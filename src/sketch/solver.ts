@@ -145,7 +145,8 @@ function geometryPrimitives(ents: Record<string, SketchEntity>): SketchPrimitive
 const baseId = (pid: string) => pid.split("#")[0];
 
 /** Resolve o esboço. Com `drag`, puxa um ponto/raio para a posição do rato (restrição temporária). */
-export function solveSketch(sketch: Pick<SketchFeature, "entities" | "constraints">, scope: Scope = () => undefined, drag?: DragTarget): SolveResult {
+export function solveSketch(sketch: Pick<SketchFeature, "entities" | "constraints">, scope: Scope = () => undefined, dragTargets?: DragTarget | DragTarget[]): SolveResult {
+  const drags = dragTargets === undefined ? [] : Array.isArray(dragTargets) ? dragTargets : [dragTargets];
   if (!wrapper) throw new Error("Solver não inicializado (initSolver)");
   const g = wrapper;
   const ents = allEntities(sketch);
@@ -169,13 +170,15 @@ export function solveSketch(sketch: Pick<SketchFeature, "entities" | "constraint
       valueErrors[c.id] = (e as Error).message;
     }
   }
-  if (drag?.kind === "point") {
-    prims.push({ id: "#dragx", type: "coordinate_x", p_id: drag.id, x: drag.x, temporary: true } as SketchPrimitive);
-    prims.push({ id: "#dragy", type: "coordinate_y", p_id: drag.id, y: drag.y, temporary: true } as SketchPrimitive);
-  } else if (drag?.kind === "radius") {
-    const t = ents[drag.id]?.type;
-    prims.push({ id: "#dragr", type: t === "arc" ? "arc_radius" : "circle_radius", [t === "arc" ? "a_id" : "c_id"]: drag.id, radius: drag.r, temporary: true } as unknown as SketchPrimitive);
-  }
+  drags.forEach((drag, k) => {
+    if (drag.kind === "point") {
+      prims.push({ id: `#dragx${k}`, type: "coordinate_x", p_id: drag.id, x: drag.x, temporary: true } as SketchPrimitive);
+      prims.push({ id: `#dragy${k}`, type: "coordinate_y", p_id: drag.id, y: drag.y, temporary: true } as SketchPrimitive);
+    } else {
+      const t = ents[drag.id]?.type;
+      prims.push({ id: `#dragr${k}`, type: t === "arc" ? "arc_radius" : "circle_radius", [t === "arc" ? "a_id" : "c_id"]: drag.id, radius: drag.r, temporary: true } as unknown as SketchPrimitive);
+    }
+  });
 
   g.clear_data();
   g.push_primitives_and_params(prims);
@@ -199,7 +202,7 @@ export function solveSketch(sketch: Pick<SketchFeature, "entities" | "constraint
   return {
     ok,
     entities: solved,
-    dof: drag ? -1 : dof,
+    dof: drags.length ? -1 : dof,
     conflicting,
     redundant,
     valueErrors,

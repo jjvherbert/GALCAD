@@ -82,3 +82,12 @@ test("plugin náutico: casco com hidrostática", async () => {
 test("crc32 conhecido", () => {
   assert.equal(crc32(new TextEncoder().encode("123456789")), 0xcbf43926);
 });
+
+test("regressão: furo cego (face cónica) não impede a malha", async () => {
+  const top = new SketchBuilder({ kind: "face", ref: { kind: "face", name: "f2:end:l5" } });
+  top.point(30, 30);
+  const r = await new KernelService().rebuild(doc(...block(), top.build(), { type: "hole", sketch: "f3", kind: "tapped", size: "M8", end: { type: "blind", depth: 10 } }));
+  assert.deepEqual(errs(r.status), []);
+  assert.ok(r.mesh!.faces.some((f) => f.type === "cone"));
+  assert.ok(r.mass!.volume < 120000);
+});

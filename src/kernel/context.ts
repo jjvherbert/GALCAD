@@ -5,7 +5,7 @@ import type { Profiles } from "../sketch/profiles.ts";
 import type { SolveResult } from "../sketch/solver.ts";
 import { type Axis, type Frame, STD_AXES, STD_FRAMES, csysAxis, csysPlane, frameFromPlane, to3D } from "./frame.ts";
 import { type NamedBody, type NamedEdge, type NamedFace, namedEdges, resolveEdge, resolveFace } from "./naming.ts";
-import { bbox, edgeProps, explore, faceProps, v3 } from "./occ.ts";
+import { bbox, edgeProps, explore, faceProps, isSmoothEdge, v3 } from "./occ.ts";
 
 export interface SketchResult {
   frame: Frame;
@@ -126,12 +126,20 @@ export function edges(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedEdge[
   const push = (e: NamedEdge) => { if (!out.some((o) => o.edge.IsSame(e.edge))) out.push(e); };
   for (const r of refs) {
     if (r.kind === "face") {
+      // uma face seleciona as suas arestas vivas; as tangentes (concordâncias) são ignoradas
+      let smooth = 0, found = 0;
       for (const f of faces(ctx, [r], report)) {
         for (const fe of explore(f.face, "edge")) {
           const ne = all.find((e) => e.edge.IsSame(fe));
-          if (ne) push(ne);
+          if (!ne) continue;
+          const adj = ne.faces.map((n) => body.faces.find((x) => x.name === n)?.face).filter((x) => x !== undefined);
+          if (adj.length === 2 && isSmoothEdge(ne.edge, adj[0], adj[1])) { smooth++; continue; }
+          found++;
+          push(ne);
         }
       }
+      if (!found && smooth) throw new Error(`As arestas da face "${r.name}" são todas tangentes (sem canto vivo)`);
+      if (smooth) report.warnings.push(`${smooth} aresta(s) tangente(s) da face ignorada(s)`);
       continue;
     }
     const res = resolveEdge(body, all, r);

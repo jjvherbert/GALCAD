@@ -90,6 +90,8 @@ export interface SketchConstraint {
   value?: Expr;
   /** Cota de referência (medida, não comanda a geometria). */
   driven?: boolean;
+  /** Posição da etiqueta da cota no esboço (só apresentação). */
+  pos?: [number, number];
 }
 
 export const DIMENSION_TYPES: ReadonlySet<ConstraintType> = new Set([
@@ -126,8 +128,6 @@ export interface ExtrudeFeature {
   flip?: boolean;
   /** Ângulo de saída (graus), aplicado às faces laterais. */
   draft?: Expr;
-  /** Feature fina: espessura da parede gerada a partir do contorno. */
-  thin?: Expr;
 }
 
 export interface RevolveFeature {

@@ -254,3 +254,18 @@ test("nomes de arestas únicos", async () => {
 
 export type { SketchFeature };
 
+
+test("face num filete: arestas tangentes ignoradas", async () => {
+  const s = new SketchBuilder();
+  s.rect(0, 0, 100, 60, 90, 50);
+  const { doc: d } = doc(
+    s.build(),
+    { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 20 } },
+    { type: "fillet", refs: [{ kind: "face", name: "f2:end:l5" }], radius: 4 },
+    { type: "fillet", refs: [{ kind: "face", name: "f2:end:l5" }], radius: 1 },
+  );
+  const r = await new Engine().rebuild(d);
+  assert.equal(r.status.f3.state, "ok");
+  assert.equal(r.status.f4.state, "error");
+  assert.match(r.status.f4.error!, /tangentes/);
+});

@@ -165,10 +165,12 @@ export function faceProps(shape: TopoDS_Shape): FaceProps {
     if (reversed) n = v3.mul(n, -1);
     res.normal = n;
     res.planeOrigin = xyz(pl.Location());
-  } else if (type === "cylinder" || type === "cone") {
-    const g: Any = type === "cylinder" ? ad.Cylinder() : ad.Cone();
-    const ax = g.Axis();
-    res.axis = { o: xyz(ax.Location()), d: xyz(ax.Direction()) };
+  } else if (type === "cylinder") {
+    // (o cone não tem ligação nesta compilação WASM: gp_Cone não está exposto)
+    try {
+      const ax = (ad.Cylinder() as Any).Axis();
+      res.axis = { o: xyz(ax.Location()), d: xyz(ax.Direction()) };
+    } catch { /* eixo indisponível */ }
   }
   ad.delete();
   return res;
@@ -214,7 +216,7 @@ export function edgeProps(shape: TopoDS_Shape): EdgeProps {
 export function bbox(s: TopoDS_Shape): { min: Vec3; max: Vec3 } {
   const o = oc();
   const box = new o.Bnd_Box();
-  o.BRepBndLib.Add(s, box, true);
+  o.BRepBndLib.AddOptimal(s, box, false, false);
   if (box.IsVoid()) { box.delete(); return { min: [0, 0, 0], max: [0, 0, 0] }; }
   const mn = box.CornerMin(), mx = box.CornerMax();
   const r = { min: xyz(mn), max: xyz(mx) };
@@ -253,6 +255,18 @@ export function vertexAt(p: Vec3): TopoDS_Shape {
   const v = T(mk.Vertex());
   mk.delete();
   return v;
+}
+
+/** Aresta tangente (concordância G1 ou melhor) entre duas faces: não tem canto para arredondar/chanfrar. */
+export function isSmoothEdge(e: TopoDS_Shape, f1: TopoDS_Shape, f2: TopoDS_Shape): boolean {
+  const o = oc();
+  const edge = T(o.TopoDS.Edge(e)), a = T(o.TopoDS.Face(f1)), b = T(o.TopoDS.Face(f2));
+  try {
+    o.BRepLib.EncodeRegularity(edge, a, b, 1e-4);
+    return o.BRep_Tool.Continuity(edge, a, b) !== o.GeomAbs_Shape.GeomAbs_C0;
+  } catch {
+    return false;
+  }
 }
 
 /** Distância mínima entre duas formas. */
