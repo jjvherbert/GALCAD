@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CAD protótipo</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <aside id="panel">
+    <h1>CAD protótipo</h1>
+    <label>Modelo <select id="model"></select></label>
+    <div id="params"></div>
+    <div class="row">
+      <button id="exp-step">Exportar STEP</button>
+      <button id="exp-stl">Exportar STL</button>
+    </div>
+    <div id="status">A carregar o núcleo geométrico…</div>
+    <div id="info"></div>
+  </aside>
+  <main id="view"></main>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
