@@ -1,37 +1,41 @@
 # CAD protótipo
 
-Protótipo de CAD paramétrico open source, no browser, com foco futuro em náutica.
+CAD paramétrico open source, no browser, para modelação de sólidos e de superfícies. O objetivo é ter fluxos de trabalho ao nível do SolidWorks e, mais tarde, funcionalidades de superfícies avançadas inspiradas no CATIA. Os domínios específicos, como o boat design, são **plugins** opcionais e não fazem parte do núcleo.
 
 - **Núcleo geométrico:** [OpenCASCADE](https://dev.opencascade.org/) (LGPL-2.1) compilado para WebAssembly, via [replicad](https://replicad.xyz/).
 - **Visualização:** Three.js.
 - **Exportação:** STEP (AP214) e STL binário, sempre em **milímetros**.
-
-A geometria corre num Web Worker (`src/worker.js`), por isso a UI não bloqueia durante as reconstruções.
 
 ## Correr
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
+npm test           # constrói todos os modelos de todos os plugins e verifica o STEP (Node, sem browser)
 npm run build      # build estática em dist/
-npm run test:hull  # teste do casco e da hidrostática em Node, sem browser
 ```
 
-## Estrutura
+## Arquitetura
 
-| Ficheiro | Papel |
-|---|---|
-| `src/model-defs.js` | Metadados dos modelos (parâmetros e limites), usados pela UI |
-| `src/models.js` | Construtores de geometria (OpenCASCADE), usados pelo worker |
-| `src/hull.js` | Casco por loft de secções transversais e hidrostática simplificada |
-| `src/worker.js` | Núcleo geométrico, malha para visualização e exportação |
-| `src/main.js` | Visualizador 3D, painel de parâmetros e downloads |
+```
+src/
+  core/      núcleo: worker OpenCASCADE, registo de plugins, testes
+  app/       interface: visualizador 3D, painel de parâmetros, exportação
+  plugins/
+    base/    peças e superfícies genéricas (placa, caixa em casca, loft aberto)
+    nautica/ módulo náutico: casco paramétrico e hidrostática simplificada
+```
 
-Para adicionar um modelo, acrescente os parâmetros a `model-defs.js` e o construtor com a mesma chave a `models.js`.
+A geometria corre num Web Worker, por isso a UI não bloqueia durante as reconstruções.
 
-## Hidrostática: hipóteses e limites
+**Plugins.** Cada pasta em `src/plugins/<id>/` é descoberta automaticamente e tem:
 
-Calcula o volume imerso, o deslocamento, o LCB, o VCB e o C<sub>B</sub> por interseção do sólido com o semiespaço z < 0. Considera águas paradas, sem caimento nem adornamento, e água salgada com ρ = 1025 kg/m³. É uma **estimativa de conceção**: não substitui um cálculo de estabilidade (ex. ISO 12217) nem tem valor de certificação.
+- `plugin.js`: metadados (nome e modelos com parâmetros e limites). A UI importa só este ficheiro.
+- `geometry.js`: exporta `builders`, com um construtor `build(params) → { shape, info? }` por modelo. Só o worker o carrega.
+
+O `info` opcional (`{ title, rows: [[rótulo, valor]], note }`) aparece no painel lateral. Qualquer resultado técnico deve indicar as hipóteses e os limites no `note`.
+
+Nesta fase os "modelos" são peças paramétricas fixas. A Fase 1 do roadmap substitui-os por esboços com restrições e uma árvore de features editável, que é o modelo de trabalho do SolidWorks.
 
 ## Propriedade intelectual
 

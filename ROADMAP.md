@@ -1,40 +1,51 @@
 # Roadmap
 
+Produto: CAD geral de sólidos e superfícies. Os módulos de domínio (náutica, FEA, …) são plugins por cima de um núcleo genérico, e o núcleo nunca depende de um plugin.
+
 ## Fase 0: protótipo (feito)
 - Núcleo OpenCASCADE/WASM num worker, visualizador Three.js
-- Modelos paramétricos (placa, casco por loft) com sliders
-- Exportação STEP e STL em mm, hidrostática simplificada
+- Sistema de plugins com descoberta automática (`base`, `nautica`)
+- Exemplos: sólido com fillet, shell, superfície aberta por loft, casco
+- Exportação STEP e STL em mm; teste headless de todos os modelos
 
-## Fase 1: núcleo de CAD
-- Esboço 2D com restrições geométricas e cotas (solver: PlaneGCS ou o do SolveSpace)
-- Árvore de features editável (extrusão, revolução, corte, furo, fillet, chamfer, padrões, espelho)
-- Nomeação topológica estável (referências a faces e arestas que sobrevivem a edições)
-- Formato de projeto aberto (JSON do histórico de features) e importação STEP/IGES
-- Exportação: STEP AP242, IGES, 3MF, glTF, DXF
+## Fase 1: modelação de peças (nível SolidWorks, núcleo)
+- Esboço 2D: linhas, arcos, splines, cotas e restrições geométricas (solver: PlaneGCS ou o do SolveSpace)
+- Árvore de features editável e reordenável: extrusão e corte (cego, passante, até superfície), revolução, sweep, loft, furos (passante/cego, roscado), fillet, chamfer, shell, draft, rib, padrões e espelho
+- Planos, eixos e sistemas de coordenadas de referência
+- Equações e variáveis globais (parâmetros ligados entre features)
+- Nomeação topológica estável: referências a faces e arestas que sobrevivem a edições a montante
+- Formato de projeto aberto (JSON do histórico de features); importação STEP/IGES; desfazer e refazer
 
-## Fase 2: superfícies e montagens
-- Superfícies NURBS: loft/sweep com guias, preenchimento, continuidade G1/G2, análise de curvatura (zebra)
-- Montagens com mates e solver de restrições 3D
-- Desenhos técnicos: vistas HLR, cotas, exportação DXF e PDF
+## Fase 2: superfícies (nível SolidWorks Surfacing)
+- Extrusão, revolução, sweep, loft e boundary surface, com controlo de tangência e curvatura nos limites
+- Fill surface (remendo N-lados), offset, ruled surface
+- Trim e untrim, knit (costura), thicken (superfície → sólido), substituir face
+- Curvas 3D: spline por pontos, projeção, interseção, curva composta, hélice
+- Análises: zebra, mapa de curvatura, desvio, draft
 
-## Fase 3: módulo náutico (plugin)
-- Linhas do casco: secções, linhas de água, longitudinais; fairing com controlo de curvatura
-- Importação e exportação de tabelas de offsets
-- Hidrostática completa: curvas hidrostáticas, coeficientes (C<sub>B</sub>, C<sub>P</sub>, C<sub>M</sub>, C<sub>WP</sub>), KB, BM, KM, TPC, MCT1cm
-- Estabilidade: curva GZ com adornamento e caimento livre. Ligação ao `galkeel-calculadora` para ISO 12217, sem reimplementar
-- Estrutura: cavernas, longarinas e anteparas geradas a partir do casco; laminados de PRFV por zonas
-- Planificação de chapas e painéis desenvolvíveis
-- Apêndices: patilhão, leme, quilha, com perfis NACA
-- Massa e centro de gravidade por componente
+## Fase 3: montagens e desenhos
+- Montagens com mates (coincidente, concêntrico, distância, ângulo) e solver de restrições 3D
+- Peças em contexto e deteção de interferências
+- Desenhos técnicos: vistas projetadas com HLR, cortes, cotas e tolerâncias, exportação DXF e PDF
 
-## Fase 4: FEA com solvers abertos
-- Malhação: Gmsh (sólidos e cascas)
-- Solvers: CalculiX (estrutural linear e não linear, compósitos em casca), Code_Aster, Elmer (multifísica)
-- Fluxo: geometria → grupos físicos (faces de carga e apoio) → `.inp` do CalculiX → execução local ou num servidor → resultados (`.frd`) mostrados no visualizador
-- Casos náuticos: pressões de projeto do casco (ISO 12215-5), slamming, cargas no patilhão e no leme
-- Mais tarde: CFD (OpenFOAM) para a resistência ao avanço
+## Fase 4: funcionalidades inspiradas no CATIA
+- Wireframe e superfícies ao estilo do GSD: multi-section com guias e spine, blend, sweeps avançados, extrapolação, junção e cura de geometria
+- Continuidade G2/G3 controlada e análise de superfícies de classe A (reflexão, highlight lines, porcupine)
+- Superfícies de forma livre: controlo direto de polos NURBS
+- Knowledgeware: regras, fórmulas, tabelas de configurações e templates reutilizáveis (estilo PowerCopy/UDF)
+- Publicação de geometria entre peças e montagens (referências externas controladas)
+- Exportação STEP AP242 com PMI
 
-## Arquitetura de plugins
-- API estável: registar features, painéis, exportadores e análises
-- Os plugins correm em worker isolado e acedem à geometria apenas pela API
-- Plugins de referência: `nautica`, `fea-calculix`
+## Módulos (plugins), desenvolvidos em paralelo quando o núcleo o permitir
+- **nautica:**
+  - linhas e fairing do casco, tabelas de offsets;
+  - hidrostática e curva GZ (ISO 12217 via `galkeel-calculadora`, sem reimplementar);
+  - estrutura e laminados de PRFV, apêndices com perfis NACA;
+  - planificação de chapas.
+- **fea:** Gmsh para a malha, CalculiX ou Code_Aster para o cálculo, resultados no visualizador. Casos náuticos, como as pressões da ISO 12215-5, vivem no plugin `nautica`.
+- **cam / fabrico** (opcional): exportação para impressão 3D (3MF) e corte (DXF).
+
+## API de plugins (evolução)
+- Hoje: modelos paramétricos, mais um painel de resultados.
+- A seguir: registar features novas na árvore, comandos e painéis, importadores e exportadores, análises.
+- Os plugins correm no worker e acedem à geometria apenas pela API do núcleo.

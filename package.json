@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:hull": "node src/test-hull.mjs"
+    "test:hull": "node src/plugins/nautica/test-hull.mjs",
+    "test": "node src/core/test-models.mjs"
   },
   "author": "",
   "license": "LGPL-2.1-or-later",

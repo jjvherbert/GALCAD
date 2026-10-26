@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { modelDefs as models } from "./model-defs.js";
+import { plugins, modelDefs as models } from "../core/registry.js";
 
 // --- Worker de geometria (pedido/resposta por id) ---
-const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("../core/worker.js", import.meta.url), { type: "module" });
 let seq = 0;
 const pending = new Map();
 worker.onmessage = ({ data }) => {
@@ -56,7 +56,7 @@ function showMesh({ mesh, edges }, refit) {
   const eg = new THREE.BufferGeometry();
   eg.setAttribute("position", new THREE.Float32BufferAttribute(edges, 3));
   group.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x1c2330 })));
-  if (modelKey === "casco") group.add(waterline());
+  if (models[modelKey].waterline) group.add(waterline());
   if (refit) fit();
 }
 
@@ -83,10 +83,14 @@ function fit() {
 const $ = (id) => document.getElementById(id);
 const status = (msg, err = false) => { $("status").textContent = msg; $("status").className = err ? "err" : ""; };
 const fmt = (v, d = 2) => v.toLocaleString("pt-PT", { maximumFractionDigits: d, minimumFractionDigits: d });
-let modelKey = "casco";
+let modelKey = "base/placa";
 let values = {};
 
-for (const [k, m] of Object.entries(models)) $("model").add(new Option(m.label, k));
+for (const p of plugins) {
+  const og = Object.assign(document.createElement("optgroup"), { label: p.name });
+  for (const k of Object.keys(p.models)) og.append(new Option(p.models[k].label, `${p.id}/${k}`));
+  $("model").append(og);
+}
 $("model").onchange = (e) => selectModel(e.target.value);
 
 function selectModel(key) {
@@ -96,9 +100,9 @@ function selectModel(key) {
   $("params").replaceChildren(...Object.entries(m.params).map(([k, p]) => {
     const l = document.createElement("label");
     l.className = "param";
-    l.innerHTML = `<span>${p.label} <output>${p.value} ${k === "stations" ? "" : m.units}</output></span>`;
+    l.innerHTML = `<span>${p.label} <output>${p.value} ${p.unitless ? "" : m.units}</output></span>`;
     const input = Object.assign(document.createElement("input"), { type: "range", min: p.min, max: p.max, step: p.step, value: p.value });
-    input.oninput = () => { values[k] = +input.value; l.querySelector("output").textContent = `${input.value} ${k === "stations" ? "" : m.units}`; schedule(false); };
+    input.oninput = () => { values[k] = +input.value; l.querySelector("output").textContent = `${input.value} ${p.unitless ? "" : m.units}`; schedule(false); };
     l.append(input);
     return l;
   }));
@@ -126,27 +130,23 @@ async function rebuild(refit) {
   }
 }
 
-function renderInfo({ hydro }) {
-  if (!hydro) return $("info").replaceChildren();
-  const L = values.L;
-  const cb = hydro.volume / (values.L * values.B * values.T);
-  $("info").innerHTML = `
-    <h1>Hidrostática (estimativa)</h1>
-    <table>
-      <tr><td>Volume imerso ∇</td><td>${fmt(hydro.volume)} m³</td></tr>
-      <tr><td>Deslocamento Δ (ρ=1025)</td><td>${fmt(hydro.displacementKg / 1000)} t</td></tr>
-      <tr><td>LCB (da popa)</td><td>${fmt(hydro.lcb)} m · ${fmt(100 * hydro.lcb / L, 1)}% L</td></tr>
-      <tr><td>VCB (abaixo da LA)</td><td>${fmt(-hydro.vcb)} m</td></tr>
-      <tr><td>Coef. de bloco C<sub>B</sub></td><td>${fmt(cb, 3)}</td></tr>
-    </table>
-    <p class="note">Hipóteses: casco em águas paradas, sem caimento nem adornamento, LA em z = 0, água salgada ρ = 1025 kg/m³. Geometria paramétrica simplificada. É uma estimativa de conceção, não substitui um cálculo de estabilidade nem tem valor de certificação.</p>`;
+// Painel de resultados genérico: cada construtor devolve { title, rows: [[rótulo, valor]], note? }.
+function renderInfo(info) {
+  const box = $("info");
+  box.replaceChildren();
+  if (!info) return;
+  const h = Object.assign(document.createElement("h1"), { textContent: info.title });
+  const table = document.createElement("table");
+  for (const [label, value] of info.rows) table.insertRow().append(...[label, value].map((t) => Object.assign(document.createElement("td"), { textContent: t })));
+  box.append(h, table);
+  if (info.note) box.append(Object.assign(document.createElement("p"), { className: "note", textContent: info.note }));
 }
 
 async function exportAs(format) {
   status(`A exportar ${format.toUpperCase()}…`);
   try {
     const { blob } = await call({ type: "export", format });
-    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `${modelKey}.${format}` });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `${modelKey.replace("/", "-")}.${format}` });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     status(`${format.toUpperCase()} exportado (${fmt(blob.size / 1024, 0)} kB, em mm)`);
