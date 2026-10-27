@@ -1,5 +1,5 @@
 // Catálogo de features: nomes, dependências e validação de ordem.
-import type { AxisRef, CadDocument, CurveRef, EndCondition, Feature, FeatureType, PlaneRef, SurfaceTarget, TopoRef } from "./types.ts";
+import type { AxisRef, CadDocument, CurveRef, EndCondition, Feature, FeatureType, PlaneRef, SurfaceTarget, SweepOptions, TopoRef } from "./types.ts";
 
 export const FEATURE_LABELS: Record<FeatureType, string> = {
   sketch: "Esboço",
@@ -36,6 +36,11 @@ export const FEATURE_LABELS: Record<FeatureType, string> = {
   ruled: "Superfície regrada",
   untrim: "Desaparar superfície",
   replaceFace: "Substituir face",
+  multiSection: "Multi-secção",
+  blend: "Concordância",
+  circleSweep: "Varrimento circular",
+  extrapolate: "Extrapolar",
+  heal: "Curar",
 };
 
 export function featureLabel(f: Feature): string {
@@ -49,16 +54,21 @@ export function featureLabel(f: Feature): string {
 export const TOOL_FEATURES: ReadonlySet<FeatureType> = new Set(["extrude", "revolve", "sweep", "loft", "hole", "rib"]);
 
 /** Features do separador Superfícies (pela ordem da barra). */
-export const SURFACE_TYPES: FeatureType[] = ["curve", "surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "trimSurface", "untrim", "knit", "thicken", "replaceFace", "deleteFace"];
+export const SURFACE_TYPES: FeatureType[] = ["curve", "surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "trimSurface", "untrim", "knit", "thicken", "replaceFace", "deleteFace", "multiSection", "blend", "circleSweep", "extrapolate", "heal"];
 
 /** Features que criam um corpo de superfície novo (com a chave do seu id). */
-export const SHEET_SOURCES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "untrim", "knit", "deleteFace", "linearPattern", "circularPattern", "mirror"];
+export const SHEET_SOURCES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "untrim", "knit", "deleteFace", "linearPattern", "circularPattern", "mirror", "multiSection", "blend", "circleSweep", "extrapolate", "heal"];
+
+/** A feature cria um corpo de superfície com a chave do seu id (e não altera um existente)? */
+export const createsSheet = (f: Feature) =>
+  SHEET_SOURCES.includes(f.type) && !(f.type === "knit" && f.makeSolid) && !(f.type === "extrapolate" && f.assemble !== false);
 
 export const FEATURE_ICONS: Record<FeatureType, string> = {
   sketch: "✎", extrude: "▮", revolve: "◐", sweep: "〰", loft: "⟁", hole: "⊚", fillet: "◜", chamfer: "◸", shell: "▢",
   draft: "⏢", rib: "⊿", linearPattern: "⁞", circularPattern: "✲", mirror: "⇋", plane: "▱", axis: "┆", csys: "⌖", import: "⇩", plugin: "⧉",
   surfaceExtrude: "⬒", surfaceRevolve: "◑", surfaceSweep: "≈", surfaceLoft: "⧖", fill: "⬠", offsetSurface: "⇶", knit: "⨝",
   thicken: "▤", trimSurface: "✂", deleteFace: "⌫", curve: "∿", boundary: "⬚", ruled: "⫼", untrim: "⤧", replaceFace: "⇄",
+  multiSection: "⧗", blend: "⌒", circleSweep: "◯", extrapolate: "⇥", heal: "✚",
 };
 
 /** Ids de features referidos num nome topológico (ex.: "f3:side:l2" → f3). */
@@ -82,10 +92,17 @@ const targetDeps = (t: SurfaceTarget, out: Set<string>) => {
   else if (t.kind === "sheet") out.add(t.sheet);
   else if (t.kind === "faces") t.faces.forEach((r) => topoDeps(r, out));
 };
-const curveDeps = (c: CurveRef, out: Set<string>) => {
+const curveDeps = (c: CurveRef | undefined, out: Set<string>) => {
+  if (!c) return;
   if (c.kind === "curve") out.add(c.feature);
   else if (c.kind === "edge") topoDeps(c.ref, out);
   else out.add(c.sketch);
+};
+
+const sweepDeps = (f: SweepOptions, d: Set<string>) => {
+  axisDeps(f.binormal, d);
+  f.support?.forEach((r) => topoDeps(r, d));
+  curveDeps(f.guide, d);
 };
 
 /** Features de que esta depende diretamente. */
@@ -98,7 +115,7 @@ export function dependencies(f: Feature): Set<string> {
       break;
     case "extrude": d.add(f.sketch); endDeps(f.end, d); endDeps(f.end2, d); break;
     case "revolve": d.add(f.sketch); axisDeps(f.axis, d); break;
-    case "sweep": d.add(f.profile); d.add(f.path); break;
+    case "sweep": d.add(f.profile); d.add(f.path); sweepDeps(f, d); break;
     case "loft": f.sections.forEach((s) => d.add(s)); break;
     case "hole": d.add(f.sketch); break;
     case "fillet": case "chamfer": f.refs.forEach((r) => topoDeps(r, d)); break;
@@ -112,7 +129,7 @@ export function dependencies(f: Feature): Set<string> {
     case "axis": f.planes?.forEach((p) => planeDeps(p, d)); topoDeps(f.edge, d); break;
     case "surfaceExtrude": d.add(f.sketch); break;
     case "surfaceRevolve": d.add(f.sketch); axisDeps(f.axis, d); break;
-    case "surfaceSweep": d.add(f.profile); d.add(f.path); break;
+    case "surfaceSweep": d.add(f.profile); d.add(f.path); sweepDeps(f, d); break;
     case "surfaceLoft": f.sections.forEach((s) => d.add(s)); break;
     case "fill": f.edges.forEach((r) => topoDeps(r, d)); break;
     case "offsetSurface": case "deleteFace": f.faces.forEach((r) => topoDeps(r, d)); break;
@@ -130,12 +147,21 @@ export function dependencies(f: Feature): Set<string> {
       else if (c.kind === "intersection") { targetDeps(c.a, d); targetDeps(c.b, d); }
       else if (c.kind === "composite") c.edges.forEach((r) => topoDeps(r, d));
       else if (c.kind === "helix") axisDeps(c.axis, d);
+      else if (c.kind === "extend") curveDeps(c.curve, d);
       break;
     }
     case "boundary": [...f.dir1, ...f.dir2].forEach((c) => curveDeps(c, d)); break;
     case "ruled": f.edges.forEach((r) => topoDeps(r, d)); topoDeps(f.face, d); axisDeps(f.direction, d); break;
     case "untrim": f.faces.forEach((r) => topoDeps(r, d)); break;
     case "replaceFace": f.faces.forEach((r) => topoDeps(r, d)); d.add(f.sheet); break;
+    case "multiSection":
+      [...f.sections, ...(f.guides ?? [])].forEach((c) => curveDeps(c, d));
+      curveDeps(f.spine, d); topoDeps(f.startTangent?.face, d); topoDeps(f.endTangent?.face, d);
+      break;
+    case "blend": for (const s of [f.side1, f.side2]) { curveDeps(s.curve, d); topoDeps(s.support, d); } break;
+    case "circleSweep": f.guides.forEach((c) => curveDeps(c, d)); break;
+    case "extrapolate": d.add(f.sheet); f.edges.forEach((r) => topoDeps(r, d)); break;
+    case "heal": f.sheets.forEach((s) => d.add(s)); break;
   }
   d.delete(f.id);
   return d;
@@ -155,6 +181,8 @@ export function effectiveDependencies(features: Feature[]): Map<string, Set<stri
     if (f.type === "trimSurface") {
       for (const key of f.mutual && f.tool.kind === "sheet" ? [f.sheet, f.tool.sheet] : [f.sheet]) trims.set(key, [...(trims.get(key) ?? []), f.id]);
     }
+    // extrapolar (junto ao corpo) também altera o corpo mantendo a chave
+    if (f.type === "extrapolate" && f.assemble !== false) trims.set(f.sheet, [...(trims.get(f.sheet) ?? []), f.id]);
   }
   return out;
 }

@@ -14,6 +14,7 @@ import { circularPattern, linearPattern, mirrorFeature } from "./features/patter
 import { axis, csys, importFeature, plane, sketch } from "./features/datum.ts";
 import { boundary, deleteFace, fill, knit, offsetSurface, replaceFace, ruled, surfaceExtrude, surfaceLoft, surfaceRevolve, surfaceSweep, thicken, trimSurface, untrim } from "./features/surface.ts";
 import { curve } from "./features/curve.ts";
+import { blend, circleSweep, extrapolate, heal, multiSection } from "./features/gsd.ts";
 import { evalParam } from "../doc/variables.ts";
 
 export interface FeatureStatus {
@@ -67,6 +68,11 @@ async function runStep(ctx: Ctx, f: Feature, report: StepReport): Promise<Ctx> {
     case "ruled": return ruled(ctx, f, report);
     case "untrim": return untrim(ctx, f, report);
     case "replaceFace": return replaceFace(ctx, f, report);
+    case "multiSection": return multiSection(ctx, f, report);
+    case "blend": return blend(ctx, f, report);
+    case "circleSweep": return circleSweep(ctx, f, report);
+    case "extrapolate": return extrapolate(ctx, f, report);
+    case "heal": return heal(ctx, f, report);
     case "plugin": {
       const b = PLUGIN_BUILDERS[f.plugin]?.[f.kind];
       if (!b) throw new Error(`Plugin desconhecido: ${f.plugin}/${f.kind}`);

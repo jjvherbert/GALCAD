@@ -6,7 +6,8 @@ import type { CurveFeature, CurveRef, Feature, SurfaceTarget, Vec3 } from "../..
 import { evalParam } from "../../doc/variables.ts";
 import { type Ctx, type NamedCurve, type StepReport, axisOf, edges as resolveEdges, faces as resolveFaces, featureName, modelSize, planeFrame, sheetOf } from "../context.ts";
 import { type NamedEdge, sortByPosition } from "../naming.ts";
-import { T, type TopoDS_Shape, edgeProps, explore, gpAx1, gpPln, gpVec, interpolateEdge, makeCompound, makeWire, oc, v3 } from "../occ.ts";
+import { T, type TopoDS_Shape, edgeProps, explore, gpAx1, gpPln, gpVec, interpolateEdge, makeCompound, makeWire, oc, sampleWire, v3, wireEnd, wireOf } from "../occ.ts";
+import { resample } from "../../geom/spline.ts";
 import { chainWire } from "../sketch3d.ts";
 import { sketchOf } from "./solid.ts";
 
@@ -105,10 +106,41 @@ export const curve: Step<CurveFeature & Feature> = (ctx, f, report) => {
       edges = explore(shape, "edge");
       break;
     }
+    case "extend": {
+      edges = [extendCurve(ctx, c, report)];
+      break;
+    }
   }
   ctx.curves.set(f.id, namedCurve(edges, f.id));
   return ctx;
 };
+
+/**
+ * Prolonga uma curva (extrapolação) no início e/ou no fim: em tangência (reta) ou em curvatura
+ * (parábola osculadora). O resultado é uma spline que interpola a curva original amostrada e os
+ * prolongamentos (aproximação C2 da curva original).
+ */
+function extendCurve(ctx: Ctx, c: Extract<CurveFeature["def"], { kind: "extend" }>, report: StepReport): TopoDS_Shape {
+  const w = wireOf(curveRefEdges(ctx, c.curve, report).map((e) => e.edge));
+  const a = evalParam(c.start, ctx.scope, "Prolongamento inicial", 0);
+  const b = evalParam(c.end, ctx.scope, "Prolongamento final", 0);
+  if (a < 0 || b < 0) throw new Error("Os prolongamentos têm de ser positivos");
+  if (a === 0 && b === 0) throw new Error("Indique o prolongamento no início e/ou no fim");
+  const base = resample(sampleWire(w, 400), 61);
+  if (v3.dist(base[0], base[base.length - 1]) < 1e-7) throw new Error("Uma curva fechada não pode ser prolongada");
+  const ext = (atEnd: boolean, L: number): Vec3[] => {
+    if (L <= 0) return [];
+    const { p, d1, d2 } = wireEnd(w, atEnd);
+    const s1 = v3.len(d1);
+    const t = v3.mul(d1, (atEnd ? 1 : -1) / s1);
+    // vetor curvatura: componente de d2 normal à tangente, dividida por |d1|²
+    const k = c.continuity === "curvature" ? v3.mul(v3.sub(d2, v3.mul(d1, v3.dot(d2, d1) / (s1 * s1))), 1 / (s1 * s1)) : [0, 0, 0] as Vec3;
+    const n = Math.max(3, Math.ceil((10 * L) / (L + 1)) + 2);
+    return Array.from({ length: n }, (_, i) => { const s = (L * (i + 1)) / n; return v3.add(v3.add(p, v3.mul(t, s)), v3.mul(k, (s * s) / 2)); });
+  };
+  const pts = [...ext(false, a).reverse(), ...base, ...ext(true, b)];
+  return interpolateEdge(pts);
+}
 
 /** Arestas de uma curva de entrada (curva 3D, aresta do modelo ou esboço com uma cadeia). */
 export function curveRefEdges(ctx: Ctx, c: CurveRef, report: StepReport): NamedEdge[] {

@@ -28,6 +28,7 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
       { title: "Criar", ids: ["feature.surfaceExtrude", "feature.surfaceRevolve", "feature.surfaceSweep", "feature.surfaceLoft", "feature.boundary", "feature.fill", "feature.ruled", "feature.offsetSurface"] },
       { title: "Editar", ids: ["feature.trimSurface", "feature.untrim", "feature.knit", "feature.deleteFace"] },
       { title: "Para sólido", ids: ["feature.thicken", "feature.replaceFace"] },
+      { title: "GSD", ids: ["feature.multiSection", "feature.blend", "feature.circleSweep", "feature.extrapolate", "feature.heal"] },
       { title: "Análise", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation"] },
     ],
   },

@@ -1,7 +1,7 @@
 // Valores por defeito de cada feature nova.
 import type { CadDocument, FeatureData, FeatureType, PlaneRef } from "../doc/types.ts";
 import { PLUGINS } from "../plugins/meta.ts";
-import { SHEET_SOURCES } from "../doc/features.ts";
+import { createsSheet } from "../doc/features.ts";
 
 /** Último esboço do documento (antes do índice dado), o candidato natural para a feature seguinte. */
 export function lastSketch(doc: CadDocument, before = doc.rollback ?? doc.features.length): string {
@@ -13,7 +13,7 @@ export function lastSketch(doc: CadDocument, before = doc.rollback ?? doc.featur
 export function lastSheet(doc: CadDocument, before = doc.rollback ?? doc.features.length): string {
   for (let i = Math.min(before, doc.features.length) - 1; i >= 0; i--) {
     const f = doc.features[i];
-    if (SHEET_SOURCES.includes(f.type) && !(f.type === "knit" && f.makeSolid)) return f.id;
+    if (createsSheet(f)) return f.id;
   }
   return "";
 }
@@ -54,6 +54,11 @@ export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plan
     case "ruled": return { type, edges: [], mode: "normal", distance: 10 };
     case "untrim": return { type, faces: [] };
     case "replaceFace": return { type, faces: [], sheet: lastSheet(doc) };
+    case "multiSection": return { type, sections: [], guides: [] };
+    case "blend": return { type, side1: { curve: { kind: "curve", feature: "" }, continuity: "tangent" }, side2: { curve: { kind: "curve", feature: "" }, continuity: "tangent" } };
+    case "circleSweep": return { type, mode: "threeGuides", guides: [], radius: 10 };
+    case "extrapolate": return { type, sheet: lastSheet(doc), edges: [], length: 10, continuity: "tangent" };
+    case "heal": return { type, sheets: [], distance: 0.1, tangency: 0.5, simplify: true };
     case "plugin": {
       const p = PLUGINS.find((x) => x.id === opts.plugin) ?? PLUGINS[0];
       const kind = opts.kind ?? Object.keys(p.kinds)[0];

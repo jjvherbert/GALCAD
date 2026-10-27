@@ -23,6 +23,7 @@ import {
 import { applyOp } from "../boolean.ts";
 import { generatedNames, nameFrom, sketchOf } from "./solid.ts";
 import { curveRefEdges, pathWire } from "./curve.ts";
+import { connectedParts, seamDeviations, setupPipe, simplifyBody } from "./gsd.ts";
 
 type Step<F> = (ctx: Ctx, f: F, report: StepReport) => Ctx;
 
@@ -93,8 +94,7 @@ export const surfaceSweep: Step<SurfaceSweepFeature & Feature> = (ctx, f, report
   const parts = chains.map((c) => {
     const { wire, edgeMap } = chainWithMap(c, s.frame);
     const mk = T(new (oc().BRepOffsetAPI_MakePipeShell)(oc().TopoDS.Wire(spine)));
-    mk.SetMode(f.orientation !== "fixed");
-    mk.Add(wire, false, false);
+    setupPipe(ctx, mk, f, wire, report);
     mk.Build();
     if (!mk.IsDone()) throw new Error("O varrimento falhou (perfil demasiado grande para a curvatura do caminho?)");
     return { shape: T(mk.Shape()), known: generatedNames(mk, edgeMap, `${f.id}:side`) };
@@ -234,6 +234,7 @@ export const ruled: Step<RuledSurfaceFeature & Feature> = (ctx, f, report) => {
   if (!es.length) throw new Error("Escolha as arestas");
   const dist = evalParam(f.distance, ctx.scope, "Distância") * (f.flip ? -1 : 1);
   if (Math.abs(dist) < 1e-9) throw new Error("Distância: não pode ser nula");
+  const ang = (evalParam(f.angle, ctx.scope, "Ângulo", 45) * Math.PI) / 180;
   const all = pool(ctx);
   const o = oc();
   const parts = es.map((e) => {
@@ -251,10 +252,12 @@ export const ruled: Step<RuledSurfaceFeature & Feature> = (ctx, f, report) => {
       const pts = sampleEdge(e.edge, 24).map(({ p, t }) => {
         const n = normalOnFace(support.face, p);
         let d = n;
-        if (f.mode === "tangent") {
+        if (f.mode === "tangent" || f.mode === "angle") {
           d = v3.norm([t[1] * n[2] - t[2] * n[1], t[2] * n[0] - t[0] * n[2], t[0] * n[1] - t[1] * n[0]]);
           // tangente à face, para fora dela
           if (v3.dot(d, v3.sub(fc, p)) > 0) d = v3.mul(d, -1);
+          // a um ângulo da face, rodando da tangente para a normal
+          if (f.mode === "angle") d = v3.add(v3.mul(d, Math.cos(ang)), v3.mul(n, Math.sin(ang)));
         }
         return v3.add(p, v3.mul(d, dist));
       });
@@ -401,7 +404,8 @@ export const knit: Step<KnitFeature & Feature> = (ctx, f, report) => {
   const tol = evalParam(f.tolerance, ctx.scope, "Tolerância", 0.01);
   const sewn = sew(inputs.map((b) => b.shape), tol);
   const known = inputs.flatMap((b) => b.faces.map((nf) => ({ face: sewn.map(nf.face), name: nf.name })));
-  report.info = { title: "Costura", rows: [["Faces", String(explore(sewn.shape, "face").length)], ["Arestas livres", String(sewn.freeEdges)]] };
+  const info = { title: "Costura", rows: [["Faces", String(explore(sewn.shape, "face").length)], ["Arestas livres", String(sewn.freeEdges)]] as [string, string][] };
+  report.info = info;
   if (f.makeSolid) {
     if (sewn.freeEdges > 0) throw new Error(`A costura tem ${sewn.freeEdges} aresta(s) livre(s): não fecha um volume (feche as aberturas ou aumente a tolerância)`);
     const tool = nameFrom(solidsOf(sewn.shape), f.id, known);
@@ -412,7 +416,15 @@ export const knit: Step<KnitFeature & Feature> = (ctx, f, report) => {
     ctx.tools.set(f.id, { body: tool, op });
     return { ...ctx, body };
   }
-  const body = nameFrom(sewn.shape, f.id, known);
+  let body = nameFrom(sewn.shape, f.id, known);
+  if (f.simplify) body = simplifyBody(body, f.id);
+  const parts = connectedParts(body.shape);
+  info.rows.push(["Partes ligadas", String(parts)]);
+  if (f.checkConnected && parts > 1) throw new Error(`O resultado tem ${parts} partes desligadas (aumente a tolerância ou acrescente superfícies de ligação)`);
+  if (f.checkTangency) {
+    const bad = seamDeviations(body).filter((x) => x.deg > 0.5);
+    if (bad.length) throw new Error(`${bad.length} aresta(s) costurada(s) não tangente(s) (máx. ${Math.max(...bad.map((x) => x.deg)).toFixed(1)}°)`);
+  }
   for (const id of f.sheets) ctx.sheets.delete(id);
   ctx.sheets.set(f.id, body);
   return ctx;

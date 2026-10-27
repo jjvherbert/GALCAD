@@ -1,9 +1,9 @@
 // Campos reutilizáveis do painel de propriedades.
 import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { AxisRef, CadDocument, CurveRef, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, SurfaceTarget, TopoRef, Vec3 } from "../doc/types.ts";
+import type { AxisRef, CadDocument, CurveRef, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, SurfaceTarget, SweepOptions, SweepOrientation, TopoRef, Vec3 } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
-import { FEATURE_LABELS, SHEET_SOURCES } from "../doc/features.ts";
+import { FEATURE_LABELS, createsSheet } from "../doc/features.ts";
 import { type Pick, pickHandlers, store, useStore } from "./store.ts";
 
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 4 });
@@ -312,7 +312,7 @@ export function RegionList({ sketch, value, onChange }: { sketch: string; value:
 
 /** Corpos de superfície criados antes de `before` (as features que os criam). */
 function sheetCandidates(doc: CadDocument, before: number) {
-  return doc.features.slice(0, before).filter((f) => SHEET_SOURCES.includes(f.type) && !f.suppressed && !(f.type === "knit" && f.makeSolid));
+  return doc.features.slice(0, before).filter((f) => createsSheet(f) && !f.suppressed);
 }
 
 /**
@@ -396,14 +396,18 @@ export function TargetEditor({ field, label, value, onChange, before }: { field:
   );
 }
 
+/** Curva já escolhida (as features novas começam com referências vazias). */
+const validCurve = (c: CurveRef) => (c.kind === "edge" ? !!c.ref.name : c.kind === "curve" ? !!c.feature : !!c.sketch);
+
 const curveLabel = (doc: CadDocument, c: CurveRef) =>
   c.kind === "edge" ? describeName(doc, c.ref.name) : doc.features.find((f) => f.id === (c.kind === "curve" ? c.feature : c.sketch))?.name ?? "?";
 
 /** Lista ordenada de curvas (curvas 3D, esboços ou arestas escolhidas no 3D). */
-export function CurveList({ field, label, value, onChange, before }: { field: string; label: string; value: CurveRef[]; onChange: (v: CurveRef[]) => void; before: number }) {
+export function CurveList({ field, label, value, onChange, before, single }: { field: string; label: string; value: CurveRef[]; onChange: (v: CurveRef[]) => void; before: number; single?: boolean }) {
   const st = useStore();
   const active = st.pickTarget?.field === field;
-  usePickTarget(field, (p) => { if (p.kind === "edge") onChange([...value, { kind: "edge", ref: { kind: "edge", name: p.name, hint: p.hint } }]); });
+  const push = (c: CurveRef) => onChange(single ? [c] : [...value, c]);
+  usePickTarget(field, (p) => { if (p.kind === "edge") push({ kind: "edge", ref: { kind: "edge", name: p.name, hint: p.hint } }); });
   const cands = st.doc.features.slice(0, before).filter((f) => (f.type === "curve" || f.type === "sketch") && !f.suppressed);
   return (
     <div class={`reflist ${active ? "active" : ""}`}>
@@ -414,14 +418,14 @@ export function CurveList({ field, label, value, onChange, before }: { field: st
       <select aria-label={`${label}: acrescentar`} value="" onChange={(e) => {
         const id = (e.target as HTMLSelectElement).value;
         const f = cands.find((x) => x.id === id);
-        if (f) onChange([...value, f.type === "curve" ? { kind: "curve", feature: id } : { kind: "sketch", sketch: id }]);
+        if (f) push(f.type === "curve" ? { kind: "curve", feature: id } : { kind: "sketch", sketch: id });
       }}>
-        <option value="">+ acrescentar curva ou esboço…</option>
+        <option value="">{single ? "escolher curva ou esboço…" : "+ acrescentar curva ou esboço…"}</option>
         {cands.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
       </select>
       <ul>
-        {value.map((c, i) => (
-          <li key={i}><span><b>{i + 1}.</b> {curveLabel(st.doc, c)}</span><button class="icon" aria-label="Retirar" onClick={() => onChange(value.filter((_, k) => k !== i))}>✕</button></li>
+        {value.filter(validCurve).map((c, i) => (
+          <li key={i}><span>{single ? "" : <b>{i + 1}. </b>}{curveLabel(st.doc, c)}</span><button class="icon" aria-label="Retirar" onClick={() => onChange(value.filter((_, k) => k !== i))}>✕</button></li>
         ))}
         {!value.length && <li class="muted">Nenhuma</li>}
       </ul>
@@ -457,5 +461,29 @@ export function PointsEditor({ value, onChange }: { value: [Expr, Expr, Expr][];
       ))}
       <button class="small" onClick={() => { const l = value.at(-1) ?? [0, 0, 0]; onChange([...value, [Number(l[0]) + 20 || 0, l[1], l[2]]]); }}>+ ponto</button>
     </div>
+  );
+}
+
+/** Opções avançadas de varrimento (orientação do perfil, guia, lei de escala). */
+export function SweepOptionsEditor({ value, onChange, before }: { value: SweepOptions; onChange: (v: Partial<SweepOptions>) => void; before: number }) {
+  const o = value.orientation ?? "frenet";
+  return (
+    <>
+      <Select<SweepOrientation> label="Orientação do perfil" value={o} onChange={(orientation) => onChange({ orientation })}
+        options={[["frenet", "Segue o caminho (Frenet)"], ["fixed", "Constante"], ["binormal", "Binormal fixa (direção)"], ["support", "Normal das faces de suporte"], ["guide", "Curva guia"]]} />
+      {o === "binormal" && <AxisSelect field="binormal" label="Direção da binormal" value={value.binormal ?? { kind: "std", name: "Z" }} before={before} onChange={(binormal) => onChange({ binormal })} />}
+      {o === "support" && <RefList field="support" label="Faces de suporte do caminho" accept={["face"]} refs={value.support ?? []} onChange={(support) => onChange({ support })} />}
+      {o === "guide" && (
+        <>
+          <CurveList field="guide" single label="Curva guia" value={value.guide ? [value.guide] : []} before={before} onChange={([guide]) => onChange({ guide })} />
+          <Select label="Papel da guia" value={value.guideMode ?? "orient"} onChange={(guideMode) => onChange({ guideMode })}
+            options={[["orient", "Só orienta (roda o perfil)"], ["contact", "Contacto (largura constante)"], ["border", "Bordo (a largura varia até à guia)"]]} />
+        </>
+      )}
+      <ExprInput label="Escala no fim do caminho" unit="×" allowEmpty value={value.scale} onChange={(scale) => onChange({ scale })} />
+      {value.scale !== undefined && value.scale !== "" && Number(value.scale) !== 1 && (
+        <Select label="Lei de escala" value={value.scaleLaw ?? "linear"} options={[["linear", "Linear"], ["s", "Em S (tangente nula nas pontas)"]]} onChange={(scaleLaw) => onChange({ scaleLaw })} />
+      )}
+    </>
   );
 }

@@ -157,13 +157,11 @@ export interface RevolveFeature {
   flip?: boolean;
 }
 
-export interface SweepFeature {
+export interface SweepFeature extends SweepOptions {
   type: "sweep";
   profile: string; // esboço com perfil fechado
-  path: string; // esboço com caminho aberto ou fechado
+  path: string; // esboço com caminho aberto ou fechado (ou curva 3D)
   op: BodyOp;
-  /** "frenet": o perfil segue a curvatura; "fixed": orientação constante. */
-  orientation?: "frenet" | "fixed";
 }
 
 export interface LoftFeature {
@@ -333,11 +331,33 @@ export interface SurfaceRevolveFeature {
   midplane?: boolean;
 }
 
-export interface SurfaceSweepFeature {
+/**
+ * Orientação do perfil ao longo do caminho: "frenet" (segue a curvatura), "fixed" (constante),
+ * "binormal" (binormal fixa numa direção), "support" (normal das faces de suporte do caminho) ou
+ * "guide" (uma curva guia controla a rotação do perfil).
+ */
+export type SweepOrientation = "frenet" | "fixed" | "binormal" | "support" | "guide";
+
+/** Opções avançadas de varrimento (estilo GSD): orientação, guia e lei de escala. */
+export interface SweepOptions {
+  orientation?: SweepOrientation;
+  binormal?: AxisRef;
+  support?: TopoRef[];
+  guide?: CurveRef;
+  /**
+   * Papel da guia: "orient" (só roda o perfil), "contact" (o perfil toca a guia, largura constante)
+   * ou "border" (a guia é o bordo da superfície e a largura varia).
+   */
+  guideMode?: "orient" | "contact" | "border";
+  /** Escala do perfil no fim do caminho (1 = constante), com lei linear ou em S. */
+  scale?: Expr;
+  scaleLaw?: "linear" | "s";
+}
+
+export interface SurfaceSweepFeature extends SweepOptions {
   type: "surfaceSweep";
   profile: string;
   path: string;
-  orientation?: "frenet" | "fixed";
 }
 
 export interface SurfaceLoftFeature {
@@ -366,6 +386,12 @@ export interface KnitFeature {
   makeSolid?: boolean;
   op?: BodyOp;
   tolerance?: Expr;
+  /** Juntar (estilo GSD): erro se o resultado não ficar ligado num só conjunto de faces. */
+  checkConnected?: boolean;
+  /** Erro se alguma aresta costurada tiver um desvio de tangência acima de 0,5°. */
+  checkTangency?: boolean;
+  /** Unir faces da mesma superfície (simplificar o resultado). */
+  simplify?: boolean;
 }
 
 /** Dar espessura a um corpo de superfície (superfície → sólido). */
@@ -417,7 +443,9 @@ export type CurveDef =
   /** Curva composta: arestas encadeadas (do modelo ou de outras curvas). */
   | { kind: "composite"; edges: TopoRef[] }
   /** Hélice em torno de um eixo. */
-  | { kind: "helix"; axis: AxisRef; radius: Expr; pitch: Expr; height: Expr; lefthand?: boolean; startAngle?: Expr };
+  | { kind: "helix"; axis: AxisRef; radius: Expr; pitch: Expr; height: Expr; lefthand?: boolean; startAngle?: Expr }
+  /** Curva prolongada (extrapolação) no início e/ou no fim, em tangência ou curvatura. */
+  | { kind: "extend"; curve: CurveRef; start?: Expr; end?: Expr; continuity?: "tangent" | "curvature" };
 
 export interface CurveFeature {
   type: "curve";
@@ -444,7 +472,9 @@ export interface BoundaryFeature {
 export interface RuledSurfaceFeature {
   type: "ruled";
   edges: TopoRef[];
-  mode: "normal" | "tangent" | "direction";
+  /** "angle": linha a um ângulo da superfície (0° = tangente, 90° = normal), como o "line sweep" do GSD. */
+  mode: "normal" | "tangent" | "direction" | "angle";
+  angle?: Expr;
   /** Face de referência para normal/tangente (por defeito, a face vizinha de cada aresta; obrigatória em arestas entre duas faces). */
   face?: TopoRef;
   direction?: AxisRef;
@@ -463,6 +493,82 @@ export interface ReplaceFaceFeature {
   type: "replaceFace";
   faces: TopoRef[];
   sheet: string;
+}
+
+// ---------------------------------------------------------------------------
+// Fase 4: superfícies ao estilo do CATIA GSD
+// ---------------------------------------------------------------------------
+
+/** Tangência de um extremo de uma multi-secção a uma face de suporte (que contém a secção). */
+export interface SectionTangent {
+  face: TopoRef;
+  /** Tensão (1 = normal). */
+  weight?: Expr;
+  flip?: boolean;
+}
+
+/**
+ * Superfície multi-secção: secções por ordem, guias opcionais (a superfície passa exatamente por
+ * secções e guias — superfície de Gordon), spine opcional (orienta as secções intermédias) e
+ * tangência às faces de suporte na primeira e na última secção.
+ */
+export interface MultiSectionFeature {
+  type: "multiSection";
+  sections: CurveRef[];
+  guides?: CurveRef[];
+  spine?: CurveRef;
+  startTangent?: SectionTangent;
+  endTangent?: SectionTangent;
+}
+
+/** Um dos lados de uma concordância: curva, face de suporte, continuidade e tensão. */
+export interface BlendSide {
+  curve: CurveRef;
+  /** Face de suporte (por defeito, a face da aresta, se for aresta livre). */
+  support?: TopoRef;
+  continuity: Continuity;
+  tension?: Expr;
+  /** Inverte o sentido de saída da face de suporte. */
+  flip?: boolean;
+}
+
+/** Concordância (blend) entre duas curvas, com contacto/tangência/curvatura às faces de suporte. */
+export interface BlendFeature {
+  type: "blend";
+  side1: BlendSide;
+  side2: BlendSide;
+}
+
+/** Varrimento circular: por 3 guias, por 2 guias e raio, ou tubo em torno de uma curva central. */
+export interface CircleSweepFeature {
+  type: "circleSweep";
+  mode: "threeGuides" | "twoGuidesRadius" | "centerRadius";
+  guides: CurveRef[];
+  radius?: Expr;
+  /** Duas guias e raio: o outro centro possível e/ou o arco maior. */
+  flip?: boolean;
+  long?: boolean;
+}
+
+/** Extrapolar um corpo de superfície a partir de arestas livres, em tangência ou curvatura. */
+export interface ExtrapolateFeature {
+  type: "extrapolate";
+  sheet: string;
+  edges: TopoRef[];
+  length: Expr;
+  continuity: "tangent" | "curvature";
+  /** Juntar a extensão ao corpo (por defeito, sim). */
+  assemble?: boolean;
+}
+
+/** Curar (healing): fecha folgas até à distância indicada, corrige faces e simplifica. */
+export interface HealFeature {
+  type: "heal";
+  sheets: string[];
+  distance: Expr;
+  /** Ângulo (graus) abaixo do qual uma aresta não tangente é assinalada como "quase tangente". */
+  tangency?: Expr;
+  simplify?: boolean;
 }
 
 export type FeatureData =
@@ -499,7 +605,12 @@ export type FeatureData =
   | BoundaryFeature
   | RuledSurfaceFeature
   | UntrimFeature
-  | ReplaceFaceFeature;
+  | ReplaceFaceFeature
+  | MultiSectionFeature
+  | BlendFeature
+  | CircleSweepFeature
+  | ExtrapolateFeature
+  | HealFeature;
 
 export type FeatureType = FeatureData["type"];
 

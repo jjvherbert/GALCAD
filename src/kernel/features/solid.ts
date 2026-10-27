@@ -10,6 +10,7 @@ import { type NamedBody, finalize, nameResult } from "../naming.ts";
 import { T, type TopoDS_Face, type TopoDS_Shape, bbox, edgeProps, explore, faceProps, vertexAt, gpAx1, gpDir, gpPln, gpVec, isValid, listToArray, makeCompound, oc, v3, distance } from "../occ.ts";
 import { applyOp } from "../boolean.ts";
 import { pathWire } from "./curve.ts";
+import { setupPipe } from "./gsd.ts";
 
 type Step<F> = (ctx: Ctx, f: F, report: StepReport) => Ctx;
 
@@ -218,7 +219,7 @@ export const revolve: Step<RevolveFeature & Feature> = (ctx, f, report) => {
   return { ...ctx, body: applyOp(ctx, tool, f.op, f.id) };
 };
 
-export const sweep: Step<SweepFeature & Feature> = (ctx, f) => {
+export const sweep: Step<SweepFeature & Feature> = (ctx, f, report) => {
   const { s, regions } = closedRegions(ctx, f.profile);
   const spine = { wrapped: pathWire(ctx, f.path) };
   const o = oc();
@@ -226,8 +227,7 @@ export const sweep: Step<SweepFeature & Feature> = (ctx, f) => {
     const wire = loopWire(segs, s.frame);
     const edgeMap = mapEdgesToEntities(wire.wrapped, segs, s.frame) as Map<TopoDS_Shape, string>;
     const mk = T(new o.BRepOffsetAPI_MakePipeShell(spine.wrapped));
-    mk.SetMode(f.orientation !== "fixed");
-    mk.Add(wire.wrapped, false, false);
+    setupPipe(ctx, mk, f, wire.wrapped, report);
     mk.Build();
     if (!mk.IsDone()) throw new Error("O varrimento falhou (perfil demasiado grande para a curvatura do caminho?)");
     mk.MakeSolid();
