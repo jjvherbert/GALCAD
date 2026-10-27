@@ -164,6 +164,25 @@ test("CalculiX: frequência própria da consola e condução térmica 1D", { ski
   for (let i = 0; i < T.length; i++) near(T[i], 100 - 0.8 * pos[i * 3], 1e-3);
 });
 
+test("CalculiX: convergência da malha da consola (GCI) com tetraedros lineares", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 600000 }, async () => {
+  const { doc, face } = await bar();
+  const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
+  const delta = (F * L ** 3) / (3 * E * I) + (F * L) / ((5 / 6) * G * A);
+  const { dir } = await solve(doc, fem({ mesh: { size: 2, order: 1, curvature: 0 }, loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -F] }] }));
+  const r = await runCase(dir, () => {}, false, { convergence: { ratio: 1.5 } });
+  const c = r.convergence!;
+  assert.equal(c.meshes.length, 3);
+  assert.ok(c.meshes[0].cells > c.meshes[1].cells && c.meshes[1].cells > c.meshes[2].cells);
+  const u = c.rows.find((x) => x.key === "umax")!;
+  // os tetraedros lineares são rígidos em flexão: convergem por baixo, e a extrapolação aproxima-se
+  // da solução analítica mais do que a malha fina
+  assert.equal(u.gci.behaviour, "monotonic");
+  assert.ok(u.values[0] > u.values[1] && u.values[1] > u.values[2], u.values.join(" "));
+  assert.ok(Math.abs(u.gci.extrapolated - delta) < Math.abs(u.values[0] - delta), `${u.gci.extrapolated} vs ${delta} (fina ${u.values[0]})`);
+  assert.ok(u.gci.gciFine > 0 && u.gci.gciFine < 0.5);
+  assert.equal(r.cells, c.meshes[0].cells);
+});
+
 const hasFoam = !!T.openfoam;
 
 test("caso OpenFOAM: dicionários e STL por patch (sem solver)", async () => {
@@ -192,6 +211,27 @@ test("OpenFOAM: conduta quadrada laminar — balanço de massa e queda de press�
   const dp = 56.9 / ((U * 0.01) / nu) * (0.1 / 0.01) * 998.2 * U ** 2 / 2;
   const got = Number(kv["Queda de pressão"].split(" ")[0]);
   assert.ok(got > 0.8 * dp && got < 1.6 * dp, `Δp ${got} vs ${dp.toFixed(4)} Pa (com o comprimento de entrada)`);
+  assert.equal(r.metrics.find((m) => m.key === "dp")!.value.toPrecision(5), got.toPrecision(5));
+  // campos no 3D: corte longitudinal com o perfil desenvolvido (u_máx/u_médio = 2,096 numa conduta
+  // quadrada, Shah & London) e paredes com a pressão a descer ao longo da conduta
+  const v = r.view!;
+  assert.deepEqual(v.fields.map((f) => f.name), ["Pressão", "Velocidade"]);
+  const slice = v.layers.find((l) => l.visible && l.name.startsWith("Corte Z"))!;
+  assert.ok(slice && slice.triangles.length > 300, "corte Z visível");
+  const speed = slice.values[1]!;
+  const umax = speed.reduce((a, b) => Math.max(a, b), 0), umin = speed.reduce((a, b) => Math.min(a, b), Infinity);
+  assert.ok(umax > 1.8 * U && umax < 2.25 * U, `u_máx/U = ${(umax / U).toFixed(3)}`);
+  assert.ok(umin < 0.05 * U, `|U| nas paredes ${umin}`);
+  for (let i = 0; i < slice.positions.length; i += 3) assert.ok(Math.abs(slice.positions[i + 2] - 5) < 1e-6, "corte em z = 5 mm");
+  const walls = v.layers.find((l) => l.name === "Paredes")!;
+  assert.equal(walls.visible, false);
+  assert.equal(walls.values[1], null);
+  const xs = walls.positions.filter((_, i) => i % 3 === 0), ps = walls.values[0]!;
+  const mx = xs.reduce((a, b) => a + b, 0) / xs.length, mp = ps.reduce((a, b) => a + b, 0) / ps.length;
+  const cov = xs.reduce((a, x, i) => a + (x - mx) * (ps[i] - mp), 0);
+  assert.ok(cov < 0, "pressão a descer ao longo de x");
+  const inlet = v.layers.find((l) => l.name === "Entrada")!;
+  assert.ok(inlet.values[1]!.every((x) => Math.abs(x - U) < 1e-9 || x < U), "velocidade imposta na entrada");
 });
 
 test("SU2: malha de fluido do Gmsh com os marcadores (interno e externo)", { skip: !T.gmsh && "Gmsh não instalado", timeout: 300000 }, async () => {

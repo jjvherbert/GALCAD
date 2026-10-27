@@ -138,7 +138,7 @@ export interface State {
   sidePanel: "bom" | "ai" | "knowledge" | "sim" | null;
   /** Simulação: último resultado do agente local, vista (campo, deformada, ampliação) e ligação ao agente. */
   simResult: { studyId: string; result: import("./sim-client.ts").RunResult } | null;
-  simView: { field: number; disp: number; scale: number };
+  simView: { field: number; disp: number; scale: number; hidden: string[] };
   simHidden: boolean;
   agent: { url: string; token: string };
   /** Forma livre em edição: polo selecionado e restrição do arrasto. */
@@ -184,7 +184,7 @@ class Store {
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
-      simResult: null, simView: { field: 0, disp: 0, scale: 0 }, simHidden: false, agent: { url: "http://127.0.0.1:8765", token: "" },
+      simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: { url: "http://127.0.0.1:8765", token: "" },
     };
     this.rebuild(0);
   }

@@ -5,6 +5,7 @@
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
 import type { FemCase } from "./case.ts";
 import { type Msh, physicalBlocks } from "./msh.ts";
+import type { Metric } from "./convergence.ts";
 
 /** Faces de um tetraedro (cantos, base 0) pela numeração do CalculiX: F1 = 1-2-3, F2 = 1-4-2, F3 = 2-4-3, F4 = 3-4-1. */
 const TET_FACES = [[0, 1, 2], [0, 3, 1], [1, 3, 2], [2, 3, 0]];
@@ -242,6 +243,8 @@ export interface FemResult {
   buckling: number[];
   reactions: [number, number, number][];
   summary: [string, string][];
+  /** Grandezas escalares (para a convergência da malha e comparações). */
+  metrics: Metric[];
   hypotheses: string[];
 }
 
@@ -279,12 +282,15 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string): FemResu
   const displacements: FemResult["displacements"] = [];
   const disp = r.blocks.filter((b) => b.name === "DISP");
   const summary: [string, string][] = [];
+  const metrics: Metric[] = [];
   const max = (a: number[]) => a.reduce((x, y) => Math.max(x, y), 0);
   if (c.analysis === "thermal") {
     const t = r.blocks.find((b) => b.name === "NDTEMP");
     const T = field(t, (v) => v[0]);
     fields.push({ name: "Temperatura", unit: "°C", values: T });
-    summary.push(["Temperatura mín.", `${Math.min(...T).toFixed(2)} °C`], ["Temperatura máx.", `${Math.max(...T).toFixed(2)} °C`]);
+    const lo = T.reduce((a, b) => Math.min(a, b), Infinity), hi = T.reduce((a, b) => Math.max(a, b), -Infinity);
+    summary.push(["Temperatura mín.", `${lo.toFixed(2)} °C`], ["Temperatura máx.", `${hi.toFixed(2)} °C`]);
+    metrics.push({ key: "tmin", label: "Temperatura mín.", unit: "°C", value: lo }, { key: "tmax", label: "Temperatura máx.", unit: "°C", value: hi });
   } else {
     disp.forEach((b, k) => {
       const vals = order.flatMap((t) => b.data.get(t)?.slice(0, 3) ?? [0, 0, 0]);
@@ -300,16 +306,18 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string): FemResu
         const vm = field(s, (v) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
         fields.push({ name: "Tensão de von Mises", unit: "MPa", values: vm });
         summary.push(["Tensão de von Mises máx.", `${max(vm).toFixed(2)} MPa`]);
+        metrics.push({ key: "vmmax", label: "Tensão de von Mises máx.", unit: "MPa", value: max(vm) });
         if (c.material.yield) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
       }
       summary.unshift(["Deslocamento máx.", `${max(U).toFixed(4)} mm`]);
+      metrics.unshift({ key: "umax", label: "Deslocamento máx.", unit: "mm", value: max(U) });
     }
-    if (c.analysis === "modal") d.frequencies.slice(0, c.modes).forEach((f, k) => summary.push([`Frequência ${k + 1}`, `${f.toFixed(2)} Hz`]));
-    if (c.analysis === "buckling") d.buckling.forEach((f, k) => summary.push([`Fator de encurvadura ${k + 1}`, f.toFixed(3)]));
+    if (c.analysis === "modal") d.frequencies.slice(0, c.modes).forEach((f, k) => { summary.push([`Frequência ${k + 1}`, `${f.toFixed(2)} Hz`]); metrics.push({ key: `f${k + 1}`, label: `Frequência ${k + 1}`, unit: "Hz", value: f }); });
+    if (c.analysis === "buckling") d.buckling.forEach((f, k) => { summary.push([`Fator de encurvadura ${k + 1}`, f.toFixed(3)]); metrics.push({ key: `lambda${k + 1}`, label: `Fator de encurvadura ${k + 1}`, unit: "", value: f }); });
   }
   if (d.reactions.length) {
     const R = d.reactions.reduce((a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]] as [number, number, number], [0, 0, 0] as [number, number, number]);
     summary.push(["Reações totais (N)", R.map((x) => x.toFixed(2)).join(" · ")]);
   }
-  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, summary, hypotheses: c.hypotheses };
+  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, summary, metrics, hypotheses: c.hypotheses };
 }

@@ -5,7 +5,8 @@ import type { Expr } from "../doc/types.ts";
 import { type CfdStudy, type FemLoad, type FemStudy, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { store, useStore } from "./store.ts";
 import { Check, ExprInput, Field, RefList, Select } from "./forms.tsx";
-import { agentStatus, exportStudyCase, runStudy } from "./sim-client.ts";
+import { agentStatus, exportStudyCase, resultView, runStudy } from "./sim-client.ts";
+import { fieldRange, layerShown, toggleLayer } from "../sim/result.ts";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento imposto", force: "Força total", pressure: "Pressão", gravity: "Gravidade",
@@ -177,17 +178,23 @@ function CfdEditor({ s, up }: { s: CfdStudy; up: (p: Partial<CfdStudy>) => void 
   );
 }
 
+const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(2)} %` : "—");
+const num = (x: number) => (Number.isFinite(x) ? (Math.abs(x) >= 1e4 || (Math.abs(x) < 1e-3 && x !== 0) ? x.toExponential(3) : x.toPrecision(5)) : "—");
+const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida" } as const;
+
 function RunBox({ s }: { s: Study }) {
   const st = useStore();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [conv, setConv] = useState(false);
+  const [ratio, setRatio] = useState(1.5);
   const a = st.agent;
   const res = st.simResult?.studyId === s.id ? st.simResult : null;
   const run = async () => {
     setBusy(true);
     try {
-      const { result } = await runStudy(s.id, a.url, a.token);
-      store.set({ simResult: { studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0 }, message: `Calculado em ${result.seconds.toFixed(1)} s` });
+      const { result } = await runStudy(s.id, a.url, a.token, conv ? { ratio } : undefined);
+      store.set({ simResult: { studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, message: `Calculado em ${result.seconds.toFixed(1)} s` });
     } catch (e) {
       store.set({ error: (e as Error).message });
     } finally {
@@ -195,7 +202,7 @@ function RunBox({ s }: { s: Study }) {
     }
   };
   const r = res?.result;
-  const fem = r?.fem;
+  const view = resultView(r);
   const v = st.simView;
   return (
     <>
@@ -211,28 +218,52 @@ function RunBox({ s }: { s: Study }) {
         <Field label="Token"><input type="password" autocomplete="off" value={a.token} onInput={(e) => store.set({ agent: { ...a, token: (e.target as HTMLInputElement).value.trim() } })} /></Field>
         <button class="small" onClick={async () => { const x = await agentStatus(a.url, a.token); setStatus(x.ok ? Object.entries(x.tools ?? {}).map(([k, t]) => `${k} ${t ? "✓" : "✗"}`).join(" · ") : x.error ?? "erro"); }}>Testar ligação</button>
       </details>
+      <Check label="Estudo de convergência da malha (3 malhas, GCI)" value={conv} onChange={setConv} />
+      {conv && <Field label="Razão r entre malhas"><input type="number" min="1.1" max="3" step="0.1" value={ratio} onChange={(e) => setRatio(Number((e.target as HTMLInputElement).value) || 1.5)} /></Field>}
+      {conv && <p class="field-hint">Corre também com malhas de tamanho r·h e r²·h (mais grossas, mais rápidas) e estima a incerteza da discretização da malha pedida (Celik et al. 2008 / ASME V&V 20).</p>}
       <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{busy ? "A calcular…" : "Calcular no agente local"}</button>
       {r && (
         <div class="kw-item ok">
           <b>{r.solver}</b>
           <table class="info-table">{r.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>
           {r.warnings.map((w) => <p key={w} class="error-text">{w}</p>)}
-          {fem && (
+          {view && (
             <>
-              {fem.fields.length > 0 && (
-                <Select label="Campo" value={String(v.field)} options={fem.fields.map((f, k) => [String(k), `${f.name} (${f.unit})`])} onChange={(x) => store.set({ simView: { ...v, field: Number(x) } })} />
+              {view.fields.length > 0 && (
+                <Select label="Campo" value={String(v.field)} options={view.fields.map((f, k) => [String(k), `${f.name} (${f.unit})`])} onChange={(x) => store.set({ simView: { ...v, field: Number(x) } })} />
               )}
-              {fem.displacements.length > 0 && (
+              {view.modes.length > 0 && (
                 <>
-                  <Select label="Deformada" value={String(v.disp)} options={fem.displacements.map((d, k) => [String(k), d.label])} onChange={(x) => store.set({ simView: { ...v, disp: Number(x) } })} />
+                  <Select label="Deformada" value={String(v.disp)} options={view.modes.map((d, k) => [String(k), d])} onChange={(x) => store.set({ simView: { ...v, disp: Number(x) } })} />
                   <Field label="Ampliação da deformada (0 = automática)"><input type="number" min="0" value={v.scale} onChange={(e) => store.set({ simView: { ...v, scale: Number((e.target as HTMLInputElement).value) || 0 } })} /></Field>
                 </>
+              )}
+              {view.layers.length > 1 && (
+                <fieldset class="checklist">
+                  <legend class="field-label">Camadas</legend>
+                  {view.layers.map((l) => <Check key={l.name} label={l.name} value={layerShown(l, v.hidden)} onChange={() => store.set({ simView: { ...v, hidden: toggleLayer(l, v.hidden) } })} />)}
+                </fieldset>
               )}
               <SimLegend />
             </>
           )}
+          {r.convergence && (
+            <details open class="convergence">
+              <summary>Convergência da malha (r = {r.convergence.ratio})</summary>
+              <table class="info-table">
+                <tr><td>Malhas</td><td>{r.convergence.meshes.map((m) => m.cells).join(" / ")} {r.physics === "fem" ? "elementos" : "células"}</td></tr>
+                {r.convergence.rows.map((x) => (
+                  <tr key={x.key}>
+                    <td>{x.label}{x.unit && ` (${x.unit})`}</td>
+                    <td>{x.values.map(num).join(" / ")} → <b>{num(x.gci.extrapolated)}</b> · GCI {pct(x.gci.gciFine)} · p = {num(x.gci.p)} · {BEHAVIOUR[x.gci.behaviour]}</td>
+                  </tr>
+                ))}
+              </table>
+              <ul class="muted">{r.convergence.hypotheses.map((h) => <li key={h}>{h}</li>)}</ul>
+            </details>
+          )}
           <Check label="Mostrar resultados no 3D" value={!st.simHidden} onChange={(x) => store.set({ simHidden: !x })} />
-          <details><summary>Hipóteses</summary><ul>{(fem?.hypotheses ?? []).map((h) => <li key={h}>{h}</li>)}</ul></details>
+          <details><summary>Hipóteses</summary><ul>{(r.hypotheses ?? r.fem?.hypotheses ?? []).map((h) => <li key={h}>{h}</li>)}</ul></details>
         </div>
       )}
       <p class="field-hint">Resultados de apoio à decisão de engenharia, com as hipóteses e limites indicados: não são certificação nem decisão de uma autoridade ou de um organismo notificado.</p>
@@ -242,15 +273,15 @@ function RunBox({ s }: { s: Study }) {
 
 function SimLegend() {
   const st = useStore();
-  const fem = st.simResult?.result.fem;
-  const f = fem?.fields[st.simView.field];
-  if (!f || !f.values.length) return null;
-  const min = Math.min(...f.values), max = Math.max(...f.values);
+  const view = resultView(st.simResult?.result);
+  const f = view?.fields[st.simView.field];
+  const range = view ? fieldRange(view, st.simView.field, st.simView.hidden) : null;
+  if (!f || !range) return null;
   const fmt = (x: number) => (Math.abs(x) >= 1000 || (Math.abs(x) < 0.01 && x !== 0) ? x.toExponential(2) : x.toFixed(3));
   return (
     <>
       <div class="legend sequential" />
-      <div class="legend-labels"><span>{fmt(min)}</span><span>{f.unit}</span><span>{fmt(max)}</span></div>
+      <div class="legend-labels"><span>{fmt(range[0])}</span><span>{f.unit}</span><span>{fmt(range[1])}</span></div>
     </>
   );
 }

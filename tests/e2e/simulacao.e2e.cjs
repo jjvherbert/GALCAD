@@ -58,6 +58,30 @@ async function main() {
       await p.selectOption(".sim-panel select:near(:text('Campo'))", { index: 1 }).catch(() => {});
       await p.waitForTimeout(300);
       await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-simulacao.png") });
+      // convergência da malha: três malhas e GCI da flecha
+      await p.click(".sim-panel label:has-text('Estudo de convergência') input");
+      await p.click(".sim-panel button:has-text('Calcular no agente local')");
+      await p.waitForSelector(".sim-panel details.convergence", { timeout: 300000 });
+      const cv = (await p.textContent(".sim-panel details.convergence")).replace(/\s+/g, " ");
+      const ext = Number(cv.match(/Deslocamento máx\. \(mm\)[\d.\s/]+→\s*([\d.]+)/)?.[1]);
+      check("convergência: flecha extrapolada ≈ 0,192 mm", Math.abs(ext - 0.192) < 0.004 && /GCI/.test(cv), cv.slice(0, 260));
+      await p.click(".sim-panel label:has-text('Estudo de convergência') input");
+      if (has("simpleFoam") || fs.existsSync("/usr/share/openfoam/etc/bashrc")) {
+        await p.selectOption(".sim-panel select[aria-label=Estudo]", "s2");
+        await p.waitForTimeout(300);
+        await p.click(".sim-panel button:has-text('Calcular no agente local')");
+        await p.waitForFunction(() => /OpenFOAM/.test(document.querySelector(".sim-panel .kw-item.ok")?.textContent ?? ""), null, { timeout: 300000 });
+        const ct = (await p.textContent(".sim-panel .kw-item.ok")).replace(/\s+/g, " ");
+        check("CFD: queda de pressão e balanço", /Queda de pressão/.test(ct) && /Balanço de massa\s*-?0\.\d+ %/.test(ct), ct.slice(0, 200));
+        const layers = await p.$eval(".viewport", (e) => e.dataset.simLayers);
+        check("CFD: entrada, saída e corte no 3D", /Entrada/.test(layers) && /Saída/.test(layers) && /Corte Z/.test(layers), layers);
+        await p.selectOption(".sim-panel select:near(:text('Campo'))", { index: 1 }).catch(() => {});
+        await p.click(".sim-panel fieldset label:has-text('Paredes') input");
+        check("CFD: camada das paredes ligada", /Paredes/.test(await p.$eval(".viewport", (e) => e.dataset.simLayers)));
+        await p.click(".sim-panel fieldset label:has-text('Paredes') input");
+        await p.waitForTimeout(300);
+        await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-simulacao-cfd.png") });
+      } else R.push("- CFD no agente saltado (OpenFOAM não instalado)");
       await p.click(".sim-panel button:has-text('Árvore')");
       check("corpo volta a aparecer", (await p.$eval(".viewport", (e) => e.dataset.sim)) === "");
     } else R.push("- cálculo no agente saltado (Gmsh/CalculiX não instalados)");

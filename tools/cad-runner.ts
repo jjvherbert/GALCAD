@@ -2,6 +2,7 @@
 // OpenFOAM, SU2) para os casos que a aplicação prepara, e devolve os resultados.
 //
 //   node cad-runner.mjs <pasta-do-caso>          corre um caso exportado (case.json + model.brep …)
+//        [--convergence 1.5]                     … em três malhas (h, 1,5·h, 2,25·h) com o GCI
 //   node cad-runner.mjs --serve [--port 8765]    servidor em 127.0.0.1 para a aplicação ("Calcular")
 //   node cad-runner.mjs --status                 solvers encontrados
 //
@@ -22,6 +23,9 @@ import { calculixDeck, femResult, type FemResult } from "../src/sim/calculix.ts"
 import { openfoamCase } from "../src/sim/openfoam.ts";
 import { patchAverage, patchFlux, patchPressureForce, readBoundary, readFaces, readLabels, readPoints, readScalarField } from "../src/sim/foamread.ts";
 import { su2Config } from "../src/sim/su2.ts";
+import { type LayerField, type FoamMeshFull, patchLayer, readField, sliceLayer } from "../src/sim/foamfields.ts";
+import { type ResultLayer, type ResultView, femView } from "../src/sim/result.ts";
+import { type ConvergenceReport, type Metric, convergenceReport } from "../src/sim/convergence.ts";
 
 export interface RunResult {
   ok: boolean;
@@ -30,6 +34,15 @@ export interface RunResult {
   summary: [string, string][];
   warnings: string[];
   fem?: FemResult;
+  /** Camadas de resultados para o 3D (FEM: superfície da peça; CFD: patches e cortes). */
+  view?: ResultView;
+  /** Grandezas escalares do cálculo e número de células/elementos da malha. */
+  metrics: Metric[];
+  cells: number;
+  /** Estudo de convergência da malha (se pedido): três malhas e GCI por grandeza. */
+  convergence?: ConvergenceReport;
+  /** Hipóteses e limites do caso (normas, modelação), a mostrar com os resultados. */
+  hypotheses: string[];
   /** Últimas linhas dos registos (diagnóstico). */
   log: string;
   seconds: number;
@@ -126,7 +139,7 @@ function checkGroups(c: FemCase, m: Msh): string[] {
   return out;
 }
 
-async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds">> {
+async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
   if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
@@ -142,13 +155,40 @@ async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): P
   await run(t.calculix.path, ["-i", "job"], dir, "log.ccx", log, { OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "2" });
   const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "");
   const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
-  return { ok: true, physics: "fem", solver: `CalculiX ${t.calculix.version ?? ""}`.trim(), summary, warnings, fem, log: tail(join(dir, "log.ccx")) };
+  return { ok: true, physics: "fem", solver: `CalculiX ${t.calculix.version ?? ""}`.trim(), summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, "log.ccx")) };
+}
+
+/**
+ * Camadas do resultado CFD: patches (paredes/corpo, entrada, saída) com a pressão e três cortes
+ * pelo centro do corpo com a pressão e |U|. Visíveis por omissão: interno — entrada, saída e o corte
+ * que contém o escoamento; externo — corpo e esse corte.
+ */
+function cfdView(c: CfdCase, mesh: FoamMeshFull, p: ReturnType<typeof readField>, U: ReturnType<typeof readField>): ResultView {
+  const pres: LayerField = { name: "Pressão", unit: "Pa", field: p, ncomp: 1, map: (v) => v[0] * c.fluid.rho };
+  const vel: LayerField = { name: "Velocidade", unit: "m/s", field: U, ncomp: 3, map: (v) => Math.hypot(v[0], v[1], v[2]) };
+  const internal = c.regime === "internal";
+  const layers: ResultLayer[] = [];
+  const add = (l: ResultLayer | null) => { if (l) layers.push(l); };
+  if (internal) {
+    add(patchLayer("Paredes", mesh, "walls", [pres, null], false));
+    add(patchLayer("Entrada", mesh, "inlet", [pres, vel], true));
+    add(patchLayer("Saída", mesh, "outlet", [pres, vel], true));
+  } else add(patchLayer("Corpo", mesh, "body", [pres, null], true));
+  const ax = [0, 1, 2].reduce((m, k) => (Math.abs(c.velocity[k]) > Math.abs(c.velocity[m]) ? k : m), 0);
+  const show = ax === 2 ? 1 : 2;
+  const mid = [0, 1, 2].map((k) => ((c.bbox.min[k] + c.bbox.max[k]) / 2) * 1e-3);
+  for (const k of [0, 1, 2]) {
+    const n = [0, 0, 0];
+    n[k] = 1;
+    add(sliceLayer(`Corte ${"XYZ"[k]} = ${(mid[k] * 1000).toFixed(1)} mm`, mesh, mid, n, [pres, vel], k === show));
+  }
+  return { fields: [{ name: pres.name, unit: pres.unit }, { name: vel.name, unit: vel.unit }], modes: [], layers };
 }
 
 /** Diretivas de dicionário do OpenFOAM que executam código (recusadas nos ficheiros recebidos). */
 const UNSAFE = /#(codeStream|calc|include|includeEtc|includeFunc|eval)\b|\bcode(Include|Options|Libs)?\s*#?\{/;
 
-async function runOpenfoam(c: CfdCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds">> {
+async function runOpenfoam(c: CfdCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
   if (regenerate) {
     const stl: Record<string, string> = {};
     for (const name of Object.keys(c.groups)) stl[name] = readFileSync(join(dir, `constant/triSurface/${name}.stl`), "utf8");
@@ -183,20 +223,27 @@ async function runOpenfoam(c: CfdCase, dir: string, log: Log, regenerate: boolea
     ["Re", c.reynolds.toExponential(2)],
   ];
   if (!conv) warnings.push("O simpleFoam não convergiu para os resíduos pedidos: aumente as iterações ou reveja a malha");
-  // resumo a partir dos campos do último tempo (independente da versão e dos function objects)
+  // resumo e campos a partir do último tempo (independente da versão e dos function objects)
+  const metrics: Metric[] = [];
+  let view: ResultView | undefined;
   const times = readdirSync(dir).filter((d) => /^\d+(\.\d+)?$/.test(d) && d !== "0").sort((a, b) => Number(a) - Number(b));
   const last = times.at(-1);
   if (last) {
     const pm = join(dir, "constant/polyMesh");
-    const mesh = { points: readPoints(readFileSync(join(pm, "points"), "utf8")), faces: readFaces(readFileSync(join(pm, "faces"), "utf8")), owner: readLabels(readFileSync(join(pm, "owner"), "utf8")), boundary: readBoundary(readFileSync(join(pm, "boundary"), "utf8")) };
+    const mesh: FoamMeshFull = { points: readPoints(readFileSync(join(pm, "points"), "utf8")), faces: readFaces(readFileSync(join(pm, "faces"), "utf8")), owner: readLabels(readFileSync(join(pm, "owner"), "utf8")), neighbour: readLabels(readFileSync(join(pm, "neighbour"), "utf8")), boundary: readBoundary(readFileSync(join(pm, "boundary"), "utf8")) };
     const phi = existsSync(join(dir, last, "phi")) ? readScalarField(readFileSync(join(dir, last, "phi"), "utf8")) : null;
-    const p = readScalarField(readFileSync(join(dir, last, "p"), "utf8"));
+    const pText = readFileSync(join(dir, last, "p"), "utf8");
+    const p = readScalarField(pText);
     if (phi && mesh.boundary.has("inlet") && mesh.boundary.has("outlet")) {
       const Qi = -patchFlux(phi, mesh, "inlet"), Qo = patchFlux(phi, mesh, "outlet");
-      summary.push(["Caudal de entrada", `${(Qi * 1000).toPrecision(5)} L/s`], ["Balanço de massa", `${((100 * (Qo - Qi)) / Math.max(Math.abs(Qi), 1e-30)).toFixed(3)} %`]);
+      const bal = (100 * (Qo - Qi)) / Math.max(Math.abs(Qi), 1e-30);
+      summary.push(["Caudal de entrada", `${(Qi * 1000).toPrecision(5)} L/s`], ["Balanço de massa", `${bal.toFixed(3)} %`]);
+      metrics.push({ key: "q", label: "Caudal de entrada", unit: "L/s", value: Qi * 1000 });
     }
     if (c.regime === "internal" && mesh.boundary.has("inlet") && mesh.boundary.has("outlet")) {
-      summary.push(["Queda de pressão", `${((patchAverage(p, mesh, "inlet") - patchAverage(p, mesh, "outlet")) * c.fluid.rho).toPrecision(5)} Pa`]);
+      const dp = (patchAverage(p, mesh, "inlet") - patchAverage(p, mesh, "outlet")) * c.fluid.rho;
+      summary.push(["Queda de pressão", `${dp.toPrecision(5)} Pa`]);
+      metrics.push({ key: "dp", label: "Queda de pressão", unit: "Pa", value: dp });
     }
     if (c.regime === "external" && mesh.boundary.has("body")) {
       const F = patchPressureForce(p, mesh, "body", c.fluid.rho);
@@ -206,14 +253,22 @@ async function runOpenfoam(c: CfdCase, dir: string, log: Log, regenerate: boolea
       const ax = [0, 1, 2].reduce((m, k) => (Math.abs(dir[k]) > Math.abs(dir[m]) ? k : m), 0);
       const ext = [0, 1, 2].map((k) => (c.bbox.max[k] - c.bbox.min[k]) * 1e-3);
       const Aref = ext.filter((_, k) => k !== ax).reduce((a, b) => a * b, 1);
-      summary.push(["Força de pressão no corpo (N)", F.map((x) => x.toPrecision(4)).join(" · ")], ["Arrasto de pressão", `${drag.toPrecision(4)} N (Cd ≈ ${(drag / (0.5 * c.fluid.rho * U * U * Aref)).toFixed(3)}, área ${(Aref * 1e6).toFixed(0)} mm²)`]);
+      const cd = drag / (0.5 * c.fluid.rho * U * U * Aref);
+      summary.push(["Força de pressão no corpo (N)", F.map((x) => x.toPrecision(4)).join(" · ")], ["Arrasto de pressão", `${drag.toPrecision(4)} N (Cd ≈ ${cd.toFixed(3)}, área ${(Aref * 1e6).toFixed(0)} mm²)`]);
+      metrics.push({ key: "drag", label: "Arrasto de pressão", unit: "N", value: drag }, { key: "cd", label: "Cd (pressão)", unit: "", value: cd });
       warnings.push("Força calculada só com a pressão: falta a parcela viscosa (use o function object forces/wallShearStress do OpenFOAM)");
     }
+    try {
+      view = cfdView(c, mesh, readField(pText), readField(readFileSync(join(dir, last, "U"), "utf8")));
+    } catch (e) {
+      warnings.push(`Campos para o 3D não lidos: ${(e as Error).message}`);
+    }
   }
-  return { ok: true, physics: "cfd", solver: "OpenFOAM simpleFoam", summary, warnings, log: L.split(/\r?\n/).slice(-30).join("\n") };
+  const nCells = Number(cells) || 0;
+  return { ok: true, physics: "cfd", solver: "OpenFOAM simpleFoam", summary, warnings, view, metrics, cells: nCells, log: L.split(/\r?\n/).slice(-30).join("\n") };
 }
 
-async function runSu2(c: CfdCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds">> {
+async function runSu2(c: CfdCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado");
   if (!t.su2) throw new Error("SU2 não encontrado (https://su2code.github.io, ou defina CAD_SU2)");
@@ -222,23 +277,68 @@ async function runSu2(c: CfdCase, dir: string, log: Log, regenerate: boolean): P
   await run(t.su2.path, ["case.cfg"], dir, "log.su2", log);
   const hist = existsSync(join(dir, "history.csv")) ? readFileSync(join(dir, "history.csv"), "utf8").trim().split(/\r?\n/) : [];
   const summary: [string, string][] = [["Iterações", String(Math.max(0, hist.length - 1))], ["Re", c.reynolds.toExponential(2)]];
+  const metrics: Metric[] = [];
   if (hist.length > 1) {
     const h = hist[0].split(",").map((x) => x.replace(/"/g, "").trim()), v = hist.at(-1)!.split(",");
-    h.forEach((k, i) => { if (/rms\[P\]|CD|CL/i.test(k)) summary.push([k, v[i].trim()]); });
+    h.forEach((k, i) => {
+      if (!/rms\[P\]|CD|CL/i.test(k)) return;
+      summary.push([k, v[i].trim()]);
+      if (/^C[DL]$/i.test(k)) metrics.push({ key: k.toLowerCase(), label: k, unit: "", value: Number(v[i]) });
+    });
   }
-  return { ok: true, physics: "cfd", solver: "SU2", summary, warnings: [], log: tail(join(dir, "log.su2")) };
+  const nelem = Number(/NELEM=\s*(\d+)/.exec(readFileSync(join(dir, "mesh.su2"), "utf8").slice(0, 400))?.[1] ?? 0);
+  return { ok: true, physics: "cfd", solver: "SU2", summary, warnings: [], metrics, cells: nelem, log: tail(join(dir, "log.su2")) };
 }
 
 const tail = (p: string, n = 25) => (existsSync(p) ? readFileSync(p, "utf8").split(/\r?\n/).slice(-n).join("\n") : "");
 
+export interface RunOptions {
+  /** Estudo de convergência: três malhas com tamanhos h, r·h, r²·h (a pedida é a mais fina). */
+  convergence?: { ratio: number };
+}
+
+async function runOnce(c: SimCase, dir: string, log: Log, regenerate: boolean) {
+  return c.physics === "fem" ? runFem(c, dir, log, regenerate)
+    : c.solver === "openfoam" ? runOpenfoam(c, dir, log, regenerate) : runSu2(c, dir, log, regenerate);
+}
+
+/** Caso com a malha engrossada pelo fator `k` (tamanhos × k; refinamento por curvatura ÷ k). */
+export function coarsened(c: SimCase, k: number): SimCase {
+  if (c.physics === "fem") {
+    const curv = c.mesh.curvature > 0 ? Math.max(4, Math.round(c.mesh.curvature / k)) : 0;
+    return { ...c, mesh: { ...c.mesh, size: c.mesh.size * k, minSize: c.mesh.minSize * k, curvature: curv, local: c.mesh.local.map((l) => ({ ...l, size: l.size * k })) } };
+  }
+  return { ...c, mesh: { ...c.mesh, size: c.mesh.size * k } };
+}
+
 /** Corre o caso de uma pasta (case.json + model.brep [+ STL]). `regenerate`: refaz os ficheiros dos solvers a partir do caso. */
-export async function runCase(dir: string, log: Log = () => {}, regenerate = false): Promise<RunResult> {
+export async function runCase(dir: string, log: Log = () => {}, regenerate = false, opts: RunOptions = {}): Promise<RunResult> {
   const t0 = Date.now();
   const c = JSON.parse(readFileSync(join(dir, "case.json"), "utf8")) as SimCase;
   if (c.format !== "cadp-sim-case") throw new Error("case.json inválido");
-  const r = c.physics === "fem" ? await runFem(c, dir, log, regenerate)
-    : c.solver === "openfoam" ? await runOpenfoam(c, dir, log, regenerate) : await runSu2(c, dir, log, regenerate);
-  const res: RunResult = { ...r, summary: [...r.summary], seconds: (Date.now() - t0) / 1000 };
+  let r: Omit<RunResult, "seconds" | "hypotheses">;
+  if (opts.convergence) {
+    const ratio = opts.convergence.ratio;
+    if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
+    // da mais grossa (mais rápida, falha cedo) para a pedida
+    const runs: Omit<RunResult, "seconds" | "hypotheses">[] = [];
+    for (const lvl of [2, 1, 0]) {
+      const sub = join(dir, `malha${lvl + 1}`);
+      mkdirSync(sub, { recursive: true });
+      const ck = coarsened(c, ratio ** lvl);
+      writeFileSync(join(sub, "case.json"), JSON.stringify(ck));
+      writeFileSync(join(sub, "model.brep"), readFileSync(join(dir, "model.brep")));
+      if (existsSync(join(dir, "constant/triSurface"))) {
+        mkdirSync(join(sub, "constant/triSurface"), { recursive: true });
+        for (const fn of readdirSync(join(dir, "constant/triSurface"))) if (fn.endsWith(".stl")) writeFileSync(join(sub, "constant/triSurface", fn), readFileSync(join(dir, "constant/triSurface", fn)));
+      }
+      log(`— malha ${lvl + 1} de 3 (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+      runs[lvl] = await runOnce(ck, sub, log, true);
+    }
+    const report = convergenceReport(ratio, runs.map((x, i) => ({ cells: x.cells, size: c.mesh.size * ratio ** i, metrics: x.metrics })));
+    r = { ...runs[0], convergence: report, warnings: [...runs[0].warnings, ...report.rows.flatMap((x) => x.gci.notes.map((n) => `${x.label}: ${n}`))] };
+  } else r = await runOnce(c, dir, log, regenerate);
+  const res: RunResult = { ...r, summary: [...r.summary], hypotheses: c.hypotheses, seconds: (Date.now() - t0) / 1000 };
   writeFileSync(join(dir, "results.json"), JSON.stringify(res));
   return res;
 }
@@ -248,7 +348,7 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
 // ---------------------------------------------------------------------------
 
 /** Pedido da aplicação: o caso, a geometria e (CFD/OpenFOAM) as superfícies STL de cada patch. */
-export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string> }
+export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string>; convergence?: { ratio: number } }
 
 export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
   let busy = false;
@@ -281,7 +381,8 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
           writeFileSync(join(dir, `constant/triSurface/${name}.stl`), text);
         }
       }
-      const r = await runCase(dir, (s) => console.log(s), true);
+      const conv = body.convergence && Number.isFinite(Number(body.convergence.ratio)) ? { ratio: Number(body.convergence.ratio) } : undefined;
+      const r = await runCase(dir, (s) => console.log(s), true, { convergence: conv });
       send(200, r);
     } catch (e) {
       send(500, { error: (e as Error).message, log: tail(join(dir, "log.ccx")) || tail(join(dir, "log.gmsh")) });
@@ -307,8 +408,13 @@ if (isMain) {
     const { token } = serve(port, process.env.CAD_TOKEN);
     console.log(`Agente CAD a escutar em http://127.0.0.1:${port}\nToken (copie para a aplicação, Simulação → Agente local): ${token}\nSolvers: ${JSON.stringify(tools())}`);
   } else if (args[0]) {
-    runCase(resolve(args[0]), (s) => console.log(s), args.includes("--regenerate"))
-      .then((r) => { for (const [k, v] of r.summary) console.log(`${k}: ${v}`); for (const w of r.warnings) console.log(`Aviso: ${w}`); })
+    const ri = args.indexOf("--convergence");
+    runCase(resolve(args[0]), (s) => console.log(s), args.includes("--regenerate"), ri > 0 ? { convergence: { ratio: Number(args[ri + 1]) || 1.5 } } : {})
+      .then((r) => {
+        for (const [k, v] of r.summary) console.log(`${k}: ${v}`);
+        for (const x of r.convergence?.rows ?? []) console.log(`${x.label}: ${x.values.map((v) => v.toPrecision(5)).join(" / ")} → extrapolado ${x.gci.extrapolated.toPrecision(5)} ${x.unit}, p = ${x.gci.p.toFixed(2)}, GCI = ${(100 * x.gci.gciFine).toFixed(2)} %`);
+        for (const w of r.warnings) console.log(`Aviso: ${w}`);
+      })
       .catch((e) => { console.error((e as Error).message); process.exit(1); });
   } else console.log("Uso: node cad-runner.mjs <pasta-do-caso> | --serve [--port 8765] | --status");
 }

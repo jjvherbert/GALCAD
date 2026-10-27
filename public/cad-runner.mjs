@@ -464,6 +464,7 @@ function femResult(c, m, frd, dat) {
 	const displacements = [];
 	const disp = r.blocks.filter((b) => b.name === "DISP");
 	const summary = [];
+	const metrics = [];
 	const max = (a) => a.reduce((x, y) => Math.max(x, y), 0);
 	if (c.analysis === "thermal") {
 		const T = field(r.blocks.find((b) => b.name === "NDTEMP"), (v) => v[0]);
@@ -472,7 +473,19 @@ function femResult(c, m, frd, dat) {
 			unit: "°C",
 			values: T
 		});
-		summary.push(["Temperatura mín.", `${Math.min(...T).toFixed(2)} °C`], ["Temperatura máx.", `${Math.max(...T).toFixed(2)} °C`]);
+		const lo = T.reduce((a, b) => Math.min(a, b), Infinity), hi = T.reduce((a, b) => Math.max(a, b), -Infinity);
+		summary.push(["Temperatura mín.", `${lo.toFixed(2)} °C`], ["Temperatura máx.", `${hi.toFixed(2)} °C`]);
+		metrics.push({
+			key: "tmin",
+			label: "Temperatura mín.",
+			unit: "°C",
+			value: lo
+		}, {
+			key: "tmax",
+			label: "Temperatura máx.",
+			unit: "°C",
+			value: hi
+		});
 	} else {
 		disp.forEach((b, k) => {
 			const vals = order.flatMap((t) => b.data.get(t)?.slice(0, 3) ?? [
@@ -502,12 +515,40 @@ function femResult(c, m, frd, dat) {
 					values: vm
 				});
 				summary.push(["Tensão de von Mises máx.", `${max(vm).toFixed(2)} MPa`]);
+				metrics.push({
+					key: "vmmax",
+					label: "Tensão de von Mises máx.",
+					unit: "MPa",
+					value: max(vm)
+				});
 				if (c.material.yield) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
 			}
 			summary.unshift(["Deslocamento máx.", `${max(U).toFixed(4)} mm`]);
+			metrics.unshift({
+				key: "umax",
+				label: "Deslocamento máx.",
+				unit: "mm",
+				value: max(U)
+			});
 		}
-		if (c.analysis === "modal") d.frequencies.slice(0, c.modes).forEach((f, k) => summary.push([`Frequência ${k + 1}`, `${f.toFixed(2)} Hz`]));
-		if (c.analysis === "buckling") d.buckling.forEach((f, k) => summary.push([`Fator de encurvadura ${k + 1}`, f.toFixed(3)]));
+		if (c.analysis === "modal") d.frequencies.slice(0, c.modes).forEach((f, k) => {
+			summary.push([`Frequência ${k + 1}`, `${f.toFixed(2)} Hz`]);
+			metrics.push({
+				key: `f${k + 1}`,
+				label: `Frequência ${k + 1}`,
+				unit: "Hz",
+				value: f
+			});
+		});
+		if (c.analysis === "buckling") d.buckling.forEach((f, k) => {
+			summary.push([`Fator de encurvadura ${k + 1}`, f.toFixed(3)]);
+			metrics.push({
+				key: `lambda${k + 1}`,
+				label: `Fator de encurvadura ${k + 1}`,
+				unit: "",
+				value: f
+			});
+		});
 	}
 	if (d.reactions.length) {
 		const R = d.reactions.reduce((a, b) => [
@@ -531,6 +572,7 @@ function femResult(c, m, frd, dat) {
 		buckling: d.buckling,
 		reactions: d.reactions,
 		summary,
+		metrics,
 		hypotheses: c.hypotheses
 	};
 }
@@ -1169,6 +1211,365 @@ function su2Config(c) {
 		""
 	].join("\n");
 }
+// src/sim/foamfields.ts
+const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/FoamFile\s*\{[\s\S]*?\}/, "");
+/**
+* Lê "uniform x", "uniform (x y z)" ou "nonuniform List<scalar|vector> N (…)" a partir do início de
+* `s`: uniforme → componentes; não uniforme → componentes de cada elemento.
+*/
+function parseValue(s) {
+	const u = /^\s*uniform\s+(\([^()]*\)|[-+\deE.]+)/.exec(s);
+	if (u) return u[1].startsWith("(") ? u[1].slice(1, -1).trim().split(/\s+/).map(Number) : [Number(u[1])];
+	const nu = /^\s*nonuniform\s+List<(scalar|vector)>\s*(\d+)\s*\(/.exec(s);
+	if (!nu) return null;
+	let depth = 1, i = nu.index + nu[0].length;
+	const start = i;
+	for (; i < s.length && depth > 0; i++) if (s[i] === "(") depth++;
+	else if (s[i] === ")") depth--;
+	const body = s.slice(start, i - 1);
+	if (nu[1] === "scalar") return body.trim().split(/\s+/).map((x) => [Number(x)]);
+	return [...body.matchAll(/\(([^()]+)\)/g)].map((m) => m[1].trim().split(/\s+/).map(Number));
+}
+function readField(text) {
+	const t = strip(text);
+	const im = /internalField\s+/.exec(t);
+	const internal = (im ? parseValue(t.slice(im.index + im[0].length)) : null) ?? [0];
+	const patches = /* @__PURE__ */ new Map();
+	const bf = t.indexOf("boundaryField");
+	if (bf >= 0) {
+		const body = t.slice(bf + 13);
+		let i = body.indexOf("{") + 1;
+		while (i < body.length) {
+			const m = /\s*(\w+)\s*\{/y;
+			m.lastIndex = i;
+			const h = m.exec(body);
+			if (!h) break;
+			let depth = 1, j = m.lastIndex;
+			const start = j;
+			for (; j < body.length && depth > 0; j++) if (body[j] === "{") depth++;
+			else if (body[j] === "}") depth--;
+			const blk = body.slice(start, j - 1);
+			const type = /\btype\s+(\w+)\s*;/.exec(blk)?.[1] ?? "";
+			const v = /\bvalue\s+/.exec(blk);
+			patches.set(h[1], {
+				type,
+				value: v ? parseValue(blk.slice(v.index + v[0].length)) : null
+			});
+			i = j;
+		}
+	}
+	return {
+		internal,
+		patches
+	};
+}
+/** Valor (componentes) da célula `c`. */
+const cellValue = (f, c) => Array.isArray(f.internal[0]) ? f.internal[c] : f.internal;
+/** Valor (componentes) da face `k` de um patch: o escrito ou, se não houver, o da célula vizinha. */
+function faceValue(f, mesh, patch, k, ncomp) {
+	const p = f.patches.get(patch);
+	const b = mesh.boundary.get(patch);
+	if (p?.type === "noSlip") return new Array(ncomp).fill(0);
+	const v = p?.value;
+	if (v) return Array.isArray(v[0]) ? v[k] : v;
+	return cellValue(f, mesh.owner[b.start + k]);
+}
+/**
+* Valores nos pontos da malha: média das células que os contêm; nos patches com valor imposto
+* (fixedValue, noSlip, inletOutlet com valor) o ponto fica com a média das faces desse patch.
+*/
+function pointValues(f, mesh, ncomp) {
+	const np = mesh.points.length;
+	const sum = new Float64Array(np * ncomp), cnt = new Float64Array(np);
+	const add = (pt, v) => {
+		cnt[pt]++;
+		for (let q = 0; q < ncomp; q++) sum[pt * ncomp + q] += v[q];
+	};
+	for (let fi = 0; fi < mesh.faces.length; fi++) {
+		const o = cellValue(f, mesh.owner[fi]);
+		for (const pt of mesh.faces[fi]) add(pt, o);
+		if (fi < mesh.neighbour.length) {
+			const nb = cellValue(f, mesh.neighbour[fi]);
+			for (const pt of mesh.faces[fi]) add(pt, nb);
+		}
+	}
+	for (let i = 0; i < np; i++) if (cnt[i]) for (let q = 0; q < ncomp; q++) sum[i * ncomp + q] /= cnt[i];
+	const bsum = new Float64Array(np * ncomp), bcnt = new Float64Array(np);
+	for (const [name, b] of mesh.boundary) {
+		const p = f.patches.get(name);
+		if (!p || !(p.type === "noSlip" || p.type === "fixedValue")) continue;
+		for (let k = 0; k < b.n; k++) {
+			const v = faceValue(f, mesh, name, k, ncomp);
+			for (const pt of mesh.faces[b.start + k]) {
+				bcnt[pt]++;
+				for (let q = 0; q < ncomp; q++) bsum[pt * ncomp + q] += v[q];
+			}
+		}
+	}
+	for (let i = 0; i < np; i++) if (bcnt[i]) for (let q = 0; q < ncomp; q++) sum[i * ncomp + q] = bsum[i * ncomp + q] / bcnt[i];
+	return sum;
+}
+/** Triângulos (em leque) e valores nodais de um patch; posições em mm. */
+function patchLayer(name, mesh, patch, fields, visible) {
+	const b = mesh.boundary.get(patch);
+	if (!b || !b.n) return null;
+	const index = /* @__PURE__ */ new Map();
+	const positions = [], triangles = [];
+	for (let k = 0; k < b.n; k++) {
+		const loc = mesh.faces[b.start + k].map((pt) => {
+			let i = index.get(pt);
+			if (i === void 0) {
+				i = index.size;
+				index.set(pt, i);
+				positions.push(...mesh.points[pt].map((x) => x * 1e3));
+			}
+			return i;
+		});
+		for (let q = 1; q + 1 < loc.length; q++) triangles.push(loc[0], loc[q], loc[q + 1]);
+	}
+	return {
+		name,
+		visible,
+		positions,
+		triangles,
+		values: fields.map((lf) => {
+			if (!lf) return null;
+			const s = new Float64Array(index.size), c = new Float64Array(index.size);
+			for (let k = 0; k < b.n; k++) {
+				const v = lf.map(faceValue(lf.field, mesh, patch, k, lf.ncomp));
+				for (const pt of mesh.faces[b.start + k]) {
+					const i = index.get(pt);
+					s[i] += v;
+					c[i]++;
+				}
+			}
+			return [...s].map((x, i) => x / c[i]);
+		})
+	};
+}
+/** Corte plano (ponto e normal em metros) com os campos interpolados; posições em mm. */
+function sliceLayer(name, mesh, origin, normal, fields, visible) {
+	const nn = Math.hypot(normal[0], normal[1], normal[2]);
+	const n = normal.map((x) => x / nn);
+	const pts = mesh.points;
+	const tol = 1e-12;
+	const d = pts.map((p) => {
+		const s = (p[0] - origin[0]) * n[0] + (p[1] - origin[1]) * n[1] + (p[2] - origin[2]) * n[2];
+		return Math.abs(s) < tol ? tol : s;
+	});
+	const a = Math.abs(n[0]) < .9 ? [
+		1,
+		0,
+		0
+	] : [
+		0,
+		1,
+		0
+	];
+	const u = [
+		n[1] * a[2] - n[2] * a[1],
+		n[2] * a[0] - n[0] * a[2],
+		n[0] * a[1] - n[1] * a[0]
+	];
+	const ul = Math.hypot(u[0], u[1], u[2]);
+	for (let q = 0; q < 3; q++) u[q] /= ul;
+	const w = [
+		n[1] * u[2] - n[2] * u[1],
+		n[2] * u[0] - n[0] * u[2],
+		n[0] * u[1] - n[1] * u[0]
+	];
+	let nCells = 0;
+	for (const c of mesh.owner) if (c >= nCells) nCells = c + 1;
+	const cellFaces = Array.from({ length: nCells }, () => []);
+	mesh.owner.forEach((c, fi) => cellFaces[c].push(fi));
+	mesh.neighbour.forEach((c, fi) => cellFaces[c].push(fi));
+	const pv = fields.map((lf) => lf ? pointValues(lf.field, mesh, lf.ncomp) : null);
+	const edgeIndex = /* @__PURE__ */ new Map();
+	const positions = [], triangles = [];
+	const values = fields.map(() => []);
+	const cut = (i, j) => {
+		const key = i < j ? `${i},${j}` : `${j},${i}`;
+		let k = edgeIndex.get(key);
+		if (k !== void 0) return k;
+		k = edgeIndex.size;
+		edgeIndex.set(key, k);
+		const t = d[i] / (d[i] - d[j]);
+		const P = pts[i], Q = pts[j];
+		positions.push(...[
+			0,
+			1,
+			2
+		].map((q) => (P[q] + t * (Q[q] - P[q])) * 1e3));
+		fields.forEach((lf, fi) => {
+			const arr = pv[fi];
+			if (!lf || !arr) return;
+			const vi = Array.from(arr.subarray(i * lf.ncomp, (i + 1) * lf.ncomp)), vj = Array.from(arr.subarray(j * lf.ncomp, (j + 1) * lf.ncomp));
+			values[fi].push(lf.map(vi.map((x, q) => x + t * (vj[q] - x))));
+		});
+		return k;
+	};
+	for (const faces of cellFaces) {
+		const ids = /* @__PURE__ */ new Set();
+		for (const fi of faces) {
+			const f = mesh.faces[fi];
+			for (let q = 0; q < f.length; q++) {
+				const i = f[q], j = f[(q + 1) % f.length];
+				if (d[i] > 0 !== d[j] > 0) ids.add(cut(i, j));
+			}
+		}
+		if (ids.size < 3) continue;
+		const loop = [...ids];
+		const c = [
+			0,
+			1,
+			2
+		].map((q) => loop.reduce((s, k) => s + positions[k * 3 + q], 0) / loop.length);
+		const ang = (k) => {
+			const r = [
+				0,
+				1,
+				2
+			].map((q) => positions[k * 3 + q] - c[q]);
+			return Math.atan2(r[0] * w[0] + r[1] * w[1] + r[2] * w[2], r[0] * u[0] + r[1] * u[1] + r[2] * u[2]);
+		};
+		loop.sort((x, y) => ang(x) - ang(y));
+		for (let q = 1; q + 1 < loop.length; q++) triangles.push(loop[0], loop[q], loop[q + 1]);
+	}
+	if (!triangles.length) return null;
+	return {
+		name,
+		visible,
+		positions,
+		triangles,
+		values: fields.map((lf, fi) => lf ? values[fi] : null)
+	};
+}
+// src/sim/result.ts
+/** Resultado FEM como uma camada única (superfície exterior da malha). */
+function femView(r) {
+	return {
+		fields: r.fields.map((f) => ({
+			name: f.name,
+			unit: f.unit
+		})),
+		modes: r.displacements.map((d) => d.label),
+		layers: [{
+			name: "Peça",
+			visible: true,
+			positions: r.positions,
+			triangles: r.triangles,
+			values: r.fields.map((f) => f.values),
+			displacements: r.displacements.map((d) => d.values)
+		}]
+	};
+}
+// src/sim/convergence.ts
+/**
+* GCI de três soluções `f` (fina → grossa) com números de células/elementos `n` (fina → grossa).
+* `Fs` = 1,25 (fator de segurança recomendado para três malhas).
+*/
+function gci(n, f, dim = 3, Fs = 1.25) {
+	const h = n.map((x) => (1 / x) ** (1 / dim));
+	const r21 = h[1] / h[0], r32 = h[2] / h[1];
+	const [f1, f2, f3] = f;
+	const e21 = f2 - f1, e32 = f3 - f2;
+	const notes = [];
+	if (r21 < 1.3 || r32 < 1.3) notes.push(`Razões de refinamento ${r21.toFixed(2)} / ${r32.toFixed(2)} abaixo de 1,3 (recomendado ≥ 1,3)`);
+	if (e21 === 0 || Math.abs(e21) <= 1e-12 * Math.max(Math.abs(f1), 1e-300)) return {
+		r21,
+		r32,
+		p: NaN,
+		extrapolated: f1,
+		ea21: 0,
+		eext21: 0,
+		gciFine: 0,
+		asymptotic: NaN,
+		behaviour: "converged",
+		notes: [...notes, "As duas malhas mais finas dão o mesmo valor"]
+	};
+	const R = e21 / e32;
+	const behaviour = !Number.isFinite(R) ? "divergent" : R < 0 ? "oscillatory" : R > 1 ? "divergent" : "monotonic";
+	const s = Math.sign(e32 / e21);
+	let p = Math.abs(Math.log(Math.abs(e32 / e21))) / Math.log(r21);
+	for (let it = 0; it < 200; it++) {
+		const q = Math.log((r21 ** p - s) / (r32 ** p - s));
+		const next = Math.abs(Math.log(Math.abs(e32 / e21)) + q) / Math.log(r21);
+		if (!Number.isFinite(next)) break;
+		if (Math.abs(next - p) < 1e-12) {
+			p = next;
+			break;
+		}
+		p = next;
+	}
+	const rp = r21 ** p;
+	const extrapolated = (rp * f1 - f2) / (rp - 1);
+	const ea21 = Math.abs((f1 - f2) / f1);
+	const eext21 = Math.abs((extrapolated - f1) / extrapolated);
+	const gciFine = Fs * ea21 / (rp - 1);
+	const asymptotic = Fs * Math.abs((f2 - f3) / f2) / (r32 ** p - 1) / (rp * gciFine);
+	if (behaviour === "oscillatory") notes.push("Convergência oscilatória: o GCI é apenas indicativo");
+	if (behaviour === "divergent") notes.push("As soluções afastam-se ao refinar: a malha não está na gama assintótica (singularidade, malha demasiado grossa ou erro de modelação)");
+	if (behaviour === "monotonic" && Math.abs(asymptotic - 1) > .1) notes.push(`Fora da gama assintótica (razão ${asymptotic.toFixed(2)}; esperado ≈ 1)`);
+	if (p > 6 || p < .5) notes.push(`Ordem aparente ${p.toFixed(2)} pouco plausível para o método (esperado ≈ 1–2 em CFD, 2–3 em tetraedros quadráticos)`);
+	return {
+		r21,
+		r32,
+		p,
+		extrapolated,
+		ea21,
+		eext21,
+		gciFine,
+		asymptotic,
+		behaviour,
+		notes
+	};
+}
+/** Junta as métricas das três malhas (fina → grossa) num relatório de convergência. */
+function convergenceReport(ratio, meshes) {
+	const [a, b, c] = meshes;
+	const rows = [];
+	for (const m of a.metrics) {
+		const v2 = b.metrics.find((x) => x.key === m.key)?.value, v3 = c.metrics.find((x) => x.key === m.key)?.value;
+		if (v2 === void 0 || v3 === void 0 || ![
+			m.value,
+			v2,
+			v3
+		].every(Number.isFinite)) continue;
+		rows.push({
+			key: m.key,
+			label: m.label,
+			unit: m.unit,
+			values: [
+				m.value,
+				v2,
+				v3
+			],
+			gci: gci([
+				a.cells,
+				b.cells,
+				c.cells
+			], [
+				m.value,
+				v2,
+				v3
+			])
+		});
+	}
+	return {
+		ratio,
+		meshes: meshes.map((m) => ({
+			cells: m.cells,
+			size: m.size
+		})),
+		rows,
+		hypotheses: [
+			"Incerteza numérica da discretização pelo GCI (Celik et al., J. Fluids Eng. 130, 2008; ASME V&V 20-2009), Fs = 1,25, três malhas refinadas de forma sistemática",
+			"h = (1/N)^(1/3) com N células/elementos (domínio igual nas três malhas)",
+			"Não inclui erros de modelação (condições de fronteira, material, turbulência) nem de convergência iterativa",
+			"Máximos locais junto a singularidades geométricas (cantos vivos, cargas pontuais) não convergem: use valores afastados das singularidades"
+		]
+	};
+}
 // tools/cad-runner.ts
 const which = (cmd) => {
 	const r = spawnSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8" });
@@ -1325,7 +1726,75 @@ async function runFem(c, dir, log, regenerate) {
 		summary,
 		warnings,
 		fem,
+		view: femView(fem),
+		metrics: fem.metrics,
+		cells: deck.elements,
 		log: tail(join(dir, "log.ccx"))
+	};
+}
+/**
+* Camadas do resultado CFD: patches (paredes/corpo, entrada, saída) com a pressão e três cortes
+* pelo centro do corpo com a pressão e |U|. Visíveis por omissão: interno — entrada, saída e o corte
+* que contém o escoamento; externo — corpo e esse corte.
+*/
+function cfdView(c, mesh, p, U) {
+	const pres = {
+		name: "Pressão",
+		unit: "Pa",
+		field: p,
+		ncomp: 1,
+		map: (v) => v[0] * c.fluid.rho
+	};
+	const vel = {
+		name: "Velocidade",
+		unit: "m/s",
+		field: U,
+		ncomp: 3,
+		map: (v) => Math.hypot(v[0], v[1], v[2])
+	};
+	const internal = c.regime === "internal";
+	const layers = [];
+	const add = (l) => {
+		if (l) layers.push(l);
+	};
+	if (internal) {
+		add(patchLayer("Paredes", mesh, "walls", [pres, null], false));
+		add(patchLayer("Entrada", mesh, "inlet", [pres, vel], true));
+		add(patchLayer("Saída", mesh, "outlet", [pres, vel], true));
+	} else add(patchLayer("Corpo", mesh, "body", [pres, null], true));
+	const show = [
+		0,
+		1,
+		2
+	].reduce((m, k) => Math.abs(c.velocity[k]) > Math.abs(c.velocity[m]) ? k : m, 0) === 2 ? 1 : 2;
+	const mid = [
+		0,
+		1,
+		2
+	].map((k) => (c.bbox.min[k] + c.bbox.max[k]) / 2 * .001);
+	for (const k of [
+		0,
+		1,
+		2
+	]) {
+		const n = [
+			0,
+			0,
+			0
+		];
+		n[k] = 1;
+		add(sliceLayer(`Corte ${"XYZ"[k]} = ${(mid[k] * 1e3).toFixed(1)} mm`, mesh, mid, n, [pres, vel], k === show));
+	}
+	return {
+		fields: [{
+			name: pres.name,
+			unit: pres.unit
+		}, {
+			name: vel.name,
+			unit: vel.unit
+		}],
+		modes: [],
+		layers
 	};
 }
 /** Diretivas de dicionário do OpenFOAM que executam código (recusadas nos ficheiros recebidos). */
@@ -1363,12 +1832,15 @@ async function runOpenfoam(c, dir, log, regenerate) {
 	const L = readFileSync(join(dir, "log.simpleFoam"), "utf8");
 	const conv = /SIMPLE solution converged in (\d+) iterations/.exec(L);
 	const iters = [...L.matchAll(/^Time = (\d+)/gm)].length;
+	const cells = /cells:\s+(\d+)/.exec(tail(join(dir, "log.checkMesh"), 400))?.[1];
 	const summary = [
-		["Malha", `${/cells:\s+(\d+)/.exec(tail(join(dir, "log.checkMesh"), 400))?.[1] ?? "?"} células (snappyHexMesh)`],
+		["Malha", `${cells ?? "?"} células (snappyHexMesh)`],
 		["Iterações", conv ? `${conv[1]} (convergido)` : `${iters} (sem atingir os resíduos pedidos)`],
 		["Re", c.reynolds.toExponential(2)]
 	];
 	if (!conv) warnings.push("O simpleFoam não convergiu para os resíduos pedidos: aumente as iterações ou reveja a malha");
+	const metrics = [];
+	let view;
 	const last = readdirSync(dir).filter((d) => /^\d+(\.\d+)?$/.test(d) && d !== "0").sort((a, b) => Number(a) - Number(b)).at(-1);
 	if (last) {
 		const pm = join(dir, "constant/polyMesh");
@@ -1376,15 +1848,33 @@ async function runOpenfoam(c, dir, log, regenerate) {
 			points: readPoints(readFileSync(join(pm, "points"), "utf8")),
 			faces: readFaces(readFileSync(join(pm, "faces"), "utf8")),
 			owner: readLabels(readFileSync(join(pm, "owner"), "utf8")),
+			neighbour: readLabels(readFileSync(join(pm, "neighbour"), "utf8")),
 			boundary: readBoundary(readFileSync(join(pm, "boundary"), "utf8"))
 		};
 		const phi = existsSync(join(dir, last, "phi")) ? readScalarField(readFileSync(join(dir, last, "phi"), "utf8")) : null;
-		const p = readScalarField(readFileSync(join(dir, last, "p"), "utf8"));
+		const pText = readFileSync(join(dir, last, "p"), "utf8");
+		const p = readScalarField(pText);
 		if (phi && mesh.boundary.has("inlet") && mesh.boundary.has("outlet")) {
-			const Qi = -patchFlux(phi, mesh, "inlet"), Qo = patchFlux(phi, mesh, "outlet");
-			summary.push(["Caudal de entrada", `${(Qi * 1e3).toPrecision(5)} L/s`], ["Balanço de massa", `${(100 * (Qo - Qi) / Math.max(Math.abs(Qi), 1e-30)).toFixed(3)} %`]);
+			const Qi = -patchFlux(phi, mesh, "inlet");
+			const bal = 100 * (patchFlux(phi, mesh, "outlet") - Qi) / Math.max(Math.abs(Qi), 1e-30);
+			summary.push(["Caudal de entrada", `${(Qi * 1e3).toPrecision(5)} L/s`], ["Balanço de massa", `${bal.toFixed(3)} %`]);
+			metrics.push({
+				key: "q",
+				label: "Caudal de entrada",
+				unit: "L/s",
+				value: Qi * 1e3
+			});
 		}
-		if (c.regime === "internal" && mesh.boundary.has("inlet") && mesh.boundary.has("outlet")) summary.push(["Queda de pressão", `${((patchAverage(p, mesh, "inlet") - patchAverage(p, mesh, "outlet")) * c.fluid.rho).toPrecision(5)} Pa`]);
+		if (c.regime === "internal" && mesh.boundary.has("inlet") && mesh.boundary.has("outlet")) {
+			const dp = (patchAverage(p, mesh, "inlet") - patchAverage(p, mesh, "outlet")) * c.fluid.rho;
+			summary.push(["Queda de pressão", `${dp.toPrecision(5)} Pa`]);
+			metrics.push({
+				key: "dp",
+				label: "Queda de pressão",
+				unit: "Pa",
+				value: dp
+			});
+		}
 		if (c.regime === "external" && mesh.boundary.has("body")) {
 			const F = patchPressureForce(p, mesh, "body", c.fluid.rho);
 			const U = Math.hypot(...c.velocity), dir = c.velocity.map((x) => x / U);
@@ -1399,16 +1889,37 @@ async function runOpenfoam(c, dir, log, regenerate) {
 				1,
 				2
 			].map((k) => (c.bbox.max[k] - c.bbox.min[k]) * .001).filter((_, k) => k !== ax).reduce((a, b) => a * b, 1);
-			summary.push(["Força de pressão no corpo (N)", F.map((x) => x.toPrecision(4)).join(" · ")], ["Arrasto de pressão", `${drag.toPrecision(4)} N (Cd ≈ ${(drag / (.5 * c.fluid.rho * U * U * Aref)).toFixed(3)}, área ${(Aref * 1e6).toFixed(0)} mm²)`]);
+			const cd = drag / (.5 * c.fluid.rho * U * U * Aref);
+			summary.push(["Força de pressão no corpo (N)", F.map((x) => x.toPrecision(4)).join(" · ")], ["Arrasto de pressão", `${drag.toPrecision(4)} N (Cd ≈ ${cd.toFixed(3)}, área ${(Aref * 1e6).toFixed(0)} mm²)`]);
+			metrics.push({
+				key: "drag",
+				label: "Arrasto de pressão",
+				unit: "N",
+				value: drag
+			}, {
+				key: "cd",
+				label: "Cd (pressão)",
+				unit: "",
+				value: cd
+			});
 			warnings.push("Força calculada só com a pressão: falta a parcela viscosa (use o function object forces/wallShearStress do OpenFOAM)");
 		}
+		try {
+			view = cfdView(c, mesh, readField(pText), readField(readFileSync(join(dir, last, "U"), "utf8")));
+		} catch (e) {
+			warnings.push(`Campos para o 3D não lidos: ${e.message}`);
+		}
 	}
+	const nCells = Number(cells) || 0;
 	return {
 		ok: true,
 		physics: "cfd",
 		solver: "OpenFOAM simpleFoam",
 		summary,
 		warnings,
+		view,
+		metrics,
+		cells: nCells,
 		log: L.split(/\r?\n/).slice(-30).join("\n")
 	};
 }
@@ -1431,10 +1942,18 @@ async function runSu2(c, dir, log, regenerate) {
 	await run(t.su2.path, ["case.cfg"], dir, "log.su2", log);
 	const hist = existsSync(join(dir, "history.csv")) ? readFileSync(join(dir, "history.csv"), "utf8").trim().split(/\r?\n/) : [];
 	const summary = [["Iterações", String(Math.max(0, hist.length - 1))], ["Re", c.reynolds.toExponential(2)]];
+	const metrics = [];
 	if (hist.length > 1) {
 		const h = hist[0].split(",").map((x) => x.replace(/"/g, "").trim()), v = hist.at(-1).split(",");
 		h.forEach((k, i) => {
-			if (/rms\[P\]|CD|CL/i.test(k)) summary.push([k, v[i].trim()]);
+			if (!/rms\[P\]|CD|CL/i.test(k)) return;
+			summary.push([k, v[i].trim()]);
+			if (/^C[DL]$/i.test(k)) metrics.push({
+				key: k.toLowerCase(),
+				label: k,
+				unit: "",
+				value: Number(v[i])
+			});
 		});
 	}
 	return {
@@ -1443,19 +1962,83 @@ async function runSu2(c, dir, log, regenerate) {
 		solver: "SU2",
 		summary,
 		warnings: [],
+		metrics,
+		cells: Number(/NELEM=\s*(\d+)/.exec(readFileSync(join(dir, "mesh.su2"), "utf8").slice(0, 400))?.[1] ?? 0),
 		log: tail(join(dir, "log.su2"))
 	};
 }
 const tail = (p, n = 25) => existsSync(p) ? readFileSync(p, "utf8").split(/\r?\n/).slice(-n).join("\n") : "";
+async function runOnce(c, dir, log, regenerate) {
+	return c.physics === "fem" ? runFem(c, dir, log, regenerate) : c.solver === "openfoam" ? runOpenfoam(c, dir, log, regenerate) : runSu2(c, dir, log, regenerate);
+}
+/** Caso com a malha engrossada pelo fator `k` (tamanhos × k; refinamento por curvatura ÷ k). */
+function coarsened(c, k) {
+	if (c.physics === "fem") {
+		const curv = c.mesh.curvature > 0 ? Math.max(4, Math.round(c.mesh.curvature / k)) : 0;
+		return {
+			...c,
+			mesh: {
+				...c.mesh,
+				size: c.mesh.size * k,
+				minSize: c.mesh.minSize * k,
+				curvature: curv,
+				local: c.mesh.local.map((l) => ({
+					...l,
+					size: l.size * k
+				}))
+			}
+		};
+	}
+	return {
+		...c,
+		mesh: {
+			...c.mesh,
+			size: c.mesh.size * k
+		}
+	};
+}
 /** Corre o caso de uma pasta (case.json + model.brep [+ STL]). `regenerate`: refaz os ficheiros dos solvers a partir do caso. */
-async function runCase(dir, log = () => {}, regenerate = false) {
+async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 	const t0 = Date.now();
 	const c = JSON.parse(readFileSync(join(dir, "case.json"), "utf8"));
 	if (c.format !== "cadp-sim-case") throw new Error("case.json inválido");
-	const r = c.physics === "fem" ? await runFem(c, dir, log, regenerate) : c.solver === "openfoam" ? await runOpenfoam(c, dir, log, regenerate) : await runSu2(c, dir, log, regenerate);
+	let r;
+	if (opts.convergence) {
+		const ratio = opts.convergence.ratio;
+		if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
+		const runs = [];
+		for (const lvl of [
+			2,
+			1,
+			0
+		]) {
+			const sub = join(dir, `malha${lvl + 1}`);
+			mkdirSync(sub, { recursive: true });
+			const ck = coarsened(c, ratio ** lvl);
+			writeFileSync(join(sub, "case.json"), JSON.stringify(ck));
+			writeFileSync(join(sub, "model.brep"), readFileSync(join(dir, "model.brep")));
+			if (existsSync(join(dir, "constant/triSurface"))) {
+				mkdirSync(join(sub, "constant/triSurface"), { recursive: true });
+				for (const fn of readdirSync(join(dir, "constant/triSurface"))) if (fn.endsWith(".stl")) writeFileSync(join(sub, "constant/triSurface", fn), readFileSync(join(dir, "constant/triSurface", fn)));
+			}
+			log(`— malha ${lvl + 1} de 3 (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+			runs[lvl] = await runOnce(ck, sub, log, true);
+		}
+		const report = convergenceReport(ratio, runs.map((x, i) => ({
+			cells: x.cells,
+			size: c.mesh.size * ratio ** i,
+			metrics: x.metrics
+		})));
+		r = {
+			...runs[0],
+			convergence: report,
+			warnings: [...runs[0].warnings, ...report.rows.flatMap((x) => x.gci.notes.map((n) => `${x.label}: ${n}`))]
+		};
+	} else r = await runOnce(c, dir, log, regenerate);
 	const res = {
 		...r,
 		summary: [...r.summary],
+		hypotheses: c.hypotheses,
 		seconds: (Date.now() - t0) / 1e3
 	};
 	writeFileSync(join(dir, "results.json"), JSON.stringify(res));
@@ -1521,7 +2104,7 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 					writeFileSync(join(dir, `constant/triSurface/${name}.stl`), text);
 				}
 			}
-			send(200, await runCase(dir, (s) => console.log(s), true));
+			send(200, await runCase(dir, (s) => console.log(s), true, { convergence: body.convergence && Number.isFinite(Number(body.convergence.ratio)) ? { ratio: Number(body.convergence.ratio) } : void 0 }));
 		} catch (e) {
 			send(500, {
 				error: e.message,
@@ -1549,13 +2132,16 @@ if (process.argv[1] && /cad-runner\.(m?js|ts)$/.test(process.argv[1])) {
 		const port = Number(args[args.indexOf("--port") + 1]) || 8765;
 		const { token } = serve(port, process.env.CAD_TOKEN);
 		console.log(`Agente CAD a escutar em http://127.0.0.1:${port}\nToken (copie para a aplicação, Simulação → Agente local): ${token}\nSolvers: ${JSON.stringify(tools())}`);
-	} else if (args[0]) runCase(resolve(args[0]), (s) => console.log(s), args.includes("--regenerate")).then((r) => {
-		for (const [k, v] of r.summary) console.log(`${k}: ${v}`);
-		for (const w of r.warnings) console.log(`Aviso: ${w}`);
-	}).catch((e) => {
-		console.error(e.message);
-		process.exit(1);
-	});
-	else console.log("Uso: node cad-runner.mjs <pasta-do-caso> | --serve [--port 8765] | --status");
+	} else if (args[0]) {
+		const ri = args.indexOf("--convergence");
+		runCase(resolve(args[0]), (s) => console.log(s), args.includes("--regenerate"), ri > 0 ? { convergence: { ratio: Number(args[ri + 1]) || 1.5 } } : {}).then((r) => {
+			for (const [k, v] of r.summary) console.log(`${k}: ${v}`);
+			for (const x of r.convergence?.rows ?? []) console.log(`${x.label}: ${x.values.map((v) => v.toPrecision(5)).join(" / ")} → extrapolado ${x.gci.extrapolated.toPrecision(5)} ${x.unit}, p = ${x.gci.p.toFixed(2)}, GCI = ${(100 * x.gci.gciFine).toFixed(2)} %`);
+			for (const w of r.warnings) console.log(`Aviso: ${w}`);
+		}).catch((e) => {
+			console.error(e.message);
+			process.exit(1);
+		});
+	} else console.log("Uso: node cad-runner.mjs <pasta-do-caso> | --serve [--port 8765] | --status");
 }
-export { runCase, serve, tools };
+export { coarsened, runCase, serve, tools };

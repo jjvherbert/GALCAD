@@ -3,10 +3,14 @@
 import { zipStore } from "../io/mesh-export.ts";
 import type { SimCase } from "../sim/case.ts";
 import type { RunResult } from "../../tools/cad-runner.ts";
+import { type ResultView, femView } from "../sim/result.ts";
 import { externalParts, store } from "./store.ts";
 import { download } from "./fileio.ts";
 
 export type { RunResult };
+
+/** Camadas a mostrar de um resultado (resultados antigos só com a parte FEM: uma camada). */
+export const resultView = (r: RunResult | undefined | null): ResultView | null => (r ? r.view ?? (r.fem ? femView(r.fem) : null) : null);
 
 async function caseFiles(studyId: string) {
   const st = store.state;
@@ -40,8 +44,11 @@ export async function agentStatus(url: string, token: string): Promise<{ ok: boo
   }
 }
 
-/** Gera o caso e calcula-o no agente local; devolve os resultados. */
-export async function runStudy(studyId: string, url: string, token: string): Promise<{ case: SimCase; result: RunResult }> {
+/**
+ * Gera o caso e calcula-o no agente local; devolve os resultados. `convergence`: corre também em duas
+ * malhas mais grossas (tamanhos × r e × r²) e devolve o GCI de cada grandeza.
+ */
+export async function runStudy(studyId: string, url: string, token: string, convergence?: { ratio: number }): Promise<{ case: SimCase; result: RunResult }> {
   const r = await caseFiles(studyId);
   const stl = Object.fromEntries(Object.entries(r.files).filter(([p]) => p.startsWith("constant/triSurface/")).map(([p, t]) => [p.slice("constant/triSurface/".length, -4), t]));
   let res: Response;
@@ -49,7 +56,7 @@ export async function runStudy(studyId: string, url: string, token: string): Pro
     res = await fetch(`${url}/run`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-cad-token": token },
-      body: JSON.stringify({ case: r.case, brep: r.files["model.brep"], stl: Object.keys(stl).length ? stl : undefined }),
+      body: JSON.stringify({ case: r.case, brep: r.files["model.brep"], stl: Object.keys(stl).length ? stl : undefined, convergence }),
     });
   } catch {
     throw new Error("Agente local não responde (corra: node cad-runner.mjs --serve)");

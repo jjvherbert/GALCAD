@@ -180,6 +180,49 @@
             "order": 2,
             "curvature": 0
           }
+        },
+        {
+          "id": "s2",
+          "name": "Conduta — laminar",
+          "physics": "cfd",
+          "solver": "openfoam",
+          "regime": "internal",
+          "fluid": {
+            "name": "Água doce (20 °C)",
+            "rho": 998.2,
+            "nu": 0.000001004
+          },
+          "turbulence": "laminar",
+          "inlet": {
+            "faces": [
+              {
+                "kind": "face",
+                "name": "f2:side:l8"
+              }
+            ],
+            "velocity": [
+              0.01,
+              0,
+              0
+            ]
+          },
+          "outlet": {
+            "faces": [
+              {
+                "kind": "face",
+                "name": "f2:side:l6"
+              }
+            ]
+          },
+          "iterations": 300,
+          "mesh": {
+            "size": 1.25,
+            "surfaceLevel": [
+              0,
+              0
+            ],
+            "layers": 0
+          }
         }
       ]
     }

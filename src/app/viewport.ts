@@ -6,6 +6,7 @@
 //         esquerdo = selecionar (Ctrl/Shift soma) · arrastar no vazio = caixa (→ janela, ← cruzamento)
 //         direito = menu de contexto · arrastar com o direito = gestos
 import * as THREE from "three";
+import { type ResultView, fieldRange, layerShown } from "../sim/result.ts";
 import type { MeshData } from "../kernel/mesh.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import type { Frame } from "../kernel/frame.ts";
@@ -51,14 +52,6 @@ export function sequentialColor(t: number, out: THREE.Color) {
   const i = Math.min(VIRIDIS.length - 2, Math.floor(x));
   const a = new THREE.Color(VIRIDIS[i]), b = new THREE.Color(VIRIDIS[i + 1]);
   out.copy(a).lerp(b, x - i);
-}
-
-/** O que o visualizador precisa de um resultado FEM. */
-export interface FemResultView {
-  positions: number[];
-  triangles: number[];
-  fields: { name: string; unit: string; values: number[] }[];
-  displacements: { label: string; values: number[] }[];
 }
 
 /** Cores das classes de continuidade: folga, G0, G1, G2, G3. */
@@ -361,42 +354,49 @@ export class Viewport {
   private simGroup = new THREE.Group();
 
   /**
-   * Resultados FEM na superfície da malha: cores do campo escolhido (paleta sequencial) e deformada
-   * ampliada. O corpo fica escondido enquanto se mostram resultados.
+   * Resultados de simulação em camadas (superfície da malha FEM; patches e cortes CFD): cores do campo
+   * escolhido na paleta sequencial, com a mesma escala em todas as camadas visíveis, e deformada
+   * ampliada. O corpo fica escondido enquanto se mostram resultados FEM; nos CFD fica em arame.
    */
-  setSimResult(r: FemResultView | null, view: { field: number; disp: number; scale: number }) {
+  setSimResult(r: ResultView | null, view: { field: number; disp: number; scale: number; hidden: string[] }) {
     this.disposeGroup(this.simGroup);
     if (!this.simGroup.parent) this.scene.add(this.simGroup);
-    const showBody = !r;
-    if (this.faceMesh) this.faceMesh.visible = showBody;
-    if (this.edgeLines) this.edgeLines.visible = showBody && this.settings.displayStyle !== "shaded";
+    const fem = !!r?.modes.length || r?.layers.some((l) => l.displacements) === true;
+    if (this.faceMesh) this.faceMesh.visible = !r;
+    if (this.edgeLines) this.edgeLines.visible = r ? !fem : this.settings.displayStyle !== "shaded";
     this.el.dataset.sim = r ? "1" : "";
+    this.el.dataset.simLayers = r ? r.layers.filter((l) => layerShown(l, view.hidden)).map((l) => l.name).join("|") : "";
     if (!r) return;
-    const pos = new Float32Array(r.positions);
-    const d = r.displacements[view.disp]?.values;
-    if (d) {
-      let max = 0;
-      for (let i = 0; i < d.length; i += 3) max = Math.max(max, Math.hypot(d[i], d[i + 1], d[i + 2]));
-      const k = view.scale > 0 ? view.scale : max > 0 ? (0.08 * this.size) / max : 0;
-      for (let i = 0; i < pos.length; i++) pos[i] += d[i] * k;
-      this.el.dataset.simScale = k.toPrecision(3);
+    const range = fieldRange(r, view.field, view.hidden);
+    // ampliação comum a todas as camadas (a maior deformação vale 8 % da cena)
+    let dmax = 0;
+    for (const l of r.layers) {
+      const d = l.displacements?.[view.disp];
+      if (d) for (let i = 0; i < d.length; i += 3) dmax = Math.max(dmax, Math.hypot(d[i], d[i + 1], d[i + 2]));
     }
-    const f = r.fields[view.field];
-    const col = new Float32Array(pos.length);
+    const k = view.scale > 0 ? view.scale : dmax > 0 ? (0.08 * this.size) / dmax : 0;
+    this.el.dataset.simScale = dmax > 0 ? k.toPrecision(3) : "";
     const c = new THREE.Color();
-    if (f && f.values.length) {
-      let lo = Infinity, hi = -Infinity;
-      for (const x of f.values) { if (x < lo) lo = x; if (x > hi) hi = x; }
-      f.values.forEach((x, i) => { sequentialColor(hi > lo ? (x - lo) / (hi - lo) : 0, c); col.set([c.r, c.g, c.b], i * 3); });
-    } else col.fill(0.7);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    g.setIndex(r.triangles);
-    g.computeVertexNormals();
-    this.simGroup.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.7, side: THREE.DoubleSide })));
+    for (const l of r.layers) {
+      if (!layerShown(l, view.hidden)) continue;
+      const pos = new Float32Array(l.positions);
+      const d = l.displacements?.[view.disp];
+      if (d) for (let i = 0; i < pos.length; i++) pos[i] += d[i] * k;
+      const vals = l.values[view.field];
+      const col = new Float32Array(pos.length);
+      if (vals && range) {
+        const [lo, hi] = range;
+        vals.forEach((x, i) => { sequentialColor(hi > lo ? (x - lo) / (hi - lo) : 0, c); col.set([c.r, c.g, c.b], i * 3); });
+      } else col.fill(0.75);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+      g.setIndex(l.triangles);
+      g.computeVertexNormals();
+      this.simGroup.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.7, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })));
+    }
     // contorno da peça não deformada, a cinzento, como referência
-    if (this.edgeLines && d) {
+    if (this.edgeLines && fem && dmax > 0) {
       const ref = new THREE.LineSegments(this.edgeLines.geometry, new THREE.LineBasicMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.6 }));
       ref.userData.shared = true;
       this.simGroup.add(ref);

@@ -28,6 +28,7 @@ import { AnalysisPanel, ContextMenu, ContextToolbar, GestureHud, HeadsUpToolbar,
 
 const SURF: Record<string, string> = { plane: "plana", cylinder: "cilíndrica", cone: "cónica", sphere: "esférica", torus: "tórica", bspline: "livre (B-spline)", bezier: "livre (Bézier)", revolution: "de revolução", extrusion: "de extrusão" };
 const CURVE: Record<string, string> = { line: "reta", circle: "circular", ellipse: "elíptica", bsplinecurve: "livre", beziercurve: "livre" };
+import { resultView } from "./sim-client.ts";
 import "./style.css";
 
 function selectedKeys(): string[] {
@@ -111,7 +112,7 @@ function App() {
   // resultados de simulação (FEM) no 3D
   useEffect(() => {
     const show = st.sidePanel === "sim" && !st.simHidden && st.active.kind === "part";
-    vp.current?.setSimResult(show ? st.simResult?.result.fem ?? null : null, st.simView);
+    vp.current?.setSimResult(show ? resultView(st.simResult?.result) : null, st.simView);
   }, [st.simResult, st.simView, st.simHidden, st.sidePanel, st.active, st.result]);
   // rede de controlo da forma livre em edição
   useEffect(() => {
