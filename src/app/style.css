@@ -258,3 +258,26 @@ kbd { font: 11px ui-monospace, monospace; padding: 0 4px; border: 1px solid var(
 .ok { color: #16a34a; }
 .modal.props .row { display: grid; grid-template-columns: 180px 1fr auto; gap: 6px; align-items: center; margin: 4px 0; }
 .modal.props .row:has(> span) { grid-template-columns: 180px 1fr; }
+
+/* desenhos */
+.drawing-mode { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.drawing-panel { padding: 8px 10px; overflow: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.drawing-panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 10px 0 4px; }
+.drawing-panel .tree { list-style: none; margin: 0; padding: 0; }
+.drawing-panel .feat { display: flex; gap: 6px; align-items: center; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.drawing-panel .feat.selected { background: var(--accent-soft); }
+.drawing-panel .feat.error .name { color: #dc2626; }
+.drawing-panel .tree-head { display: flex; flex-direction: column; }
+.property-panel.inline { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
+.small-tabs { margin: 6px 0 0; align-self: flex-start; }
+.sheet-view { flex: 1; position: relative; background: #8a929c; overflow: hidden; min-width: 0; }
+.sheet-svg { width: 100%; height: 100%; display: block; touch-action: none; }
+.sheet-svg .sel-box { fill: none; stroke: #2563eb; stroke-width: 0.4; stroke-dasharray: 2 1; pointer-events: none; }
+.sheet-svg .hover-edge { fill: none; stroke: #f59e0b; stroke-width: 0.9; pointer-events: none; }
+.sheet-svg .pick-dot { fill: #2563eb; pointer-events: none; }
+.sheet-warn { position: absolute; left: 8px; bottom: 8px; background: var(--panel); padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+.gdt-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.gdt-grid button { padding: 2px; display: flex; justify-content: center; }
+.gdt-grid svg line, .gdt-grid svg circle, .gdt-grid svg path, .gdt-grid svg polygon, .gdt-grid svg polyline { stroke-width: 0.8; }
+button.on { background: var(--accent-soft); border-color: var(--accent); }
+.main.hidden-3d .view { display: none; }

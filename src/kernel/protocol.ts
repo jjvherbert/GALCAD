@@ -78,14 +78,14 @@ export interface ViewResult {
   visible: Curve2D[];
   hidden: Curve2D[];
   tangent: Curve2D[];
-  /** Polígonos das faces cortadas (cortes), para tracejar. */
-  hatch: [number, number][][][];
+  /** Triângulos das faces cortadas (cortes), para tracejar: x0,y0,x1,y1,x2,y2,… */
+  hatch: number[];
   centerMarks: { c: [number, number]; r: number }[];
   centerLines: [[number, number], [number, number]][];
   /** Projeção de cada aresta do modelo com nome (para âncoras de cotas e notas). */
   edges: Record<string, Curve2D>;
   /** Cotas dos esboços paralelos ao plano da vista (importar cotas do modelo). */
-  modelDims: { feature: string; constraint: string; type: "linear" | "radius" | "diameter"; a: [number, number]; b: [number, number]; value: number }[];
+  modelDims: { feature: string; constraint: string; type: "aligned" | "horizontal" | "vertical" | "radius" | "diameter"; a: [number, number]; b: [number, number]; value: number }[];
   /** Componente de cada aresta (vistas de montagem): nome da aresta → componente de topo. */
   edgeComponent?: Record<string, string>;
 }
@@ -94,6 +94,8 @@ export interface DrawingResponse {
   views: Record<string, ViewResult>;
   /** Massa (volume × densidade) da fonte de cada vista de modelo, para a legenda. */
   sources: Record<string, { volume: number; material?: string }>;
+  /** Volume (mm³) das peças usadas nas tabelas de BOM do desenho. */
+  partVolumes: Record<string, number>;
   ms: number;
 }
 

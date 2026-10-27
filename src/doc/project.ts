@@ -143,7 +143,12 @@ export type GdtChar =
   | "parallelism" | "perpendicularity" | "angularity" | "position" | "concentricity" | "symmetry" | "runout" | "totalRunout";
 
 export type Annotation =
-  | { kind: "dim"; id: string; type: DimType; a: Anchor; b?: Anchor; offset: number; tol?: { plus?: string; minus?: string; fit?: string }; prefix?: string; precision?: number; model?: { feature: string; constraint: string } }
+  /**
+   * Cota. `offset`: distância (mm na folha) da linha de cota aos pontos medidos (lineares), ou
+   * comprimento do prolongamento para fora do círculo (raio/diâmetro). `angle`: direção (graus) da linha
+   * de chamada do raio/diâmetro. `model`: cota importada de um esboço (segue o modelo).
+   */
+  | { kind: "dim"; id: string; type: DimType; a: Anchor; b?: Anchor; offset: number; angle?: number; tol?: { plus?: string; minus?: string; fit?: string }; prefix?: string; precision?: number; model?: { feature: string; constraint: string; view: string } }
   | { kind: "note"; id: string; at: [number, number]; text: string; leader?: Anchor; height?: number }
   | { kind: "gdt"; id: string; at: [number, number]; leader?: Anchor; char: GdtChar; tol: string; dia?: boolean; modifier?: "M" | "L"; datums: string[] }
   | { kind: "datum"; id: string; at: [number, number]; anchor: Anchor; letter: string }
@@ -275,3 +280,8 @@ export function containsAssembly(project: CadProject, asmId: string, target: str
 }
 
 export const DEFAULT_DENSITY = 7.85;
+
+/** Omit distributivo (mantém a união de tipos). */
+export type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+export type NewView = DistOmit<DrawingView, "id" | "name"> & { name?: string };
+export type NewAnnotation = DistOmit<Annotation, "id">;

@@ -102,6 +102,8 @@ export class KernelService {
   private meshCache = new Map<string, { key: string; mesh: MeshData | null }>();
   private lastAsm: { project: CadProject; id: string } | null = null;
   private asmArena = new Arena();
+  /** Objetos das vistas do último desenho (libertados no desenho seguinte). */
+  readonly drawingArena = new Arena();
 
   /** Peça reconstruída (cache do motor da peça) e a sua malha (cache por conteúdo). */
   async partBuild(project: CadProject, id: string): Promise<PartBuild> {

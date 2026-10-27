@@ -2,6 +2,10 @@
 import { FILE_EXTENSION } from "../doc/io.ts";
 import type { ExportFormat } from "../kernel/protocol.ts";
 import { store } from "./store.ts";
+import { renderDrawing } from "../drawing/render.ts";
+import { toPDF } from "../drawing/pdf.ts";
+import { toDXF } from "../drawing/dxf.ts";
+import { toSVG } from "../drawing/svg.ts";
 
 /** Nome de ficheiro portável: sem acentos nem caracteres especiais (alguns browsers rejeitam-nos). */
 export const safeFileName = (n: string) => n.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w.-]+/g, "_") || "peca";
@@ -62,3 +66,15 @@ export const EXPORTS: [ExportFormat, string][] = [
   ["step", "STEP (AP214) — sólido exato"], ["stl", "STL binário — impressão 3D"], ["3mf", "3MF — impressão 3D"],
   ["obj", "OBJ — malha"], ["glb", "glTF binário (.glb) — visualização"],
 ];
+
+/** Exporta o desenho ativo (PDF vetorial, DXF R12 ou SVG), em tamanho real. */
+export function exportDrawing(format: "pdf" | "dxf" | "svg") {
+  const d = store.activeDrawing();
+  if (!d) return;
+  const layout = renderDrawing(d, store.state.project, store.state.drawingResult);
+  const name = d.title.number || d.name;
+  if (format === "pdf") download(`${name}.pdf`, toPDF(layout, d.name) as BlobPart, "application/pdf");
+  else if (format === "dxf") download(`${name}.dxf`, toDXF(layout) as BlobPart, "application/dxf");
+  else download(`${name}.svg`, toSVG(layout, d.name), "image/svg+xml");
+  store.set({ message: `Exportado ${format.toUpperCase()} (${d.sheet.size}, ${d.sheet.scale.join(":")})${layout.warnings.length ? ` com ${layout.warnings.length} aviso(s)` : ""}` });
+}

@@ -101,9 +101,24 @@ export interface State {
   interference: InterferenceResponse | null;
   /** Painel lateral alternativo: BOM ou assistente. */
   sidePanel: "bom" | "ai" | null;
+  /** Ferramenta ativa no editor de desenhos. */
+  drawingTool: DrawingTool | null;
+  /** Seleção no desenho (vista ou anotação). */
+  drawingSel: { kind: "view" | "ann"; id: string } | null;
 }
 
+export type DrawingTool =
+  | { kind: "modelView"; source: { kind: "part" | "assembly"; id: string }; orientation: import("../doc/project.ts").StdView }
+  | { kind: "projected" | "section" | "detail" | "auxiliary"; parent?: string; points?: [number, number][]; edge?: string }
+  | { kind: "dim" | "note" | "gdt" | "datum" | "surface" | "weld" | "balloon"; picks?: { view: string; edge: string; at: [number, number] }[] }
+  | { kind: "bom" };
+
 const AUTOSAVE = "cad-prototipo:autosave";
+
+/** Partes de um desenho que o núcleo usa (as vistas sem posição; as fontes das tabelas de BOM). */
+function drawingKernelKey(d: DrawingDoc): string {
+  return JSON.stringify([d.views.map(({ at: _a, name: _n, ...v }) => v), d.sheet, d.annotations.filter((a) => a.kind === "bom").map((a) => (a.kind === "bom" ? a.source : ""))]);
+}
 
 class Store {
   kernel = new KernelClient();
@@ -125,7 +140,7 @@ class Store {
       edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null,
+      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, drawingTool: null, drawingSel: null,
     };
     this.rebuild(0);
   }
@@ -310,8 +325,11 @@ class Store {
       : kind === "assembly" ? { ...p, assemblies: p.assemblies.map((x) => (x.id === doc.id ? (doc as AssemblyDoc) : x)) }
       : { ...p, drawings: p.drawings.map((x) => (x.id === doc.id ? (doc as DrawingDoc) : x)) };
     if (this.state.active.id === doc.id) this.history.push(doc, label, merge);
+    const before = kind === "drawing" ? p.drawings.find((x) => x.id === doc.id) : undefined;
     this.set({ project, dirty: true, ...(kind === "part" && this.state.doc.id === doc.id ? { doc: doc as PartDoc } : {}) });
     this.autosave();
+    // num desenho, mover vistas ou editar anotações não muda as projeções: não é preciso o núcleo
+    if (kind === "drawing" && before && drawingKernelKey(before) === drawingKernelKey(doc as DrawingDoc) && this.state.drawingResult) return;
     this.rebuild();
   }
 
@@ -324,7 +342,7 @@ class Store {
     this.set({
       active: ref, ...(doc ? { doc, result: null } : {}), selection: [], selectedFeature: null, pickTarget: null, analysis: null,
       asmResult: ref.kind === "assembly" ? this.state.asmResult : null, drawingResult: null, contextToolbar: null,
-      mateEdit: null, componentEdit: null, interference: null,
+      mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null,
     });
     this.rebuild(0);
   }

@@ -45,7 +45,8 @@ const ASM_TABS: typeof TABS = [
   { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.rebuild", "edit.forceRebuild", "asm.interference"] }] },
 ];
 
-const short = (label: string) => label.replace(/^Mate: /, "").replace("Deteção de interferências", "Interferências").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const short = (label: string) => cap(label.replace(/^Mate: /, "").replace(/^Vista de /, "").replace(/^Vista (projetada|auxiliar)$/, "$1")).replace("Deteção de interferências", "Interferências").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
   const st = useStore();

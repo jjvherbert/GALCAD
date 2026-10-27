@@ -6,7 +6,23 @@ import { PLUGINS } from "../plugins/meta.ts";
 import { store } from "./store.ts";
 import type { Viewport, ViewName } from "./viewport.ts";
 import { VIEWS } from "./viewport.ts";
-import { EXPORTS, exportAs, importStep, openProject, saveProject } from "./fileio.ts";
+import { EXPORTS, exportAs, exportDrawing, importStep, openProject, saveProject } from "./fileio.ts";
+import { autoBalloons, importModelDims } from "../drawing/edit.ts";
+
+/** Ações do desenho sobre a vista selecionada (ou todas). */
+function drawingAction(what: "modelDims" | "balloons") {
+  const d = store.activeDrawing();
+  if (!d) return;
+  const sel = store.state.drawingSel;
+  const ids = sel?.kind === "view" ? [sel.id] : d.views.map((v) => v.id);
+  let doc = d, n = 0;
+  for (const id of ids) {
+    const r = what === "modelDims" ? importModelDims(doc, store.state.drawingResult, id) : autoBalloons(doc, store.state.project, store.state.drawingResult, id);
+    doc = r.doc; n += r.count;
+  }
+  store.commitDrawing(doc, what === "modelDims" ? "Importar cotas" : "Balões");
+  store.set({ message: what === "modelDims" ? `${n} cota(s) importada(s) do modelo` : `${n} balão(ões)` });
+}
 
 export interface Command {
   id: string;
@@ -111,6 +127,23 @@ export const COMMANDS: Command[] = [
     run: () => { if (store.state.active.kind === "assembly" && !store.state.mateEdit) store.startMate(k); },
   })),
   { id: "asm.interference", label: "Deteção de interferências", group: "Montagem", icon: "⧯", run: () => { if (store.state.active.kind === "assembly") void store.checkInterference(); } },
+  // desenho
+  ...([
+    ["dr.view.projected", "Vista projetada", "⊞", "projected"], ["dr.view.section", "Vista de corte", "⊟", "section"], ["dr.view.detail", "Vista de pormenor", "⊙", "detail"], ["dr.view.aux", "Vista auxiliar", "⟋", "auxiliary"],
+    ["dr.dim", "Cota inteligente", "↔", "dim"], ["dr.note", "Nota", "A", "note"], ["dr.gdt", "Tolerância geométrica", "⌖", "gdt"], ["dr.datum", "Referência (datum)", "▣", "datum"],
+    ["dr.surface", "Estado de superfície", "√", "surface"], ["dr.weld", "Símbolo de soldadura", "⌳", "weld"], ["dr.balloon", "Balão", "①", "balloon"], ["dr.bom", "Tabela de BOM", "☰", "bom"],
+  ] as const).map(([id, label, icon, kind]): Command => ({
+    id, label, group: "Desenho", icon, repeatable: true,
+    run: () => {
+      if (store.state.active.kind !== "drawing") return;
+      const sel = store.state.drawingSel;
+      const parent = sel?.kind === "view" && (kind === "projected" || kind === "section" || kind === "detail") ? sel.id : undefined;
+      store.set({ drawingTool: { kind, ...(parent ? { parent, points: [] } : {}) } as never });
+    },
+  })),
+  { id: "dr.modelDims", label: "Importar cotas do modelo", group: "Desenho", icon: "⇲", run: () => drawingAction("modelDims") },
+  { id: "dr.autoBalloon", label: "Balões automáticos", group: "Desenho", icon: "⑳", run: () => drawingAction("balloons") },
+  ...(["pdf", "dxf", "svg"] as const).map((f): Command => ({ id: `dr.export.${f}`, label: `Exportar ${f.toUpperCase()}`, group: "Desenho", icon: "⇪", run: () => { if (store.state.active.kind === "drawing") exportDrawing(f); } })),
   { id: "analysis.off", label: "Desligar análise", group: "Avaliar", run: () => store.setAnalysis(null) },
   { id: "feature.cut", label: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy() && store.state.active.kind === "part") { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
   ...PLUGINS.flatMap((p) => Object.entries(p.kinds).map(([k, kind]): Command => ({
