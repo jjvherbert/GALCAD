@@ -12,7 +12,8 @@ CAD paramétrico completo, com **paridade com o SolidWorks** na modelação, nos
 Os domínios de engenharia entram como módulos:
 - **moldes:** saída e análise de inclinação, linha de partição, superfícies de fecho, núcleo/cavidade, contração;
 - **compósitos:** plies, zonas, rosetas, sequência de laminação, planificação, exportação para corte;
-- **náutica.**
+- **náutica;**
+- **FEM:** pré-processador associativo que exporta para solvers abertos (CalculiX, Code_Aster, Elmer, MYSTRAN), com integração direta dos solvers numa etapa posterior.
 
 **Ligação ao cálculo.** Um adaptador ajusta automaticamente o esboço (e as cotas que o comandam) a partir de um **modelo FEM de ordem reduzida (ROM)**. O ROM avalia rapidamente o desempenho, por exemplo tensão, rigidez ou deslocamento, em função dos parâmetros. Um otimizador move as variáveis e as cotas do esboço até cumprir os objetivos e restrições, e o resultado é verificado com o FEM completo.
 
@@ -41,21 +42,17 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
 - Tabela de configurações (famílias de peças) a partir das variáveis
 - Gestão de multi-corpo (listar, ocultar, combinar)
 
-## Fase 2: superfícies (nível SolidWorks Surfacing) — em curso
-Feito:
-- ✅ Corpos de superfície no motor (chave = feature criadora), resolução de referências em sólido + superfícies, malha/exportação conjunta
-- ✅ Extrusão, revolução, sweep e loft de superfície (contornos abertos ou fechados)
-- ✅ Fill surface (remendo N-lados) com contacto, tangência ou curvatura; offset
-- ✅ Trim (plano, superfície ou esboço, partes a manter por ponto), knit (com sólido opcional e operação), thicken (frente/trás/simétrico), apagar face
-- ✅ Análises: zebra, curvatura (gaussiana/média, exata por vértice), draft
-- ✅ UI: separador Superfícies, painéis, escolha de corpos no 3D, menu de contexto; testes Node e e2e
+## Fase 2: superfícies (nível SolidWorks Surfacing) ✅ (com as limitações listadas)
+- ✅ Corpos de superfície no motor (chave = feature criadora), resolução de referências em sólido + superfícies + curvas, malha e exportação conjuntas
+- ✅ Curvas 3D: spline por pontos, esboço projetado em faces, interseção, curva composta, hélice; usáveis como caminho de varrimento, limite de superfícies e arestas de referência
+- ✅ Superfície extrudida, de revolução, varrida (caminho = esboço ou curva 3D) e loft
+- ✅ Superfície limite (*boundary*) em duas direções, com curvas guia interiores e contacto/tangência/curvatura nos limites
+- ✅ Preenchimento N-lados, superfície regrada (normal, tangente, direção), superfície deslocada
+- ✅ Aparar (plano, superfície, esboço) e aparar mútuo; desaparar; costura (com sólido); espessar; substituir face; apagar face e apagar e remendar
+- ✅ Padrões e espelho de corpos de superfície; o aparar entra no grafo de dependências das features a jusante
+- ✅ Análises: zebra, curvatura (gaussiana/média, exata por vértice), inclinação, desvio de tangência nas arestas; verificação automática do desvio G1 nos preenchimentos, limites e remendos
 
-Pendente:
-- Boundary surface e loft com controlo de tangência/curvatura nos limites; ruled surface
-- Untrim, substituir face, apagar e reparar (*delete and heal*), aparar mútuo
-- Curvas 3D: spline por pontos, projeção, interseção, curva composta, hélice
-- Análise de desvio (entre superfícies, ou entre arestas de faces adjacentes) e verificação automática de G1 no preenchimento
-- Padrões e espelho de corpos de superfície; registo da dependência a jusante de um aparar
+Limitações que passam para a Fase 4 (geometria de classe A e cura): o remendo não prolonga as faces vizinhas (não reconstrói cantos vivos, *delete and heal* verdadeiro); substituir face pressupõe faces laterais aproximadamente paralelas à normal da face; o loft não tem condições de tangência nos extremos (usar a superfície limite); tangência difícil com faces vizinhas quase perpendiculares ao remendo (detetada e avisada).
 
 ## Fase 3: montagens, desenhos 2D e BOM
 - Montagens com mates (coincidente, concêntrico, distância, ângulo) e solver de restrições 3D
@@ -98,7 +95,7 @@ Pendente:
   - hidrostática e curva GZ (ISO 12217 via `galkeel-calculadora`, sem reimplementar);
   - estrutura e laminados de PRFV, apêndices com perfis NACA;
   - planificação de chapas.
-- **fea:** Gmsh para a malha, CalculiX ou Code_Aster para o cálculo, resultados no visualizador. Casos náuticos, como as pressões da ISO 12215-5, vivem no plugin `nautica`.
+- **fem:** pré-processador compatível com solvers abertos — ver a secção própria abaixo. Casos náuticos, como as pressões da ISO 12215-5, vivem no plugin `nautica` (cálculo na `galkeel-calculadora`, sem reimplementar).
 - **rom-fea (esboço adaptativo):**
   - amostragem do espaço de parâmetros (variáveis e cotas) com o FEM completo;
   - modelo de ordem reduzida (POD/RBF ou PGD, com estimativa de erro);
@@ -120,6 +117,46 @@ Pendente:
   - exportação para corte e laser de posicionamento;
   - ligação ao FEA de cascas laminadas.
 - **cam / fabrico** (opcional): exportação para impressão 3D (3MF, já existe) e corte (DXF).
+
+## Pré-processador FEM compatível com solvers abertos (módulo `fem`)
+
+Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, condições, malha) e escrever os ficheiros de entrada dos solvers abertos, sem depender de nenhum em particular. A integração direta dos solvers (correr e ler resultados sem sair da aplicação) fica preparada pela mesma interface e entra por etapas.
+
+**Princípios**
+- **Associativo:** cada estudo é parte do documento. Cargas, apoios, contactos e controlos de malha ligam-se às faces/arestas pelo nome topológico (o mesmo mecanismo dos filetes), por isso sobrevivem às alterações do modelo; mudar uma cota regenera a malha e o ficheiro do solver.
+- **Neutro em relação ao solver:** um modelo de análise interno único (nós, elementos, grupos, materiais, secções, passos, cargas), traduzido por adaptadores para cada formato.
+- **Unidades explícitas:** sistema coerente mm–N–MPa–t (tonelada), escrito no cabeçalho de cada ficheiro exportado.
+- **Transparência:** cada exportação e cada relatório indicam as hipóteses (linear/não linear, pequenas deformações), o tipo e a ordem dos elementos, o tamanho de malha, as idealizações aplicadas e as limitações. Nunca é apresentado como certificação nem como decisão de uma autoridade ou de um organismo notificado.
+
+**Etapa F1: definição do estudo e exportação (sem solver na aplicação)**
+- Tipos de estudo: estático linear, modal (frequências próprias), encurvadura linear, térmico em regime permanente; mais tarde não linear geométrico, contacto e transitório.
+- Materiais: isotrópico (E, ν, ρ, α, k), biblioteca com origem dos valores; ortotrópico e laminados vindos do módulo `compósitos`.
+- Idealização: configuração de análise que suprime features pequenas (filetes, furos) sem alterar o projeto; superfície média de peças finas (usa as ferramentas de superfícies da Fase 2) com espessura por face; vigas a partir de curvas com perfil; simetria e linhas de divisão para regiões de carga.
+- Condições de fronteira: encastramento, apoios com graus de liberdade escolhidos, simetria, deslocamento imposto; força, pressão (uniforme ou por expressão, ex. pressão hidrostática), gravidade, carga remota, temperatura; ligações coladas (*tie*) entre corpos.
+- Malha: tetraedros lineares/quadráticos, cascas (tri/quad) e vigas; tamanho global, refinamento local em faces/arestas, controlo de curvatura; verificação de qualidade (razão de aspeto, Jacobiano) e grupos físicos com os nomes das condições.
+- Malhadores: **Netgen** (LGPL, compilável para WASM, integra com a geometria OpenCASCADE) como opção embebida; **Gmsh** como processo externo opcional (é GPL: só por ficheiros/processo separado, nunca ligado à aplicação).
+- Formatos de saída:
+  - **CalculiX** `.inp` (formato tipo Abaqus: malha, conjuntos, materiais, passos);
+  - **Code_Aster** malha `.med` (ou `.unv`) + ficheiro de comandos `.comm`;
+  - **Elmer** malha ElmerGrid + `.sif`;
+  - **Nastran BDF** (lido pelo **MYSTRAN**, solver aberto compatível, e por muitas ferramentas);
+  - neutros: Gmsh `.msh` v4 com grupos físicos, `.vtu` para visualização.
+- Testes de referência automáticos, comparados com soluções analíticas e benchmarks publicados: consola em flexão (Euler–Bernoulli), placa com furo (fator de concentração de tensões), cilindro sob pressão (Lamé), modos de uma consola, NAFEMS LE1/LE10 quando disponíveis.
+
+**Etapa F2: resultados no visualizador**
+- Leitura de `.frd` (CalculiX), `.vtu`/`.med` e resultados de MYSTRAN.
+- Mapas de cores (tensão de von Mises, principais, deslocamento, fator de segurança face ao limite elástico), deformada amplificada, modos animados, sondas, reações nos apoios, verificação do equilíbrio (soma das reações vs. cargas).
+- Estudo de convergência de malha assistido (refinamento sucessivo e variação da grandeza de interesse).
+
+**Etapa F3: integração dos solvers**
+- Interface de adaptador (`SolverAdapter`): capacidades (tipos de estudo e elementos), `exportDeck(estudo, malha) → ficheiros`, `parseResults(ficheiros) → resultados` e, opcionalmente, `run(ficheiros)`.
+- Execução por um agente local opcional na máquina do utilizador (corre os binários instalados, devolve o estado e os resultados); depois, fila de trabalhos remota. Solvers pequenos em WASM (por exemplo, CalculiX) como experiência para casos leves.
+- Os solvers são programas separados, contactados por ficheiros ou processo: as licenças GPL dos solvers não se estendem à aplicação proprietária. **VALIDAR** este enquadramento com aconselhamento jurídico antes de distribuir qualquer solver em conjunto.
+
+**Etapa F4: ligação aos outros módulos**
+- `rom-fea`: os estudos parametrizados (variáveis → geometria → malha → ficheiro) são a base da amostragem do modelo de ordem reduzida.
+- `compósitos`: cascas laminadas (sequência de plies, orientação por roseta) exportadas como secções compostas (`*SHELL SECTION, COMPOSITE` / `PCOMP`).
+- `nautica`: casos de carga a partir das pressões de projeto calculadas na `galkeel-calculadora`.
 
 ## API de plugins (evolução)
 - Hoje: features de plugin que geram um sólido e um painel de resultados.

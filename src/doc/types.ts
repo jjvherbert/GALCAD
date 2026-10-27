@@ -384,14 +384,86 @@ export interface TrimSurfaceFeature {
   tool: { kind: "plane"; plane: PlaneRef } | { kind: "sheet"; sheet: string } | { kind: "sketch"; sketch: string };
   /** Pontos (3D) nas partes a manter. */
   keep: Vec3[];
+  /** Aparar mútuo (ferramenta = superfície): as duas superfícies aparam-se e as partes mantidas são costuradas. */
+  mutual?: boolean;
 }
 
 /** Apagar faces de um sólido: o resultado passa a corpo de superfície (para reconstruir com superfícies). */
 export interface DeleteFaceFeature {
   type: "deleteFace";
   faces: TopoRef[];
+  /** "patch": apagar e remendar — o buraco é preenchido e o sólido mantém-se (como "Delete and Patch"). */
+  mode?: "delete" | "patch";
+  /** Continuidade do remendo com as faces vizinhas. */
+  continuity?: Continuity;
 }
 
+
+/** Alvo de uma interseção/projeção: plano, corpo de superfície, faces escolhidas ou o corpo sólido inteiro. */
+export type SurfaceTarget =
+  | { kind: "plane"; plane: PlaneRef }
+  | { kind: "sheet"; sheet: string }
+  | { kind: "faces"; faces: TopoRef[] }
+  | { kind: "body" };
+
+/** Definição de uma curva 3D. */
+export type CurveDef =
+  /** Spline que passa pelos pontos (interpolação C2). */
+  | { kind: "points"; points: [Expr, Expr, Expr][]; closed?: boolean }
+  /** Esboço projetado em faces segundo a normal do esboço. */
+  | { kind: "projected"; sketch: string; onto: SurfaceTarget }
+  /** Interseção de duas superfícies/planos/corpos. */
+  | { kind: "intersection"; a: SurfaceTarget; b: SurfaceTarget }
+  /** Curva composta: arestas encadeadas (do modelo ou de outras curvas). */
+  | { kind: "composite"; edges: TopoRef[] }
+  /** Hélice em torno de um eixo. */
+  | { kind: "helix"; axis: AxisRef; radius: Expr; pitch: Expr; height: Expr; lefthand?: boolean; startAngle?: Expr };
+
+export interface CurveFeature {
+  type: "curve";
+  def: CurveDef;
+}
+
+/** Curva de entrada de uma superfície: curva 3D, aresta do modelo ou esboço (uma cadeia). */
+export type CurveRef = { kind: "curve"; feature: string } | { kind: "edge"; ref: TopoRef } | { kind: "sketch"; sketch: string };
+
+/**
+ * Superfície limite (boundary): curvas em duas direções. Os limites (primeira e última curva de cada
+ * direção) podem ter tangência/curvatura às faces vizinhas; as curvas intermédias guiam a forma.
+ * Só com a direção 1, é um loft suave pelas curvas.
+ */
+export interface BoundaryFeature {
+  type: "boundary";
+  dir1: CurveRef[];
+  dir2: CurveRef[];
+  cont1?: Continuity;
+  cont2?: Continuity;
+}
+
+/** Superfície regrada a partir de arestas: normal ou tangente à face vizinha, ou numa direção. */
+export interface RuledSurfaceFeature {
+  type: "ruled";
+  edges: TopoRef[];
+  mode: "normal" | "tangent" | "direction";
+  /** Face de referência para normal/tangente (por defeito, a face vizinha de cada aresta; obrigatória em arestas entre duas faces). */
+  face?: TopoRef;
+  direction?: AxisRef;
+  distance: Expr;
+  flip?: boolean;
+}
+
+/** Desaparar: faces até aos limites naturais da superfície (ou à caixa UV, se a superfície for infinita). */
+export interface UntrimFeature {
+  type: "untrim";
+  faces: TopoRef[];
+}
+
+/** Substituir faces do sólido por um corpo de superfície (o sólido estende-se ou apara-se até ela). */
+export interface ReplaceFaceFeature {
+  type: "replaceFace";
+  faces: TopoRef[];
+  sheet: string;
+}
 
 export type FeatureData =
   | SketchFeature
@@ -422,7 +494,12 @@ export type FeatureData =
   | KnitFeature
   | ThickenFeature
   | TrimSurfaceFeature
-  | DeleteFaceFeature;
+  | DeleteFaceFeature
+  | CurveFeature
+  | BoundaryFeature
+  | RuledSurfaceFeature
+  | UntrimFeature
+  | ReplaceFaceFeature;
 
 export type FeatureType = FeatureData["type"];
 

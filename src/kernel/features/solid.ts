@@ -9,6 +9,7 @@ import { chainWire, loopWire, mapEdgesToEntities, regionFace } from "../sketch3d
 import { type NamedBody, finalize, nameResult } from "../naming.ts";
 import { T, type TopoDS_Face, type TopoDS_Shape, bbox, edgeProps, explore, faceProps, vertexAt, gpAx1, gpDir, gpPln, gpVec, isValid, listToArray, makeCompound, oc, v3, distance } from "../occ.ts";
 import { applyOp } from "../boolean.ts";
+import { pathWire } from "./curve.ts";
 
 type Step<F> = (ctx: Ctx, f: F, report: StepReport) => Ctx;
 
@@ -219,11 +220,7 @@ export const revolve: Step<RevolveFeature & Feature> = (ctx, f, report) => {
 
 export const sweep: Step<SweepFeature & Feature> = (ctx, f) => {
   const { s, regions } = closedRegions(ctx, f.profile);
-  const path = sketchOf(ctx, f.path);
-  const chain = path.profiles.chains[0];
-  if (!chain) throw new Error(`O esboço de caminho "${featureName(ctx, f.path)}" está vazio`);
-  if (path.profiles.chains.length > 1) throw new Error("O caminho tem de ser uma única cadeia de entidades");
-  const spine = chainWire(chain, path.frame);
+  const spine = { wrapped: pathWire(ctx, f.path) };
   const o = oc();
   const sweepLoop = (segs: Region["outer"]["segs"], key: string) => {
     const wire = loopWire(segs, s.frame);

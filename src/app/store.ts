@@ -4,13 +4,14 @@ import type { AxisRef, CadDocument, Feature, FeatureData, FeatureType, GeoHint, 
 import { History } from "../doc/history.ts";
 import { addFeature, defaultFeatureName, newDocument, nextFeatureId, parseDocument, serialize, updateFeature } from "../doc/io.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
-import type { CurvatureKind, CurvatureResponse, RebuildResponse } from "../kernel/protocol.ts";
+import type { CurvatureKind, CurvatureResponse, DeviationResponse, RebuildResponse } from "../kernel/protocol.ts";
 
 /** Análise de superfície ativa no 3D (separador Avaliar). */
 export type Analysis =
   | { kind: "zebra" }
   | { kind: "curvature"; mode: CurvatureKind; data?: CurvatureResponse }
-  | { kind: "draft"; dir: StdAxis; angle: number };
+  | { kind: "draft"; dir: StdAxis; angle: number }
+  | { kind: "deviation"; data?: DeviationResponse };
 import { KernelClient } from "./kernel-client.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
@@ -156,10 +157,10 @@ class Store {
 
   private async refreshAnalysis() {
     const a = this.state.analysis;
-    if (a?.kind !== "curvature" || !this.state.result?.mesh) return;
+    if ((a?.kind !== "curvature" && a?.kind !== "deviation") || !this.state.result?.mesh) return;
     try {
-      const data = await this.kernel.curvature(a.mode);
-      if (this.state.analysis === a) this.set({ analysis: { ...a, data } });
+      const data = a.kind === "curvature" ? await this.kernel.curvature(a.mode) : await this.kernel.deviation();
+      if (this.state.analysis === a) this.set({ analysis: { ...a, data } as Analysis });
     } catch (e) {
       this.set({ error: (e as Error).message });
     }
@@ -231,7 +232,11 @@ class Store {
     const refs = sel.filter((p): p is Extract<Pick, { kind: "face" | "edge" }> => p.kind === "face" || p.kind === "edge").map((p) => ({ kind: p.kind, name: p.name, hint: p.hint }));
     const faces = refs.filter((r) => r.kind === "face");
     if ((f.type === "fillet" || f.type === "chamfer") && refs.length) return { ...f, refs };
-    if ((f.type === "shell" || f.type === "draft" || f.type === "offsetSurface" || f.type === "deleteFace") && faces.length) return { ...f, faces };
+    if ((f.type === "shell" || f.type === "draft" || f.type === "offsetSurface" || f.type === "deleteFace" || f.type === "untrim" || f.type === "replaceFace") && faces.length) return { ...f, faces };
+    const edgeRefs = refs.filter((r) => r.kind === "edge");
+    if (f.type === "ruled" && edgeRefs.length) return { ...f, edges: edgeRefs };
+    if (f.type === "curve" && edgeRefs.length) return { ...f, def: { kind: "composite", edges: edgeRefs } };
+    if (f.type === "boundary" && edgeRefs.length) return { ...f, dir1: edgeRefs.map((ref) => ({ kind: "edge" as const, ref })) };
     if (f.type === "fill") { const es = refs.filter((r) => r.kind === "edge"); if (es.length) return { ...f, edges: es }; }
     const sheetIds = [...new Set(sel.flatMap((p) => (p.kind === "face" && p.body ? [p.body] : [])))];
     if (f.type === "knit" && sheetIds.length) return { ...f, sheets: sheetIds };

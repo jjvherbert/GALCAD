@@ -32,10 +32,10 @@ export const VIEWS = {
 } satisfies Record<string, { dir: Vec3; up: Vec3; label: string; key: string }>;
 export type ViewName = keyof typeof VIEWS;
 
-interface Theme { bg: number; body: number; sheet: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number; feat: number }
+interface Theme { bg: number; body: number; sheet: number; curve: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number; feat: number }
 const themes: Record<"light" | "dark", Theme> = {
-  light: { bg: 0xf3f4f6, body: 0xb9c7d6, sheet: 0xe5c07b, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af, feat: 0x7dd3fc },
-  dark: { bg: 0x14181f, body: 0x7f93a8, sheet: 0xb08d3a, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9 },
+  light: { bg: 0xf3f4f6, body: 0xb9c7d6, sheet: 0xe5c07b, curve: 0xdb2777, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af, feat: 0x7dd3fc },
+  dark: { bg: 0x14181f, body: 0x7f93a8, sheet: 0xb08d3a, curve: 0xf472b6, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9 },
 };
 
 /** Textura matcap às riscas: com a normal em coordenadas de vista dá as riscas de zebra (reflexo de luzes em tubo). */
@@ -429,9 +429,12 @@ export class Viewport {
     });
     col.needsUpdate = true;
     const ecol = this.edgeLines.geometry.getAttribute("color") as THREE.BufferAttribute;
+    const dev = a?.kind === "deviation" && a.data ? new Map(a.data.edges.map((x) => [x.name, x.deg])) : null;
     this.mesh.edges.forEach((e) => {
       const k = `edge:${e.name}`;
-      c.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : this.theme.edge);
+      const d = dev?.get(e.name);
+      const base = d === undefined ? (e.curve ? this.theme.curve : this.theme.edge) : d <= 0.5 ? 0x16a34a : d <= 10 ? 0xf59e0b : 0x6b7280;
+      c.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : base);
       for (let v = e.start; v < e.start + e.count; v++) ecol.setXYZ(v, c.r, c.g, c.b);
     });
     ecol.needsUpdate = true;

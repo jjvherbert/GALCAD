@@ -48,7 +48,12 @@ export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plan
     case "knit": return { type, sheets: [], makeSolid: false, op: "add" };
     case "thicken": return { type, sheet: lastSheet(doc), thickness: 2, side: "front", op: "add" };
     case "trimSurface": return { type, sheet: lastSheet(doc), tool: { kind: "plane", plane: { kind: "std", name: "XY" } }, keep: [] };
-    case "deleteFace": return { type, faces: [] };
+    case "deleteFace": return { type, faces: [], mode: "delete" };
+    case "curve": return { type, def: { kind: "points", points: [[0, 0, 0], [50, 20, 10], [100, 0, 0]] } };
+    case "boundary": return { type, dir1: [], dir2: [], cont1: "contact", cont2: "contact" };
+    case "ruled": return { type, edges: [], mode: "normal", distance: 10 };
+    case "untrim": return { type, faces: [] };
+    case "replaceFace": return { type, faces: [], sheet: lastSheet(doc) };
     case "plugin": {
       const p = PLUGINS.find((x) => x.id === opts.plugin) ?? PLUGINS[0];
       const kind = opts.kind ?? Object.keys(p.kinds)[0];

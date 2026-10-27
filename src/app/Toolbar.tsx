@@ -23,19 +23,20 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
     id: "surfaces", label: "Superfícies",
     groups: [
       { title: "Esboço", ids: ["sketch.new"] },
-      { title: "Criar", ids: ["feature.surfaceExtrude", "feature.surfaceRevolve", "feature.surfaceSweep", "feature.surfaceLoft", "feature.fill", "feature.offsetSurface"] },
-      { title: "Editar", ids: ["feature.trimSurface", "feature.knit", "feature.deleteFace"] },
-      { title: "Para sólido", ids: ["feature.thicken"] },
-      { title: "Análise", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft"] },
+      { title: "Curvas", ids: ["feature.curve"] },
+      { title: "Criar", ids: ["feature.surfaceExtrude", "feature.surfaceRevolve", "feature.surfaceSweep", "feature.surfaceLoft", "feature.boundary", "feature.fill", "feature.ruled", "feature.offsetSurface"] },
+      { title: "Editar", ids: ["feature.trimSurface", "feature.untrim", "feature.knit", "feature.deleteFace"] },
+      { title: "Para sólido", ids: ["feature.thicken", "feature.replaceFace"] },
+      { title: "Análise", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation"] },
     ],
   },
   { id: "sketch", label: "Esboço", groups: [{ title: "Esboço", ids: ["sketch.new"] }] },
   { id: "refs", label: "Referências", groups: [{ title: "Geometria de referência", ids: ["feature.plane", "feature.axis", "feature.csys"] }] },
-  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }, { title: "Análise de superfícies", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft"] }] },
+  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }, { title: "Análise de superfícies", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation"] }] },
   { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
 ];
 
-const short = (label: string) => label.replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
+const short = (label: string) => label.replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
   const st = useStore();

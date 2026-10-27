@@ -64,6 +64,20 @@ async function main() {
     await p.click(".analysis-panel button[aria-label='Desligar análise']"); await p.waitForTimeout(100);
     check("análise desligada", (await analysis()) === "");
 
+    // desvio nas arestas: o sólido espessado tem arestas vivas
+    await p.click(".commands button[title^='Análise de desvio']");
+    await p.waitForFunction(() => /Aresta viva/.test(document.querySelector(".analysis-panel")?.textContent ?? ""), null, { timeout: 30000 });
+    const dv = await p.textContent(".analysis-panel");
+    check("desvio nas arestas", /Aresta viva \(> 10°\): [1-9]/.test(dv), dv.replace(/\s+/g, " ").slice(0, 160));
+    await p.click(".analysis-panel button[aria-label='Desligar análise']");
+
+    // curva 3D: hélice pela interface
+    await p.click(".commands button[title^='Curva 3D']"); await settle();
+    await p.selectOption(".property-panel select >> nth=0", "helix"); await settle();
+    await p.click(".property-panel button.primary"); await settle();
+    const tree = await p.textContent(".feature-tree, aside");
+    check("hélice criada", /Curva1/.test(tree) && !(await p.$(".feat.error")), tree.slice(0, 200));
+
     check("sem erros na página", logs.length === 0, logs.join(" | "));
     await b.close();
   } finally {

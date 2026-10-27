@@ -47,19 +47,24 @@ function applyInstances(ctx: Ctx, fid: string, sources: string[], trsfs: Trsf[])
   }
   let cur = ctx;
   const made: NamedBody[] = [];
+  const sheetsMade: NamedBody[] = [];
   for (const src of sources) {
+    // corpo de superfície: as instâncias formam um corpo de superfície novo (chave = este padrão)
+    const sheet = ctx.sheets.get(src);
+    if (sheet) { sheetsMade.push(...instances(sheet)); continue; }
     const t = ctx.tools.get(src);
     if (!t) {
       const f = ctx.doc.features.find((x) => x.id === src);
-      throw new Error(f && !TOOL_FEATURES.has(f.type) ? `"${f.name}" não pode ser repetida (só extrusões, revoluções, varrimentos, lofts, furos e nervuras)` : `"${featureName(ctx, src)}" indisponível (suprimida ou com erro?)`);
+      throw new Error(f && !TOOL_FEATURES.has(f.type) ? `"${f.name}" não pode ser repetida (só extrusões, revoluções, varrimentos, lofts, furos, nervuras e corpos de superfície)` : `"${featureName(ctx, src)}" indisponível (suprimida ou com erro?)`);
     }
     const tool = compound(instances(t.body));
     made.push(tool);
     cur = { ...cur, body: applyOp(cur, tool, t.op, fid) };
   }
+  if (sheetsMade.length) cur.sheets.set(fid, compound(sheetsMade));
   // um padrão de uma só feature pode, por sua vez, ser repetido
-  const ops = new Set(sources.map((s) => ctx.tools.get(s)!.op));
-  if (ops.size === 1) ctx.tools.set(fid, { body: compound(made), op: [...ops][0] });
+  const ops = new Set(sources.filter((s) => ctx.tools.has(s)).map((s) => ctx.tools.get(s)!.op));
+  if (ops.size === 1 && made.length) ctx.tools.set(fid, { body: compound(made), op: [...ops][0] });
   return cur;
 }
 

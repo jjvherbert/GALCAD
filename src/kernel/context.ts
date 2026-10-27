@@ -6,7 +6,7 @@ import type { SketchRegion } from "./regions.ts";
 import type { SolveResult } from "../sketch/solver.ts";
 import { type Axis, type Frame, STD_AXES, STD_FRAMES, csysAxis, csysPlane, frameFromPlane, to3D } from "./frame.ts";
 import { type NamedBody, type NamedEdge, type NamedFace, namedEdges, resolveEdge, resolveFace } from "./naming.ts";
-import { type TopoDS_Face, bbox, edgeProps, explore, faceProps, isSmoothEdge, v3 } from "./occ.ts";
+import { type TopoDS_Face, type TopoDS_Shape, bbox, edgeProps, explore, faceProps, isSmoothEdge, v3 } from "./occ.ts";
 
 export interface SketchResult {
   frame: Frame;
@@ -34,6 +34,14 @@ export interface Ctx {
   tools: Map<string, Tool>;
   /** Corpos de superfície (folhas), pelo id da feature que os criou. */
   sheets: Map<string, NamedBody>;
+  /** Curvas 3D, pelo id da feature que as criou. */
+  curves: Map<string, NamedCurve>;
+}
+
+/** Curva 3D: forma (aresta, contorno ou composto) e as arestas com nomes `fN:cK`. */
+export interface NamedCurve {
+  shape: TopoDS_Shape;
+  edges: NamedEdge[];
 }
 
 /** Avisos e informação produzidos por uma feature. */
@@ -141,7 +149,7 @@ export function faces(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedFace[
 
 /** Resolve referências a arestas; uma referência a face expande para todas as suas arestas. */
 export function edges(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedEdge[] {
-  const body = pool(ctx);
+  const body = ctx.body || ctx.sheets.size ? pool(ctx) : { shape: null as never, faces: [] };
   const all = namedEdges(body);
   const out: NamedEdge[] = [];
   const push = (e: NamedEdge) => { if (!out.some((o) => o.edge.IsSame(e.edge))) out.push(e); };
@@ -163,6 +171,8 @@ export function edges(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedEdge[
       if (smooth) report.warnings.push(`${smooth} aresta(s) tangente(s) da face ignorada(s)`);
       continue;
     }
+    const ce = [...ctx.curves.values()].flatMap((c) => c.edges).find((e) => e.name === r.name);
+    if (ce) { push(ce); continue; }
     const res = resolveEdge(body, all, r);
     if (res.how === "missing") throw new Error(`Aresta "${r.name}" já não existe`);
     const w = howWarning(r, res.how);

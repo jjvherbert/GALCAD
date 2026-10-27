@@ -1,7 +1,7 @@
 // Campos reutilizáveis do painel de propriedades.
 import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { AxisRef, CadDocument, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, TopoRef, Vec3 } from "../doc/types.ts";
+import type { AxisRef, CadDocument, CurveRef, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, SurfaceTarget, TopoRef, Vec3 } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
 import { FEATURE_LABELS, SHEET_SOURCES } from "../doc/features.ts";
 import { type Pick, pickHandlers, store, useStore } from "./store.ts";
@@ -374,6 +374,88 @@ export function PointList({ field, label, value, onChange }: { field: string; la
         ))}
         {!value.length && <li class="muted">Nenhuma</li>}
       </ul>
+    </div>
+  );
+}
+
+/** Alvo de interseção/projeção: plano, corpo de superfície, faces ou o corpo sólido. */
+export function TargetEditor({ field, label, value, onChange, before }: { field: string; label: string; value: SurfaceTarget; onChange: (v: SurfaceTarget) => void; before: number }) {
+  return (
+    <fieldset class="checklist">
+      <legend class="field-label">{label}</legend>
+      <select aria-label={`${label}: tipo`} value={value.kind} onChange={(e) => {
+        const k = (e.target as HTMLSelectElement).value as SurfaceTarget["kind"];
+        onChange(k === "plane" ? { kind: k, plane: { kind: "std", name: "XY" } } : k === "sheet" ? { kind: k, sheet: "" } : k === "faces" ? { kind: k, faces: [] } : { kind: "body" });
+      }}>
+        <option value="plane">Plano</option><option value="sheet">Corpo de superfície</option><option value="faces">Faces</option><option value="body">Corpo sólido</option>
+      </select>
+      {value.kind === "plane" && <PlaneSelect field={`${field}.plane`} label="Plano" value={value.plane} before={before} onChange={(plane) => onChange({ kind: "plane", plane })} />}
+      {value.kind === "sheet" && <SheetList field={`${field}.sheet`} single label="Corpo" value={value.sheet ? [value.sheet] : []} before={before} onChange={([sheet]) => onChange({ kind: "sheet", sheet: sheet ?? "" })} />}
+      {value.kind === "faces" && <RefList field={`${field}.faces`} label="Faces" accept={["face"]} refs={value.faces} onChange={(faces) => onChange({ kind: "faces", faces })} />}
+    </fieldset>
+  );
+}
+
+const curveLabel = (doc: CadDocument, c: CurveRef) =>
+  c.kind === "edge" ? describeName(doc, c.ref.name) : doc.features.find((f) => f.id === (c.kind === "curve" ? c.feature : c.sketch))?.name ?? "?";
+
+/** Lista ordenada de curvas (curvas 3D, esboços ou arestas escolhidas no 3D). */
+export function CurveList({ field, label, value, onChange, before }: { field: string; label: string; value: CurveRef[]; onChange: (v: CurveRef[]) => void; before: number }) {
+  const st = useStore();
+  const active = st.pickTarget?.field === field;
+  usePickTarget(field, (p) => { if (p.kind === "edge") onChange([...value, { kind: "edge", ref: { kind: "edge", name: p.name, hint: p.hint } }]); });
+  const cands = st.doc.features.slice(0, before).filter((f) => (f.type === "curve" || f.type === "sketch") && !f.suppressed);
+  return (
+    <div class={`reflist ${active ? "active" : ""}`}>
+      <div class="reflist-head">
+        <span class="field-label">{label}</span>
+        <button class="small" onClick={() => store.set({ pickTarget: active ? null : { field, accept: ["edge"] } })}>{active ? "Concluir" : "Arestas no modelo"}</button>
+      </div>
+      <select aria-label={`${label}: acrescentar`} value="" onChange={(e) => {
+        const id = (e.target as HTMLSelectElement).value;
+        const f = cands.find((x) => x.id === id);
+        if (f) onChange([...value, f.type === "curve" ? { kind: "curve", feature: id } : { kind: "sketch", sketch: id }]);
+      }}>
+        <option value="">+ acrescentar curva ou esboço…</option>
+        {cands.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+      </select>
+      <ul>
+        {value.map((c, i) => (
+          <li key={i}><span><b>{i + 1}.</b> {curveLabel(st.doc, c)}</span><button class="icon" aria-label="Retirar" onClick={() => onChange(value.filter((_, k) => k !== i))}>✕</button></li>
+        ))}
+        {!value.length && <li class="muted">Nenhuma</li>}
+      </ul>
+    </div>
+  );
+}
+
+/** Caminho de varrimento: esboço ou curva 3D. */
+export function PathSelect({ label, value, onChange, before }: { label: string; value: string; onChange: (v: string) => void; before: number }) {
+  const st = useStore();
+  const cands = st.doc.features.slice(0, before).filter((f) => f.type === "sketch" || f.type === "curve");
+  return (
+    <Field label={label}>
+      <select value={value} onChange={(e) => onChange((e.target as HTMLSelectElement).value)}>
+        <option value="">— escolher —</option>
+        {cands.map((s) => <option key={s.id} value={s.id}>{s.name} ({FEATURE_LABELS[s.type]})</option>)}
+      </select>
+    </Field>
+  );
+}
+
+/** Tabela de pontos 3D (expressões), com acrescentar/retirar. */
+export function PointsEditor({ value, onChange }: { value: [Expr, Expr, Expr][]; onChange: (v: [Expr, Expr, Expr][]) => void }) {
+  return (
+    <div class="points-editor">
+      {value.map((p, i) => (
+        <div class="row3" key={i}>
+          {[0, 1, 2].map((k) => (
+            <ExprInput key={k} label={`P${i + 1} ${"XYZ"[k]}`} value={p[k]} onChange={(v) => { const n = value.map((q) => [...q] as [Expr, Expr, Expr]); n[i][k] = v ?? 0; onChange(n); }} />
+          ))}
+          <button class="icon" aria-label={`Retirar ponto ${i + 1}`} disabled={value.length <= 2} onClick={() => onChange(value.filter((_, j) => j !== i))}>✕</button>
+        </div>
+      ))}
+      <button class="small" onClick={() => { const l = value.at(-1) ?? [0, 0, 0]; onChange([...value, [Number(l[0]) + 20 || 0, l[1], l[2]]]); }}>+ ponto</button>
     </div>
   );
 }

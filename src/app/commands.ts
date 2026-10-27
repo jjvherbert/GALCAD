@@ -101,6 +101,7 @@ export const COMMANDS: Command[] = [
   { id: "analysis.zebra", label: "Riscas de zebra", group: "Avaliar", icon: "▥", run: () => store.setAnalysis(store.state.analysis?.kind === "zebra" ? null : { kind: "zebra" }) },
   { id: "analysis.curvature", label: "Curvatura", group: "Avaliar", icon: "◍", run: () => void store.setAnalysis(store.state.analysis?.kind === "curvature" ? null : { kind: "curvature", mode: "gauss" }) },
   { id: "analysis.draft", label: "Análise de inclinação", group: "Avaliar", icon: "⏣", run: () => store.setAnalysis(store.state.analysis?.kind === "draft" ? null : { kind: "draft", dir: "Z", angle: 1 }) },
+  { id: "analysis.deviation", label: "Análise de desvio (tangência nas arestas)", group: "Avaliar", icon: "∡", run: () => void store.setAnalysis(store.state.analysis?.kind === "deviation" ? null : { kind: "deviation" }) },
   { id: "analysis.off", label: "Desligar análise", group: "Avaliar", run: () => store.setAnalysis(null) },
   { id: "feature.cut", label: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy()) { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
   ...PLUGINS.flatMap((p) => Object.entries(p.kinds).map(([k, kind]): Command => ({

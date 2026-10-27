@@ -1,6 +1,6 @@
 // Cliente do worker do núcleo: pedidos com id e reconstruções coalescidas (só a mais recente conta).
 import type { CadDocument } from "../doc/types.ts";
-import type { CurvatureKind, CurvatureResponse, ExportFormat, ExportResponse, RebuildResponse, Request, Response } from "../kernel/protocol.ts";
+import type { CurvatureKind, CurvatureResponse, DeviationResponse, ExportFormat, ExportResponse, RebuildResponse, Request, Response } from "../kernel/protocol.ts";
 
 export class KernelClient {
   private worker = new Worker(new URL("../kernel/worker.ts", import.meta.url), { type: "module" });
@@ -58,6 +58,10 @@ export class KernelClient {
 
   export(format: ExportFormat, name: string): Promise<ExportResponse> {
     return this.call<ExportResponse>({ type: "export", format, name });
+  }
+
+  deviation(): Promise<DeviationResponse> {
+    return this.call<DeviationResponse>({ type: "deviation" });
   }
 
   curvature(kind: CurvatureKind): Promise<CurvatureResponse> {

@@ -1,10 +1,10 @@
 // Análises de superfície no núcleo: curvatura exata em cada vértice da malha de visualização.
 // Para cada vértice: projeção na superfície da face → (u, v) → derivadas até à 2.ª ordem →
 // formas fundamentais → curvatura gaussiana K = (LN − M²)/(EG − F²) e média H = (EN − 2FM + GL)/(2(EG − F²)).
-import type { CurvatureKind, CurvatureResponse } from "./protocol.ts";
+import type { CurvatureKind, CurvatureResponse, DeviationResponse } from "./protocol.ts";
 import type { MeshData } from "./mesh.ts";
-import type { NamedBody } from "./naming.ts";
-import { T, faceProps, oc } from "./occ.ts";
+import { type NamedBody, namedEdges } from "./naming.ts";
+import { T, type TopoDS_Shape, faceProps, normalOnFace, oc, sampleEdge } from "./occ.ts";
 
 type V = { X(): number; Y(): number; Z(): number };
 const dot = (a: V, b: V) => a.X() * b.X() + a.Y() * b.Y() + a.Z() * b.Z();
@@ -45,4 +45,29 @@ export function curvature(scene: NamedBody, mesh: MeshData, kind: CurvatureKind)
   let min = Infinity, max = -Infinity;
   for (const v of values) { if (v < min) min = v; if (v > max) max = v; }
   return { kind, values, min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 0 };
+}
+
+/** Ângulo máximo (graus) entre as normais de duas faces ao longo de uma aresta (9 amostras interiores). */
+export function maxNormalDeviation(edge: TopoDS_Shape, a: TopoDS_Shape, b: TopoDS_Shape): number {
+  let max = 0;
+  const pts = sampleEdge(edge, 11).slice(1, -1);
+  for (const { p } of pts) {
+    try {
+      const n1 = normalOnFace(a, p), n2 = normalOnFace(b, p);
+      const c = Math.min(1, Math.abs(n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]));
+      max = Math.max(max, (Math.acos(c) * 180) / Math.PI);
+    } catch { /* ponto fora da superfície: ignorar */ }
+  }
+  return max;
+}
+
+/** Desvio de tangência de cada aresta entre duas faces da cena (análise de desvio). */
+export function deviation(scene: NamedBody): DeviationResponse {
+  const edges = namedEdges(scene)
+    .filter((e) => e.faces.length === 2 && e.faces[0] !== e.faces[1])
+    .map((e) => {
+      const fa = scene.faces.find((f) => f.name === e.faces[0])!.face, fb = scene.faces.find((f) => f.name === e.faces[1])!.face;
+      return { name: e.name, deg: Math.round(maxNormalDeviation(e.edge, fa, fb) * 1000) / 1000 };
+    });
+  return { edges };
 }

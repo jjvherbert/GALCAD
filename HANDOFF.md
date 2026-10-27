@@ -1,5 +1,25 @@
 # Handoff — Fases 1 e 2
 
+## Atualização: fecho da Fase 2 e plano do pré-processador FEM
+
+**Alterações**
+- Curvas 3D (`src/kernel/features/curve.ts`, feature `curve` com `def`): pontos (`GeomAPI_Interpolate`), projetada (extrusão do esboço ∩ alvo, `BRepAlgoAPI_Section`), interseção, composta, hélice (`makeHelix`). `ctx.curves`, arestas `fN:cK` resolvidas em `edges()` e mostradas na malha (`EdgeGroup.curve`). `pathWire` aceita esboço ou curva nos dois varrimentos.
+- `surface.ts`: `boundary` (MakeFilling com limites e curvas guia, ou ThruSections só com a direção 1), `ruled`, `untrim` (limites naturais / caixa UV), `replaceFace` (prolongamento por prisma + divisão pela superfície), `deleteFace` com `mode: "patch"`, aparar mútuo (`mutual`), `plate()` com medição automática do desvio G1 (`maxNormalDeviation` em `analysis.ts`) e verificação geométrica de contornos fechados.
+- Padrões/espelho aceitam corpos de superfície (novo corpo com a chave do padrão).
+- `features.ts`: `effectiveDependencies` — quem consome um corpo depende dos aparares anteriores desse corpo; `dependents`, `orderProblems` e `moveFeature` usam-na.
+- Análise de desvio (pedido `deviation` ao worker, cores nas arestas e painel).
+- UI: separador Superfícies reorganizado (Curvas, Criar, Editar, Para sólido, Análise), painéis novos, `TargetEditor`, `CurveList`, `PathSelect`, `PointsEditor`, entradas no menu de contexto.
+- ROADMAP: Fase 2 fechada; secção nova **Pré-processador FEM compatível com solvers abertos** (etapas F1–F4: estudo associativo e exportação CalculiX/Code_Aster/Elmer/Nastran-MYSTRAN, malhadores Netgen embebido e Gmsh externo, resultados, adaptadores de solver, ligação a rom-fea/compósitos/náutica).
+
+**Testes:** 59 em Node (10 novos em `tests/surface2.test.ts`, com valores analíticos: comprimentos de hélice/círculos, volume de varrimento numa curva, áreas de superfícies limite e regradas, desaparar, substituir face a estender e a aparar, remendo, aparar mútuo, padrão, desvio, dependências) e 3 suites e2e (superfícies inclui agora desvio e hélice criada pela UI). Todos a passar.
+
+**Bloqueios:** nenhum técnico. Licenças dos malhadores/solvers do FEM por VALIDAR antes de distribuir (Gmsh e solvers GPL só por processo/ficheiros).
+
+**Próxima ação:** Fase 3 (desenhos 2D + BOM) ou etapa F1 do FEM, conforme a prioridade de Juan. Sem push: o repositório remoto ainda não existe.
+
+---
+
+
 ## Atualização: Fase 2, superfícies (núcleo, interface e análises)
 
 **Alterações**

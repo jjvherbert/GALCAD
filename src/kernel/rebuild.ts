@@ -12,7 +12,8 @@ import { chamfer, draft, fillet, shell } from "./features/dress.ts";
 import { hole } from "./features/hole.ts";
 import { circularPattern, linearPattern, mirrorFeature } from "./features/pattern.ts";
 import { axis, csys, importFeature, plane, sketch } from "./features/datum.ts";
-import { deleteFace, fill, knit, offsetSurface, surfaceExtrude, surfaceLoft, surfaceRevolve, surfaceSweep, thicken, trimSurface } from "./features/surface.ts";
+import { boundary, deleteFace, fill, knit, offsetSurface, replaceFace, ruled, surfaceExtrude, surfaceLoft, surfaceRevolve, surfaceSweep, thicken, trimSurface, untrim } from "./features/surface.ts";
+import { curve } from "./features/curve.ts";
 import { evalParam } from "../doc/variables.ts";
 
 export interface FeatureStatus {
@@ -61,6 +62,11 @@ async function runStep(ctx: Ctx, f: Feature, report: StepReport): Promise<Ctx> {
     case "thicken": return thicken(ctx, f, report);
     case "trimSurface": return trimSurface(ctx, f, report);
     case "deleteFace": return deleteFace(ctx, f, report);
+    case "curve": return curve(ctx, f, report);
+    case "boundary": return boundary(ctx, f, report);
+    case "ruled": return ruled(ctx, f, report);
+    case "untrim": return untrim(ctx, f, report);
+    case "replaceFace": return replaceFace(ctx, f, report);
     case "plugin": {
       const b = PLUGIN_BUILDERS[f.plugin]?.[f.kind];
       if (!b) throw new Error(`Plugin desconhecido: ${f.plugin}/${f.kind}`);
@@ -92,6 +98,7 @@ const copyCtx = (c: Ctx, doc: CadDocument): Ctx => ({
   csys: new Map(c.csys),
   tools: new Map(c.tools),
   sheets: new Map(c.sheets),
+  curves: new Map(c.curves),
 });
 
 export class Engine {
@@ -104,7 +111,7 @@ export class Engine {
     this.scratch.free();
     const vars = resolveVariables(doc.variables);
     let key = JSON.stringify([...vars.values]);
-    let ctx: Ctx = { doc, scope: vars.scope, body: null, sketches: new Map(), planes: new Map(), axes: new Map(), csys: new Map(), tools: new Map(), sheets: new Map() };
+    let ctx: Ctx = { doc, scope: vars.scope, body: null, sketches: new Map(), planes: new Map(), axes: new Map(), csys: new Map(), tools: new Map(), sheets: new Map(), curves: new Map() };
     const status: Record<string, FeatureStatus> = {};
     const limit = doc.rollback ?? doc.features.length;
     let reused = 0;

@@ -3,7 +3,7 @@
 // Cada corpo de superfície fica em ctx.sheets com a chave do id da feature que o criou; aparar mantém
 // a chave, costurar/espessar consomem os corpos de entrada.
 import type {
-  DeleteFaceFeature, Feature, FillFeature, KnitFeature, OffsetSurfaceFeature, SurfaceExtrudeFeature, SurfaceLoftFeature,
+  BoundaryFeature, Continuity, DeleteFaceFeature, Feature, FillFeature, ReplaceFaceFeature, RuledSurfaceFeature, UntrimFeature, KnitFeature, OffsetSurfaceFeature, SurfaceExtrudeFeature, SurfaceLoftFeature,
   SurfaceRevolveFeature, SurfaceSweepFeature, ThickenFeature, TrimSurfaceFeature, Vec3,
 } from "../../doc/types.ts";
 import { evalParam } from "../../doc/variables.ts";
@@ -14,13 +14,15 @@ import {
 } from "../context.ts";
 import { type Frame, rotateFrame } from "../frame.ts";
 import { chainWire, mapEdgesToEntities } from "../sketch3d.ts";
-import { type NamedBody, type NamedFace, ShapeIndex, nameFresh, nameResult } from "../naming.ts";
+import { type NamedBody, type NamedEdge, type NamedFace, ShapeIndex, nameFresh, nameResult } from "../naming.ts";
+import { maxNormalDeviation } from "../analysis.ts";
 import {
-  T, type TopoDS_Face, type TopoDS_Shape, distance, edgeProps, explore, gpAx1, gpPln, gpVec, listToArray, makeCompound,
-  makeList, makeShell, oc, v3, vertexAt, volume,
+  T, type TopoDS_Face, type TopoDS_Shape, distance, edgeProps, explore, faceProps, gpAx1, gpPln, gpVec, interpolateEdge, listToArray,
+  makeCompound, makeList, makeShell, makeWire, normalOnFace, oc, sampleEdge, v3, vertexAt, volume,
 } from "../occ.ts";
 import { applyOp } from "../boolean.ts";
 import { generatedNames, nameFrom, sketchOf } from "./solid.ts";
+import { curveRefEdges, pathWire } from "./curve.ts";
 
 type Step<F> = (ctx: Ctx, f: F, report: StepReport) => Ctx;
 
@@ -87,12 +89,10 @@ export const surfaceRevolve: Step<SurfaceRevolveFeature & Feature> = (ctx, f, re
 
 export const surfaceSweep: Step<SurfaceSweepFeature & Feature> = (ctx, f, report) => {
   const { s, chains } = chainsOf(ctx, f.profile, report);
-  const path = sketchOf(ctx, f.path);
-  if (path.profiles.chains.length !== 1) throw new Error("O caminho tem de ser uma única cadeia de entidades");
-  const spine = chainWire(path.profiles.chains[0], path.frame);
+  const spine = pathWire(ctx, f.path);
   const parts = chains.map((c) => {
     const { wire, edgeMap } = chainWithMap(c, s.frame);
-    const mk = T(new (oc().BRepOffsetAPI_MakePipeShell)(spine.wrapped));
+    const mk = T(new (oc().BRepOffsetAPI_MakePipeShell)(oc().TopoDS.Wire(spine)));
     mk.SetMode(f.orientation !== "fixed");
     mk.Add(wire, false, false);
     mk.Build();
@@ -124,45 +124,230 @@ export const surfaceLoft: Step<SurfaceLoftFeature & Feature> = (ctx, f, report) 
   return ctx;
 };
 
-/** As arestas formam um contorno fechado (cada vértice usado exatamente duas vezes)? */
-function isClosedLoop(es: TopoDS_Shape[]): boolean {
-  const count = new ShapeIndex<number>();
-  const list: TopoDS_Shape[] = [];
+/**
+ * As arestas formam um contorno fechado? Cada extremidade tem de coincidir (geometricamente, com
+ * tolerância) com exatamente outra: as arestas podem vir de corpos e curvas diferentes.
+ */
+function isClosedLoop(es: TopoDS_Shape[], tol = 1e-4): boolean {
+  const ends: Vec3[] = [];
   for (const e of es) {
-    for (const v of explore(e, "vertex")) {
-      if (!count.has(v)) list.push(v);
-      count.set(v, (count.get(v) ?? 0) + 1);
+    const vs = explore(e, "vertex");
+    if (vs.length === 1) continue; // aresta fechada (círculo)
+    const p = edgeProps(e);
+    ends.push(p.start, p.end);
+  }
+  if (!ends.length) return es.length === 1;
+  return ends.every((p, i) => ends.filter((q, j) => j !== i && v3.dist(p, q) < tol).length === 1);
+}
+
+/** Restrição de um preenchimento: aresta, se é limite, e a continuidade pedida com a face vizinha. */
+interface FillConstraint { edge: NamedEdge; bound: boolean; continuity: Continuity }
+
+/**
+ * Preenchimento (placa) com as arestas dadas. Devolve a face e o desvio de tangência máximo (graus)
+ * medido ao longo das arestas com continuidade tangente/curvatura (verificação automática de G1).
+ */
+function plate(ctx: Ctx, cons: FillConstraint[], report: StepReport): { shape: TopoDS_Shape; deviation: number | null } {
+  const o = oc();
+  const S = o.GeomAbs_Shape;
+  const ORDER = { contact: S.GeomAbs_C0, tangent: S.GeomAbs_G1, curvature: S.GeomAbs_G2 };
+  const all = ctx.body || ctx.sheets.size ? pool(ctx) : { faces: [] as NamedFace[] };
+  const mk = T(new o.BRepOffsetAPI_MakeFilling());
+  const checks: { edge: TopoDS_Shape; support: TopoDS_Face }[] = [];
+  for (const c of cons) {
+    const support = c.continuity === "contact" ? undefined : all.faces.find((x) => c.edge.faces.includes(x.name));
+    if (support) { mk.Add(c.edge.edge, support.face, ORDER[c.continuity], c.bound); checks.push({ edge: c.edge.edge, support: support.face }); }
+    else {
+      if (c.continuity !== "contact") report.warnings.push(`Aresta "${c.edge.name}" sem face vizinha: só contacto`);
+      mk.Add(c.edge.edge, S.GeomAbs_C0, c.bound);
     }
   }
-  return list.every((v) => count.get(v) === 2) || (es.length === 1 && list.length === 1);
+  try {
+    mk.Build();
+  } catch {
+    throw new Error("O preenchimento falhou (contorno demasiado complexo?)");
+  }
+  if (!mk.IsDone()) throw new Error("O preenchimento falhou");
+  const shape = T(mk.Shape());
+  const face = explore(shape, "face")[0];
+  let deviation: number | null = null;
+  if (face && checks.length) {
+    deviation = 0;
+    for (const ch of checks) deviation = Math.max(deviation, maxNormalDeviation(ch.edge, face, ch.support));
+  }
+  return { shape, deviation };
+}
+
+/** Informação e aviso da verificação de tangência de um preenchimento. */
+function reportDeviation(report: StepReport, title: string, dev: number | null) {
+  if (dev === null) return;
+  report.info = { title, rows: [["Desvio de tangência máx.", `${dev.toFixed(2)}°`]], note: "Ângulo máximo entre as normais do remendo e das faces vizinhas ao longo das arestas com tangência/curvatura pedida (amostragem em 9 pontos por aresta)." };
+  if (dev > 1) report.warnings.push(`A tangência não é cumprida: desvio de ${dev.toFixed(1)}° (face vizinha quase perpendicular?)`);
 }
 
 export const fill: Step<FillFeature & Feature> = (ctx, f, report) => {
   const es = resolveEdges(ctx, f.edges, report);
   if (!es.length) throw new Error("Escolha as arestas do contorno a preencher");
   if (!isClosedLoop(es.map((e) => e.edge))) throw new Error("As arestas não formam um contorno fechado");
-  const o = oc();
-  const S = o.GeomAbs_Shape;
-  const order = { contact: S.GeomAbs_C0, tangent: S.GeomAbs_G1, curvature: S.GeomAbs_G2 }[f.continuity];
-  const all = pool(ctx);
-  const mk = T(new o.BRepOffsetAPI_MakeFilling());
-  for (const e of es) {
-    const support = f.continuity === "contact" ? undefined : all.faces.find((x) => e.faces.includes(x.name));
-    if (support) mk.Add(e.edge, support.face, order, true);
-    else {
-      if (f.continuity !== "contact") report.warnings.push(`Aresta "${e.name}" sem face vizinha: só contacto`);
-      mk.Add(e.edge, S.GeomAbs_C0, true);
-    }
-  }
-  try {
-    mk.Build();
-  } catch {
-    throw new Error("O preenchimento falhou (contorno não plano demasiado complexo?)");
-  }
-  if (!mk.IsDone()) throw new Error("O preenchimento falhou");
-  const shape = T(mk.Shape());
+  const { shape, deviation } = plate(ctx, es.map((edge) => ({ edge, bound: true, continuity: f.continuity })), report);
+  reportDeviation(report, "Preenchimento", deviation);
   ctx.sheets.set(f.id, nameFresh(shape, f.id, () => `${f.id}:fill`));
   return ctx;
+};
+
+export const boundary: Step<BoundaryFeature & Feature> = (ctx, f, report) => {
+  const d1 = f.dir1.map((c) => curveRefEdges(ctx, c, report));
+  const d2 = f.dir2.map((c) => curveRefEdges(ctx, c, report));
+  if (d1.length < 2) throw new Error("A direção 1 precisa de pelo menos 2 curvas");
+  if (d2.length === 1) throw new Error("A direção 2 precisa de 0 ou de pelo menos 2 curvas");
+  if (!d2.length) {
+    // só uma direção: superfície suave pelas curvas (loft de superfície)
+    const mk = T(new (oc().BRepOffsetAPI_ThruSections)(false, false, 1e-6));
+    for (const es of d1) {
+      const w = es.length === 1 ? T(T(new (oc().BRepBuilderAPI_MakeWire)(oc().TopoDS.Edge(es[0].edge))).Wire()) : makeWire(es.map((e) => e.edge));
+      if (!w) throw new Error("Uma das curvas não é contínua");
+      mk.AddWire(oc().TopoDS.Wire(w));
+    }
+    mk.CheckCompatibility(false);
+    mk.Build();
+    if (!mk.IsDone()) throw new Error("A superfície limite falhou (curvas incompatíveis?)");
+    if ((f.cont1 ?? "contact") !== "contact") report.warnings.push("Só com a direção 1 a tangência nos limites não é aplicada; acrescente curvas na direção 2");
+    ctx.sheets.set(f.id, nameFresh(T(mk.Shape()), f.id, () => `${f.id}:bnd`));
+    return ctx;
+  }
+  const c1 = f.cont1 ?? "contact", c2 = f.cont2 ?? "contact";
+  const bounds = [...d1[0], ...d1.at(-1)!, ...d2[0], ...d2.at(-1)!];
+  if (!isClosedLoop(bounds.map((e) => e.edge))) throw new Error("As curvas-limite (primeira e última de cada direção) não formam um contorno fechado: as extremidades têm de coincidir");
+  const cons: FillConstraint[] = [
+    ...[d1[0], d1.at(-1)!].flat().map((edge) => ({ edge, bound: true, continuity: c1 })),
+    ...[d2[0], d2.at(-1)!].flat().map((edge) => ({ edge, bound: true, continuity: c2 })),
+    ...[...d1.slice(1, -1), ...d2.slice(1, -1)].flat().map((edge) => ({ edge, bound: false, continuity: "contact" as Continuity })),
+  ];
+  const { shape, deviation } = plate(ctx, cons, report);
+  reportDeviation(report, "Superfície limite", deviation);
+  ctx.sheets.set(f.id, nameFresh(shape, f.id, () => `${f.id}:bnd`));
+  return ctx;
+};
+
+export const ruled: Step<RuledSurfaceFeature & Feature> = (ctx, f, report) => {
+  const es = resolveEdges(ctx, f.edges, report);
+  if (!es.length) throw new Error("Escolha as arestas");
+  const dist = evalParam(f.distance, ctx.scope, "Distância") * (f.flip ? -1 : 1);
+  if (Math.abs(dist) < 1e-9) throw new Error("Distância: não pode ser nula");
+  const all = pool(ctx);
+  const o = oc();
+  const parts = es.map((e) => {
+    let shape: TopoDS_Shape;
+    if (f.mode === "direction") {
+      if (!f.direction) throw new Error("Escolha a direção");
+      const d = axisOf(ctx, f.direction, report).d;
+      shape = T(T(new o.BRepPrimAPI_MakePrism(e.edge, gpVec(v3.mul(d, dist)), false, true)).Shape());
+    } else {
+      const ref = f.face ? resolveFaces(ctx, [f.face], report)[0] : undefined;
+      if (!ref && e.faces.length > 1) throw new Error(`A aresta "${e.name}" está entre duas faces: escolha a face de referência`);
+      const support = ref ?? all.faces.find((x) => e.faces.includes(x.name));
+      if (!support) throw new Error(`A aresta "${e.name}" não tem face vizinha (use o modo direção)`);
+      const fc = faceProps(support.face).center;
+      const pts = sampleEdge(e.edge, 24).map(({ p, t }) => {
+        const n = normalOnFace(support.face, p);
+        let d = n;
+        if (f.mode === "tangent") {
+          d = v3.norm([t[1] * n[2] - t[2] * n[1], t[2] * n[0] - t[0] * n[2], t[0] * n[1] - t[1] * n[0]]);
+          // tangente à face, para fora dela
+          if (v3.dot(d, v3.sub(fc, p)) > 0) d = v3.mul(d, -1);
+        }
+        return v3.add(p, v3.mul(d, dist));
+      });
+      const closed = v3.dist(pts[0], pts.at(-1)!) < 1e-7;
+      const other = interpolateEdge(closed ? pts.slice(0, -1) : pts, closed);
+      const mk = T(new o.BRepOffsetAPI_ThruSections(false, true, 1e-6));
+      mk.AddWire(T(T(new o.BRepBuilderAPI_MakeWire(o.TopoDS.Edge(e.edge))).Wire()));
+      mk.AddWire(T(T(new o.BRepBuilderAPI_MakeWire(o.TopoDS.Edge(other))).Wire()));
+      mk.Build();
+      if (!mk.IsDone()) throw new Error(`A superfície regrada falhou na aresta "${e.name}"`);
+      shape = T(mk.Shape());
+    }
+    return { shape, name: `${f.id}:rul{${e.name}}` };
+  });
+  // costura das faces regradas de arestas consecutivas
+  const sewn = parts.length > 1 ? sew(parts.map((p) => p.shape), 1e-4) : null;
+  const known = parts.flatMap((p) => explore(p.shape, "face").map((face) => ({ face: sewn ? sewn.map(face) : face, name: p.name })));
+  ctx.sheets.set(f.id, nameFrom(sewn?.shape ?? parts[0].shape, f.id, known));
+  return ctx;
+};
+
+/** Retira faces de um corpo de superfície (e apaga-o se ficar vazio). */
+function removeFromSheet(sheets: Map<string, NamedBody>, id: string, gone: ShapeIndex<true>) {
+  const sh = sheets.get(id)!;
+  const rest = sh.faces.filter((nf) => !gone.has(nf.face));
+  if (rest.length) sheets.set(id, { shape: makeShell(rest.map((r) => r.face)), faces: rest });
+  else sheets.delete(id);
+}
+
+export const untrim: Step<UntrimFeature & Feature> = (ctx, f, report) => {
+  const fs = resolveFaces(ctx, f.faces, report);
+  if (!fs.length) throw new Error("Escolha as faces a desaparar");
+  const o = oc();
+  const out = fs.map((nf) => {
+    const face = T(o.TopoDS.Face(nf.face));
+    const surf = T(o.BRep_Tool.Surface(face));
+    const nat = surf.Bounds(0, 0, 0, 0);
+    const box = o.BRepTools.UVBounds(face, 0, 0, 0, 0);
+    // superfícies infinitas (plano, cilindro em V, …): fica a caixa UV da face, sem furos nem recortes
+    const inf = (x: number) => !Number.isFinite(x) || Math.abs(x) > 1e50;
+    const u1 = inf(nat.U1) ? box.UMin : nat.U1, u2 = inf(nat.U2) ? box.UMax : nat.U2;
+    const w1 = inf(nat.V1) ? box.VMin : nat.V1, w2 = inf(nat.V2) ? box.VMax : nat.V2;
+    const mk = T(new o.BRepBuilderAPI_MakeFace(surf, u1, u2, w1, w2, 1e-6));
+    if (!mk.IsDone()) throw new Error(`Não foi possível desaparar a face "${nf.name}"`);
+    return { face: T(mk.Face()) as TopoDS_Shape, name: `${f.id}:unt{${nf.name}}` };
+  });
+  // as faces escolhidas de corpos de superfície são substituídas; as do sólido são copiadas
+  const gone = new ShapeIndex<true>();
+  for (const nf of fs) gone.set(nf.face, true);
+  for (const ow of new Set(fs.map((nf) => faceOwner(ctx, nf.face)))) if (ow && ow !== "body") removeFromSheet(ctx.sheets, ow, gone);
+  const shape = one(out.map((x) => x.face));
+  ctx.sheets.set(f.id, nameFrom(shape, f.id, out));
+  return ctx;
+};
+
+/**
+ * Substituir faces: o sólido é prolongado para fora de cada face (prisma segundo a normal) e cortado
+ * pela superfície; ficam as partes que não chegam ao fim do prolongamento. Serve tanto para estender
+ * como para aparar o sólido até à superfície (faces laterais aproximadamente paralelas à normal).
+ */
+export const replaceFace: Step<ReplaceFaceFeature & Feature> = (ctx, f, report) => {
+  if (!ctx.body) throw new Error("Substituir face precisa de um corpo sólido");
+  const sheet = sheetOf(ctx, f.sheet);
+  const fs = resolveFaces(ctx, f.faces, report);
+  if (!fs.length) throw new Error("Escolha as faces a substituir");
+  if (fs.some((nf) => faceOwner(ctx, nf.face) !== "body")) throw new Error("As faces a substituir têm de ser do corpo sólido");
+  const far = modelSize(ctx);
+  const o = oc();
+  let body = ctx.body;
+  const caps: TopoDS_Shape[] = [];
+  for (const nf of fs) {
+    const n = normalOnFace(nf.face, faceProps(nf.face).center);
+    const mk = T(new o.BRepPrimAPI_MakePrism(nf.face, gpVec(v3.mul(n, far)), false, true));
+    caps.push(T(mk.LastShape()));
+    const prism = nameFresh(T(mk.Shape()), f.id, () => undefined);
+    for (const pf of prism.faces) pf.name = pf.name.replace(`${f.id}:u`, `${f.id}:ext`);
+    body = applyOp({ ...ctx, body }, prism, "add", f.id);
+  }
+  const sp = T(new o.BRepAlgoAPI_Splitter());
+  sp.SetArguments(makeList([body.shape]));
+  sp.SetTools(makeList([sheet.shape]));
+  sp.Build();
+  if (sp.HasErrors()) throw new Error("Não foi possível cortar o corpo pela superfície");
+  const split = nameResult(sp, [...body.faces, ...sheet.faces], T(sp.Shape()), f.id);
+  const tol = far * 1e-7;
+  const keep = explore(split.shape, "solid").filter((sol) => caps.every((c) => distance(sol, c) > tol));
+  if (!keep.length) throw new Error("A superfície não atravessa o corpo prolongado (tem de cobrir toda a face a substituir)");
+  const idx = new ShapeIndex<true>();
+  for (const sol of keep) for (const x of explore(sol, "face")) idx.set(x, true);
+  const out = { shape: one(keep), faces: split.faces.filter((nf) => idx.has(nf.face)) };
+  if (out.faces.some((nf) => nf.name.startsWith(`${f.id}:ext`))) report.warnings.push("Parte do prolongamento ficou no resultado: a superfície não fecha o corpo em toda a volta");
+  ctx.sheets.delete(f.sheet);
+  return { ...ctx, body: out };
 };
 
 /** Costura faces soltas numa casca (as arestas comuns ficam partilhadas), com o mapa face → face costurada. */
@@ -286,20 +471,14 @@ function trimTool(ctx: Ctx, f: TrimSurfaceFeature, report: StepReport): TopoDS_S
   }
 }
 
-export const trimSurface: Step<TrimSurfaceFeature & Feature> = (ctx, f, report) => {
-  const sheet = sheetOf(ctx, f.sheet);
-  if (!f.keep.length) throw new Error("Indique as partes a manter");
-  const tool = trimTool(ctx, f, report);
-  const o = oc();
-  const sp = T(new o.BRepAlgoAPI_Splitter());
+/** Divide um corpo de superfície por uma ferramenta e agrupa as faces em peças (ligadas por arestas fora da ferramenta). */
+function splitPieces(sheet: NamedBody, tool: TopoDS_Shape, fid: string, tol: number) {
+  const sp = T(new (oc().BRepAlgoAPI_Splitter)());
   sp.SetArguments(makeList([sheet.shape]));
   sp.SetTools(makeList([tool]));
   sp.Build();
   if (sp.HasErrors()) throw new Error("Não foi possível aparar a superfície");
-  const split = nameResult(sp, sheet.faces, T(sp.Shape()), f.id);
-
-  // peças: faces ligadas por arestas que não estão sobre a ferramenta de corte
-  const tol = modelSize(ctx) * 1e-7;
+  const split = nameResult(sp, sheet.faces, T(sp.Shape()), fid);
   const parent = split.faces.map((_, i) => i);
   const root = (i: number): number => (parent[i] === i ? i : (parent[i] = root(parent[i])));
   const owners = new ShapeIndex<number[]>();
@@ -316,26 +495,91 @@ export const trimSurface: Step<TrimSurfaceFeature & Feature> = (ctx, f, report) 
     if (fs.length < 2 || distance(vertexAt(edgeProps(e).mid), tool) < tol) continue;
     for (const j of fs.slice(1)) parent[root(j)] = root(fs[0]);
   }
-  const keep = new Set<number>();
+  return { faces: split.faces, root, count: new Set(split.faces.map((_, i) => root(i))).size };
+}
+
+export const trimSurface: Step<TrimSurfaceFeature & Feature> = (ctx, f, report) => {
+  const sheet = sheetOf(ctx, f.sheet);
+  if (!f.keep.length) throw new Error("Indique as partes a manter");
+  const tool = trimTool(ctx, f, report);
+  const tol = modelSize(ctx) * 1e-7;
+  const mutual = !!f.mutual && f.tool.kind === "sheet";
+  // aparar mútuo: as duas superfícies dividem-se uma à outra e escolhem-se peças de ambas
+  const sets = [splitPieces(sheet, tool, f.id, tol)];
+  if (mutual) sets.push(splitPieces(sheetOf(ctx, (f.tool as { sheet: string }).sheet), sheet.shape, f.id, tol));
+  const keep = sets.map(() => new Set<number>());
   for (const p of f.keep) {
     const v = vertexAt(p);
-    let best = -1, bestD = Infinity;
-    split.faces.forEach((nf, i) => { const d = distance(v, nf.face); if (d < bestD) { bestD = d; best = i; } });
-    if (best >= 0) keep.add(root(best));
+    let best: [number, number] = [-1, -1], bestD = Infinity;
+    sets.forEach((set, k) => set.faces.forEach((nf, i) => { const d = distance(v, nf.face); if (d < bestD) { bestD = d; best = [k, i]; } }));
+    if (best[0] >= 0) keep[best[0]].add(sets[best[0]].root(best[1]));
   }
-  const kept = split.faces.filter((_, i) => keep.has(root(i)));
-  const pieces = new Set(split.faces.map((_, i) => root(i))).size;
-  if (pieces === 1) report.warnings.push("A ferramenta não divide a superfície");
+  if (sets[0].count === 1) report.warnings.push("A ferramenta não divide a superfície");
+  const kept = sets.flatMap((set, k) => set.faces.filter((_, i) => keep[k].has(set.root(i))));
+  if (!kept.length) throw new Error("Nenhuma parte escolhida");
+  if (mutual) {
+    // as peças das duas superfícies são costuradas num só corpo
+    const sewn = sew(kept.map((nf) => nf.face), tol * 100);
+    ctx.sheets.set(f.sheet, nameFrom(sewn.shape, f.id, kept.map((nf) => ({ face: sewn.map(nf.face), name: nf.name }))));
+    ctx.sheets.delete((f.tool as { sheet: string }).sheet);
+    return ctx;
+  }
   const groups = new Map<number, TopoDS_Face[]>();
-  split.faces.forEach((nf, i) => { if (keep.has(root(i))) groups.set(root(i), [...(groups.get(root(i)) ?? []), nf.face]); });
-  const shape = one([...groups.values()].map((g) => makeShell(g)));
-  ctx.sheets.set(f.sheet, { shape, faces: kept });
+  sets[0].faces.forEach((nf, i) => { const r = sets[0].root(i); if (keep[0].has(r)) groups.set(r, [...(groups.get(r) ?? []), nf.face]); });
+  ctx.sheets.set(f.sheet, { shape: one([...groups.values()].map((g) => makeShell(g))), faces: kept });
   return ctx;
 };
+
+/** Arestas de fronteira entre faces apagadas e faces que ficam, agrupadas em contornos. */
+function holeLoops(rest: NamedFace[], deleted: NamedFace[]): NamedEdge[][] {
+  const restIdx = new ShapeIndex<NamedFace>();
+  for (const nf of rest) for (const e of explore(nf.face, "edge")) restIdx.set(e, nf);
+  const border: NamedEdge[] = [];
+  const seen = new ShapeIndex<true>();
+  for (const nf of deleted) for (const e of explore(nf.face, "edge")) {
+    const owner = restIdx.get(e);
+    if (!owner || seen.has(e)) continue;
+    seen.set(e, true);
+    border.push({ edge: e, name: `{${owner.name}&${nf.name}}`, faces: [owner.name] });
+  }
+  // componentes ligadas pelos vértices
+  const loops: NamedEdge[][] = [];
+  const used = new Set<number>();
+  for (let i = 0; i < border.length; i++) {
+    if (used.has(i)) continue;
+    const loop = [border[i]];
+    used.add(i);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (let j = 0; j < border.length; j++) {
+        if (used.has(j)) continue;
+        const vs = explore(border[j].edge, "vertex");
+        if (loop.some((l) => explore(l.edge, "vertex").some((v) => vs.some((w) => w.IsSame(v))))) { loop.push(border[j]); used.add(j); grew = true; }
+      }
+    }
+    loops.push(loop);
+  }
+  return loops;
+}
+
+/** Remenda os buracos deixados pelas faces apagadas e costura tudo. */
+function patched(ctx: Ctx, rest: NamedFace[], deleted: NamedFace[], continuity: Continuity, fid: string, report: StepReport) {
+  const loops = holeLoops(rest, deleted);
+  const patches = loops.map((loop) => plate(ctx, loop.map((edge) => ({ edge, bound: true, continuity })), report));
+  const dev = patches.reduce<number | null>((m, p) => (p.deviation === null ? m : Math.max(m ?? 0, p.deviation)), null);
+  reportDeviation(report, "Remendo", dev);
+  const sewn = sew([...rest.map((r) => r.face), ...patches.map((p) => p.shape)], 1e-4);
+  const known = [
+    ...rest.map((nf) => ({ face: sewn.map(nf.face), name: nf.name })),
+    ...patches.flatMap((p, k) => explore(p.shape, "face").map((face) => ({ face: sewn.map(face), name: `${fid}:patch${k}` }))),
+  ];
+  return { sewn, known };
+}
 
 export const deleteFace: Step<DeleteFaceFeature & Feature> = (ctx, f, report) => {
   const fs = resolveFaces(ctx, f.faces, report);
   if (!fs.length) throw new Error("Escolha as faces a apagar");
+  const patch = f.mode === "patch";
   const gone = new ShapeIndex<true>();
   for (const nf of fs) gone.set(nf.face, true);
   const byOwner = new Map<string, NamedFace[]>();
@@ -349,24 +593,29 @@ export const deleteFace: Step<DeleteFaceFeature & Feature> = (ctx, f, report) =>
   const opened: { shape: TopoDS_Shape; faces: NamedFace[] }[] = [];
   for (const ow of byOwner.keys()) {
     if (ow === "body") {
-      // cada sólido com faces apagadas passa a casca aberta; os outros ficam no corpo
+      // cada sólido com faces apagadas passa a casca aberta (ou é remendado); os outros ficam no corpo
       const keepSolids: TopoDS_Shape[] = [];
+      const keepFaces: NamedFace[] = [];
       for (const solid of explore(ctx.body!.shape, "solid")) {
         const sf = explore(solid, "face");
         const named = ctx.body!.faces.filter((nf) => sf.some((x) => x.IsSame(nf.face)));
-        if (!sf.some((x) => gone.has(x))) { keepSolids.push(solid); continue; }
+        if (!sf.some((x) => gone.has(x))) { keepSolids.push(solid); keepFaces.push(...named); continue; }
         const rest = named.filter((nf) => !gone.has(nf.face));
-        if (rest.length) opened.push({ shape: makeShell(rest.map((r) => r.face)), faces: rest });
+        if (patch) {
+          const { sewn, known } = patched(ctx, rest, named.filter((nf) => gone.has(nf.face)), f.continuity ?? "tangent", f.id, report);
+          if (sewn.freeEdges > 0) throw new Error(`O remendo deixou ${sewn.freeEdges} aresta(s) livre(s): o sólido não fecha`);
+          const solidBody = nameFrom(solidsOf(sewn.shape), f.id, known);
+          keepSolids.push(solidBody.shape);
+          keepFaces.push(...solidBody.faces);
+        } else if (rest.length) opened.push({ shape: makeShell(rest.map((r) => r.face)), faces: rest });
       }
-      const keepIdx = new ShapeIndex<true>();
-      for (const s of keepSolids) for (const x of explore(s, "face")) keepIdx.set(x, true);
-      body = keepSolids.length ? { shape: one(keepSolids), faces: ctx.body!.faces.filter((nf) => keepIdx.has(nf.face)) } : null;
-    } else {
+      body = keepSolids.length ? { shape: one(keepSolids), faces: keepFaces } : null;
+    } else if (patch) {
       const sh = ctx.sheets.get(ow)!;
       const rest = sh.faces.filter((nf) => !gone.has(nf.face));
-      if (rest.length) sheets.set(ow, { shape: makeShell(rest.map((r) => r.face)), faces: rest });
-      else sheets.delete(ow);
-    }
+      const { sewn, known } = patched(ctx, rest, sh.faces.filter((nf) => gone.has(nf.face)), f.continuity ?? "tangent", f.id, report);
+      sheets.set(ow, nameFrom(sewn.shape, f.id, known));
+    } else removeFromSheet(sheets, ow, gone);
   }
   if (opened.length) sheets.set(f.id, { shape: one(opened.map((x) => x.shape)), faces: opened.flatMap((x) => x.faces) });
   return { ...ctx, body, sheets };

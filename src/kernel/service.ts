@@ -1,9 +1,9 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { CurvatureKind, CurvatureResponse, ExportFormat, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { CurvatureKind, CurvatureResponse, DeviationResponse, ExportFormat, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
-import { curvature } from "./analysis.ts";
+import { curvature, deviation } from "./analysis.ts";
 import type { CadDocument } from "../doc/types.ts";
 import { Engine } from "./rebuild.ts";
 import { meshBody, type MeshData } from "./mesh.ts";
@@ -24,9 +24,10 @@ function sceneOf(ctx: Ctx): { scene: NamedBody | null; owner: (name: string) => 
   const owners = new Map<string, string>();
   for (const [id, b] of parts) for (const f of b.faces) owners.set(f.name, id);
   const owner = (n: string) => owners.get(n) ?? "";
-  if (!parts.length) return { scene: null, owner };
-  if (parts.length === 1) return { scene: parts[0][1], owner };
-  return { scene: { shape: makeCompound(parts.map(([, b]) => b.shape)), faces: parts.flatMap(([, b]) => b.faces) }, owner };
+  const curves = [...ctx.curves.values()];
+  if (!parts.length && !curves.length) return { scene: null, owner };
+  if (parts.length === 1 && !curves.length) return { scene: parts[0][1], owner };
+  return { scene: { shape: makeCompound([...parts.map(([, b]) => b.shape), ...curves.map((c) => c.shape)]), faces: parts.flatMap(([, b]) => b.faces) }, owner };
 }
 import { to3MF, toGLB, toOBJ } from "../io/mesh-export.ts";
 
@@ -41,7 +42,7 @@ export class KernelService {
     const r = await this.engine.rebuild(doc);
     const body = r.ctx.body;
     const { scene, owner } = sceneOf(r.ctx);
-    const mesh = scene ? meshBody(scene, undefined, owner) : null;
+    const mesh = scene ? meshBody(scene, undefined, owner, [...r.ctx.curves.values()].flatMap((c) => c.edges)) : null;
     // cópia própria: o worker transfere os buffers da malha devolvida para a interface (ficam vazios aqui)
     this.lastMesh = mesh && { ...mesh, vertices: mesh.vertices.slice(), normals: mesh.normals.slice(), triangles: mesh.triangles.slice(), lines: mesh.lines.slice() };
     this.lastScene = scene;
@@ -80,6 +81,12 @@ export class KernelService {
       mass,
       sheets,
     };
+  }
+
+  /** Desvio de tangência nas arestas entre faces. */
+  deviation(): DeviationResponse {
+    if (!this.lastScene) throw new Error("Não há modelo para analisar");
+    return deviation(this.lastScene);
   }
 
   /** Curvatura em cada vértice da última malha. */

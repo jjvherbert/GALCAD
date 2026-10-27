@@ -10,7 +10,13 @@ export type ExportFormat = "step" | "stl" | "3mf" | "obj" | "glb";
 export type Request =
   | { type: "rebuild"; doc: CadDocument; force?: boolean }
   | { type: "export"; format: ExportFormat; name: string }
-  | { type: "curvature"; kind: CurvatureKind };
+  | { type: "curvature"; kind: CurvatureKind }
+  | { type: "deviation" };
+
+/** Desvio de tangência (graus) de cada aresta entre duas faces: 0 = tangente; ~90 = aresta viva a 90°. */
+export interface DeviationResponse {
+  edges: { name: string; deg: number }[];
+}
 
 /** Análise de curvatura: gaussiana (K = k1·k2) ou média (H = (k1+k2)/2), em 1/mm. */
 export type CurvatureKind = "gauss" | "mean";
@@ -70,5 +76,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse }
   | { id: number; ok: false; error: string };

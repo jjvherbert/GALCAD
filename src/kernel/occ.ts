@@ -288,3 +288,53 @@ export function makeShell(faces: TopoDS_Shape[]): TopoDS_Shape {
   builder.delete();
   return sh;
 }
+
+/** Normal da face (com a orientação da face) no ponto da superfície mais próximo de `p`. */
+export function normalOnFace(face: TopoDS_Shape, p: Vec3): Vec3 {
+  const o = oc();
+  const f = T(o.TopoDS.Face(face));
+  const proj = T(new o.GeomAPI_ProjectPointOnSurf(gpPnt(p), T(o.BRep_Tool.Surface(f))));
+  if (!proj.IsDone() || proj.NbPoints() < 1) throw new Error("Projeção na face falhou");
+  const { U, V } = proj.LowerDistanceParameters();
+  const ad = T(new o.BRepAdaptor_Surface(f, true));
+  const P = T(new o.gp_Pnt(0, 0, 0)), su = T(new o.gp_Vec(0, 0, 0)), sv = T(new o.gp_Vec(0, 0, 0));
+  ad.D1(U, V, P, su, sv);
+  let n = v3.norm([su.Y() * sv.Z() - su.Z() * sv.Y(), su.Z() * sv.X() - su.X() * sv.Z(), su.X() * sv.Y() - su.Y() * sv.X()]);
+  if (f.Orientation() === o.TopAbs_Orientation.TopAbs_REVERSED) n = v3.mul(n, -1);
+  return n;
+}
+
+/** Pontos (e tangentes) ao longo de uma aresta, `n` amostras incluindo as extremidades. */
+export function sampleEdge(edge: TopoDS_Shape, n: number): { p: Vec3; t: Vec3 }[] {
+  const o = oc();
+  const c = T(new o.BRepAdaptor_Curve(T(o.TopoDS.Edge(edge))));
+  const a = c.FirstParameter(), b = c.LastParameter();
+  const P = T(new o.gp_Pnt(0, 0, 0)), D = T(new o.gp_Vec(0, 0, 0));
+  const out: { p: Vec3; t: Vec3 }[] = [];
+  for (let i = 0; i < n; i++) {
+    c.D1(a + ((b - a) * i) / (n - 1), P, D);
+    out.push({ p: [P.X(), P.Y(), P.Z()], t: v3.norm([D.X(), D.Y(), D.Z()]) });
+  }
+  return out;
+}
+
+/** Aresta B-spline interpolada (C2) que passa pelos pontos. */
+export function interpolateEdge(points: Vec3[], closed = false): TopoDS_Shape {
+  const o = oc();
+  if (points.length < 2) throw new Error("São precisos pelo menos 2 pontos");
+  const a1 = T(new o.NCollection_Array1_gp_Pnt(1, points.length));
+  points.forEach((p, i) => a1.SetValue(i + 1, gpPnt(p)));
+  const it = T(new o.GeomAPI_Interpolate(T(new o.NCollection_HArray1_gp_Pnt(a1)), closed, 1e-7));
+  it.Perform();
+  if (!it.IsDone()) throw new Error("A interpolação dos pontos falhou (pontos repetidos?)");
+  return T(T(new o.BRepBuilderAPI_MakeEdge(T(it.Curve()))).Edge());
+}
+
+/** Contorno (wire) a partir de arestas encadeadas, ou null se não ligarem. */
+export function makeWire(edges: TopoDS_Shape[]): TopoDS_Shape | null {
+  const o = oc();
+  const mk = T(new o.BRepBuilderAPI_MakeWire());
+  // a versão com lista aceita as arestas por qualquer ordem, desde que liguem
+  mk.Add(makeList(edges));
+  return mk.IsDone() ? T(mk.Wire()) : null;
+}

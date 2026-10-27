@@ -62,6 +62,10 @@ export function ContextMenu() {
       {p?.kind === "face" && p.body && <Item label="Espessar este corpo de superfície" onClick={() => withPick(p, "feature.thicken")} />}
       {p?.kind === "face" && p.body && <Item label="Aparar este corpo de superfície" onClick={() => withPick(p, "feature.trimSurface")} />}
       {p?.kind === "edge" && <Item label="Preencher contorno" onClick={() => withPick(p, "feature.fill")} />}
+      {p?.kind === "edge" && <Item label="Superfície regrada" onClick={() => withPick(p, "feature.ruled")} />}
+      {p?.kind === "edge" && <Item label="Curva composta" onClick={() => withPick(p, "feature.curve")} />}
+      {p?.kind === "face" && p.body === "" && <Item label="Substituir face" onClick={() => withPick(p, "feature.replaceFace")} />}
+      {p?.kind === "face" && <Item label="Desaparar" onClick={() => withPick(p, "feature.untrim")} />}
       {(planarFace || p?.kind === "plane") && <Item label="Plano de referência paralelo" onClick={() => withPick(p, "feature.plane")} />}
       {!p && <Item label="Esboço" onClick={() => runCommand("sketch.new")} />}
       <Item label="Ajustar ao ecrã" keys="F" onClick={() => runCommand("view.fit")} />
@@ -195,7 +199,7 @@ export function AnalysisPanel() {
   return (
     <div class="analysis-panel" role="region" aria-label="Análise">
       <div class="analysis-head">
-        <b>{a.kind === "zebra" ? "Riscas de zebra" : a.kind === "curvature" ? "Curvatura" : "Análise de inclinação"}</b>
+        <b>{a.kind === "zebra" ? "Riscas de zebra" : a.kind === "curvature" ? "Curvatura" : a.kind === "deviation" ? "Desvio nas arestas" : "Análise de inclinação"}</b>
         <button class="icon" aria-label="Desligar análise" onClick={() => store.setAnalysis(null)}>✕</button>
       </div>
       {a.kind === "zebra" && <p class="muted">Riscas contínuas = continuidade tangente (G1); riscas sem quebra de direção = curvatura contínua (G2). Rode a vista para as ver mover.</p>}
@@ -218,6 +222,20 @@ export function AnalysisPanel() {
           })() : <p class="muted">A calcular…</p>}
         </>
       )}
+      {a.kind === "deviation" && (a.data ? (() => {
+        const near = a.data.edges.filter((e) => e.deg > 0.5 && e.deg <= 10).sort((x, y) => y.deg - x.deg);
+        return (
+          <>
+            <ul class="legend-list">
+              <li><i style="background:#16a34a" /> Tangente (≤ 0,5°): {a.data.edges.filter((e) => e.deg <= 0.5).length}</li>
+              <li><i style="background:#f59e0b" /> Quase tangente (0,5–10°): {near.length} — suspeito</li>
+              <li><i style="background:#6b7280" /> Aresta viva (&gt; 10°): {a.data.edges.filter((e) => e.deg > 10).length}</li>
+            </ul>
+            {near.slice(0, 5).map((e) => <p key={e.name} class="muted" title={e.name}>{e.deg.toFixed(2)}° · {describeName(st.doc, e.name)}</p>)}
+            <p class="muted">Ângulo máximo entre as normais das duas faces ao longo de cada aresta (9 pontos).</p>
+          </>
+        );
+      })() : <p class="muted">A calcular…</p>)}
       {a.kind === "draft" && (
         <>
           <label class="row">Direção de extração

@@ -23,6 +23,7 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
       await ready;
       const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force)
         : data.type === "curvature" ? service.curvature(data.kind)
+        : data.type === "deviation" ? service.deviation()
         : await service.export(data.format, data.name);
       msg = { id: data.id, ok: true, result };
     } catch (e) {

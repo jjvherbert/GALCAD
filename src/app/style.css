@@ -232,3 +232,5 @@ kbd { font: 11px ui-monospace, monospace; padding: 0 4px; border: 1px solid var(
 .legend-list { list-style: none; margin: 0; padding: 0; }
 .legend-list i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 .sheets h3 { margin: 8px 0 4px; font-size: 13px; }
+.points-editor .row3 { align-items: end; }
+.points-editor { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }

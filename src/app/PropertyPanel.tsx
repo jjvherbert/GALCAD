@@ -1,15 +1,27 @@
 // Painel de propriedades da feature em edição (equivalente ao PropertyManager).
 import { useEffect } from "preact/hooks";
-import type { BodyOp, Feature, HoleKind } from "../doc/types.ts";
-import { FEATURE_LABELS, TOOL_FEATURES, featureLabel } from "../doc/features.ts";
+import type { BodyOp, Continuity, CurveDef, Feature, HoleKind } from "../doc/types.ts";
+import { FEATURE_LABELS, SHEET_SOURCES, TOOL_FEATURES, featureLabel } from "../doc/features.ts";
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
-import { AxisSelect, Check, EndEditor, ExprInput, FeatureChecklist, Field, PlaneSelect, PointList, RefList, RegionList, Select, SheetList, SketchSelect } from "./forms.tsx";
+import { AxisSelect, Check, CurveList, EndEditor, ExprInput, FeatureChecklist, Field, PathSelect, PlaneSelect, PointList, PointsEditor, RefList, RegionList, Select, SheetList, SketchSelect, TargetEditor } from "./forms.tsx";
 import { StatusBlock } from "./InfoPanel.tsx";
 
 const OPS: [BodyOp, string][] = [["add", "Adicionar material"], ["cut", "Remover material (corte)"], ["intersect", "Intersetar"], ["new", "Corpo separado"]];
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 3 });
+const CONT: [Continuity, string][] = [["contact", "Contacto (G0)"], ["tangent", "Tangente (G1)"], ["curvature", "Curvatura (G2)"]];
+const CURVE_KINDS: [CurveDef["kind"], string][] = [["points", "Spline por pontos"], ["projected", "Esboço projetado em faces"], ["intersection", "Interseção de superfícies"], ["composite", "Curva composta (arestas)"], ["helix", "Hélice"]];
+
+function newCurveDef(kind: CurveDef["kind"]): CurveDef {
+  switch (kind) {
+    case "points": return { kind, points: [[0, 0, 0], [50, 20, 10], [100, 0, 0]] };
+    case "projected": return { kind, sketch: "", onto: { kind: "faces", faces: [] } };
+    case "intersection": return { kind, a: { kind: "sheet", sheet: "" }, b: { kind: "plane", plane: { kind: "std", name: "XY" } } };
+    case "composite": return { kind, edges: [] };
+    case "helix": return { kind, axis: { kind: "std", name: "Z" }, radius: 10, pitch: 5, height: 30 };
+  }
+}
 
 export function PropertyPanel() {
   const st = useStore();
@@ -24,7 +36,8 @@ export function PropertyPanel() {
     if (!e.isNew) return;
     if ((f.type === "fillet" || f.type === "chamfer") && !f.refs.length) store.set({ pickTarget: { field: "refs", accept: ["edge", "face"] } });
     if ((f.type === "shell" || f.type === "draft" || f.type === "offsetSurface" || f.type === "deleteFace") && !f.faces.length) store.set({ pickTarget: { field: "faces", accept: ["face"] } });
-    if (f.type === "fill" && !f.edges.length) store.set({ pickTarget: { field: "edges", accept: ["edge"] } });
+    if ((f.type === "fill" || f.type === "ruled") && !f.edges.length) store.set({ pickTarget: { field: "edges", accept: ["edge"] } });
+    if ((f.type === "untrim" || f.type === "replaceFace") && !f.faces.length) store.set({ pickTarget: { field: "faces", accept: ["face"] } });
     // esboço com contornos sobrepostos: pedir logo as regiões (como no SolidWorks)
     if ((f.type === "extrude" || f.type === "revolve") && f.sketch && st.result?.sketches[f.sketch]?.profiles.errors.length) store.set({ pickTarget: { field: "regions", accept: ["region"] } });
   }, [e.id]);
@@ -61,7 +74,7 @@ export function PropertyPanel() {
       body = (
         <>
           <SketchSelect label="Perfil (contorno fechado)" value={f.profile} before={before} onChange={(profile) => up({ profile })} />
-          <SketchSelect label="Caminho" value={f.path} before={before} onChange={(path) => up({ path })} />
+          <PathSelect label="Caminho (esboço ou curva 3D)" value={f.path} before={before} onChange={(path) => up({ path })} />
           <Select label="Operação" value={f.op} options={OPS} onChange={(op) => up({ op })} />
           <Select label="Orientação do perfil" value={f.orientation ?? "frenet"} options={[["frenet", "Segue o caminho"], ["fixed", "Constante"]]} onChange={(orientation) => up({ orientation })} />
         </>
@@ -158,7 +171,7 @@ export function PropertyPanel() {
     case "linearPattern":
       body = (
         <>
-          <FeatureChecklist label="Features a repetir (nenhuma = corpo inteiro)" value={f.features} before={before} types={[...TOOL_FEATURES, "linearPattern", "circularPattern", "mirror"]} onChange={(features) => up({ features })} />
+          <FeatureChecklist label="Features ou superfícies a repetir (nenhuma = corpo inteiro)" value={f.features} before={before} types={[...TOOL_FEATURES, ...SHEET_SOURCES]} onChange={(features) => up({ features })} />
           <AxisSelect field="dir1" label="Direção 1" value={f.direction} before={before} onChange={(direction) => up({ direction })} />
           <ExprInput label="Instâncias" unit="" value={f.count} onChange={(count) => up({ count: count ?? "" })} />
           <ExprInput label="Espaçamento" value={f.spacing} onChange={(spacing) => up({ spacing: spacing ?? "" })} />
@@ -178,7 +191,7 @@ export function PropertyPanel() {
     case "circularPattern":
       body = (
         <>
-          <FeatureChecklist label="Features a repetir (nenhuma = corpo inteiro)" value={f.features} before={before} types={[...TOOL_FEATURES, "linearPattern", "circularPattern", "mirror"]} onChange={(features) => up({ features })} />
+          <FeatureChecklist label="Features ou superfícies a repetir (nenhuma = corpo inteiro)" value={f.features} before={before} types={[...TOOL_FEATURES, ...SHEET_SOURCES]} onChange={(features) => up({ features })} />
           <AxisSelect field="axis" label="Eixo" value={f.axis} before={before} onChange={(axis) => up({ axis })} />
           <ExprInput label="Instâncias" unit="" value={f.count} onChange={(count) => up({ count: count ?? "" })} />
           <ExprInput label="Ângulo total" unit="°" value={f.angle} onChange={(angle) => up({ angle: angle ?? "" })} />
@@ -188,7 +201,7 @@ export function PropertyPanel() {
     case "mirror":
       body = (
         <>
-          <FeatureChecklist label="Features a espelhar (nenhuma = corpo inteiro)" value={f.features} before={before} types={[...TOOL_FEATURES, "linearPattern", "circularPattern", "mirror"]} onChange={(features) => up({ features })} />
+          <FeatureChecklist label="Features ou superfícies a espelhar (nenhuma = corpo inteiro)" value={f.features} before={before} types={[...TOOL_FEATURES, ...SHEET_SOURCES]} onChange={(features) => up({ features })} />
           <PlaneSelect field="plane" label="Plano de espelho" value={f.plane} before={before} onChange={(plane) => up({ plane })} />
         </>
       );
@@ -283,7 +296,7 @@ export function PropertyPanel() {
       body = (
         <>
           <SketchSelect label="Perfil (aberto ou fechado)" value={f.profile} before={before} onChange={(profile) => up({ profile })} />
-          <SketchSelect label="Caminho" value={f.path} before={before} onChange={(path) => up({ path })} />
+          <PathSelect label="Caminho (esboço ou curva 3D)" value={f.path} before={before} onChange={(path) => up({ path })} />
           <Select label="Orientação do perfil" value={f.orientation ?? "frenet"} options={[["frenet", "Segue o caminho"], ["fixed", "Constante"]]} onChange={(orientation) => up({ orientation })} />
         </>
       );
@@ -300,8 +313,8 @@ export function PropertyPanel() {
       body = (
         <>
           <RefList field="edges" label="Arestas do contorno (fechado)" accept={["edge"]} refs={f.edges} onChange={(edges) => up({ edges })} />
-          <Select label="Continuidade com as faces vizinhas" value={f.continuity} options={[["contact", "Contacto (G0)"], ["tangent", "Tangente (G1)"], ["curvature", "Curvatura (G2)"]]} onChange={(continuity) => up({ continuity })} />
-          <p class="field-hint">Tangente/curvatura usam a face vizinha de cada aresta. Com faces quase perpendiculares ao preenchimento a continuidade pode não ser cumprida: confirme com as riscas de zebra.</p>
+          <Select label="Continuidade com as faces vizinhas" value={f.continuity} options={CONT} onChange={(continuity) => up({ continuity })} />
+          <p class="field-hint">Tangente/curvatura usam a face vizinha de cada aresta. O desvio de tangência é medido no fim e há aviso acima de 1°.</p>
         </>
       );
       break;
@@ -342,6 +355,7 @@ export function PropertyPanel() {
             onChange={(kind) => up({ tool: kind === "plane" ? { kind, plane: { kind: "std", name: "XY" } } : kind === "sheet" ? { kind, sheet: "" } : { kind, sketch: "" } })} />
           {t.kind === "plane" && <PlaneSelect field="toolPlane" label="Plano de corte" value={t.plane} before={before} onChange={(plane) => up({ tool: { kind: "plane", plane } })} />}
           {t.kind === "sheet" && <SheetList field="toolSheet" single label="Superfície de corte" value={t.sheet ? [t.sheet] : []} before={before} exclude={[f.sheet]} onChange={([sheet]) => up({ tool: { kind: "sheet", sheet: sheet ?? "" } })} />}
+          {t.kind === "sheet" && <Check label="Aparar mútuo (as duas aparam-se e ficam costuradas)" value={f.mutual} onChange={(mutual) => up({ mutual })} />}
           {t.kind === "sketch" && <SketchSelect label="Esboço de corte" value={t.sketch} before={before} onChange={(sketch) => up({ tool: { kind: "sketch", sketch } })} />}
           <PointList field="keep" label="Partes a manter" value={f.keep} onChange={(keep) => up({ keep })} />
         </>
@@ -352,7 +366,90 @@ export function PropertyPanel() {
       body = (
         <>
           <RefList field="faces" label="Faces a apagar" accept={["face"]} refs={f.faces} onChange={(faces) => up({ faces })} />
-          <p class="field-hint">O sólido com faces apagadas passa a corpo de superfície aberto (para refazer a zona com superfícies e costurar de novo).</p>
+          <Select label="Modo" value={f.mode ?? "delete"} options={[["delete", "Apagar (o sólido passa a superfície)"], ["patch", "Apagar e remendar (o sólido mantém-se)"]]} onChange={(mode) => up({ mode })} />
+          {f.mode === "patch" && <Select<Continuity> label="Continuidade do remendo" value={f.continuity ?? "tangent"} options={CONT} onChange={(continuity) => up({ continuity })} />}
+          <p class="field-hint">{f.mode === "patch" ? "Cada buraco é preenchido com uma placa e o resultado é costurado de novo num sólido. Não prolonga as faces vizinhas (não reconstrói cantos vivos)." : "O sólido com faces apagadas passa a corpo de superfície aberto (para refazer a zona com superfícies e costurar de novo)."}</p>
+        </>
+      );
+      break;
+    case "curve": {
+      const c = f.def;
+      const set = (def: CurveDef) => up({ def });
+      body = (
+        <>
+          <Select label="Tipo de curva" value={c.kind} options={CURVE_KINDS} onChange={(k) => set(newCurveDef(k))} />
+          {c.kind === "points" && (
+            <>
+              <PointsEditor value={c.points} onChange={(points) => set({ ...c, points })} />
+              <Check label="Fechada" value={c.closed} onChange={(closed) => set({ ...c, closed })} />
+            </>
+          )}
+          {c.kind === "projected" && (
+            <>
+              <SketchSelect label="Esboço a projetar" value={c.sketch} before={before} onChange={(sketch) => set({ ...c, sketch })} />
+              <TargetEditor field="onto" label="Projetar em" value={c.onto} before={before} onChange={(onto) => set({ ...c, onto })} />
+              <p class="field-hint">Projeção segundo a normal do plano do esboço.</p>
+            </>
+          )}
+          {c.kind === "intersection" && (
+            <>
+              <TargetEditor field="ta" label="Superfície A" value={c.a} before={before} onChange={(a) => set({ ...c, a })} />
+              <TargetEditor field="tb" label="Superfície B" value={c.b} before={before} onChange={(b) => set({ ...c, b })} />
+            </>
+          )}
+          {c.kind === "composite" && <RefList field="edges" label="Arestas (encadeadas)" accept={["edge"]} refs={c.edges} onChange={(edges) => set({ ...c, edges })} />}
+          {c.kind === "helix" && (
+            <>
+              <AxisSelect field="axis" label="Eixo" value={c.axis} before={before} onChange={(axis) => set({ ...c, axis })} />
+              <ExprInput label="Raio" value={c.radius} onChange={(radius) => set({ ...c, radius: radius ?? "" })} />
+              <ExprInput label="Passo" value={c.pitch} onChange={(pitch) => set({ ...c, pitch: pitch ?? "" })} />
+              <ExprInput label="Altura" value={c.height} onChange={(height) => set({ ...c, height: height ?? "" })} />
+              <ExprInput label="Ângulo inicial" unit="°" allowEmpty value={c.startAngle} onChange={(startAngle) => set({ ...c, startAngle })} />
+              <Check label="Esquerda (anti-horária)" value={c.lefthand} onChange={(lefthand) => set({ ...c, lefthand })} />
+            </>
+          )}
+          <p class="field-hint">As curvas 3D servem de caminho de varrimento, limites de superfícies e arestas de referência.</p>
+        </>
+      );
+      break;
+    }
+    case "boundary":
+      body = (
+        <>
+          <CurveList field="dir1" label="Direção 1 (≥ 2 curvas, por ordem)" value={f.dir1} before={before} onChange={(dir1) => up({ dir1 })} />
+          <Select<Continuity> label="Continuidade nos limites da direção 1" value={f.cont1 ?? "contact"} options={CONT} onChange={(cont1) => up({ cont1 })} />
+          <CurveList field="dir2" label="Direção 2 (0 ou ≥ 2 curvas)" value={f.dir2} before={before} onChange={(dir2) => up({ dir2 })} />
+          <Select<Continuity> label="Continuidade nos limites da direção 2" value={f.cont2 ?? "contact"} options={CONT} onChange={(cont2) => up({ cont2 })} />
+          <p class="field-hint">Com as duas direções, a primeira e a última curva de cada uma fecham o contorno e as do meio guiam a forma. A tangência/curvatura aplica-se a curvas que são arestas de faces existentes.</p>
+        </>
+      );
+      break;
+    case "ruled":
+      body = (
+        <>
+          <RefList field="edges" label="Arestas" accept={["edge"]} refs={f.edges} onChange={(edges) => up({ edges })} />
+          <Select label="Tipo" value={f.mode} options={[["normal", "Normal à superfície"], ["tangent", "Tangente à superfície"], ["direction", "Numa direção"]]} onChange={(mode) => up({ mode })} />
+          {f.mode !== "direction" && <RefList field="face" single label="Face de referência (necessária em arestas entre duas faces)" accept={["face"]} refs={f.face ? [f.face] : []} onChange={(r) => up({ face: r[0] })} />}
+          {f.mode === "direction" && <AxisSelect field="direction" label="Direção" value={f.direction ?? { kind: "std", name: "Z" }} before={before} onChange={(direction) => up({ direction })} />}
+          <ExprInput label="Distância" value={f.distance} onChange={(distance) => up({ distance: distance ?? "" })} />
+          <Check label="Inverter" value={f.flip} onChange={(flip) => up({ flip })} />
+        </>
+      );
+      break;
+    case "untrim":
+      body = (
+        <>
+          <RefList field="faces" label="Faces a desaparar" accept={["face"]} refs={f.faces} onChange={(faces) => up({ faces })} />
+          <p class="field-hint">A face volta aos limites naturais da superfície; nas superfícies infinitas (plano, cilindro em altura) fica a caixa UV da face, sem furos nem recortes.</p>
+        </>
+      );
+      break;
+    case "replaceFace":
+      body = (
+        <>
+          <RefList field="faces" label="Faces do sólido a substituir" accept={["face"]} refs={f.faces} onChange={(faces) => up({ faces })} />
+          <SheetList field="sheet" single label="Superfície de substituição" value={f.sheet ? [f.sheet] : []} before={before} onChange={([sheet]) => up({ sheet: sheet ?? "" })} />
+          <p class="field-hint">O sólido estende-se ou apara-se até à superfície, que tem de cobrir toda a face. Pressupõe faces laterais aproximadamente paralelas à normal da face substituída.</p>
         </>
       );
       break;

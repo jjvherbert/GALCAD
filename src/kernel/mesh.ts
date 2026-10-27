@@ -1,7 +1,7 @@
 // Malha de visualização do corpo, com cada grupo de triângulos/linhas ligado ao nome topológico.
 import { cast } from "replicad";
 import type { Vec3 } from "../doc/types.ts";
-import { type NamedBody, namedEdges } from "./naming.ts";
+import { type NamedBody, type NamedEdge, namedEdges } from "./naming.ts";
 import { edgeProps, faceProps, hash, v3 } from "./occ.ts";
 
 export interface FaceGroup {
@@ -22,6 +22,8 @@ export interface EdgeGroup {
   mid: Vec3;
   dir?: Vec3;
   type: string;
+  /** Aresta de uma curva 3D (sem faces). */
+  curve?: boolean;
 }
 
 export interface MeshData {
@@ -36,7 +38,7 @@ export interface MeshData {
 const r4 = (v: Vec3): Vec3 => v.map((x) => Math.round(x * 1e4) / 1e4) as Vec3;
 
 /** `owner`: corpo de cada face pelo nome ("" = sólido). */
-export function meshBody(body: NamedBody, tolerance?: number, owner: (name: string) => string = () => ""): MeshData {
+export function meshBody(body: NamedBody, tolerance?: number, owner: (name: string) => string = () => "", curveEdges: NamedEdge[] = []): MeshData {
   const shape = cast(body.shape);
   const { min, max } = (() => {
     const b = shape.boundingBox;
@@ -58,10 +60,11 @@ export function meshBody(body: NamedBody, tolerance?: number, owner: (name: stri
 
   const edgeByHash = new Map<number, ReturnType<typeof namedEdges>[number]>();
   for (const ne of namedEdges(body)) edgeByHash.set(hash(ne.edge), ne);
+  for (const ne of curveEdges) edgeByHash.set(hash(ne.edge), ne);
   const edges: EdgeGroup[] = e.edgeGroups.map((g) => {
     const ne = edgeByHash.get(g.edgeId);
     const p = ne ? edgeProps(ne.edge) : undefined;
-    return { start: g.start, count: g.count, name: ne?.name ?? "?", mid: r4(p?.mid ?? [0, 0, 0]), dir: p?.dir && r4(p.dir), type: p?.type ?? "?" };
+    return { start: g.start, count: g.count, name: ne?.name ?? "?", mid: r4(p?.mid ?? [0, 0, 0]), dir: p?.dir && r4(p.dir), type: p?.type ?? "?", curve: ne ? !ne.faces.length || undefined : undefined };
   });
   shape.delete();
   return {
