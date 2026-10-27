@@ -121,6 +121,16 @@ export const COMMANDS: Command[] = [
   { id: "analysis.curvature", label: "Curvatura", group: "Avaliar", icon: "◍", run: () => void store.setAnalysis(store.state.analysis?.kind === "curvature" ? null : { kind: "curvature", mode: "gauss" }) },
   { id: "analysis.draft", label: "Análise de inclinação", group: "Avaliar", icon: "⏣", run: () => store.setAnalysis(store.state.analysis?.kind === "draft" ? null : { kind: "draft", dir: "Z", angle: 1 }) },
   { id: "analysis.deviation", label: "Análise de desvio (tangência nas arestas)", group: "Avaliar", icon: "∡", run: () => void store.setAnalysis(store.state.analysis?.kind === "deviation" ? null : { kind: "deviation" }) },
+  { id: "analysis.continuity", label: "Continuidade G0–G3 (classe A)", group: "Avaliar", icon: "≋", run: () => void store.setAnalysis(store.state.analysis?.kind === "continuity" ? null : { kind: "continuity" }) },
+  { id: "analysis.highlight", label: "Linhas de realce (highlight)", group: "Avaliar", icon: "☰", run: () => void store.setAnalysis(store.state.analysis?.kind === "highlight" ? null : { kind: "highlight", axis: "X", spacing: 10 }) },
+  {
+    id: "analysis.combs", label: "Pentes de curvatura (porcupine)", group: "Avaliar", icon: "⫶",
+    run: () => {
+      if (store.state.analysis?.kind === "combs") return void store.setAnalysis(null);
+      const edges = store.state.selection.filter((s) => s.kind === "edge").map((s) => s.name);
+      void store.setAnalysis({ kind: "combs", edges: edges.length ? edges : undefined, gain: 1 });
+    },
+  },
   // montagem
   ...(["coincident", "concentric", "parallel", "perpendicular", "distance", "angle", "tangent", "lock"] as const).map((k): Command => ({
     id: `asm.mate.${k}`, label: `Mate: ${MATE_NAMES[k]}`, group: "Montagem", icon: MATE_ICON[k], repeatable: true,

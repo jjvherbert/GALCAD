@@ -14,6 +14,8 @@ export type Request =
   | { type: "export"; format: ExportFormat; name: string }
   | { type: "curvature"; kind: CurvatureKind }
   | { type: "deviation" }
+  | { type: "continuity" }
+  | { type: "combs"; edges?: string[] }
   | { type: "assembly"; project: CadProject; asmId: string; force?: boolean }
   | { type: "interference" }
   | { type: "drawing"; project: CadProject; drawingId: string; force?: boolean }
@@ -110,6 +112,26 @@ export interface DeviationResponse {
   edges: { name: string; deg: number }[];
 }
 
+/**
+ * Continuidade de cada aresta entre duas faces (classe A): folga (G0), ângulo entre normais (G1),
+ * diferença relativa da curvatura normal transversal (G2) e da sua derivada (G3).
+ * `cls`: −1 = folga; 0 = só posição (G0); 1 = G1; 2 = G2; 3 = G3.
+ */
+export interface ContinuityResponse {
+  edges: { name: string; gap: number; deg: number; dk: number; dk3: number; cls: -1 | 0 | 1 | 2 | 3 }[];
+  limits: { gap: number; deg: number; dk: number; dk3: number };
+}
+
+/** Pentes de curvatura (porcupine): segmentos (pares de pontos) das cerdas e da envolvente. */
+export interface CombsResponse {
+  quills: Float32Array;
+  envelope: Float32Array;
+  /** Curvatura máxima (1/mm) e escala usada (mm por 1/mm). */
+  maxK: number;
+  scale: number;
+  edges: number;
+}
+
 /** Análise de curvatura: gaussiana (K = k1·k2) ou média (H = (k1+k2)/2), em 1/mm. */
 export type CurvatureKind = "gauss" | "mean";
 
@@ -168,5 +190,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
   | { id: number; ok: false; error: string };

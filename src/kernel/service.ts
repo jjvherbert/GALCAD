@@ -1,9 +1,10 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { AssemblyResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { AssemblyResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
-import { curvature, deviation } from "./analysis.ts";
+import { combs, continuity, curvature, deviation } from "./analysis.ts";
+import type { NamedEdge } from "./naming.ts";
 import type { CadDocument } from "../doc/types.ts";
 import { Engine } from "./rebuild.ts";
 import type { CadProject } from "../doc/project.ts";
@@ -43,6 +44,7 @@ export class KernelService {
   private engines = new Map<string, Engine>();
   private lastMesh: MeshData | null = null;
   private lastScene: NamedBody | null = null;
+  private lastCurves: NamedEdge[] = [];
 
   engineFor(id: string): Engine {
     let e = this.engines.get(id);
@@ -61,6 +63,7 @@ export class KernelService {
     // cópia própria: o worker transfere os buffers da malha devolvida para a interface (ficam vazios aqui)
     this.lastMesh = mesh && { ...mesh, vertices: mesh.vertices.slice(), normals: mesh.normals.slice(), triangles: mesh.triangles.slice(), lines: mesh.lines.slice() };
     this.lastScene = scene;
+    this.lastCurves = [...r.ctx.curves.values()].flatMap((c) => c.edges);
     const sheets: SheetInfo[] = [...r.ctx.sheets].map(([id, b]) => {
       const s = new (oc().BRepBuilderAPI_Sewing)(1e-6, false, true, true, false);
       s.Add(b.shape);
@@ -229,6 +232,18 @@ export class KernelService {
   deviation(): DeviationResponse {
     if (!this.lastScene) throw new Error("Não há modelo para analisar");
     return deviation(this.lastScene);
+  }
+
+  /** Continuidade G0–G3 nas arestas entre faces (classe A). */
+  continuity(): ContinuityResponse {
+    if (!this.lastScene) throw new Error("Não há modelo para analisar");
+    return continuity(this.lastScene);
+  }
+
+  /** Pentes de curvatura (porcupine) das arestas escolhidas, ou de todas as arestas curvas e curvas 3D. */
+  combs(edges?: string[]): CombsResponse {
+    if (!this.lastScene && !this.lastCurves.length) throw new Error("Não há modelo para analisar");
+    return combs(this.lastScene, this.lastCurves, edges);
   }
 
   /** Curvatura em cada vértice da última malha. */

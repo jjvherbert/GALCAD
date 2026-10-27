@@ -24,6 +24,8 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
       const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force)
         : data.type === "curvature" ? service.curvature(data.kind)
         : data.type === "deviation" ? service.deviation()
+        : data.type === "continuity" ? service.continuity()
+        : data.type === "combs" ? service.combs(data.edges)
         : data.type === "assembly" ? await service.assembly(data.project, data.asmId, data.force)
         : data.type === "interference" ? await service.interference()
         : data.type === "drawing" ? await service.drawing(data.project, data.drawingId, data.force)

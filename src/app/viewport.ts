@@ -38,6 +38,41 @@ const themes: Record<"light" | "dark", Theme> = {
   dark: { bg: 0x14181f, body: 0x7f93a8, sheet: 0xb08d3a, curve: 0xf472b6, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9 },
 };
 
+/**
+ * Linhas de realce (highlight lines): luzes lineares paralelas ao eixo `e`, empilhadas na direção `s`
+ * num plano acima do modelo. Em cada ponto, a reta que passa por ele segundo a normal corta o plano
+ * das luzes; a coordenada desse ponto em `s` dá a risca. Ao contrário da zebra, não depende da vista
+ * e é sensível ao sinal da curvatura (descontinuidades G1/G2 aparecem como quebras ou cotovelos).
+ */
+/** Cores das classes de continuidade: folga, G0, G1, G2, G3. */
+export const CONTINUITY_COLORS: Record<-1 | 0 | 1 | 2 | 3, number> = { [-1]: 0xdc2626, 0: 0x6b7280, 1: 0xeab308, 2: 0x16a34a, 3: 0x2563eb };
+
+function highlightMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    uniforms: { e: { value: new THREE.Vector3(1, 0, 0) }, sdir: { value: new THREE.Vector3(0, 1, 0) }, h: { value: 100 }, w: { value: 10 } },
+    vertexShader: `
+      varying vec3 vPos; varying vec3 vN;
+      void main() { vPos = (modelMatrix * vec4(position, 1.0)).xyz; vN = normalize(mat3(modelMatrix) * normal); gl_Position = projectionMatrix * viewMatrix * vec4(vPos, 1.0); }`,
+    fragmentShader: `
+      uniform vec3 e; uniform vec3 sdir; uniform float h; uniform float w;
+      varying vec3 vPos; varying vec3 vN;
+      void main() {
+        vec3 n = normalize(vN);
+        vec3 k = normalize(cross(e, sdir));
+        float nk = dot(n, k);
+        if (abs(nk) < 1e-3) { gl_FragColor = vec4(0.55, 0.55, 0.6, 1.0); return; }
+        float lam = (h - dot(vPos, k)) / nk;
+        float sig = dot(vPos + lam * n, sdir) / w;
+        float f = abs(fract(sig) - 0.5);
+        float line = 1.0 - smoothstep(0.03, 0.08, f);
+        float shade = 0.75 + 0.25 * abs(nk);
+        gl_FragColor = vec4(mix(vec3(shade), vec3(0.05, 0.1, 0.35), line), 1.0);
+      }`,
+  });
+}
+
 /** Textura matcap às riscas: com a normal em coordenadas de vista dá as riscas de zebra (reflexo de luzes em tubo). */
 function zebraTexture(): THREE.Texture {
   const c = document.createElement("canvas");
@@ -116,6 +151,8 @@ export class Viewport {
   private analysis: Analysis | null = null;
   private overlayGroup = new THREE.Group();
   private zebraMat: THREE.MeshMatcapMaterial | null = null;
+  private highlightMat: THREE.ShaderMaterial | null = null;
+  private analysisGroup = new THREE.Group();
   private shadedMat: THREE.Material | null = null;
   settings: Settings;
 
@@ -233,7 +270,7 @@ export class Viewport {
       return [lo, hi];
     });
     this.shadedMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    this.faceMesh = new THREE.Mesh(g, this.analysis?.kind === "zebra" ? this.zebra() : this.shadedMat);
+    this.faceMesh = new THREE.Mesh(g, this.faceMaterial());
     const eg = new THREE.BufferGeometry();
     eg.setAttribute("position", new THREE.BufferAttribute(mesh.lines, 3));
     eg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(mesh.lines.length), 3));
@@ -286,11 +323,51 @@ export class Viewport {
     return this.zebraMat;
   }
 
-  /** Análise de superfície: zebra (material matcap), inclinação e curvatura (cores por vértice). */
+  /** Material das faces conforme a análise (zebra, linhas de realce ou sombreado com cores). */
+  private faceMaterial(): THREE.Material {
+    const a = this.analysis;
+    if (a?.kind === "zebra") return this.zebra();
+    if (a?.kind === "highlight") {
+      this.highlightMat ??= highlightMaterial();
+      const u = this.highlightMat.uniforms;
+      const axes = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] } as const;
+      const e = axes[a.axis];
+      // luzes acima do modelo: plano perpendicular ao eixo "mais vertical" que não é o das luzes
+      const up = a.axis === "Z" ? axes.Y : axes.Z;
+      const sdir = new THREE.Vector3(...e).cross(new THREE.Vector3(...up)).normalize();
+      u.e.value.set(...e);
+      u.sdir.value.copy(sdir);
+      const k = new THREE.Vector3(...e).cross(sdir);
+      u.h.value = this.size * 1.5 * k.dot(new THREE.Vector3(...up));
+      u.w.value = a.spacing;
+      return this.highlightMat;
+    }
+    return this.shadedMat!;
+  }
+
+  /** Análise de superfície: zebra/realce (materiais), inclinação e curvatura (cores), pentes (linhas). */
   setAnalysis(a: Analysis | null) {
     this.analysis = a;
-    if (this.faceMesh && this.shadedMat) this.faceMesh.material = a?.kind === "zebra" ? this.zebra() : this.shadedMat;
+    if (this.faceMesh && this.shadedMat) this.faceMesh.material = this.faceMaterial();
     this.el.dataset.analysis = a?.kind ?? "";
+    this.disposeGroup(this.analysisGroup);
+    if (!this.analysisGroup.parent) this.scene.add(this.analysisGroup);
+    if (a?.kind === "combs" && a.data) {
+      const add = (arr: Float32Array, color: number) => {
+        if (!arr.length) return;
+        const g = new THREE.BufferGeometry();
+        // as cerdas são desenhadas com o ganho escolhido na interface (a partir da base de cada cerda)
+        const pos = arr.slice();
+        if (a.gain !== 1 && arr === a.data!.quills) for (let i = 0; i < pos.length; i += 6) for (let k = 0; k < 3; k++) pos[i + 3 + k] = pos[i + k] + (pos[i + 3 + k] - pos[i + k]) * a.gain;
+        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, depthTest: false }));
+        l.renderOrder = 7;
+        this.analysisGroup.add(l);
+      };
+      add(a.data.quills, 0x7c3aed);
+      if (a.gain === 1) add(a.data.envelope, 0xdb2777);
+      this.el.dataset.combs = String(a.data.quills.length / 6);
+    }
     this.recolor();
   }
 
@@ -449,10 +526,13 @@ export class Viewport {
     col.needsUpdate = true;
     const ecol = this.edgeLines.geometry.getAttribute("color") as THREE.BufferAttribute;
     const dev = a?.kind === "deviation" && a.data ? new Map(a.data.edges.map((x) => [x.name, x.deg])) : null;
+    const cont = a?.kind === "continuity" && a.data ? new Map(a.data.edges.map((x) => [x.name, x.cls])) : null;
     this.mesh.edges.forEach((e) => {
       const k = `edge:${e.name}`;
       const d = dev?.get(e.name);
-      const base = d === undefined ? (e.curve ? this.theme.curve : this.theme.edge) : d <= 0.5 ? 0x16a34a : d <= 10 ? 0xf59e0b : 0x6b7280;
+      const cl = cont?.get(e.name);
+      const base = cl !== undefined ? CONTINUITY_COLORS[cl]
+        : d === undefined ? (e.curve ? this.theme.curve : this.theme.edge) : d <= 0.5 ? 0x16a34a : d <= 10 ? 0xf59e0b : 0x6b7280;
       c.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : base);
       for (let v = e.start; v < e.start + e.count; v++) ecol.setXYZ(v, c.r, c.g, c.b);
     });

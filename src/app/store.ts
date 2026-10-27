@@ -8,14 +8,19 @@ import {
   newAssembly, newDrawing, newPart, newProject, parseProject, serializeProject, usages,
 } from "../doc/project.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
-import type { AssemblyResponse, InterferenceResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, RebuildResponse } from "../kernel/protocol.ts";
+import type { AssemblyResponse, InterferenceResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, RebuildResponse } from "../kernel/protocol.ts";
 
 /** Análise de superfície ativa no 3D (separador Avaliar). */
 export type Analysis =
   | { kind: "zebra" }
   | { kind: "curvature"; mode: CurvatureKind; data?: CurvatureResponse }
   | { kind: "draft"; dir: StdAxis; angle: number }
-  | { kind: "deviation"; data?: DeviationResponse };
+  | { kind: "deviation"; data?: DeviationResponse }
+  | { kind: "continuity"; data?: ContinuityResponse }
+  /** Linhas de realce (highlight lines): luzes lineares paralelas a um eixo, fixas no espaço. */
+  | { kind: "highlight"; axis: StdAxis; spacing: number }
+  /** Pentes de curvatura das arestas selecionadas (ou de todas as curvas). */
+  | { kind: "combs"; edges?: string[]; gain: number; data?: CombsResponse };
 import { KernelClient } from "./kernel-client.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
@@ -395,9 +400,12 @@ class Store {
 
   private async refreshAnalysis() {
     const a = this.state.analysis;
-    if ((a?.kind !== "curvature" && a?.kind !== "deviation") || !this.state.result?.mesh) return;
+    if ((a?.kind !== "curvature" && a?.kind !== "deviation" && a?.kind !== "continuity" && a?.kind !== "combs") || !this.state.result?.mesh) return;
     try {
-      const data = a.kind === "curvature" ? await this.kernel.curvature(a.mode) : await this.kernel.deviation();
+      const data = a.kind === "curvature" ? await this.kernel.curvature(a.mode)
+        : a.kind === "continuity" ? await this.kernel.continuity()
+        : a.kind === "combs" ? await this.kernel.combs(a.edges)
+        : await this.kernel.deviation();
       if (this.state.analysis === a) this.set({ analysis: { ...a, data } as Analysis });
     } catch (e) {
       this.set({ error: (e as Error).message });

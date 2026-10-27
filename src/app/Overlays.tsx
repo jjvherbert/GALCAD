@@ -5,7 +5,7 @@ import type { ComponentChildren } from "preact";
 import { COMMANDS, commandById, runCommand } from "./commands.ts";
 import { type Pick, store, useStore } from "./store.ts";
 import type { GestureDir } from "./settings.ts";
-import { VIEWS, type ViewName, robustScale } from "./viewport.ts";
+import { CONTINUITY_COLORS, VIEWS, type ViewName, robustScale } from "./viewport.ts";
 import { describeName } from "./forms.tsx";
 
 /** Feature que criou uma face/aresta (pelo primeiro id do nome topológico). */
@@ -199,7 +199,7 @@ export function AnalysisPanel() {
   return (
     <div class="analysis-panel" role="region" aria-label="Análise">
       <div class="analysis-head">
-        <b>{a.kind === "zebra" ? "Riscas de zebra" : a.kind === "curvature" ? "Curvatura" : a.kind === "deviation" ? "Desvio nas arestas" : "Análise de inclinação"}</b>
+        <b>{{ zebra: "Riscas de zebra", curvature: "Curvatura", deviation: "Desvio nas arestas", draft: "Análise de inclinação", continuity: "Continuidade (classe A)", highlight: "Linhas de realce", combs: "Pentes de curvatura" }[a.kind]}</b>
         <button class="icon" aria-label="Desligar análise" onClick={() => store.setAnalysis(null)}>✕</button>
       </div>
       {a.kind === "zebra" && <p class="muted">Riscas contínuas = continuidade tangente (G1); riscas sem quebra de direção = curvatura contínua (G2). Rode a vista para as ver mover.</p>}
@@ -236,6 +236,48 @@ export function AnalysisPanel() {
           </>
         );
       })() : <p class="muted">A calcular…</p>)}
+      {a.kind === "continuity" && (a.data ? (() => {
+        const d = a.data;
+        const n = (c: number) => d.edges.filter((e) => e.cls === c).length;
+        const pct = (x: number) => `${(x * 100).toLocaleString("pt-PT", { maximumFractionDigits: 1 })} %`;
+        const worst = d.edges.filter((e) => e.cls >= 1 && e.cls < 3).sort((x, y) => y.dk - x.dk).slice(0, 4);
+        const col = (c: -1 | 0 | 1 | 2 | 3) => `background:#${CONTINUITY_COLORS[c].toString(16).padStart(6, "0")}`;
+        return (
+          <>
+            <ul class="legend-list">
+              <li><i style={col(-1)} /> Folga &gt; {d.limits.gap} mm: {n(-1)}</li>
+              <li><i style={col(0)} /> G0 (ângulo &gt; {d.limits.deg}°): {n(0)}</li>
+              <li><i style={col(1)} /> G1 (curvatura difere &gt; {pct(d.limits.dk)}): {n(1)}</li>
+              <li><i style={col(2)} /> G2 (derivada da curvatura difere &gt; {pct(d.limits.dk3)}): {n(2)}</li>
+              <li><i style={col(3)} /> G3: {n(3)}</li>
+            </ul>
+            {worst.map((e) => <p key={e.name} class="muted" title={e.name}>{describeName(st.doc, e.name)} · {e.deg.toFixed(3)}° · Δk {pct(e.dk)}</p>)}
+            <p class="muted">Em 5 pontos por aresta: folga entre as superfícies, ângulo entre normais, salto relativo da curvatura normal transversal (G2) e da sua derivada por diferenças finitas (G3, indicativo).</p>
+          </>
+        );
+      })() : <p class="muted">A calcular…</p>)}
+      {a.kind === "highlight" && (
+        <>
+          <label class="row">Luzes paralelas a
+            <select value={a.axis} onChange={(e) => void store.setAnalysis({ ...a, axis: (e.target as HTMLSelectElement).value as "X" | "Y" | "Z" })}>
+              <option value="X">X</option><option value="Y">Y</option><option value="Z">Z</option>
+            </select>
+          </label>
+          <label class="row">Espaçamento (mm)
+            <input type="number" min="0.5" step="1" value={a.spacing} onInput={(e) => void store.setAnalysis({ ...a, spacing: Number((e.target as HTMLInputElement).value) || 10 })} />
+          </label>
+          <p class="muted">Luzes lineares fixas no espaço (não acompanham a vista). Linhas contínuas e sem cotovelos = G2; um cotovelo indica G1; uma quebra, aresta viva.</p>
+        </>
+      )}
+      {a.kind === "combs" && (a.data ? (
+        <>
+          <label class="row">Ganho
+            <input type="range" min="0.2" max="5" step="0.1" value={a.gain} onInput={(e) => void store.setAnalysis({ ...a, gain: Number((e.target as HTMLInputElement).value) })} />
+          </label>
+          <p class="muted">{a.data.edges} curva(s){a.edges ? " selecionada(s)" : " (todas as arestas curvas e curvas 3D; selecione arestas antes para restringir)"}. Curvatura máx. {a.data.maxK.toExponential(2).replace("e", "·10^")} 1/mm (raio {a.data.maxK > 0 ? (1 / a.data.maxK).toFixed(2) : "∞"} mm).</p>
+          <p class="muted">Cerdas perpendiculares à curva, com comprimento proporcional à curvatura; a envolvente (com ganho 1) deve ser suave: saltos = descontinuidade de curvatura.</p>
+        </>
+      ) : <p class="muted">A calcular…</p>)}
       {a.kind === "draft" && (
         <>
           <label class="row">Direção de extração

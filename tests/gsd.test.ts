@@ -234,3 +234,45 @@ test("curva prolongada e regrada a um ângulo", async () => {
   const top = namedEdges(g.ctx.sheets.get("f4")!).map((x) => edgeProps(x.edge).mid[2]);
   near(Math.max(...top.map(Math.abs)), 10, 1e-6);
 });
+
+// ---------------------------------------------------------------------------
+// Fase 4.2: análises de classe A
+// ---------------------------------------------------------------------------
+
+test("continuidade: filete (G1), arestas vivas (G0) e concordância G2 costurada", async () => {
+  const { continuity, combs } = await import("../src/kernel/analysis.ts");
+  const { sceneOf } = await import("../src/kernel/service.ts");
+  const s = new SketchBuilder();
+  s.rect(0, 0, 100, 60, 100, 60);
+  const b0 = await build(s.build(), { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 20 } });
+  const top = namedEdges(b0.ctx.body!).filter((e) => Math.abs(edgeProps(e.edge).mid[2] - 20) < 1e-6).map((e) => ({ kind: "edge" as const, name: e.name }));
+  const r = await build(s.build(), { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 20 } }, { type: "fillet", refs: top, radius: 5 });
+  const c = continuity(r.ctx.body!);
+  const cls = (want: number) => c.edges.filter((e) => e.cls === want).length;
+  // 4 arestas de topo arredondadas = 8 arestas tangentes (G1: a curvatura salta de 0 para 1/5) e 4 cantos esféricos
+  assert.ok(cls(1) >= 8, JSON.stringify(c.edges.map((e) => e.cls)));
+  assert.ok(cls(0) >= 4); // arestas verticais e de base
+  assert.equal(cls(-1), 0);
+
+  // concordância G2 entre tiras desfasadas, costurada: as costuras são pelo menos G2
+  const strips: NewFeature[] = [
+    line([0, 0, 0], [100, 0, 0]), line([0, 50, 0], [100, 50, 0]), { type: "boundary", dir1: [cv("f1"), cv("f2")], dir2: [] },
+    line([0, 100, 40], [100, 100, 40]), line([0, 150, 40], [100, 150, 40]), { type: "boundary", dir1: [cv("f4"), cv("f5")], dir2: [] },
+  ];
+  const side = (curve: string, face: string) => ({ curve: cv(curve), support: { kind: "face" as const, name: face }, continuity: "curvature" as const });
+  const k = await build(...strips, { type: "blend", side1: side("f2", "f3:bnd"), side2: side("f4", "f6:bnd") },
+    { type: "knit", sheets: ["f3", "f6", "f7"], tolerance: 0.01 });
+  const ck = continuity(k.ctx.sheets.get("f8")!);
+  assert.equal(ck.edges.length, 2);
+  for (const e of ck.edges) assert.ok(e.cls >= 2, JSON.stringify(e));
+
+  // pentes de curvatura de uma circunferência r = 20: curvatura 1/20 em todas as cerdas
+  const circ = new SketchBuilder();
+  circ.circle(0, 0, 20);
+  const cr = await build(circ.build(), { type: "surfaceExtrude", sketch: "f1", end: { type: "blind", depth: 10 } });
+  const { scene } = sceneOf(cr.ctx);
+  const cb = combs(scene, []);
+  near(cb.maxK, 1 / 20, 1e-6);
+  assert.ok(cb.edges >= 2 && cb.quills.length > 0);
+  near(cb.scale * cb.maxK, 0.15 * Math.hypot(40, 40, 10), 1e-6);
+});

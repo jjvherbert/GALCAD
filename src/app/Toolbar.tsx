@@ -30,11 +30,12 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
       { title: "Para sólido", ids: ["feature.thicken", "feature.replaceFace"] },
       { title: "GSD", ids: ["feature.multiSection", "feature.blend", "feature.circleSweep", "feature.extrapolate", "feature.heal"] },
       { title: "Análise", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation"] },
+      { title: "Classe A", ids: ["analysis.continuity", "analysis.highlight", "analysis.combs"] },
     ],
   },
   { id: "sketch", label: "Esboço", groups: [{ title: "Esboço", ids: ["sketch.new"] }] },
   { id: "refs", label: "Referências", groups: [{ title: "Geometria de referência", ids: ["feature.plane", "feature.axis", "feature.csys"] }] },
-  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }, { title: "Análise de superfícies", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation"] }] },
+  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }, { title: "Análise de superfícies", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation", "analysis.continuity", "analysis.highlight", "analysis.combs"] }] },
   { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
 ];
 
@@ -48,7 +49,7 @@ const ASM_TABS: typeof TABS = [
 ];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const short = (label: string) => cap(label.replace(/^Mate: /, "").replace(/^Vista de /, "").replace(/^Vista (projetada|auxiliar)$/, "$1")).replace("Deteção de interferências", "Interferências").replace("Lista de materiais (BOM) e assistente", "BOM").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
+const short = (label: string) => cap(label.replace(/^Mate: /, "").replace(/^Vista de /, "").replace(/^Vista (projetada|auxiliar)$/, "$1")).replace("Deteção de interferências", "Interferências").replace("Lista de materiais (BOM) e assistente", "BOM").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace(/^Continuidade.*/, "Continuidade").replace(/^Linhas de realce.*/, "Realce").replace(/^Pentes de curvatura.*/, "Pentes").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
   const st = useStore();
