@@ -733,6 +733,8 @@ export interface CadDocument {
   pmi?: import("./pmi.ts").PmiItem[];
   modelViews?: import("./pmi.ts").ModelView[];
   attributes?: import("./pmi.ts").Attribute[];
+  /** Scripts de automação guardados com a peça (API cad.*). */
+  scripts?: { name: string; code: string }[];
   /** Índice da barra de rollback: só as features antes deste índice são reconstruídas. Omitido = todas. */
   rollback?: number;
 }

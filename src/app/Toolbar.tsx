@@ -7,7 +7,7 @@ import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
 import { DRAWING_TABS } from "./drawing-commands.ts";
 
-type Tab = "features" | "surfaces" | "sketch" | "refs" | "evaluate" | "knowledge" | "pmi" | "simulation" | "modules" | "assembly" | "drawing" | "annotate";
+type Tab = "features" | "surfaces" | "sketch" | "refs" | "evaluate" | "knowledge" | "pmi" | "simulation" | "automation" | "modules" | "assembly" | "drawing" | "annotate";
 
 const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[] }[] = [
   {
@@ -40,6 +40,7 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
   { id: "knowledge", label: "Conhecimento", groups: [{ title: "Knowledgeware", ids: ["kw.panel", "edit.variables"] }, { title: "Publicação", ids: ["feature.external"] }] },
   { id: "pmi", label: "PMI", groups: [{ title: "PMI 3D e atributos", ids: ["pmi.panel"] }, { title: "Exportar", ids: ["export.step242"] }] },
   { id: "simulation", label: "Simulação", groups: [{ title: "Pré-processador", ids: ["sim.panel"] }, { title: "Análise", ids: ["analysis.curvature", "analysis.deviation"] }] },
+  { id: "automation", label: "Automação", groups: [{ title: "Scripts", ids: ["script.panel"] }, { title: "Simulação", ids: ["sim.panel"] }] },
   { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
 ];
 
@@ -54,7 +55,7 @@ const ASM_TABS: typeof TABS = [
 ];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const short = (label: string) => cap(label.replace(/^Mate: /, "").replace(/^Vista de /, "").replace(/^Vista (projetada|auxiliar)$/, "$1")).replace("Deteção de interferências", "Interferências").replace("Lista de materiais (BOM) e assistente", "BOM").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace(/^Continuidade.*/, "Continuidade").replace(/^Linhas de realce.*/, "Realce").replace(/^Pentes de curvatura.*/, "Pentes").replace(/^Conhecimento:.*/, "Regras e configs.").replace(/^Simulação:.*/, "Estudos").replace(/^PMI:.*/, "Anotações PMI").replace(/^Exportar STEP AP242.*/, "STEP AP242").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
+const short = (label: string) => cap(label.replace(/^Mate: /, "").replace(/^Vista de /, "").replace(/^Vista (projetada|auxiliar)$/, "$1")).replace("Deteção de interferências", "Interferências").replace("Lista de materiais (BOM) e assistente", "BOM").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace(/^Continuidade.*/, "Continuidade").replace(/^Linhas de realce.*/, "Realce").replace(/^Pentes de curvatura.*/, "Pentes").replace(/^Conhecimento:.*/, "Regras e configs.").replace(/^Simulação:.*/, "Estudos").replace(/^PMI:.*/, "Anotações PMI").replace(/^Exportar STEP AP242.*/, "STEP AP242").replace(/^Scripts:.*/, "Scripts").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
   const st = useStore();

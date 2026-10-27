@@ -1,0 +1,211 @@
+{
+  "format": "cadp-project",
+  "version": 1,
+  "name": "Scripts",
+  "parts": [
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p1",
+      "name": "Consola",
+      "units": "mm",
+      "variables": [
+        {
+          "name": "L",
+          "expr": "100",
+          "comment": "comprimento (mm)"
+        }
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 100,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 100,
+              "y": 10
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 10
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": "L"
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 10
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 10
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        }
+      ],
+      "studies": [
+        {
+          "id": "s1",
+          "name": "Consola — estática",
+          "physics": "fem",
+          "solver": "calculix",
+          "analysis": "static",
+          "material": {
+            "name": "Aço S235JR",
+            "E": 210000,
+            "nu": 0.3,
+            "density": 7.85,
+            "alpha": 0.000012,
+            "k": 50,
+            "yield": 235,
+            "tangent": 2100,
+            "source": "EN 10025-2 (valores nominais)"
+          },
+          "loads": [
+            {
+              "kind": "fixed",
+              "faces": [
+                {
+                  "kind": "face",
+                  "name": "f2:side:l8"
+                }
+              ]
+            },
+            {
+              "kind": "force",
+              "faces": [
+                {
+                  "kind": "face",
+                  "name": "f2:side:l6"
+                }
+              ],
+              "f": [
+                0,
+                0,
+                -100
+              ]
+            }
+          ],
+          "modes": 6,
+          "mesh": {
+            "size": 3,
+            "order": 2,
+            "curvature": 0
+          },
+          "probes": [
+            {
+              "name": "Flecha na ponta",
+              "quantity": "uz",
+              "at": {
+                "kind": "faces",
+                "faces": [
+                  {
+                    "kind": "face",
+                    "name": "f2:side:l6"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "assemblies": [],
+  "drawings": []
+}

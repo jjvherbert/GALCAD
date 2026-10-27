@@ -353,3 +353,13 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .conv-plot circle { fill: #2563eb; }
 .conv-plot .ext { stroke: #16a34a; stroke-dasharray: 4 3; }
 .conv-plot text { fill: var(--muted, #6b7280); }
+/* scripts */
+.script-editor { width: 100%; min-height: 260px; font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace; tab-size: 2; white-space: pre; resize: vertical; box-sizing: border-box; }
+.script-console, .script-value, .api-doc pre { font: 11px/1.4 ui-monospace, monospace; background: var(--panel2, #f3f4f6); padding: 6px; max-height: 220px; overflow: auto; white-space: pre-wrap; margin: 4px 0; }
+.api-doc { flex: 1; min-width: 0; }
+.api-doc pre { max-height: 320px; }
+.table-scroll { overflow-x: auto; max-height: 320px; }
+.info-table.data th { text-align: right; font-weight: 600; padding: 1px 4px; border-bottom: 1px solid var(--line); }
+.info-table.data td { text-align: right; }
+.script-panel .row input { min-width: 0; flex: 1; }
+.script-panel textarea[aria-label="Pedido ao copiloto"] { width: 100%; box-sizing: border-box; }

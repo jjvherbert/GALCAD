@@ -703,6 +703,83 @@ function femResultFrom(c, m, blocks, d) {
 			});
 		});
 	}
+	if (c.probes?.length && (c.analysis === "static" || c.analysis === "thermal")) {
+		const dispB = lastOf("DISP"), stB = lastOf("STRESS"), vmB = lastOf("VMIS"), tB = lastOf("NDTEMP");
+		const value = (t, q) => {
+			if (q === "T") return tB?.data.get(t)?.[0];
+			if (q === "vm") {
+				const v = vmB?.data.get(t);
+				if (v) return v[0];
+				const sv = stB?.data.get(t);
+				return sv && Math.sqrt(.5 * ((sv[0] - sv[1]) ** 2 + (sv[1] - sv[2]) ** 2 + (sv[2] - sv[0]) ** 2) + 3 * (sv[3] ** 2 + sv[4] ** 2 + sv[5] ** 2));
+			}
+			const u = dispB?.data.get(t);
+			if (!u) return void 0;
+			return q === "u" ? Math.hypot(u[0], u[1], u[2]) : u["xyz".indexOf(q[1])];
+		};
+		const UNIT = {
+			u: "mm",
+			ux: "mm",
+			uy: "mm",
+			uz: "mm",
+			vm: "MPa",
+			T: "°C"
+		};
+		for (const pr of c.probes) {
+			let v, where = "";
+			if (pr.group) {
+				let sa = 0, sv = 0;
+				for (const b of physicalBlocks(m, pr.group).filter((x) => x.type === 2 || x.type === 9)) {
+					const per = b.type === 9 ? 6 : 3;
+					for (let k = 0; k < b.conn.length; k += per) {
+						const n = b.conn.slice(k, k + 3);
+						const [A, B, C] = n.map((t) => m.nodes.get(t));
+						const u1 = [
+							B[0] - A[0],
+							B[1] - A[1],
+							B[2] - A[2]
+						], u2 = [
+							C[0] - A[0],
+							C[1] - A[1],
+							C[2] - A[2]
+						];
+						const ar = .5 * Math.hypot(u1[1] * u2[2] - u1[2] * u2[1], u1[2] * u2[0] - u1[0] * u2[2], u1[0] * u2[1] - u1[1] * u2[0]);
+						const vals = n.map((t) => value(t, pr.quantity));
+						if (vals.some((x) => x === void 0)) continue;
+						sa += ar;
+						sv += ar * vals.reduce((a, b2) => a + b2, 0) / 3;
+					}
+				}
+				if (sa > 0) {
+					v = sv / sa;
+					where = "média na face";
+				}
+			} else if (pr.point) {
+				let best = Infinity, tag = -1;
+				for (const t of dispB?.data.keys() ?? tB?.data.keys() ?? []) {
+					const p = m.nodes.get(t);
+					if (!p) continue;
+					const d = Math.hypot(p[0] - pr.point[0], p[1] - pr.point[1], p[2] - pr.point[2]);
+					if (d < best) {
+						best = d;
+						tag = t;
+					}
+				}
+				if (tag >= 0) {
+					v = value(tag, pr.quantity);
+					where = `nó a ${best.toFixed(2)} mm do ponto`;
+				}
+			}
+			if (v === void 0) continue;
+			metrics.push({
+				key: pr.key,
+				label: pr.name,
+				unit: UNIT[pr.quantity],
+				value: v
+			});
+			summary.push([`Sonda: ${pr.name}`, `${v.toPrecision(5)} ${UNIT[pr.quantity]} (${where})`]);
+		}
+	}
 	const history = c.nonlinear && incremental ? allDisp.map((b) => ({
 		time: b.value,
 		umax: [...b.data.values()].reduce((m, v) => Math.max(m, Math.hypot(v[0], v[1], v[2])), 0),
@@ -1389,8 +1466,8 @@ const TET10_ORDER = [
 const num = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
 /** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
 function asterMesh(c, m) {
-	const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
-	if (!vol.length) throw new Error("A malha não tem tetraedros no grupo SOLID");
+	const vol = solidBlocks(m, c.bodies);
+	if (!vol.length) throw new Error("A malha não tem tetraedros nos grupos dos corpos");
 	const quad = vol[0].type === 11;
 	const L = [
 		"TITRE",
@@ -1400,14 +1477,19 @@ function asterMesh(c, m) {
 	];
 	const used = /* @__PURE__ */ new Set();
 	const cells = [];
-	for (const b of vol) for (let k = 0; k < b.conn.length; k += quad ? 10 : 4) {
-		const e = b.conn.slice(k, k + (quad ? 10 : 4));
-		const n = quad ? TET10_ORDER.map((i) => e[i]) : e;
-		n.forEach((x) => used.add(x));
-		cells.push({
-			name: `M${cells.length + 1}`,
-			nodes: n
-		});
+	const bodyCells = {};
+	for (const g of c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"]) {
+		bodyCells[g] = [];
+		for (const b of physicalBlocks(m, g).filter((x) => x.type === 4 || x.type === 11)) for (let k = 0; k < b.conn.length; k += quad ? 10 : 4) {
+			const e = b.conn.slice(k, k + (quad ? 10 : 4));
+			const n = quad ? TET10_ORDER.map((i) => e[i]) : e;
+			n.forEach((x) => used.add(x));
+			cells.push({
+				name: `M${cells.length + 1}`,
+				nodes: n
+			});
+			bodyCells[g].push(cells.at(-1).name);
+		}
 	}
 	const nodeOrder = [...used].sort((a, b) => a - b);
 	L.push("COOR_3D");
@@ -1455,8 +1537,15 @@ function asterMesh(c, m) {
 		L.push("FINSF", "%");
 	};
 	block("GROUP_MA", "SOLID", cells.map((e) => e.name));
+	for (const [g, ids] of Object.entries(bodyCells)) if (g !== "SOLID") block("GROUP_MA", g, ids);
 	for (const [g, ids] of Object.entries(faceGroups)) if (ids.length) block("GROUP_MA", g, ids);
 	for (const [g, ns] of Object.entries(nodeGroups)) if (ns.length) block("GROUP_NO", g, ns.map((x) => `N${x}`));
+	const supportNodes = new Set(c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? nodeGroups[ld.group] ?? [] : []));
+	for (const t of c.ties ?? []) {
+		const ns = (nodeGroups[t.slave] ?? []).filter((x) => !supportNodes.has(x));
+		if (ns.length) block("GROUP_NO", `${t.slave}_L`, ns.map((x) => `N${x}`));
+	}
+	block("GROUP_NO", "NALL", nodeOrder.map((x) => `N${x}`));
 	L.push("FIN");
 	return {
 		mail: L.join("\n") + "\n",
@@ -1466,7 +1555,6 @@ function asterMesh(c, m) {
 }
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 function asterCase(c, m) {
-	if (c.bodies?.length) throw new Error("code_aster: os estudos de montagem (vários corpos, contacto colado) ainda só correm no CalculiX");
 	if (c.analysis !== "static" && c.analysis !== "modal") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
 	const { mail, nodeOrder, areas } = asterMesh(c, m);
 	const warnings = [];
@@ -1479,8 +1567,18 @@ function asterCase(c, m) {
 	const presGroups = c.loads.flatMap((ld) => ld.kind === "pressure" ? [`'${ld.group}'`] : []);
 	if (presGroups.length) C.push(`MA = MODI_MAILLAGE(reuse=MA, MAILLAGE=MA, ORIE_PEAU=_F(GROUP_MA_PEAU=(${presGroups.join(", ")},)))`);
 	C.push("MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='3D'))");
-	const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(mat.tangent ?? 0)}, SY=${num(mat.yield)})` : "";
-	C.push(`MAT = DEFI_MATERIAU(ELAS=_F(E=${num(mat.E)}, NU=${num(mat.nu)}, RHO=${num(mat.density * 1e-9)})${plast})`, "CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
+	const material = (name, m2) => {
+		if (nl?.plasticity && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
+		const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield)})` : "";
+		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)})${plast})`);
+	};
+	if (c.bodies?.length) {
+		c.bodies.forEach((b, k) => material(`MAT${k + 1}`, b.material));
+		C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=(${c.bodies.map((b, k) => `_F(GROUP_MA='${b.group}', MATER=MAT${k + 1})`).join(", ")},))`);
+	} else {
+		material("MAT", mat);
+		C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
+	}
 	const ddl = [], force = [], pres = [];
 	let grav = "";
 	for (const ld of c.loads) switch (ld.kind) {
@@ -1512,7 +1610,10 @@ function asterCase(c, m) {
 		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
 	}
 	if (!ddl.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
-	C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddl.join(", ")},))`);
+	const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
+	const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
+	if (!bcParts.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
+	C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
 	const chParts = [
 		force.length && `FORCE_FACE=(${force.join(", ")},)`,
 		pres.length && `PRES_REP=(${pres.join(", ")},)`,
@@ -1525,15 +1626,15 @@ function asterCase(c, m) {
 	else if (!nl) C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH)," : ""}))`);
 	else {
 		const rel = nl.plasticity ? "VMIS_ISOT_LINE" : "ELAS";
-		const def = nl.geometry ? nl.plasticity ? "GDEF_LOG" : "GROT_GDEP" : "PETIT";
+		const def = nl.geometry ? nl.plasticity ? "GDEF_LOG" : "GREEN_LAGRANGE" : "PETIT";
 		C.push("RAMPE = DEFI_FONCTION(NOM_PARA='INST', VALE=(0., 0., 1., 1.))", `LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=1., NOMBRE=${nl.increments}))`, "LINST = DEFI_LIST_INST(DEFI_LIST=_F(LIST_INST=LR), ECHEC=_F(EVENEMENT='ERREUR', ACTION='DECOUPE', SUBD_METHODE='MANUEL', SUBD_PAS=4, SUBD_NIVEAU=5))", `RES = STAT_NON_LINE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH, FONC_MULT=RAMPE)," : ""}), COMPORTEMENT=_F(RELATION='${rel}', DEFORMATION='${def}', TOUT='OUI'), INCREMENT=_F(LIST_INST=LINST), NEWTON=_F(REAC_ITER=1), CONVERGENCE=_F(ITER_GLOB_MAXI=25))`);
 	}
 	if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
-	C.push("TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
+	C.push("TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
 	if (c.analysis === "static") {
-		C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', TOUT='OUI', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
+		C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
 		if (supports.length) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
-		if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', TOUT='OUI', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
+		if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
 	}
 	C.push("IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES))", "FIN()");
 	return {
@@ -1581,6 +1682,7 @@ function asterResult(c, m, t, nodeOrder) {
 		const byOrder = /* @__PURE__ */ new Map();
 		for (const row of parseAsterTable(text ?? "")) {
 			const ord = Number(row.NUME_ORDRE ?? 1);
+			if (c.nonlinear && c.analysis === "static" && Number(row.INST) === 0) continue;
 			let b = byOrder.get(ord);
 			if (!b) {
 				b = {
@@ -1613,7 +1715,7 @@ function asterResult(c, m, t, nodeOrder) {
 			Number(r.DY),
 			Number(r.DZ)
 		]
-	})).filter((r) => r.f.every(Number.isFinite));
+	})).filter((r) => r.f.every(Number.isFinite) && !(c.nonlinear && r.time === 0));
 	const res = femResultFrom(c, m, blocks, {
 		frequencies,
 		buckling: [],
@@ -1622,7 +1724,7 @@ function asterResult(c, m, t, nodeOrder) {
 	});
 	return {
 		...res,
-		hypotheses: [...res.hypotheses, "Calculado com o code_aster: adaptador ainda não verificado contra os casos analíticos nesta instalação"]
+		hypotheses: [...res.hypotheses, "Calculado com o code_aster (EDF, GPL-3.0); adaptador verificado com o code_aster 18.1 nos casos analíticos de referência (consola, pressão, modal, plasticidade uniaxial, elástica, montagem colada)"]
 	};
 }
 // src/sim/foamfields.ts
@@ -2000,7 +2102,15 @@ function tools() {
 	const gmsh = process.env.CAD_GMSH ?? which("gmsh");
 	const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
 	const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
-	const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run");
+	const home = process.env.HOME ?? "";
+	const condaAster = [
+		process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`,
+		`${home}/micromamba/envs/aster/bin/run_aster`,
+		`${home}/miniforge3/envs/aster/bin/run_aster`,
+		"/opt/mamba/root/envs/aster/bin/run_aster",
+		"/opt/conda/envs/aster/bin/run_aster"
+	].find((p) => p && existsSync(p));
+	const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
 	const foamDirect = which("simpleFoam");
 	const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
 	const version = (cmd, args) => {
@@ -2176,7 +2286,7 @@ async function runAster(c, dir, log, regenerate) {
 		physics: "fem",
 		solver: "code_aster",
 		summary: [["Malha", `${ac.nodeOrder.length} nós · ${elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary],
-		warnings: [...warnings, "Adaptador do code_aster ainda não verificado contra os casos analíticos: compare com o CalculiX"],
+		warnings,
 		fem,
 		view: femView(fem),
 		metrics: fem.metrics,
@@ -2492,7 +2602,108 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 	const c = JSON.parse(readFileSync(join(dir, "case.json"), "utf8"));
 	if (c.format !== "cadp-sim-case") throw new Error("case.json inválido");
 	let r;
-	if (opts.convergence) {
+	const prepare = (k, name) => {
+		const sub = join(dir, name);
+		mkdirSync(sub, { recursive: true });
+		const ck = coarsened(c, k);
+		writeFileSync(join(sub, "case.json"), JSON.stringify(ck));
+		writeFileSync(join(sub, "model.brep"), readFileSync(join(dir, "model.brep")));
+		if (existsSync(join(dir, "constant/triSurface"))) {
+			mkdirSync(join(sub, "constant/triSurface"), { recursive: true });
+			for (const fn of readdirSync(join(dir, "constant/triSurface"))) if (fn.endsWith(".stl")) writeFileSync(join(sub, "constant/triSurface", fn), readFileSync(join(dir, "constant/triSurface", fn)));
+		}
+		return {
+			sub,
+			ck
+		};
+	};
+	if (opts.convergence?.target !== void 0) {
+		const { ratio, target } = opts.convergence;
+		const maxLevels = Math.min(8, Math.max(3, opts.convergence.maxLevels ?? 5)), maxCells = opts.convergence.maxCells ?? 15e5;
+		if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
+		if (!(target > 0 && target < 1)) throw new Error("GCI alvo fora de ]0; 1[ (fração, ex. 0,01 = 1 %)");
+		const runs = [];
+		const steps = [];
+		let metric = opts.convergence.metric;
+		let achieved = false, stop = "";
+		for (let k = 0; k < maxLevels; k++) {
+			const { sub, ck } = prepare(ratio ** -k, `nivel${k + 1}`);
+			log(`— nível ${k + 1} (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+			const r1 = await runOnce(ck, sub, log, true);
+			runs.push(r1);
+			metric ??= r1.metrics.find((x) => x.key.startsWith("probe"))?.key ?? r1.metrics[0]?.key;
+			const val = r1.metrics.find((x) => x.key === metric)?.value ?? NaN;
+			let g;
+			if (runs.length >= 3) {
+				const [f3, f2, f1] = runs.slice(-3).map((x) => x.metrics.find((y) => y.key === metric)?.value ?? NaN);
+				const [n3, n2, n1] = runs.slice(-3).map((x) => x.cells);
+				g = gci([
+					n1,
+					n2,
+					n3
+				], [
+					f1,
+					f2,
+					f3
+				]);
+			}
+			steps.push({
+				level: k + 1,
+				size: ck.mesh.size,
+				cells: r1.cells,
+				value: val,
+				gci: g?.gciFine,
+				behaviour: g?.behaviour
+			});
+			if (g && g.behaviour === "monotonic" && g.gciFine <= target) {
+				achieved = true;
+				stop = `GCI ${(100 * g.gciFine).toFixed(2)} % ≤ ${(100 * target).toFixed(2)} %`;
+				break;
+			}
+			if (g?.behaviour === "converged") {
+				achieved = true;
+				stop = "valores iguais nas duas malhas mais finas";
+				break;
+			}
+			if (r1.cells * ratio ** 3 > maxCells) {
+				stop = `a malha seguinte passaria de ${maxCells.toExponential(1)} células`;
+				break;
+			}
+		}
+		if (!stop) stop = `atingido o máximo de ${maxLevels} malhas`;
+		const last = runs.slice(-3).reverse();
+		const report = last.length === 3 ? convergenceReport(ratio, last.map((x) => ({
+			cells: x.cells,
+			size: NaN,
+			metrics: x.metrics
+		}))) : {
+			ratio,
+			meshes: [],
+			rows: [],
+			hypotheses: []
+		};
+		report.meshes = last.map((x, i) => ({
+			cells: x.cells,
+			size: steps[steps.length - 1 - i].size
+		}));
+		report.auto = {
+			target,
+			metric: metric ?? "",
+			achieved,
+			stop,
+			steps
+		};
+		const fine = runs.at(-1);
+		r = {
+			...fine,
+			convergence: report,
+			warnings: [
+				...fine.warnings,
+				...achieved ? [] : [`Convergência não atingida: ${stop}`],
+				...report.rows.filter((x) => x.key === metric).flatMap((x) => x.gci.notes.map((n) => `${x.label}: ${n}`))
+			]
+		};
+	} else if (opts.convergence) {
 		const ratio = opts.convergence.ratio;
 		if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
 		const runs = [];
@@ -2501,15 +2712,7 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 			1,
 			0
 		]) {
-			const sub = join(dir, `malha${lvl + 1}`);
-			mkdirSync(sub, { recursive: true });
-			const ck = coarsened(c, ratio ** lvl);
-			writeFileSync(join(sub, "case.json"), JSON.stringify(ck));
-			writeFileSync(join(sub, "model.brep"), readFileSync(join(dir, "model.brep")));
-			if (existsSync(join(dir, "constant/triSurface"))) {
-				mkdirSync(join(sub, "constant/triSurface"), { recursive: true });
-				for (const fn of readdirSync(join(dir, "constant/triSurface"))) if (fn.endsWith(".stl")) writeFileSync(join(sub, "constant/triSurface", fn), readFileSync(join(dir, "constant/triSurface", fn)));
-			}
+			const { sub, ck } = prepare(ratio ** lvl, `malha${lvl + 1}`);
 			log(`— malha ${lvl + 1} de 3 (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
 			runs[lvl] = await runOnce(ck, sub, log, true);
 		}
@@ -2593,7 +2796,15 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 					writeFileSync(join(dir, `constant/triSurface/${name}.stl`), text);
 				}
 			}
-			send(200, await runCase(dir, (s) => console.log(s), true, { convergence: body.convergence && Number.isFinite(Number(body.convergence.ratio)) ? { ratio: Number(body.convergence.ratio) } : void 0 }));
+			const cv = body.convergence;
+			const fin = (x) => x === void 0 || x === null ? void 0 : Number.isFinite(Number(x)) ? Number(x) : void 0;
+			send(200, await runCase(dir, (s) => console.log(s), true, { convergence: cv && Number.isFinite(Number(cv.ratio)) ? {
+				ratio: Number(cv.ratio),
+				target: fin(cv.target),
+				metric: typeof cv.metric === "string" ? cv.metric : void 0,
+				maxLevels: fin(cv.maxLevels),
+				maxCells: fin(cv.maxCells)
+			} : void 0 }));
 		} catch (e) {
 			send(500, {
 				error: e.message,

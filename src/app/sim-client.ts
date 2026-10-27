@@ -5,6 +5,7 @@ import type { SimCase } from "../sim/case.ts";
 import type { RunResult } from "../../tools/cad-runner.ts";
 import { type ResultView, femView } from "../sim/result.ts";
 import { externalParts, store } from "./store.ts";
+import type { PartDoc } from "../doc/project.ts";
 import { download } from "./fileio.ts";
 
 export type { RunResult };
@@ -50,7 +51,17 @@ export async function agentStatus(url: string, token: string): Promise<{ ok: boo
  * malhas mais grossas (tamanhos × r e × r²) e devolve o GCI de cada grandeza.
  */
 export async function runStudy(studyId: string, url: string, token: string, convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number }): Promise<{ case: SimCase; result: RunResult }> {
-  const r = await caseFiles(studyId);
+  return postCase(await caseFiles(studyId), url, token, convergence);
+}
+
+/** Como `runStudy`, mas para um documento de peça dado (ex.: a cópia em que um script trabalha). */
+export async function runStudyFor(doc: PartDoc, studyId: string, url: string, token: string, convergence?: Parameters<typeof runStudy>[3]) {
+  const st = store.state;
+  return postCase(await store.kernel.studyCase(doc, externalParts(st.project, doc), studyId), url, token, convergence);
+}
+
+async function postCase(r: Awaited<ReturnType<typeof caseFiles>>, url: string, token: string, convergence?: Parameters<typeof runStudy>[3]): Promise<{ case: SimCase; result: RunResult }> {
+  if (!token) throw new Error("Ligue o agente local (Simulação → Agente local: endereço e token)");
   const stl = Object.fromEntries(Object.entries(r.files).filter(([p]) => p.startsWith("constant/triSurface/")).map(([p, t]) => [p.slice("constant/triSurface/".length, -4), t]));
   let res: Response;
   try {

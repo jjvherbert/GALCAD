@@ -39,6 +39,7 @@ export function parseDocument(text: string): CadDocument {
   if (Array.isArray(d.pmi)) out.pmi = d.pmi;
   if (Array.isArray(d.modelViews)) out.modelViews = d.modelViews;
   if (Array.isArray(d.attributes)) out.attributes = d.attributes;
+  if (Array.isArray(d.scripts)) out.scripts = d.scripts.filter((x: unknown) => x && typeof (x as { code?: unknown }).code === "string");
   return out;
 }
 

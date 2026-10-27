@@ -27,7 +27,7 @@ function drawingAction(what: "modelDims" | "balloons") {
 export interface Command {
   id: string;
   label: string;
-  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Superfícies" | "Esboço" | "Referências" | "Avaliar" | "Conhecimento" | "PMI" | "Simulação" | "Módulos" | "Exportar" | "Montagem" | "Desenho";
+  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Superfícies" | "Esboço" | "Referências" | "Avaliar" | "Conhecimento" | "PMI" | "Simulação" | "Automação" | "Módulos" | "Exportar" | "Montagem" | "Desenho";
   /** Atalhos, no formato "Ctrl+Shift+Z", "F", "Space", "ArrowLeft". */
   keys?: string[];
   icon?: string;
@@ -139,6 +139,7 @@ export const COMMANDS: Command[] = [
     id: `asm.mate.${k}`, label: `Mate: ${MATE_NAMES[k]}`, group: "Montagem", icon: MATE_ICON[k], repeatable: true,
     run: () => { if (store.state.active.kind === "assembly" && !store.state.mateEdit) store.startMate(k); },
   })),
+  { id: "script.panel", label: "Scripts: automação, estudos paramétricos e copiloto", group: "Automação", icon: "{}", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "script" ? null : "script", edit: null }); } },
   { id: "pmi.panel", label: "PMI: cotas, tolerâncias geométricas, referências, vistas de modelo e atributos", group: "PMI", icon: "⌖", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "pmi" ? null : "pmi", edit: null }); } },
   { id: "sim.panel", label: "Simulação: estudos FEM/CFD, malha e solvers abertos", group: "Simulação", icon: "≋", run: () => { if (store.state.active.kind !== "drawing") store.set({ sidePanel: store.state.sidePanel === "sim" ? null : "sim", edit: null, mateEdit: null, componentEdit: null }); } },
   { id: "kw.panel", label: "Conhecimento: regras, verificações, configurações e templates", group: "Conhecimento", icon: "⚙", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "knowledge" ? null : "knowledge" }); } },
