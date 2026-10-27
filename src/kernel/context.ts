@@ -48,6 +48,14 @@ export interface NamedCurve {
 export interface StepReport {
   warnings: string[];
   info?: { title: string; rows: [string, string][]; note?: string };
+  /** Rede de controlo (forma livre): polos depois dos deslocamentos, linha a linha (u maior). */
+  net?: ControlNet;
+}
+
+export interface ControlNet {
+  nu: number;
+  nv: number;
+  poles: number[];
 }
 
 export const featureName = (ctx: Ctx, id: string) => ctx.doc.features.find((f) => f.id === id)?.name ?? id;

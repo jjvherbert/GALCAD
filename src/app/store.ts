@@ -106,6 +106,9 @@ export interface State {
   interference: InterferenceResponse | null;
   /** Painel lateral alternativo: BOM ou assistente. */
   sidePanel: "bom" | "ai" | null;
+  /** Forma livre em edição: polo selecionado e restrição do arrasto. */
+  poleSel: [number, number] | null;
+  poleAxis: "free" | "X" | "Y" | "Z";
   /** Ferramenta ativa no editor de desenhos. */
   drawingTool: DrawingTool | null;
   /** Seleção no desenho (vista ou anotação). */
@@ -145,7 +148,7 @@ class Store {
       edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, drawingTool: null, drawingSel: null,
+      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
     };
     this.rebuild(0);
   }
@@ -518,6 +521,20 @@ class Store {
     if (f.type === "sketch") { this.editSketch(id); return; }
     this.set({ edit: { id, isNew: false, draft: structuredClone(f), index }, selectedFeature: id, pickTarget: null });
     this.rebuild();
+  }
+
+  /** Acrescenta um deslocamento a um polo da forma livre em edição (soma ao que já tiver). */
+  movePole(i: number, j: number, d: Vec3, absolute = false) {
+    const e = this.state.edit;
+    if (!e || e.draft.type !== "freeform") return;
+    const moves = e.draft.moves.slice();
+    const k = moves.findIndex((m) => m.i === i && m.j === j);
+    const prev = k >= 0 ? moves[k].d : [0, 0, 0];
+    const nd = (absolute ? d : [prev[0] + d[0], prev[1] + d[1], prev[2] + d[2]]).map((x) => Math.round(x * 1000) / 1000) as Vec3;
+    if (k >= 0) moves.splice(k, 1);
+    if (nd.some((x) => x !== 0)) moves.push({ i, j, d: nd });
+    this.set({ poleSel: [i, j] });
+    this.updateDraft({ moves } as Partial<Feature>);
   }
 
   updateDraft(patch: Partial<Feature>) {

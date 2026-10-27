@@ -75,6 +75,8 @@ function App() {
       const fid = featureOfPick(p);
       if (fid && !store.state.edit && !store.state.sketch) store.editFeature(fid);
     };
+    v.onPoleSelect = (i, j) => store.set({ poleSel: [i, j] });
+    v.onPoleMoved = (i, j, d) => store.movePole(i, j, d);
     vp.current = v;
     setCommandViewport(v);
   }, []);
@@ -103,6 +105,12 @@ function App() {
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
+  // rede de controlo da forma livre em edição
+  useEffect(() => {
+    const d = st.edit?.draft;
+    const net = d?.type === "freeform" ? st.result?.status[d.id]?.net ?? null : null;
+    if (vp.current) { vp.current.poleAxis = st.poleAxis; vp.current.setPoleNet(net, st.poleSel); }
+  }, [st.edit, st.result, st.poleSel, st.poleAxis]);
   // regiões do esboço da extrusão/revolução em edição, enquanto se escolhem ou se já há escolha
   useEffect(() => {
     const d = st.edit?.draft;

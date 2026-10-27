@@ -29,6 +29,7 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
       { title: "Editar", ids: ["feature.trimSurface", "feature.untrim", "feature.knit", "feature.deleteFace"] },
       { title: "Para sólido", ids: ["feature.thicken", "feature.replaceFace"] },
       { title: "GSD", ids: ["feature.multiSection", "feature.blend", "feature.circleSweep", "feature.extrapolate", "feature.heal"] },
+      { title: "Forma livre", ids: ["feature.freeform"] },
       { title: "Análise", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation"] },
       { title: "Classe A", ids: ["analysis.continuity", "analysis.highlight", "analysis.combs"] },
     ],

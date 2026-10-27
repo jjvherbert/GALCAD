@@ -276,3 +276,44 @@ test("continuidade: filete (G1), arestas vivas (G0) e concordância G2 costurada
   assert.ok(cb.edges >= 2 && cb.quills.length > 0);
   near(cb.scale * cb.maxK, 0.15 * Math.hypot(40, 40, 10), 1e-6);
 });
+
+// ---------------------------------------------------------------------------
+// Fase 4.3: forma livre (polos NURBS)
+// ---------------------------------------------------------------------------
+
+test("forma livre: patch plano, polo central deslocado, rede no relatório e conversão de face", async () => {
+  const { bbox } = await import("../src/kernel/occ.ts");
+  const patch = (moves: { i: number; j: number; d: Vec3 }[], width = 100): NewFeature =>
+    ({ type: "freeform", source: { kind: "patch", plane: { kind: "std", name: "XY" }, width, height: 100, nu: 5, nv: 5 }, moves });
+  const r0 = await build(patch([]));
+  near(area(r0.ctx.sheets.get("f1")!.shape), 10000, 1e-6);
+  const net0 = r0.status.f1.net!;
+  assert.equal(net0.nu * net0.nv, 25);
+  nearV(net0.poles.slice(12 * 3, 12 * 3 + 3) as Vec3, [0, 0, 0]);
+
+  const r = await build(patch([{ i: 2, j: 2, d: [0, 0, 20] }]));
+  const net = r.status.f1.net!;
+  nearV(net.poles.slice(12 * 3, 12 * 3 + 3) as Vec3, [0, 0, 20]);
+  // cúbica clamped com nós (0,0,0,0,½,1,1,1,1): N₂(½) = ½ → altura no centro = 20·½·½ = 5
+  assert.ok(distance(vertexAt([0, 0, 5]), r.ctx.sheets.get("f1")!.shape) < 1e-6);
+  assert.ok(bbox(r.ctx.sheets.get("f1")!.shape).max[2] <= 5 + 1e-6);
+  assert.ok(area(r.ctx.sheets.get("f1")!.shape) > 10000);
+  // paramétrico: com outra largura o deslocamento mantém-se no mesmo polo
+  const r2 = await build(patch([{ i: 2, j: 2, d: [0, 0, 20] }], 200));
+  assert.ok(distance(vertexAt([0, 0, 5]), r2.ctx.sheets.get("f1")!.shape) < 1e-6);
+  near(bbox(r2.ctx.sheets.get("f1")!.shape).max[0], 100, 1e-6);
+  // polo inexistente → aviso
+  const r3 = await build(patch([{ i: 7, j: 0, d: [0, 0, 1] }]));
+  assert.equal(r3.status.f1.state, "warning");
+
+  // converter a face de topo de um bloco (cópia; o sólido fica igual)
+  const s = new SketchBuilder();
+  s.rect(0, 0, 100, 60, 100, 60);
+  const blk = await build(s.build(), { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 20 } });
+  const topFace = blk.ctx.body!.faces.find((x) => x.name.includes(":end"))!;
+  const c = await build(s.build(), { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 20 } },
+    { type: "freeform", source: { kind: "face", face: { kind: "face", name: topFace.name }, nu: 4, nv: 4 }, moves: [{ i: 1, j: 1, d: [0, 0, 5] }] });
+  near(area(c.ctx.sheets.get("f3")!.shape) > 6000 ? 1 : 0, 1);
+  assert.equal(c.ctx.body!.faces.length, 6);
+  assert.ok(c.status.f3.net!.nu >= 4); // a interpolação cúbica da grelha 4 × 4 dá n + 2 polos
+});

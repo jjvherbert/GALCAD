@@ -555,6 +555,49 @@ export function PropertyPanel() {
         </>
       );
       break;
+    case "freeform": {
+      const src = f.source;
+      const net = status?.net;
+      const sel = st.poleSel && net && st.poleSel[0] < net.nu && st.poleSel[1] < net.nv ? st.poleSel : null;
+      const mv = sel ? f.moves.find((m) => m.i === sel[0] && m.j === sel[1]) : undefined;
+      const d = mv?.d ?? [0, 0, 0];
+      body = (
+        <>
+          <Select label="Origem" value={src.kind} options={[["patch", "Patch novo num plano"], ["face", "Converter uma face"]]}
+            onChange={(kind) => up({ source: kind === "patch" ? { kind, plane: { kind: "std", name: "XY" }, width: 100, height: 100, nu: 5, nv: 5 } : { kind, face: { kind: "face", name: "" } }, moves: [] })} />
+          {src.kind === "patch" && (
+            <>
+              <PlaneSelect field="plane" label="Plano (centro = origem do plano)" value={src.plane} before={before} onChange={(plane) => up({ source: { ...src, plane } })} />
+              <ExprInput label="Largura" value={src.width} onChange={(width) => up({ source: { ...src, width: width ?? "" } })} />
+              <ExprInput label="Altura" value={src.height} onChange={(height) => up({ source: { ...src, height: height ?? "" } })} />
+              <div class="row">
+                <Field label="Polos em U"><input type="number" min="2" max="30" value={src.nu} onChange={(ev) => up({ source: { ...src, nu: Number((ev.target as HTMLInputElement).value) || 2 } })} /></Field>
+                <Field label="Polos em V"><input type="number" min="2" max="30" value={src.nv} onChange={(ev) => up({ source: { ...src, nv: Number((ev.target as HTMLInputElement).value) || 2 } })} /></Field>
+                <Field label="Grau"><input type="number" min="1" max="5" value={src.degree ?? 3} onChange={(ev) => up({ source: { ...src, degree: Number((ev.target as HTMLInputElement).value) || 3 } })} /></Field>
+              </div>
+            </>
+          )}
+          {src.kind === "face" && <RefList field="face" single label="Face a converter" accept={["face"]} refs={src.face.name ? [src.face] : []} onChange={(r) => up({ source: { ...src, face: r[0] ?? { kind: "face", name: "" } }, moves: [] })} />}
+          <Select label="Arrastar polos" value={st.poleAxis} options={[["free", "Livre (plano do ecrã)"], ["X", "Só em X"], ["Y", "Só em Y"], ["Z", "Só em Z"]]} onChange={(poleAxis) => store.set({ poleAxis })} />
+          {sel ? (
+            <fieldset class="checklist">
+              <legend class="field-label">Polo ({sel[0] + 1}, {sel[1] + 1}) — deslocamento</legend>
+              <div class="row3">
+                {[0, 1, 2].map((k) => (
+                  <Field key={k} label={"dXdYdZ".slice(k * 2, k * 2 + 2)}>
+                    <input type="number" step="0.5" value={d[k]} onChange={(ev) => { const n = [...d] as [number, number, number]; n[k] = Number((ev.target as HTMLInputElement).value) || 0; store.movePole(sel[0], sel[1], n, true); }} />
+                  </Field>
+                ))}
+              </div>
+              <button class="small" onClick={() => store.movePole(sel[0], sel[1], [0, 0, 0], true)}>Repor este polo</button>
+            </fieldset>
+          ) : <p class="field-hint">Arraste os polos (roxo) no 3D; um clique seleciona o polo para editar o deslocamento.</p>}
+          <p class="muted">{f.moves.length} polo(s) deslocado(s){net ? ` · rede ${net.nu} × ${net.nv}` : ""}</p>
+          {f.moves.length > 0 && <button class="small" onClick={() => up({ moves: [] })}>Repor todos os polos</button>}
+        </>
+      );
+      break;
+    }
     default:
       body = <p>Sem propriedades.</p>;
   }

@@ -59,6 +59,7 @@ export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plan
     case "circleSweep": return { type, mode: "threeGuides", guides: [], radius: 10 };
     case "extrapolate": return { type, sheet: lastSheet(doc), edges: [], length: 10, continuity: "tangent" };
     case "heal": return { type, sheets: [], distance: 0.1, tangency: 0.5, simplify: true };
+    case "freeform": return { type, source: { kind: "patch", plane: opts.plane ?? { kind: "std", name: "XY" }, width: 100, height: 100, nu: 5, nv: 5 }, moves: [] };
     case "plugin": {
       const p = PLUGINS.find((x) => x.id === opts.plugin) ?? PLUGINS[0];
       const kind = opts.kind ?? Object.keys(p.kinds)[0];

@@ -41,6 +41,7 @@ export const FEATURE_LABELS: Record<FeatureType, string> = {
   circleSweep: "Varrimento circular",
   extrapolate: "Extrapolar",
   heal: "Curar",
+  freeform: "Forma livre (polos)",
 };
 
 export function featureLabel(f: Feature): string {
@@ -54,10 +55,10 @@ export function featureLabel(f: Feature): string {
 export const TOOL_FEATURES: ReadonlySet<FeatureType> = new Set(["extrude", "revolve", "sweep", "loft", "hole", "rib"]);
 
 /** Features do separador Superfícies (pela ordem da barra). */
-export const SURFACE_TYPES: FeatureType[] = ["curve", "surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "trimSurface", "untrim", "knit", "thicken", "replaceFace", "deleteFace", "multiSection", "blend", "circleSweep", "extrapolate", "heal"];
+export const SURFACE_TYPES: FeatureType[] = ["curve", "surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "trimSurface", "untrim", "knit", "thicken", "replaceFace", "deleteFace", "multiSection", "blend", "circleSweep", "extrapolate", "heal", "freeform"];
 
 /** Features que criam um corpo de superfície novo (com a chave do seu id). */
-export const SHEET_SOURCES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "untrim", "knit", "deleteFace", "linearPattern", "circularPattern", "mirror", "multiSection", "blend", "circleSweep", "extrapolate", "heal"];
+export const SHEET_SOURCES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "untrim", "knit", "deleteFace", "linearPattern", "circularPattern", "mirror", "multiSection", "blend", "circleSweep", "extrapolate", "heal", "freeform"];
 
 /** A feature cria um corpo de superfície com a chave do seu id (e não altera um existente)? */
 export const createsSheet = (f: Feature) =>
@@ -68,7 +69,7 @@ export const FEATURE_ICONS: Record<FeatureType, string> = {
   draft: "⏢", rib: "⊿", linearPattern: "⁞", circularPattern: "✲", mirror: "⇋", plane: "▱", axis: "┆", csys: "⌖", import: "⇩", plugin: "⧉",
   surfaceExtrude: "⬒", surfaceRevolve: "◑", surfaceSweep: "≈", surfaceLoft: "⧖", fill: "⬠", offsetSurface: "⇶", knit: "⨝",
   thicken: "▤", trimSurface: "✂", deleteFace: "⌫", curve: "∿", boundary: "⬚", ruled: "⫼", untrim: "⤧", replaceFace: "⇄",
-  multiSection: "⧗", blend: "⌒", circleSweep: "◯", extrapolate: "⇥", heal: "✚",
+  multiSection: "⧗", blend: "⌒", circleSweep: "◯", extrapolate: "⇥", heal: "✚", freeform: "⌗",
 };
 
 /** Ids de features referidos num nome topológico (ex.: "f3:side:l2" → f3). */
@@ -162,6 +163,7 @@ export function dependencies(f: Feature): Set<string> {
     case "circleSweep": f.guides.forEach((c) => curveDeps(c, d)); break;
     case "extrapolate": d.add(f.sheet); f.edges.forEach((r) => topoDeps(r, d)); break;
     case "heal": f.sheets.forEach((s) => d.add(s)); break;
+    case "freeform": if (f.source.kind === "patch") planeDeps(f.source.plane, d); else topoDeps(f.source.face, d); break;
   }
   d.delete(f.id);
   return d;

@@ -571,6 +571,26 @@ export interface HealFeature {
   simplify?: boolean;
 }
 
+/** Deslocamento de um polo de controlo (índices a partir de 0), em mm, no referencial global. */
+export interface PoleMove {
+  i: number;
+  j: number;
+  d: Vec3;
+}
+
+/**
+ * Superfície de forma livre com controlo direto dos polos NURBS: um patch novo num plano (grelha
+ * nu × nv de polos) ou uma face existente convertida em B-spline. Os deslocamentos ficam guardados por
+ * índice de polo, por isso o patch continua paramétrico (tamanho, plano) por baixo das edições.
+ */
+export interface FreeformFeature {
+  type: "freeform";
+  source:
+    | { kind: "patch"; plane: PlaneRef; width: Expr; height: Expr; nu: number; nv: number; degree?: number }
+    | { kind: "face"; face: TopoRef; nu?: number; nv?: number };
+  moves: PoleMove[];
+}
+
 export type FeatureData =
   | SketchFeature
   | ExtrudeFeature
@@ -610,7 +630,8 @@ export type FeatureData =
   | BlendFeature
   | CircleSweepFeature
   | ExtrapolateFeature
-  | HealFeature;
+  | HealFeature
+  | FreeformFeature;
 
 export type FeatureType = FeatureData["type"];
 
