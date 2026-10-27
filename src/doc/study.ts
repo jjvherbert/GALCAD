@@ -71,6 +71,8 @@ export interface Probe {
   name: string;
   quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T";
   at: { kind: "faces"; faces: TopoRef[] } | { kind: "point"; point: [Expr, Expr, Expr] };
+  /** Nas faces: média ponderada pela área (por omissão) ou máximo nos nós. */
+  stat?: "mean" | "max";
 }
 
 export interface FemStudy {

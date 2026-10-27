@@ -733,6 +733,8 @@ export interface CadDocument {
   pmi?: import("./pmi.ts").PmiItem[];
   modelViews?: import("./pmi.ts").ModelView[];
   attributes?: import("./pmi.ts").Attribute[];
+  /** Análise integrada Galkeel (registo da embarcação, laminado e painéis a verificar). */
+  galkeel?: { vessel: import("../galkeel/scantling.ts").VesselRecord; laminate: import("../galkeel/scantling.ts").Laminate; panels: import("../galkeel/scantling.ts").PanelInput[]; caseRef?: string; femStudy?: string };
   /** Scripts de automação guardados com a peça (API cad.*). */
   scripts?: { name: string; code: string }[];
   /** Índice da barra de rollback: só as features antes deste índice são reconstruídas. Omitido = todas. */

@@ -83,7 +83,7 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
     const key = `probe${i + 1}`;
     if (pr.at.kind === "faces") {
       groups[`P${i + 1}`] = tags(pr.at.faces, `Sonda ${pr.name || i + 1}`);
-      return { key, name: pr.name || `Sonda ${i + 1}`, quantity: pr.quantity, group: `P${i + 1}` };
+      return { key, name: pr.name || `Sonda ${i + 1}`, quantity: pr.quantity, group: `P${i + 1}`, stat: pr.stat };
     }
     return { key, name: pr.name || `Sonda ${i + 1}`, quantity: pr.quantity, point: n3(pr.at.point, sc, `Sonda ${i + 1}`) };
   });

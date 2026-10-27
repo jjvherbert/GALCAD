@@ -1,0 +1,3 @@
+[submodule "vendor/galkeel-calculadora"]
+	path = vendor/galkeel-calculadora
+	url = https://github.com/jjvherbert/galkeel-calculadora

@@ -441,7 +441,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
     for (const pr of c.probes) {
       let v: number | undefined, where = "";
       if (pr.group) {
-        let sa = 0, sv = 0;
+        let sa = 0, sv = 0, mx = -Infinity;
         for (const b of physicalBlocks(m, pr.group).filter((x) => x.type === 2 || x.type === 9)) {
           const per = b.type === 9 ? 6 : 3;
           for (let k = 0; k < b.conn.length; k += per) {
@@ -452,9 +452,10 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
             const vals = n.map((t) => value(t, pr.quantity));
             if (vals.some((x) => x === undefined)) continue;
             sa += ar; sv += (ar * (vals as number[]).reduce((a, b2) => a + b2, 0)) / 3;
+            for (const x of vals as number[]) if (Math.abs(x) > Math.abs(mx) || mx === -Infinity) mx = x;
           }
         }
-        if (sa > 0) { v = sv / sa; where = "média na face"; }
+        if (sa > 0) { v = pr.stat === "max" ? mx : sv / sa; where = pr.stat === "max" ? "máximo nos nós da face" : "média na face"; }
       } else if (pr.point) {
         let best = Infinity, tag = -1;
         for (const t of dispB?.data.keys() ?? tB?.data.keys() ?? []) {

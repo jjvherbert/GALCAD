@@ -728,7 +728,7 @@ function femResultFrom(c, m, blocks, d) {
 		for (const pr of c.probes) {
 			let v, where = "";
 			if (pr.group) {
-				let sa = 0, sv = 0;
+				let sa = 0, sv = 0, mx = -Infinity;
 				for (const b of physicalBlocks(m, pr.group).filter((x) => x.type === 2 || x.type === 9)) {
 					const per = b.type === 9 ? 6 : 3;
 					for (let k = 0; k < b.conn.length; k += per) {
@@ -748,11 +748,12 @@ function femResultFrom(c, m, blocks, d) {
 						if (vals.some((x) => x === void 0)) continue;
 						sa += ar;
 						sv += ar * vals.reduce((a, b2) => a + b2, 0) / 3;
+						for (const x of vals) if (Math.abs(x) > Math.abs(mx) || mx === -Infinity) mx = x;
 					}
 				}
 				if (sa > 0) {
-					v = sv / sa;
-					where = "média na face";
+					v = pr.stat === "max" ? mx : sv / sa;
+					where = pr.stat === "max" ? "máximo nos nós da face" : "média na face";
 				}
 			} else if (pr.point) {
 				let best = Infinity, tag = -1;

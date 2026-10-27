@@ -41,7 +41,7 @@ export interface FemCase {
    */
   bodies?: { group: string; path: string; name: string; material: SimMaterial; bbox: { min: V3; max: V3 } }[];
   /** Sondas: grupo de faces (média por área) ou ponto (nó mais próximo), mm. */
-  probes?: { key: string; name: string; quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T"; group?: string; point?: V3 }[];
+  probes?: { key: string; name: string; quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T"; group?: string; point?: V3; stat?: "mean" | "max" }[];
   /** Contacto colado entre faces de corpos diferentes: grupos de faces escravo/mestre. */
   ties?: { name: string; slave: string; master: string; tolerance: number; slaveBody?: string; masterBody?: string }[];
   hypotheses: string[];

@@ -1,6 +1,6 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { AssemblyInstance, AssemblyResponse, NormalsResponse, SnapshotResponse, StudyCaseResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { AssemblyInstance, AssemblyResponse, NormalsResponse, PanelsResponse, SnapshotResponse, StudyCaseResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
 import { combs, continuity, curvature, deviation, exactNormals } from "./analysis.ts";
@@ -15,6 +15,7 @@ import type { BuildEnv } from "./context.ts";
 import { freezeGeom, publish } from "./features/external.ts";
 import { type AsmBody, assemblyStudyCase, singleSolid, studyCase } from "./sim.ts";
 import { pmiStates } from "./pmi.ts";
+import { panelGeometry } from "./panels.ts";
 import { type ResolvedPmi, addSemanticPmi } from "./step-pmi.ts";
 import { SHEET_COLOR, SOLID_COLOR, type StepBody, type StepPart, stepAssembly, stepPart } from "./step242.ts";
 
@@ -405,6 +406,20 @@ export class KernelService {
     const files: Record<string, string> = {};
     for (const [k, v] of Object.entries(out.files)) files[k] = typeof v === "string" ? v : new TextDecoder().decode(v);
     return { case: out.case, files, warnings: out.warnings };
+  }
+
+  /** Geometria de painéis (escantilhonamento): dimensões, flecha, centro e normal das faces pedidas. */
+  async panels(input: PartDoc, parts: PartDoc[], faces: string[]): Promise<PanelsResponse> {
+    const doc = configuredDoc(input);
+    const r = await this.engineFor(doc.id).rebuild(doc, this.envFor({ parts: [...parts.filter((p) => p.id !== doc.id), doc] }, [doc.id]));
+    const arena = new Arena();
+    setArena(arena);
+    try {
+      return { panels: panelGeometry(r.ctx, faces) };
+    } finally {
+      arena.free();
+      setArena(this.asmArena);
+    }
   }
 
   /**

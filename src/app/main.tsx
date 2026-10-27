@@ -31,6 +31,7 @@ const CURVE: Record<string, string> = { line: "reta", circle: "circular", ellips
 import { resultView } from "./sim-client.ts";
 import { PmiPanel } from "./PmiPanel.tsx";
 import { ScriptPanel } from "./ScriptPanel.tsx";
+import { GalkeelPanel } from "./GalkeelPanel.tsx";
 import "./style.css";
 
 function selectedKeys(): string[] {
@@ -189,7 +190,7 @@ function App() {
         )}
         {kind === "part" && !st.sketch && (
           <aside class="side">
-            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : st.sidePanel === "sim" ? <SimPanel /> : st.sidePanel === "pmi" ? <PmiPanel /> : st.sidePanel === "script" ? <ScriptPanel /> : (
+            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : st.sidePanel === "sim" ? <SimPanel /> : st.sidePanel === "pmi" ? <PmiPanel /> : st.sidePanel === "script" ? <ScriptPanel /> : st.sidePanel === "galkeel" ? <GalkeelPanel /> : (
               <>
                 <FeatureTree />
                 <div class="side-info">

@@ -16,6 +16,7 @@ export type Request =
   /** Ficheiros do caso de simulação de um estudo da peça (pré-processador). */
   | { type: "studyCase"; doc: PartDoc; parts: PartDoc[]; study: string }
   | { type: "assemblyStudyCase"; project: CadProject; assembly: string; study: string }
+  | { type: "panels"; doc: PartDoc; parts: PartDoc[]; faces: string[] }
   | { type: "export"; format: ExportFormat; name: string }
   | { type: "curvature"; kind: CurvatureKind }
   | { type: "deviation" }
@@ -119,6 +120,8 @@ export interface DeviationResponse {
 }
 
 /** Caso de simulação: descrição neutra, ficheiros (texto) e avisos. */
+export interface PanelsResponse { panels: import("./panels.ts").PanelGeom[] }
+
 export interface StudyCaseResponse { case: import("../sim/case.ts").SimCase; files: Record<string, string>; warnings: string[] }
 
 /** Normais exatas por vértice da última malha (linhas de realce). */
@@ -218,5 +221,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | NormalsResponse | StudyCaseResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | NormalsResponse | StudyCaseResponse | PanelsResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
   | { id: number; ok: false; error: string };

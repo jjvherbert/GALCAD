@@ -1,0 +1,232 @@
+{
+  "format": "cadp-project",
+  "version": 1,
+  "name": "Galkeel",
+  "parts": [
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p1",
+      "name": "Painel de fundo",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 2700,
+              "y": -200
+            },
+            "p2": {
+              "type": "point",
+              "x": 3300,
+              "y": -200
+            },
+            "p3": {
+              "type": "point",
+              "x": 3300,
+              "y": 200
+            },
+            "p4": {
+              "type": "point",
+              "x": 2700,
+              "y": 200
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": 600
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 400
+            },
+            {
+              "id": "k15",
+              "type": "distanceX",
+              "refs": [
+                "O",
+                "p1"
+              ],
+              "value": 2700
+            },
+            {
+              "id": "k16",
+              "type": "distanceY",
+              "refs": [
+                "O",
+                "p1"
+              ],
+              "value": -200
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 7
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        }
+      ],
+      "studies": [
+        {
+          "id": "s1",
+          "name": "Painel encastrado",
+          "physics": "fem",
+          "solver": "calculix",
+          "analysis": "static",
+          "material": {
+            "name": "PRFV equivalente",
+            "E": 7540,
+            "nu": 0.3,
+            "density": 1.5,
+            "alpha": 0.000012,
+            "k": 50,
+            "yield": 235,
+            "tangent": 2100,
+            "source": "EN 10025-2 (valores nominais)"
+          },
+          "loads": [
+            {
+              "kind": "fixed",
+              "faces": [
+                {
+                  "kind": "face",
+                  "name": "f2:side:l5"
+                },
+                {
+                  "kind": "face",
+                  "name": "f2:side:l6"
+                },
+                {
+                  "kind": "face",
+                  "name": "f2:side:l7"
+                },
+                {
+                  "kind": "face",
+                  "name": "f2:side:l8"
+                }
+              ]
+            }
+          ],
+          "modes": 6,
+          "mesh": {
+            "size": 7,
+            "order": 2,
+            "curvature": 0
+          }
+        }
+      ],
+      "galkeel": {
+        "vessel": {
+          "craft": "motor",
+          "category": "C",
+          "LH": 7.5,
+          "LWL": 6.5,
+          "Bc": 2.2,
+          "beta04": 18,
+          "V": 30,
+          "mLDC": 2200,
+          "xAft": 0,
+          "forward": 1,
+          "zWL": 200,
+          "Zside": 0.9
+        },
+        "laminate": {
+          "layup": "mat_roving_wr_cp",
+          "psi": 0.33,
+          "k5": 1,
+          "name": "CSM/WR"
+        },
+        "panels": [
+          {
+            "face": "f2:start:l5",
+            "label": "Fundo AV",
+            "target": "auto",
+            "b": 400,
+            "l": 600,
+            "thickness": 7
+          }
+        ],
+        "caseRef": "GK-2026-0001",
+        "femStudy": "s1"
+      }
+    }
+  ],
+  "assemblies": [],
+  "drawings": []
+}

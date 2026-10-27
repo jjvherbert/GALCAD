@@ -363,3 +363,6 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .info-table.data td { text-align: right; }
 .script-panel .row input { min-width: 0; flex: 1; }
 .script-panel textarea[aria-label="Pedido ao copiloto"] { width: 100%; box-sizing: border-box; }
+.galkeel-panel .row4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.galkeel-panel .row4 input, .galkeel-panel .row3 input, .galkeel-panel .row3 select, .galkeel-panel .row select { min-width: 0; width: 100%; }
+.galkeel-panel .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
