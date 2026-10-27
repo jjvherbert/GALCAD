@@ -19,8 +19,9 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
 - ✅ Exportação STEP, STL, 3MF, OBJ e glTF; propriedades de massa
 
 **Pendentes da Fase 1** (a fazer antes ou em paralelo com a Fase 2):
-- Corte e extensão no esboço (trim/extend), filete e chanfro de esboço, deslocamento (offset) de entidades
-- Converter e projetar arestas do modelo para o esboço (referências externas com nomes estáveis)
+- ✅ Aparar, estender, filete de canto e deslocar no esboço
+- ✅ Converter arestas do modelo para o esboço, ligadas pelo nome topológico (acompanham o modelo)
+- Chanfro de esboço; aparar splines; espelhar e repetir entidades no esboço
 - Seleção de regiões em esboços com contornos sobrepostos
 - Feature fina (*thin*), "até ao próximo", "até ao vértice", "até à face" com faces curvas
 - Tabela de configurações (famílias de peças) a partir das variáveis

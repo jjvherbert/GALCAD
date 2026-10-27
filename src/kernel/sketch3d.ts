@@ -1,6 +1,6 @@
 // Do esboço resolvido (2D) para arestas, contornos e faces OCC no plano do esboço,
 // mantendo a ligação de cada aresta à entidade do esboço que a gerou.
-import { assembleWire, makeBezierCurve, makeCircle, makeFace, makeLine, makeThreePointArc, type Edge, type Face, type Wire } from "replicad";
+import { addHolesInFace, assembleWire, makeBezierCurve, makeCircle, makeFace, makeLine, makeThreePointArc, type Edge, type Face, type Wire } from "replicad";
 import type { Seg, Region, Chain } from "../sketch/profiles.ts";
 import { segSample } from "../sketch/profiles.ts";
 import type { P2 } from "../sketch/geometry.ts";
@@ -30,7 +30,8 @@ export function loopWire(segs: Seg[], f: Frame): Wire {
 export function regionFace(r: Region, f: Frame): Face {
   const outer = loopWire(r.outer.segs, f);
   const holes = r.holes.map((h) => loopWire(h.segs, f));
-  const face = makeFace(outer, holes);
+  // os furos têm de ter orientação oposta à do contorno exterior: o ShapeFix_Face corrige-a
+  const face = holes.length ? addHolesInFace(T(makeFace(outer)), holes) : makeFace(outer);
   T(face);
   return face;
 }

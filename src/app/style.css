@@ -157,6 +157,8 @@ table.vars tr.invalid input { border-color: var(--bad); }
 .ent.hover { stroke: #f59e0b; stroke-width: 3; }
 .ent.sel { stroke: #f97316; stroke-width: 3; }
 .ent.conflict { stroke: var(--bad); }
+.ent.ext:not(.sel):not(.hover):not(.conflict) { stroke: #9333ea; }
+.ref-hover { fill: none; stroke: #9333ea; stroke-width: 4; opacity: 0.6; }
 .pt { stroke-width: 1; }
 .pt.defined { fill: var(--sk-def); stroke: var(--sk-def); }
 .pt.free { fill: var(--panel); stroke: var(--sk-free); }

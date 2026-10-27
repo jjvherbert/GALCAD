@@ -49,12 +49,17 @@ export type AxisRef =
 // Esboço
 // ---------------------------------------------------------------------------
 
+/**
+ * Entidades de esboço. `ext`: entidade convertida de uma aresta do modelo ("converter entidades");
+ * a geometria é recalculada pelo núcleo a cada reconstrução, por projeção da aresta no plano do esboço,
+ * e os seus pontos ficam fixos para o solver.
+ */
 export type SketchEntity =
   | { type: "point"; x: number; y: number; construction?: boolean; fixed?: boolean }
-  | { type: "line"; p1: string; p2: string; construction?: boolean }
-  | { type: "circle"; c: string; r: number; construction?: boolean }
+  | { type: "line"; p1: string; p2: string; construction?: boolean; ext?: TopoRef }
+  | { type: "circle"; c: string; r: number; construction?: boolean; ext?: TopoRef }
   /** Arco no sentido anti-horário de s para e, centro c. */
-  | { type: "arc"; c: string; s: string; e: string; r: number; a0: number; a1: number; construction?: boolean }
+  | { type: "arc"; c: string; s: string; e: string; r: number; a0: number; a1: number; construction?: boolean; ext?: TopoRef }
   /** Spline interpolada que passa pelos pontos (Catmull-Rom → Bézier cúbicas, continuidade C1). */
   | { type: "spline"; pts: string[]; construction?: boolean };
 

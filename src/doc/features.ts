@@ -54,7 +54,10 @@ const endDeps = (e: EndCondition | undefined, out: Set<string>) => { if (e?.type
 export function dependencies(f: Feature): Set<string> {
   const d = new Set<string>();
   switch (f.type) {
-    case "sketch": planeDeps(f.plane, d); break;
+    case "sketch":
+      planeDeps(f.plane, d);
+      for (const e of Object.values(f.entities)) if ("ext" in e) topoDeps(e.ext, d);
+      break;
     case "extrude": d.add(f.sketch); endDeps(f.end, d); endDeps(f.end2, d); break;
     case "revolve": d.add(f.sketch); axisDeps(f.axis, d); break;
     case "sweep": d.add(f.profile); d.add(f.path); break;

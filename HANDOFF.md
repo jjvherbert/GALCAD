@@ -1,5 +1,15 @@
 # Handoff — Fase 1
 
+## Atualização: ferramentas de esboço
+
+- `src/sketch/modify.ts`: aparar, estender, filete de canto e deslocar, com interseções entre linhas, arcos, círculos e splines. Testes em `tests/modify.test.ts`.
+- Entidades convertidas (`ext: TopoRef` em linhas, arcos e círculos): o núcleo reprojeta-as a cada reconstrução (`projectExternal` em `src/kernel/features/datum.ts`). As dependências do esboço passam a incluir as features referidas.
+- Bug corrigido: os contornos interiores no mesmo esboço eram somados em vez de furados. A orientação dos furos é agora corrigida com `addHolesInFace` / `ShapeFix_Face`. Há teste de regressão em `kernel.test.ts`.
+- Testes: 39 em Node e 9 fluxos e2e, todos a passar.
+- Próximo passo: seleção de regiões e depois a Fase 2 (superfícies).
+
+---
+
 ## Alterações
 
 - Projeto migrado para TypeScript estrito, com Preact na UI e Vite.

@@ -4,8 +4,9 @@ import type { ConstraintType, SketchConstraint, SketchEntity } from "../doc/type
 import { DIMENSION_TYPES } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
 import { History } from "../doc/history.ts";
-import { type P2, allEntities, arcSweep, isImplicit, measure, pt, sampleEntity, splineBeziers } from "../sketch/geometry.ts";
+import { type P2, allEntities, arcSweep, entityPoints, isImplicit, measure, pt, sampleEntity, splineBeziers } from "../sketch/geometry.ts";
 import { solveSketch, freeEntities, type DragTarget, type SolveResult } from "../sketch/solver.ts";
+import { connectedCurves, extend, isLineCorner, offset, sketchFillet, trim } from "../sketch/modify.ts";
 import {
   type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, addArc, addCircle, addConstraint, addEntity, addLine, addPoint, addRectangle,
   applicableConstraints, applyConstraint, deleteItems, mergePoints, roundDim, smartDimension, toggleConstruction,
@@ -13,7 +14,7 @@ import {
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStore } from "./store.ts";
 
-type Tool = "select" | "line" | "rect" | "circle" | "arc" | "spline" | "point" | "dim";
+type Tool = "select" | "line" | "rect" | "circle" | "arc" | "spline" | "point" | "dim" | "trim" | "extend" | "skfillet" | "offset" | "convert";
 type DimMode = "auto" | "horizontal" | "vertical";
 
 type Draw =
@@ -35,6 +36,11 @@ const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
   { id: "spline", label: "Spline", key: "S", icon: "∿" },
   { id: "point", label: "Ponto", key: "P", icon: "·" },
   { id: "dim", label: "Cota inteligente", key: "D", icon: "↔" },
+  { id: "trim", label: "Aparar", key: "T", icon: "✂" },
+  { id: "extend", label: "Estender", key: "E", icon: "⟶" },
+  { id: "skfillet", label: "Filete de canto", key: "G", icon: "◟" },
+  { id: "offset", label: "Deslocar", key: "O", icon: "⧈" },
+  { id: "convert", label: "Converter arestas", key: "K", icon: "⇲" },
 ];
 
 const GEOM_CONSTRAINTS: ConstraintType[] = ["coincident", "pointOn", "midpoint", "horizontal", "vertical", "parallel", "perpendicular", "collinear", "tangent", "equal", "concentric", "symmetric", "fix"];
@@ -55,6 +61,9 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const [drawing, setDrawing] = useState<Draw | null>(null);
   const [mouse, setMouse] = useState<P2 | null>(null);
   const [dimEdit, setDimEdit] = useState<{ id: string; text: string } | null>(null);
+  /** Pedido de valor para filete de canto (raio) ou deslocamento (distância). */
+  const [prompt, setPrompt] = useState<{ kind: "fillet" | "offset"; at: [number, number]; text: string; target: string[] } | null>(null);
+  const lastValue = useRef<{ fillet: string; offset: string }>({ fillet: "5", offset: "5" });
   const [info, setInfo] = useState<SolveResult | null>(null);
   const [free, setFree] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState<string | null>(null);
@@ -72,7 +81,19 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     freeTimer.current = setTimeout(() => setFree(freeEntities(s, scope)), 150);
   };
   useEffect(() => {
-    const r = solveSketch(draft, scope);
+    // entidades convertidas: posições atualizadas pelo núcleo (projeção das arestas do modelo)
+    const fromKernel = result?.sketches[edit.id]?.entities;
+    let start = draft;
+    if (fromKernel) {
+      const entities = { ...draft.entities };
+      for (const [id, e] of Object.entries(draft.entities)) {
+        if (!("ext" in e) || !e.ext || !fromKernel[id]) continue;
+        entities[id] = fromKernel[id];
+        for (const p of entityPoints(e)) if (fromKernel[p]) entities[p] = fromKernel[p];
+      }
+      start = { ...draft, entities };
+    }
+    const r = solveSketch(start, scope);
     setInfo(r);
     if (r.ok) store.updateSketch({ ...draft, entities: r.entities });
     scheduleFree(draft);
@@ -110,11 +131,31 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   }, []);
 
   /** Arestas do modelo projetadas no plano do esboço (as que estão no plano ficam mais fortes). */
+  const projTol = 1e-3 * Math.max(1, ...(result?.mass ? result.mass.bbox.max.map((v, i) => Math.abs(v - result.mass!.bbox.min[i])) : [1]));
+  /** Arestas do modelo projetadas, uma a uma, com o nome topológico (para converter). */
+  const refGroups = useMemo(() => {
+    const m = result?.mesh;
+    if (!m || !frame) return [];
+    const L = m.lines;
+    return m.edges.map((g) => {
+      const pts: P2[] = [];
+      let inPlane = true;
+      for (let k = 0; k < g.count; k++) {
+        if (k > 1 && k % 2 === 0) continue; // segmentos guardados aos pares: o vértice k repete o k−1
+        const i = (g.start + k) * 3;
+        const d = [L[i] - frame.o[0], L[i + 1] - frame.o[1], L[i + 2] - frame.o[2]];
+        pts.push([d[0] * frame.x[0] + d[1] * frame.x[1] + d[2] * frame.x[2], d[0] * frame.y[0] + d[1] * frame.y[1] + d[2] * frame.y[2]]);
+        if (Math.abs(d[0] * frame.z[0] + d[1] * frame.z[1] + d[2] * frame.z[2]) > projTol) inPlane = false;
+      }
+      return { name: g.name, type: g.type, mid: g.mid, dir: g.dir, pts, inPlane };
+    });
+  }, [result, frame]);
+
   const refEdges = useMemo(() => {
     const lines = result?.mesh?.lines;
     if (!lines || !frame) return { inPlane: [] as [P2, P2][], other: [] as [P2, P2][] };
     const inPlane: [P2, P2][] = [], other: [P2, P2][] = [];
-    const tol = 1e-3 * Math.max(1, ...(result?.mass ? result.mass.bbox.max.map((v, i) => Math.abs(v - result.mass!.bbox.min[i])) : [1]));
+    const tol = projTol;
     const p2 = (i: number): [P2, number] => {
       const d = [lines[i] - frame.o[0], lines[i + 1] - frame.o[1], lines[i + 2] - frame.o[2]];
       return [[d[0] * frame.x[0] + d[1] * frame.x[1] + d[2] * frame.x[2], d[0] * frame.y[0] + d[1] * frame.y[1] + d[2] * frame.y[2]], d[0] * frame.z[0] + d[1] * frame.z[1] + d[2] * frame.z[2]];
@@ -200,6 +241,61 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
 
   const data = (): SketchData => ({ entities: draft.entities, constraints: draft.constraints });
 
+  function hitRef(sx: number, sy: number): number {
+    let best = -1, bestD = 7;
+    refGroups.forEach((g, i) => {
+      for (let k = 0; k < g.pts.length - 1; k++) {
+        const d = segDist([sx, sy], S(g.pts[k]), S(g.pts[k + 1]));
+        if (d < bestD) { bestD = d; best = i; }
+      }
+    });
+    return best;
+  }
+
+  const converted = new Set(Object.values(draft.entities).flatMap((e) => ("ext" in e && e.ext ? [e.ext.name] : [])));
+
+  /** Converte arestas do modelo em entidades ligadas (pontos fixos, atualizados pelo núcleo). */
+  function convert(groups: typeof refGroups) {
+    let s: SketchData = { entities: { ...draft.entities }, constraints: draft.constraints.slice() };
+    let made = 0, skipped = 0;
+    const fixedPoint = (p: P2): string => {
+      const hit = Object.entries(s.entities).find(([, e]) => e.type === "point" && Math.hypot(e.x - p[0], e.y - p[1]) < 1e-3);
+      if (hit) { s.entities[hit[0]] = { ...(hit[1] as Extract<SketchEntity, { type: "point" }>), fixed: true }; return hit[0]; }
+      const r = addPoint(s, p);
+      s = r.s;
+      s.entities[r.id] = { ...(s.entities[r.id] as Extract<SketchEntity, { type: "point" }>), fixed: true };
+      return r.id;
+    };
+    for (const g of groups) {
+      if (converted.has(g.name)) continue;
+      const ext = { kind: "edge" as const, name: g.name, hint: { c: g.mid, n: g.dir } };
+      const a = g.pts[0], b = g.pts[g.pts.length - 1];
+      if (g.type === "line") {
+        // os pontos primeiro: fixedPoint altera `s`
+        const p1 = fixedPoint(a), p2 = fixedPoint(b);
+        s = addEntity(s, "l", { type: "line", p1, p2, ext }).s;
+      } else if (g.type === "circle" && g.pts.length >= 3) {
+        const m = g.pts[Math.floor(g.pts.length / 3)], n = g.pts[Math.floor((2 * g.pts.length) / 3)];
+        const c = circleThrough(a, m, n);
+        if (!c) { skipped++; continue; }
+        const closed = Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-6 * Math.max(1, c.r);
+        const cid = fixedPoint(c.c);
+        if (closed) s = addEntity(s, "c", { type: "circle", c: cid, r: c.r, ext }).s;
+        else {
+          // sentido anti-horário pelo ponto intermédio
+          const mid = g.pts[Math.floor(g.pts.length / 2)];
+          const ccw = (a[0] - c.c[0]) * (mid[1] - c.c[1]) - (a[1] - c.c[1]) * (mid[0] - c.c[0]) > 0;
+          const [from, to] = ccw ? [a, b] : [b, a];
+          const ps = fixedPoint(from), pe = fixedPoint(to);
+          s = addEntity(s, "a", { type: "arc", c: cid, s: ps, e: pe, r: c.r, a0: Math.atan2(from[1] - c.c[1], from[0] - c.c[0]), a1: Math.atan2(to[1] - c.c[1], to[0] - c.c[0]), ext }).s;
+        }
+      } else { skipped++; continue; }
+      made++;
+    }
+    if (made) commit(s, "Converter arestas");
+    setMsg(skipped ? `${skipped} aresta(s) não convertida(s): só retas e circulares` : made ? null : "Já convertidas");
+  }
+
   // --- rato -----------------------------------------------------------------------
   function onDown(e: PointerEvent) {
     const [sx, sy] = local(e);
@@ -237,7 +333,9 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       if (r.ok) store.updateSketch({ ...draft, entities: r.entities });
       return;
     }
-    if (tool === "select" || tool === "dim") setHover(hitAt(sx, sy));
+    if (tool === "select" || tool === "dim" || tool === "trim" || tool === "extend" || tool === "offset") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "dim" ? hitAt(sx, sy) : null));
+    else if (tool === "convert") { const i = hitRef(sx, sy); setHover(i >= 0 ? `ref:${i}` : null); }
+    else if (tool === "skfillet") { const h = hitAt(sx, sy, { curves: false }); setHover(h && isLineCorner(data(), h) ? h : null); }
     else setHover(snap(sx, sy).id ?? null);
     if (drawing?.kind === "arc" && drawing.start) {
       const c = pt(ents, drawing.center);
@@ -279,6 +377,37 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       return;
     }
     if (tool === "dim") { dimClick(sx, sy); return; }
+    if (tool === "trim" || tool === "extend") {
+      const id = hitAt(sx, sy, { points: false });
+      if (!id || id === "H" || id === "V") return;
+      const target = draft.entities[id];
+      if (target && "ext" in target && target.ext) { setMsg("Entidade convertida: é comandada pelo modelo e não pode ser aparada nem estendida"); return; }
+      if (tool === "trim") commit(trim(data(), id, W(sx, sy)), "Aparar");
+      else {
+        const r = extend(data(), id, W(sx, sy));
+        if (r) commit(r, "Estender"); else setMsg("Não há nenhuma entidade nessa direção para onde estender");
+      }
+      return;
+    }
+    if (tool === "skfillet") {
+      const id = hitAt(sx, sy, { curves: false });
+      if (id && isLineCorner(data(), id)) setPrompt({ kind: "fillet", at: [sx, sy], text: lastValue.current.fillet, target: [id] });
+      else setMsg("Clique num canto entre duas linhas");
+      return;
+    }
+    if (tool === "convert") {
+      const i = hitRef(sx, sy);
+      if (i >= 0) convert([refGroups[i]]);
+      return;
+    }
+    if (tool === "offset") {
+      const id = hitAt(sx, sy, { points: false });
+      if (!id || id === "H" || id === "V") return;
+      const chain = connectedCurves(data(), id);
+      setSel(chain);
+      setPrompt({ kind: "offset", at: [sx, sy], text: lastValue.current.offset, target: chain });
+      return;
+    }
     const s0 = data();
     const sn = snap(sx, sy);
     switch (tool) {
@@ -400,6 +529,20 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   function undo() { const s = hist.current.undo(); if (s) { store.updateSketch({ ...draft, ...s }); setInfo(solveSketch(s, scope)); scheduleFree(s); } }
   function redo() { const s = hist.current.redo(); if (s) { store.updateSketch({ ...draft, ...s }); setInfo(solveSketch(s, scope)); scheduleFree(s); } }
 
+  function applyPrompt() {
+    if (!prompt) return;
+    let v: number;
+    try { v = evalExpr(prompt.text, scope); } catch (e) { setMsg((e as Error).message); return; }
+    lastValue.current[prompt.kind] = prompt.text;
+    if (prompt.kind === "fillet") {
+      const r = sketchFillet(data(), prompt.target[0], Math.abs(v));
+      if (!r) { setMsg("Raio demasiado grande para as linhas do canto"); return; }
+      if (commit(r, "Filete de canto")) setPrompt(null);
+    } else {
+      if (commit(offset(data(), prompt.target, v), "Deslocar")) { setPrompt(null); setSel([]); }
+    }
+  }
+
   function saveDim() {
     if (!dimEdit) return;
     const text = dimEdit.text.trim();
@@ -438,7 +581,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const conflicts = new Set(info?.conflicting ?? []);
   const conflictEnts = new Set(draft.constraints.filter((c) => conflicts.has(c.id)).flatMap((c) => c.refs));
   const cls = (id: string, e: SketchEntity) =>
-    ["ent", e.construction ? "constr" : "", sel.includes(id) ? "sel" : hover === id ? "hover" : "", conflictEnts.has(id) ? "conflict" : free.has(id) ? "free" : "defined"].join(" ");
+    ["ent", e.construction ? "constr" : "", "ext" in e && e.ext ? "ext" : "", sel.includes(id) ? "sel" : hover === id ? "hover" : "", conflictEnts.has(id) ? "conflict" : free.has(id) ? "free" : "defined"].join(" ");
 
   const curves = Object.entries(draft.entities).filter(([, e]) => e.type !== "point");
   const points = Object.entries(draft.entities).filter(([, e]) => e.type === "point");
@@ -495,6 +638,9 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
             <option value="vertical">Vertical</option>
           </select>
         )}
+        {tool === "convert" && refGroups.some((g) => g.inPlane) && (
+          <button title="Converter todas as arestas do modelo que estão no plano do esboço" onClick={() => convert(refGroups.filter((g) => g.inPlane))}>Contorno no plano</button>
+        )}
         <span class="sep" />
         <button title="Linha de construção (alternar)" disabled={!entitySel.length} onClick={() => { commit(toggleConstruction(data(), entitySel), "Construção"); }}>
           <span class="ic">┄</span><span class="lb">Construção</span>
@@ -525,6 +671,10 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           <g class="ref-edges">
             {refEdges.other.map(([a, b], i) => <line key={`o${i}`} class="ref-other" x1={S(a)[0]} y1={S(a)[1]} x2={S(b)[0]} y2={S(b)[1]} />)}
             {refEdges.inPlane.map(([a, b], i) => <line key={`i${i}`} class="ref-in" x1={S(a)[0]} y1={S(a)[1]} x2={S(b)[0]} y2={S(b)[1]} />)}
+            {tool === "convert" && hover?.startsWith("ref:") && (() => {
+              const g = refGroups[Number(hover.slice(4))];
+              return g ? <polyline class="ref-hover" points={g.pts.map((q) => S(q).join(",")).join(" ")} /> : null;
+            })()}
           </g>
           <line class={`axis h ${hover === "H" || sel.includes("H") ? "hover" : ""}`} x1={0} x2={size[0]} y1={v.ty} y2={v.ty} />
           <line class={`axis v ${hover === "V" || sel.includes("V") ? "hover" : ""}`} y1={0} y2={size[1]} x1={v.tx} x2={v.tx} />
@@ -541,6 +691,15 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           })}
           <circle cx={v.tx} cy={v.ty} r={4} class={`origin ${hover === "O" || sel.includes("O") ? "hover" : ""}`} />
         </svg>
+        {prompt && (
+          <div class="dim-input" style={{ left: `${prompt.at[0]}px`, top: `${prompt.at[1]}px` }}>
+            <input autoFocus value={prompt.text} aria-label={prompt.kind === "fillet" ? "Raio do filete" : "Distância (negativa para o outro lado)"}
+              onInput={(e) => setPrompt({ ...prompt, text: (e.target as HTMLInputElement).value })}
+              onKeyDown={(e) => { if (e.key === "Enter") applyPrompt(); if (e.key === "Escape") setPrompt(null); }} />
+            <button onClick={applyPrompt} title="Aplicar">✓</button>
+            <button onClick={() => setPrompt(null)} title="Fechar">✕</button>
+          </div>
+        )}
         {dimEdit && (() => {
           const c = draft.constraints.find((x) => x.id === dimEdit.id);
           if (!c) return null;
@@ -566,6 +725,16 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       </div>
     </div>
   );
+}
+
+/** Circunferência por três pontos. */
+function circleThrough(a: P2, b: P2, c: P2): { c: P2; r: number } | null {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-12) return null;
+  const a2 = a[0] ** 2 + a[1] ** 2, b2 = b[0] ** 2 + b[1] ** 2, c2 = c[0] ** 2 + c[1] ** 2;
+  const x = (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d;
+  const y = (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d;
+  return { c: [x, y], r: Math.hypot(a[0] - x, a[1] - y) };
 }
 
 function segDist(p: [number, number], a: [number, number], b: [number, number]) {

@@ -23,6 +23,7 @@ async function main() {
     const p = await browser.newPage({ viewport: { width: 1400, height: 860 }, acceptDownloads: true });
     const errors = [];
     p.on("pageerror", (e) => errors.push(e.message));
+    p.on("dialog", (d) => d.accept()); // confirmações (descartar alterações, apagar dependentes)
     p.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
 
     const settle = async () => {
@@ -155,7 +156,7 @@ async function main() {
     const projFile = path.join(tmp, projDl.suggestedFilename());
     await projDl.saveAs(projFile);
     await p.click("button:has-text('Ficheiro')");
-    p.once("dialog", (d) => d.accept());
+
     await p.click(".menu button:has-text('Novo')");
     await settle();
     await p.setInputFiles("input[type=file][accept*=json]", projFile);
@@ -165,7 +166,7 @@ async function main() {
 
     // 8. importar o STEP num documento novo, módulo náutico, rollback e apagar
     await p.click("button:has-text('Ficheiro')");
-    p.once("dialog", (d) => d.accept());
+
     await p.click(".menu button:has-text('Novo')");
     await settle();
     await p.setInputFiles("input[type=file][accept*=step]", stepFile);
@@ -190,6 +191,74 @@ async function main() {
     await settle();
     assert.equal((await states()).length, 1);
     step("importar STEP, casco náutico, rollback e apagar");
+
+    // 9. converter o contorno da face, deslocar 5 mm para dentro, moldura; mudar W: tudo acompanha
+    await p.click("button:has-text('Ficheiro')");
+
+    await p.click(".menu button:has-text('Novo')");
+    await settle();
+    await p.click("button:has-text('Variáveis')");
+    await p.click(".modal button:has-text('+ Variável')");
+    await p.fill(".modal tbody tr:nth-child(1) input[aria-label=Nome]", "W");
+    await p.fill(".modal tbody tr:nth-child(1) input[aria-label='Expressão']", "100");
+    await p.click(".modal button:has-text('Aplicar')");
+    await settle();
+    await p.click("button.cmd:has-text('Esboço')");
+    await p.click("button:has-text('Começar')");
+    const b3 = await p.locator(".sk-canvas").boundingBox();
+    const o3 = await p.$eval(".sk-canvas circle.origin", (e) => [Number(e.getAttribute("cx")), Number(e.getAttribute("cy"))]);
+    await p.keyboard.press("r");
+    await p.mouse.click(b3.x + o3[0], b3.y + o3[1]);
+    await p.mouse.click(b3.x + o3[0] + 200, b3.y + o3[1] - 120);
+    await p.keyboard.press("d");
+    P = await pts(); xs = P.map((q) => q[0]); ys = P.map((q) => q[1]);
+    await p.mouse.click(b3.x + (Math.min(...xs) + Math.max(...xs)) / 2, b3.y + Math.max(...ys));
+    await p.mouse.click(b3.x + (Math.min(...xs) + Math.max(...xs)) / 2, b3.y + Math.max(...ys) + 40);
+    await p.fill(".dim-input input", "W");
+    await p.keyboard.press("Enter");
+    await p.waitForTimeout(200);
+    P = await pts(); xs = P.map((q) => q[0]); ys = P.map((q) => q[1]);
+    await p.mouse.click(b3.x + Math.max(...xs), b3.y + (Math.min(...ys) + Math.max(...ys)) / 2);
+    await p.mouse.click(b3.x + Math.max(...xs) + 50, b3.y + (Math.min(...ys) + Math.max(...ys)) / 2);
+    await p.fill(".dim-input input", "60");
+    await p.keyboard.press("Enter");
+    await p.waitForTimeout(300);
+    await p.click("button:has-text('Sair do esboço')");
+    await settle();
+    await p.click("button.cmd:has-text('Extrusão')");
+    await p.fill(".property-panel .expr input", "20");
+    await settle();
+    await p.click(".property-panel button:has-text('OK')");
+    await settle();
+    await p.mouse.click(vb.x + vb.width / 2, vb.y + vb.height / 2 - 40);
+    await p.click("button.cmd:has-text('Esboço')");
+    await p.waitForSelector(".sketch-editor");
+    await p.waitForTimeout(400);
+    await p.keyboard.press("k");
+    await p.click("button:has-text('Contorno no plano')");
+    await p.waitForTimeout(300);
+    assert.equal(await p.locator(".sk-canvas path.ent.ext").count(), 4);
+    await p.keyboard.press("o");
+    const extc = await p.$$eval(".sk-canvas path.ent.ext", (els) => els.map((e) => e.getBBox()).map((r) => [r.x + r.width / 2, r.y + r.height / 2]));
+    await p.mouse.click(b3.x + extc[0][0], b3.y + extc[0][1]);
+    await p.fill(".dim-input input", "-5");
+    await p.keyboard.press("Enter");
+    await p.waitForTimeout(400);
+    assert.equal(await p.textContent(".sk-status span"), "Totalmente definido");
+    await p.click("button:has-text('Sair do esboço')");
+    await settle();
+    await p.click("button.cmd:has-text('Extrusão')");
+    await p.fill(".property-panel .expr input", "5");
+    await settle();
+    await p.click(".property-panel button:has-text('OK')");
+    await settle();
+    assert.ok(Math.abs((await volume()) - 127.5) < 0.01, `moldura ${await volume()}`);
+    await p.click("button:has-text('Variáveis')");
+    await p.fill(".modal tbody tr:nth-child(1) input[aria-label='Expressão']", "140");
+    await p.click(".modal button:has-text('Aplicar')");
+    await settle();
+    assert.ok(Math.abs((await volume()) - 177.5) < 0.01, `moldura com W=140 ${await volume()}`);
+    step("converter arestas + deslocar: a moldura acompanha a peça (127,5 → 177,5 cm³)");
 
     assert.deepEqual(errors, [], `erros na consola: ${errors.join(" | ")}`);
     await browser.close();

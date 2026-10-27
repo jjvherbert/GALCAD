@@ -1,17 +1,61 @@
 // Esboço, geometria de referência (plano, eixo, sistema de coordenadas) e importação.
 import { importSTEP } from "replicad";
-import type { AxisFeature, CsysFeature, Feature, ImportFeature, PlaneFeature, SketchFeature } from "../../doc/types.ts";
+import type { AxisFeature, CsysFeature, Feature, ImportFeature, PlaneFeature, SketchFeature, TopoRef } from "../../doc/types.ts";
 import { evalParam } from "../../doc/variables.ts";
 import { solveSketch } from "../../sketch/solver.ts";
 import { findProfiles } from "../../sketch/profiles.ts";
 import { type Ctx, type StepReport, axisOf, edges, planeFrame } from "../context.ts";
-import { flipFrame, frameFromEuler, offsetFrame, planesIntersection, rotateFrame } from "../frame.ts";
+import { type Frame, flipFrame, frameFromEuler, offsetFrame, planesIntersection, rotateFrame, to2D } from "../frame.ts";
 import { nameFresh } from "../naming.ts";
-import { T, explore, v3 } from "../occ.ts";
+import { T, edgeProps, explore, v3 } from "../occ.ts";
 import { applyOp } from "../boolean.ts";
 
-export function sketch(ctx: Ctx, f: SketchFeature & Feature, report: StepReport): Ctx {
-  const frame = planeFrame(ctx, f.plane, report);
+/** Atualiza as entidades convertidas de arestas do modelo, projetando cada aresta no plano do esboço. */
+function projectExternal<F extends SketchFeature>(ctx: Ctx, f: F, frame: Frame, report: StepReport): F {
+  const linked = Object.entries(f.entities).filter(([, e]) => "ext" in e && e.ext);
+  if (!linked.length) return f;
+  const entities = { ...f.entities };
+  const setPt = (id: string, p: [number, number]) => { const e = entities[id]; if (e?.type === "point") entities[id] = { ...e, x: p[0], y: p[1], fixed: true }; };
+  for (const [id, e] of linked) {
+    const ref = (e as { ext: TopoRef }).ext;
+    let edge;
+    try {
+      [edge] = edges(ctx, [ref], report);
+    } catch {
+      report.warnings.push(`Entidade convertida ${id}: a aresta de origem já não existe (mantém a última posição)`);
+      continue;
+    }
+    if (!edge) continue;
+    const p = edgeProps(edge.edge);
+    if (e.type === "line") {
+      const a = to2D(frame, p.start), b = to2D(frame, p.end);
+      // manter a correspondência dos extremos com a posição anterior
+      const p1 = entities[e.p1] as { x: number; y: number };
+      const swap = p1 && Math.hypot(p1.x - b[0], p1.y - b[1]) < Math.hypot(p1.x - a[0], p1.y - a[1]);
+      setPt(e.p1, swap ? b : a);
+      setPt(e.p2, swap ? a : b);
+    } else if ((e.type === "circle" || e.type === "arc") && p.type === "circle" && p.center && p.dir && p.radius) {
+      if (Math.abs(Math.abs(v3.dot(p.dir, frame.z)) - 1) > 1e-6) { report.warnings.push(`Entidade convertida ${id}: o círculo não é paralelo ao plano do esboço`); continue; }
+      const c = to2D(frame, p.center);
+      setPt(e.c, c);
+      if (e.type === "circle") entities[id] = { ...e, r: p.radius };
+      else {
+        const ccw = v3.dot(p.dir, frame.z) > 0;
+        const [from, to] = ccw ? [to2D(frame, p.start), to2D(frame, p.end)] : [to2D(frame, p.end), to2D(frame, p.start)];
+        setPt(e.s, from);
+        setPt(e.e, to);
+        entities[id] = { ...e, r: p.radius, a0: Math.atan2(from[1] - c[1], from[0] - c[0]), a1: Math.atan2(to[1] - c[1], to[0] - c[0]) };
+      }
+    } else {
+      report.warnings.push(`Entidade convertida ${id}: tipo de aresta não suportado (${p.type})`);
+    }
+  }
+  return { ...f, entities };
+}
+
+export function sketch(ctx: Ctx, f0: SketchFeature & Feature, report: StepReport): Ctx {
+  const frame = planeFrame(ctx, f0.plane, report);
+  const f = ctx.body ? projectExternal(ctx, f0, frame, report) : f0;
   const r = solveSketch(f, ctx.scope);
   const profiles = findProfiles(r.entities);
   ctx.sketches.set(f.id, {

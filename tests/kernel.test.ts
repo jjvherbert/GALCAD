@@ -269,3 +269,43 @@ test("face num filete: arestas tangentes ignoradas", async () => {
   assert.equal(r.status.f4.state, "error");
   assert.match(r.status.f4.error!, /tangentes/);
 });
+
+test("regressão: contornos interiores no mesmo esboço são furos (qualquer orientação)", async () => {
+  const s = new SketchBuilder();
+  s.rect(0, 0, 100, 60, 90, 50);
+  // quadrado interior desenhado no sentido horário (orientação oposta à do exterior)
+  const q = [s.point(20, 20), s.point(20, 40), s.point(40, 40), s.point(40, 20)];
+  q.forEach((p, i) => s.line(p, q[(i + 1) % 4]));
+  s.circle(70, 30, 10);
+  const { doc: d } = doc(s.build(), { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } });
+  const r = await new Engine().rebuild(d);
+  assert.deepEqual(errors(r), []);
+  near(vol(r), (6000 - 400 - Math.PI * 100) * 10);
+});
+
+test("converter entidades: o esboço segue as arestas do modelo quando este muda", async () => {
+  const base = new SketchBuilder();
+  base.rect(0, 0, "W", 60, 90, 50);
+  const top = new SketchBuilder({ kind: "face", ref: { kind: "face", name: "f2:end:l5" } });
+  // 4 cantos em posições erradas de propósito: o núcleo projeta as arestas e corrige-as
+  const c = [top.point(1, 1, { fixed: true }), top.point(2, 1, { fixed: true }), top.point(2, 2, { fixed: true }), top.point(1, 2, { fixed: true })];
+  ["l5", "l6", "l7", "l8"].forEach((side, i) => {
+    const id = top.line(c[i], c[(i + 1) % 4]);
+    (top.entities[id] as { ext?: unknown }).ext = { kind: "edge", name: `{f2:end:l5&f2:side:${side}}` };
+  });
+  const { doc: d0 } = doc(
+    base.build(),
+    { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 20 } },
+    top.build(),
+    { type: "extrude", sketch: "f3", op: "add", end: { type: "blind", depth: 5 } },
+  );
+  const d = { ...d0, variables: [{ name: "W", expr: "100" }] };
+  const e = new Engine();
+  const r = await e.rebuild(d);
+  assert.deepEqual(errors(r), []);
+  near(vol(r), 100 * 60 * 25);
+  const r2 = await e.rebuild({ ...d, variables: [{ name: "W", expr: "140" }] });
+  assert.deepEqual(errors(r2), []);
+  near(vol(r2), 140 * 60 * 25);
+  assert.equal(r2.ctx.sketches.get("f3")!.solve.dof, 0);
+});
