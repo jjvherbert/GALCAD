@@ -2,6 +2,7 @@
 // local (`cad-runner.mjs --serve`, em 127.0.0.1), que corre os solvers instalados na máquina.
 import { zipStore } from "../io/mesh-export.ts";
 import type { SimCase } from "../sim/case.ts";
+import type { XfoilRequest, XfoilResult } from "../sim/xfoil.ts";
 import type { RunResult } from "../../tools/cad-runner.ts";
 import { type ResultView, femView } from "../sim/result.ts";
 import { externalParts, store } from "./store.ts";
@@ -76,4 +77,18 @@ async function postCase(r: Awaited<ReturnType<typeof caseFiles>>, url: string, t
   const j = await res.json();
   if (!res.ok) throw new Error(`${j.error ?? "Erro do agente"}${j.log ? `\n${j.log}` : ""}`);
   return { case: r.case, result: j as RunResult };
+}
+
+/** Polar de um perfil no XFOIL do agente local. */
+export async function runXfoilAgent(req: XfoilRequest, url: string, token: string): Promise<XfoilResult> {
+  if (!token) throw new Error("Ligue o agente local (Simulação → Agente local: endereço e token)");
+  let res: Response;
+  try {
+    res = await fetch(`${url}/xfoil`, { method: "POST", headers: { "content-type": "application/json", "x-cad-token": token }, body: JSON.stringify(req) });
+  } catch {
+    throw new Error("Agente local não responde (corra: node cad-runner.mjs --serve)");
+  }
+  const j = await res.json();
+  if (!res.ok) throw new Error(j.error ?? "Erro do agente");
+  return j as XfoilResult;
 }

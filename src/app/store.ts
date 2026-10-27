@@ -135,7 +135,7 @@ export interface State {
   /** Interferências calculadas (montagem ativa). */
   interference: InterferenceResponse | null;
   /** Painel lateral alternativo: BOM ou assistente. */
-  sidePanel: "bom" | "ai" | "knowledge" | "sim" | "pmi" | "script" | "galkeel" | null;
+  sidePanel: "bom" | "ai" | "knowledge" | "sim" | "pmi" | "script" | "galkeel" | "calc" | null;
   /** PMI: item selecionado no painel e vista de modelo aplicada (filtra os rótulos no 3D). */
   pmiSel: string | null;
   pmiView: string | null;

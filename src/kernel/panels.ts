@@ -5,7 +5,7 @@
 // dimensões entre apoios (reforços/anteparas), que o engenheiro confirma no painel.
 import type { Vec3 } from "../doc/types.ts";
 import { type Ctx, type StepReport, faces as resolveFaces } from "./context.ts";
-import { T, explore, faceProps, normalOnFace, oc, sampleEdge, v3 } from "./occ.ts";
+import { T, explore, faceProps, gpAx1, normalOnFace, oc, sampleEdge, v3 } from "./occ.ts";
 
 export interface PanelGeom {
   name: string;
@@ -22,6 +22,27 @@ export interface PanelGeom {
   l: number;
   crown: number;
   bbox: { min: Vec3; max: Vec3 };
+  /** Propriedades de secção (só faces planas): para colunas, vigas e encurvadura. */
+  section?: SectionProps;
+}
+
+/**
+ * Propriedades de secção de uma face plana, no centroide: segundos momentos de área nos eixos
+ * principais (I1 ≥ I2), raio de giração mínimo, momento polar (Iu + Iv; não é a constante de torção
+ * de secções abertas) e módulos elásticos pela fibra mais afastada da fronteira.
+ */
+export interface SectionProps {
+  A: number;
+  I1: number;
+  I2: number;
+  /** Eixos principais (no plano) correspondentes a I1 e I2. */
+  e1: Vec3;
+  e2: Vec3;
+  rmin: number;
+  Ip: number;
+  /** Módulos elásticos mínimos W = I/cmax em torno de cada eixo principal. */
+  W1: number;
+  W2: number;
 }
 
 /** Vetores próprios de uma matriz 3×3 simétrica (Jacobi), por valor próprio crescente. */
@@ -66,6 +87,23 @@ export function minAreaRect(pts: [number, number][]): { w: number; h: number; an
   return { w: r.w, h: r.h, angle: best.a };
 }
 
+/**
+ * Propriedades de secção a partir dos momentos de inércia de superfície em torno de três eixos do
+ * plano que passam pelo centroide (e1, e2 e a bissetriz): Iu = ∫v², Iv = ∫u², Iuv = (Iu + Iv)/2 − I45.
+ * (A matriz de inércia completa, gp_Mat, não está exposta nesta compilação WASM do OpenCASCADE.)
+ */
+export function sectionFromMoments(A: number, n: Vec3, e1: Vec3, e2: Vec3, Iu: number, Iv: number, I45: number, boundary: Vec3[], c0: Vec3): SectionProps {
+  const Iuv = (Iu + Iv) / 2 - I45;
+  const avg = (Iu + Iv) / 2, rad = Math.sqrt(((Iu - Iv) / 2) ** 2 + Iuv ** 2);
+  const I1 = avg + rad, I2 = avg - rad;
+  const th = 0.5 * Math.atan2(-2 * Iuv, Iu - Iv);
+  const a1 = v3.add(v3.mul(e1, Math.cos(th)), v3.mul(e2, Math.sin(th))) as Vec3, a2 = v3.cross(n, a1) as Vec3;
+  // fibra mais afastada: a distância ao eixo a1 conta segundo a2 e vice-versa
+  let c1 = 0, c2 = 0;
+  for (const p of boundary) { const d = v3.sub(p, c0); c1 = Math.max(c1, Math.abs(v3.dot(d, a2))); c2 = Math.max(c2, Math.abs(v3.dot(d, a1))); }
+  return { A, I1, I2, e1: a1, e2: a2, rmin: Math.sqrt(Math.max(I2, 0) / A), Ip: Iu + Iv, W1: c1 > 0 ? I1 / c1 : 0, W2: c2 > 0 ? I2 / c2 : 0 };
+}
+
 export function panelGeometry(ctx: Ctx, names: string[]): PanelGeom[] {
   if (!ctx.body) throw new Error("A peça não tem corpo sólido");
   const o = oc();
@@ -74,6 +112,7 @@ export function panelGeometry(ctx: Ctx, names: string[]): PanelGeom[] {
     const [nf] = resolveFaces(ctx, [{ kind: "face", name }], report);
     if (!nf) throw new Error(`Face inexistente: ${name}`);
     const p = faceProps(nf.face);
+    let section: SectionProps | undefined;
     // pontos da fronteira
     const pts: Vec3[] = explore(nf.face, "edge").flatMap((e) => sampleEdge(e, 24).map((s) => s.p));
     const c0 = [0, 1, 2].map((k) => pts.reduce((s, q) => s + q[k], 0) / pts.length) as Vec3;
@@ -108,7 +147,20 @@ export function panelGeometry(ctx: Ctx, names: string[]): PanelGeom[] {
         crown = dHi - dLo;
       }
     }
+    if (p.type === "plane" && p.normal) {
+      const props = new o.GProp_GProps();
+      o.BRepGProp.SurfaceProperties(T(o.TopoDS.Face(nf.face)), props, false, false);
+      const g = props.CentreOfMass();
+      const cg: Vec3 = [g.X(), g.Y(), g.Z()];
+      g.delete();
+      const pn = p.normal;
+      const s1 = v3.norm(v3.cross(Math.abs(pn[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0], pn)) as Vec3, s2 = v3.cross(pn, s1) as Vec3;
+      const mom = (d: Vec3) => props.MomentOfInertia(gpAx1(cg, d));
+      const Iu = mom(s1), Iv = mom(s2), I45 = mom(v3.norm(v3.add(s1, s2)) as Vec3);
+      props.delete();
+      section = sectionFromMoments(p.area, pn, s1, s2, Iu, Iv, I45, pts, cg);
+    }
     const bb = pts.reduce((acc, q) => ({ min: acc.min.map((x, k) => Math.min(x, q[k])) as Vec3, max: acc.max.map((x, k) => Math.max(x, q[k])) as Vec3 }), { min: [Infinity, Infinity, Infinity] as Vec3, max: [-Infinity, -Infinity, -Infinity] as Vec3 });
-    return { name: nf.name, type: p.type, area: p.area, center: p.center as Vec3, normal: outward as Vec3, planeNormal: n, ub, ul, b, l, crown, bbox: bb };
+    return { name: nf.name, type: p.type, area: p.area, center: p.center as Vec3, normal: outward as Vec3, planeNormal: n, ub, ul, b, l, crown, bbox: bb, section };
   });
 }

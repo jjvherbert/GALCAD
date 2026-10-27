@@ -30,3 +30,9 @@ export function simulationSummary(r: RunResult): ScriptSimulation {
     convergence: r.convergence?.rows.map((x) => ({ key: x.key, values: x.values, extrapolated: x.gci.extrapolated, gci: x.gci.gciFine, behaviour: x.gci.behaviour })),
   };
 }
+
+/** Polar do XFOIL (resultado do agente) resumida para scripts. */
+export function polarForScript(r: import("../sim/xfoil.ts").XfoilResult): import("./api.ts").ScriptPolar {
+  const { clAlphaDeg, alpha0, clMax, alphaClMax, cdMin, ldMax, missing } = r.summary;
+  return { airfoil: r.airfoil, re: r.re, polar: r.polar.map(({ alpha, cl, cd, cm }) => ({ alpha, cl, cd, cm })), summary: { clAlphaDeg, alpha0, clMax, alphaClMax, cdMin, ldMax, missing }, warnings: r.warnings };
+}

@@ -84,6 +84,22 @@ export function SimPanel() {
   );
 }
 
+/** Ligação ao agente local (endereço, token, solvers encontrados): partilhada com o painel Cálculos. */
+export function AgentBox() {
+  const st = useStore();
+  const a = st.agent;
+  const [status, setStatus] = useState("");
+  return (
+    <details class="claude-box">
+        <summary>Agente local {status && <span class="muted">· {status}</span>}</summary>
+        <p class="field-hint">Corre na sua máquina com Node.js: <code>node cad-runner.mjs --serve</code>. Usa o Gmsh, o CalculiX, o code_aster, o OpenFOAM, o SU2 e o XFOIL instalados (processos separados) e mostra um token para colar aqui.</p>
+        <Field label="Endereço"><input value={a.url} onChange={(e) => store.set({ agent: { ...a, url: (e.target as HTMLInputElement).value.replace(/\/$/, "") } })} /></Field>
+        <Field label="Token"><input type="password" autocomplete="off" value={a.token} onInput={(e) => store.set({ agent: { ...a, token: (e.target as HTMLInputElement).value.trim() } })} /></Field>
+        <button class="small" onClick={async () => { const x = await agentStatus(a.url, a.token); setStatus(x.ok ? Object.entries(x.tools ?? {}).map(([k, t]) => `${k} ${t ? "✓" : "✗"}`).join(" · ") : x.error ?? "erro"); }}>Testar ligação</button>
+      </details>
+  );
+}
+
 /** Montagem: material de cada corpo (instância) e modo de contacto entre corpos. */
 function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
   const st = useStore();
@@ -256,7 +272,6 @@ const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", diver
 function RunBox({ s, doc }: { s: Study; doc: string }) {
   const st = useStore();
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
   const [conv, setConv] = useState(false);
   const [ratio, setRatio] = useState(1.5);
   const [auto, setAuto] = useState(false);
@@ -286,13 +301,7 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
         <button class="small" onClick={() => void exportStudyCase(s.id)}>Exportar caso (.zip)</button>
         <a class="small button" href="cad-runner.mjs" download="cad-runner.mjs">Agente local (cad-runner.mjs)</a>
       </div>
-      <details class="claude-box">
-        <summary>Agente local {status && <span class="muted">· {status}</span>}</summary>
-        <p class="field-hint">Corre na sua máquina com Node.js: <code>node cad-runner.mjs --serve</code>. Usa o Gmsh, o CalculiX, o OpenFOAM e o SU2 instalados (processos separados) e mostra um token para colar aqui.</p>
-        <Field label="Endereço"><input value={a.url} onChange={(e) => store.set({ agent: { ...a, url: (e.target as HTMLInputElement).value.replace(/\/$/, "") } })} /></Field>
-        <Field label="Token"><input type="password" autocomplete="off" value={a.token} onInput={(e) => store.set({ agent: { ...a, token: (e.target as HTMLInputElement).value.trim() } })} /></Field>
-        <button class="small" onClick={async () => { const x = await agentStatus(a.url, a.token); setStatus(x.ok ? Object.entries(x.tools ?? {}).map(([k, t]) => `${k} ${t ? "✓" : "✗"}`).join(" · ") : x.error ?? "erro"); }}>Testar ligação</button>
-      </details>
+      <AgentBox />
       <Check label="Estudo de convergência da malha (GCI)" value={conv} onChange={setConv} />
       {conv && (
         <fieldset class="checklist">

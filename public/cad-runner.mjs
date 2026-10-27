@@ -1464,7 +1464,7 @@ const TET10_ORDER = [
 	9,
 	8
 ];
-const num = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
+const num$1 = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
 /** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
 function asterMesh(c, m) {
 	const vol = solidBlocks(m, c.bodies);
@@ -1494,7 +1494,7 @@ function asterMesh(c, m) {
 	}
 	const nodeOrder = [...used].sort((a, b) => a - b);
 	L.push("COOR_3D");
-	for (const t of nodeOrder) L.push(`N${t} ${m.nodes.get(t).map(num).join(" ")}`);
+	for (const t of nodeOrder) L.push(`N${t} ${m.nodes.get(t).map(num$1).join(" ")}`);
 	L.push("FINSF", "%", quad ? "TETRA10" : "TETRA4");
 	for (const e of cells) L.push(`${e.name} ${e.nodes.map((x) => `N${x}`).join(" ")}`);
 	L.push("FINSF", "%");
@@ -1570,8 +1570,8 @@ function asterCase(c, m) {
 	C.push("MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='3D'))");
 	const material = (name, m2) => {
 		if (nl?.plasticity && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
-		const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield)})` : "";
-		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)})${plast})`);
+		const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num$1(m2.tangent ?? 0)}, SY=${num$1(m2.yield)})` : "";
+		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num$1(m2.E)}, NU=${num$1(m2.nu)}, RHO=${num$1(m2.density * 1e-9)})${plast})`);
 	};
 	if (c.bodies?.length) {
 		c.bodies.forEach((b, k) => material(`MAT${k + 1}`, b.material));
@@ -1587,7 +1587,7 @@ function asterCase(c, m) {
 			ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.)`);
 			break;
 		case "displacement": {
-			const comps = ld.u.map((u, k) => u === null ? "" : `D${"XYZ"[k]}=${num(u)}`).filter(Boolean);
+			const comps = ld.u.map((u, k) => u === null ? "" : `D${"XYZ"[k]}=${num$1(u)}`).filter(Boolean);
 			if (comps.length) ddl.push(`_F(GROUP_NO='${ld.group}', ${comps.join(", ")})`);
 			break;
 		}
@@ -1597,15 +1597,15 @@ function asterCase(c, m) {
 				warnings.push(`Força no grupo ${ld.group} sem área`);
 				break;
 			}
-			force.push(`_F(GROUP_MA='${ld.group}', FX=${num(ld.f[0] / A)}, FY=${num(ld.f[1] / A)}, FZ=${num(ld.f[2] / A)})`);
+			force.push(`_F(GROUP_MA='${ld.group}', FX=${num$1(ld.f[0] / A)}, FY=${num$1(ld.f[1] / A)}, FZ=${num$1(ld.f[2] / A)})`);
 			break;
 		}
 		case "pressure":
-			pres.push(`_F(GROUP_MA='${ld.group}', PRES=${num(ld.p)})`);
+			pres.push(`_F(GROUP_MA='${ld.group}', PRES=${num$1(ld.p)})`);
 			break;
 		case "gravity": {
 			const g = Math.hypot(...ld.g);
-			if (g > 0) grav = `PESANTEUR=_F(GRAVITE=${num(g)}, DIRECTION=(${ld.g.map((x) => num(x / g)).join(", ")}))`;
+			if (g > 0) grav = `PESANTEUR=_F(GRAVITE=${num$1(g)}, DIRECTION=(${ld.g.map((x) => num$1(x / g)).join(", ")}))`;
 			break;
 		}
 		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
@@ -2087,6 +2087,189 @@ function convergenceReport(ratio, meshes) {
 		]
 	};
 }
+// src/sim/xfoil.ts
+const num = (x, what, lo, hi) => {
+	const v = Number(x);
+	if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`${what}: valor inválido (${String(x)}; entre ${lo} e ${hi})`);
+	return v;
+};
+/** Pedido validado (limites físicos e de tamanho); deita fora tudo o que não é número ou código NACA. */
+function checkXfoilRequest(r) {
+	const a = r?.airfoil;
+	let airfoil;
+	if (a && typeof a.naca === "string") {
+		if (!/^\d{4,5}$/.test(a.naca)) throw new Error("Código NACA inválido (4 ou 5 dígitos)");
+		airfoil = { naca: a.naca };
+	} else if (a && Array.isArray(a.coords)) {
+		const coords = a.coords.map((p, i) => {
+			if (!Array.isArray(p) || p.length < 2) throw new Error(`Coordenada ${i + 1} inválida`);
+			return [num(p[0], "x/c", -.1, 1.1), num(p[1], "y/c", -.5, .5)];
+		});
+		if (coords.length < 20 || coords.length > 1e3) throw new Error("O perfil precisa de 20 a 1000 pontos");
+		airfoil = {
+			name: String(a.name ?? "Perfil").replace(/[^\w .+-]/g, "").slice(0, 40) || "Perfil",
+			coords
+		};
+	} else throw new Error("Perfil em falta (código NACA ou coordenadas)");
+	const al = r.alpha ?? {};
+	const from = num(al.from, "α inicial", -30, 30), to = num(al.to, "α final", -30, 30);
+	const step = Math.abs(num(al.step, "passo de α", .05, 10));
+	if (Math.abs(to - from) / step > 200) throw new Error("Demasiados ângulos (máx. 200)");
+	return {
+		airfoil,
+		re: num(r.re, "Reynolds", 1e4, 1e9),
+		mach: num(r.mach ?? 0, "Mach", 0, .7),
+		ncrit: num(r.ncrit ?? 9, "Ncrit", 1, 14),
+		alpha: {
+			from,
+			to,
+			step
+		},
+		xtrTop: num(r.xtrTop ?? 1, "transição no extradorso", 0, 1),
+		xtrBot: num(r.xtrBot ?? 1, "transição no intradorso", 0, 1),
+		iter: Math.round(num(r.iter ?? 150, "iterações", 10, 1e3)),
+		panels: Math.round(num(r.panels ?? 160, "painéis", 60, 400))
+	};
+}
+/** Ficheiro de coordenadas (formato Selig com nome na primeira linha). */
+function airfoilFile(name, coords) {
+	return `${name}\n${coords.map(([x, y]) => ` ${x.toFixed(6)}  ${y.toFixed(6)}`).join("\n")}\n`;
+}
+/**
+* Comandos para o XFOIL (stdin). A varredura começa em α = 0 (ou no ângulo mais próximo) e vai para
+* cada lado separadamente, com a camada-limite reiniciada, porque o XFOIL converge melhor partindo
+* da solução vizinha. Sem gráficos (PLOP G F).
+*/
+function xfoilCommands(req, polarFile = "polar.txt", airfoilPath = "airfoil.dat") {
+	const r = checkXfoilRequest(req);
+	const lo = Math.min(r.alpha.from, r.alpha.to), hi = Math.max(r.alpha.from, r.alpha.to), s = r.alpha.step;
+	const start = lo > 0 ? lo : hi < 0 ? hi : 0;
+	const f = (x) => x.toFixed(3);
+	const lines = [
+		"PLOP",
+		"G F",
+		""
+	];
+	lines.push("naca" in r.airfoil ? `NACA ${r.airfoil.naca}` : `LOAD ${airfoilPath}`);
+	lines.push("PPAR", `N ${r.panels}`, "", "");
+	lines.push("OPER", "VPAR", `N ${r.ncrit}`, `XTR ${r.xtrTop} ${r.xtrBot}`, "");
+	lines.push(`ITER ${r.iter}`, `VISC ${r.re}`, `MACH ${r.mach}`, "PACC", polarFile, "");
+	if (hi >= start) lines.push(`ASEQ ${f(start)} ${f(hi)} ${f(s)}`);
+	if (lo < start) lines.push("INIT", `ASEQ ${f(start - s)} ${f(lo)} ${f(-s)}`);
+	lines.push("PACC", "", "QUIT", "");
+	return {
+		stdin: lines.join("\n"),
+		files: "coords" in r.airfoil ? { [airfoilPath]: airfoilFile(r.airfoil.name, r.airfoil.coords) } : {},
+		request: r
+	};
+}
+/**
+* Segunda passagem para os ângulos que não convergiram: cada um é aproximado a partir do vizinho
+* convergido mais próximo em passos de 0,25° (camada-limite reiniciada), com o dobro das iterações
+* e mais 10 painéis.
+*/
+function xfoilRetryCommands(req, missing, converged, polarFile = "polar2.txt", airfoilPath = "airfoil.dat") {
+	const base = xfoilCommands({
+		...req,
+		iter: Math.min(1e3, (req.iter ?? 150) * 2),
+		panels: Math.min(400, (req.panels ?? 160) + 10)
+	}, polarFile, airfoilPath);
+	const head = base.stdin.split("\n");
+	const cut = head.findIndex((l) => l.startsWith("ASEQ") || l === "INIT");
+	const lines = head.slice(0, cut);
+	const f = (x) => x.toFixed(3);
+	missing.forEach((m, k) => {
+		const near = converged.length ? converged.reduce((b, a) => Math.abs(a - m) < Math.abs(b - m) ? a : b) : 0;
+		const d = m > near ? .25 : -.25;
+		if (k > 0) lines.push("INIT");
+		lines.push(`ALFA ${f(near)}`);
+		if (Math.abs(m - near) > .26) lines.push(`ASEQ ${f(near + d)} ${f(m - d)} ${f(d)}`);
+		lines.push(`ALFA ${f(m)}`);
+	});
+	lines.push("PACC", "", "QUIT", "");
+	return {
+		stdin: lines.join("\n"),
+		files: base.files,
+		request: base.request
+	};
+}
+/** Lê a polar do XFOIL (colunas depois da linha de traços), ordenada por α e sem repetidos. */
+function parsePolar(text) {
+	const lines = text.split(/\r?\n/);
+	const i = lines.findIndex((l) => /^\s*-{5,}/.test(l));
+	if (i < 0) return [];
+	const rows = /* @__PURE__ */ new Map();
+	for (const l of lines.slice(i + 1)) {
+		const v = l.trim().split(/\s+/).map(Number);
+		if (v.length < 7 || v.slice(0, 7).some((x) => !Number.isFinite(x))) continue;
+		rows.set(v[0].toFixed(3), {
+			alpha: v[0],
+			cl: v[1],
+			cd: v[2],
+			cdp: v[3],
+			cm: v[4],
+			xtrTop: v[5],
+			xtrBot: v[6]
+		});
+	}
+	return [...rows.values()].sort((a, b) => a.alpha - b.alpha);
+}
+/** Grandezas de projeto da polar: declive e α0 (mínimos quadrados na zona linear), CLmax, CDmin, L/D. */
+function polarSummary(polar, req) {
+	const missing = [];
+	if (req) {
+		const lo = Math.min(req.alpha.from, req.alpha.to), hi = Math.max(req.alpha.from, req.alpha.to);
+		for (let a = lo; a <= hi + 1e-9; a += Math.abs(req.alpha.step)) if (!polar.some((p) => Math.abs(p.alpha - a) < .001)) missing.push(Math.round(a * 1e3) / 1e3);
+	}
+	if (!polar.length) return {
+		clAlphaDeg: null,
+		clAlphaRad: null,
+		alpha0: null,
+		clMax: null,
+		alphaClMax: null,
+		cdMin: NaN,
+		clAtCdMin: NaN,
+		ldMax: NaN,
+		alphaLdMax: NaN,
+		missing
+	};
+	const near0 = polar.reduce((b, p) => Math.abs(p.cl) < Math.abs(b.cl) ? p : b);
+	const lin = polar.filter((p) => Math.abs(p.alpha - near0.alpha) <= 5);
+	let clAlphaDeg = null, alpha0 = null;
+	if (lin.length >= 3) {
+		const n = lin.length, sx = lin.reduce((s, p) => s + p.alpha, 0), sy = lin.reduce((s, p) => s + p.cl, 0);
+		const sxx = lin.reduce((s, p) => s + p.alpha * p.alpha, 0);
+		const k = (n * lin.reduce((s, p) => s + p.alpha * p.cl, 0) - sx * sy) / (n * sxx - sx * sx), b = (sy - k * sx) / n;
+		clAlphaDeg = k;
+		alpha0 = -b / k;
+	}
+	let iMax = 0;
+	polar.forEach((p, i) => {
+		if (p.cl > polar[iMax].cl) iMax = i;
+	});
+	const interior = iMax < polar.length - 1;
+	const cdBest = polar.reduce((b, p) => p.cd < b.cd ? p : b);
+	const ldBest = polar.reduce((b, p) => p.cl / p.cd > b.cl / b.cd ? p : b);
+	return {
+		clAlphaDeg,
+		clAlphaRad: clAlphaDeg === null ? null : clAlphaDeg * 180 / Math.PI,
+		alpha0,
+		clMax: interior ? polar[iMax].cl : null,
+		alphaClMax: interior ? polar[iMax].alpha : null,
+		cdMin: cdBest.cd,
+		clAtCdMin: cdBest.cl,
+		ldMax: ldBest.cl / ldBest.cd,
+		alphaLdMax: ldBest.alpha,
+		missing
+	};
+}
+const XFOIL_HYPOTHESES = [
+	"Escoamento 2D (perfil de envergadura infinita), subsónico; compressibilidade pela correção de Kármán–Tsien (válida abaixo do Mach crítico).",
+	"Camada-limite integral acoplada ao escoamento potencial (método de painéis); transição pelo método e^n com o Ncrit indicado.",
+	"Fiável na zona linear e até perto do CLmax; depois da perda (separação extensa) o XFOIL tende a sobrestimar CLmax e subestimar CD — confirmar com dados de túnel ou CFD.",
+	"Ângulos que não convergem são omitidos da polar (listados nos avisos).",
+	"Para uma asa finita, corrigir o declive pelo alongamento (cálculo «Asa finita») — resultado de apoio ao projeto, não substitui ensaio nem certificação."
+];
 // tools/cad-runner.ts
 const which = (cmd) => {
 	const r = spawnSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8" });
@@ -2112,6 +2295,7 @@ function tools() {
 		"/opt/conda/envs/aster/bin/run_aster"
 	].find((p) => p && existsSync(p));
 	const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
+	const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
 	const foamDirect = which("simpleFoam");
 	const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
 	const version = (cmd, args) => {
@@ -2143,6 +2327,11 @@ function tools() {
 		code_aster: aster ? {
 			path: aster,
 			version: aster.endsWith("as_run") ? "as_run" : "run_aster"
+		} : null,
+		xfoil: xfoil ? {
+			path: xfoil,
+			version: "XFOIL 6.9x",
+			preload: process.env.CAD_XFOIL_PRELOAD ?? null
 		} : null
 	};
 }
@@ -2737,6 +2926,101 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 	writeFileSync(join(dir, "results.json"), JSON.stringify(res));
 	return res;
 }
+/**
+* Polar de um perfil no XFOIL. Os comandos são gerados a partir do pedido validado (só números e
+* códigos NACA). Algumas compilações (ex.: Debian/Ubuntu 6.99) ativam exceções de vírgula flutuante e
+* abortam no modo viscoso: CAD_XFOIL_PRELOAD aponta para uma biblioteca que as desliga (ver LEIA-ME).
+*/
+async function runXfoil(req, log = () => {}) {
+	const t0 = Date.now();
+	const c = xfoilCommands(req);
+	const x = tools().xfoil;
+	if (!x) throw new Error("XFOIL não encontrado (https://web.mit.edu/drela/Public/web/xfoil/, apt install xfoil, ou defina CAD_XFOIL)");
+	const dir = mkdtempSync(join(tmpdir(), "cad-xfoil-"));
+	try {
+		for (const [p, text] of Object.entries(c.files)) writeFileSync(join(dir, p), text);
+		log(`$ ${x.path} < comandos (${c.request.alpha.from}…${c.request.alpha.to}°, Re ${c.request.re})`);
+		const env = {
+			...process.env,
+			...x.preload ? { LD_PRELOAD: x.preload } : {}
+		};
+		const xf = (stdin, seconds) => new Promise((ok, fail) => {
+			const p = spawn(x.path, [], {
+				cwd: dir,
+				env
+			});
+			let tailText = "", total = 0, stopped = "";
+			const take = (b) => {
+				total += b.length;
+				tailText = (tailText + b.toString()).slice(-2e4);
+				if (total > 5e7 && !stopped) {
+					stopped = "saída descontrolada (camada-limite divergente, NaN)";
+					p.kill("SIGKILL");
+				}
+			};
+			p.stdout.on("data", take);
+			p.stderr.on("data", take);
+			const timer = setTimeout(() => {
+				stopped = `não terminou em ${seconds} s`;
+				p.kill("SIGKILL");
+			}, seconds * 1e3);
+			p.on("error", (e) => {
+				clearTimeout(timer);
+				fail(/* @__PURE__ */ new Error(`xfoil: ${e.message}`));
+			});
+			p.on("close", () => {
+				clearTimeout(timer);
+				ok(stopped ? `${tailText}\n[XFOIL parado: ${stopped}]` : tailText);
+			});
+			p.stdin.end(stdin);
+		});
+		const nA = Math.abs(c.request.alpha.to - c.request.alpha.from) / c.request.alpha.step + 1;
+		const limit = Math.round(30 + 3 * nA);
+		const out = await xf(c.stdin, limit);
+		const file = join(dir, "polar.txt");
+		let polar = existsSync(file) ? parsePolar(readFileSync(file, "utf8")) : [];
+		let retried = 0;
+		const first = polar.length ? polarSummary(polar, c.request).missing : [];
+		if (first.length) {
+			log(`XFOIL: segunda passagem para α = ${first.join(", ")}°`);
+			await xf(xfoilRetryCommands(c.request, first, polar.map((p) => p.alpha)).stdin, Math.round(30 + 6 * first.length));
+			const f2 = join(dir, "polar2.txt");
+			const extra = existsSync(f2) ? parsePolar(readFileSync(f2, "utf8")).filter((p) => first.some((m) => Math.abs(m - p.alpha) < .001)) : [];
+			retried = extra.length;
+			polar = [...polar, ...extra].sort((a, b) => a.alpha - b.alpha);
+		}
+		if (!polar.length) {
+			const fpe = /SIGFPE|Floating-point exception/i.test(out);
+			throw new Error(fpe ? "O XFOIL abortou com uma exceção de vírgula flutuante (compilação com FPE ativas): defina CAD_XFOIL_PRELOAD (ver LEIA-ME)" : `O XFOIL não produziu nenhum ponto da polar:\n${out.split(/\r?\n/).slice(-12).join("\n")}`);
+		}
+		const summary = polarSummary(polar, c.request);
+		const warnings = [];
+		if (retried) warnings.push(`${retried} ângulo(s) obtidos numa segunda passagem (aproximação a partir do vizinho convergido, +10 painéis): confirmar a continuidade da polar`);
+		if (summary.missing.length) warnings.push(`Sem convergência em α = ${summary.missing.join(", ")}° (omitidos)`);
+		if (summary.clMax === null) warnings.push("CLmax não atingido na gama pedida");
+		if (c.request.mach > .5) warnings.push("Mach > 0,5: verificar se há escoamento supersónico local (Cp mínimo)");
+		const name = "naca" in c.request.airfoil ? `NACA ${c.request.airfoil.naca}` : c.request.airfoil.name;
+		return {
+			ok: true,
+			solver: x.version,
+			airfoil: name,
+			re: c.request.re,
+			mach: c.request.mach,
+			ncrit: c.request.ncrit,
+			polar,
+			summary,
+			warnings,
+			hypotheses: XFOIL_HYPOTHESES,
+			seconds: (Date.now() - t0) / 1e3,
+			log: out.split(/\r?\n/).slice(-20).join("\n")
+		};
+	} finally {
+		if (!process.env.CAD_KEEP) rmSync(dir, {
+			recursive: true,
+			force: true
+		});
+	}
+}
 function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 	let busy = false;
 	const server = createServer(async (req, res) => {
@@ -2765,7 +3049,7 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 			});
 			return;
 		}
-		if (req.method !== "POST" || req.url !== "/run") {
+		if (req.method !== "POST" || req.url !== "/run" && req.url !== "/xfoil") {
 			send(404, { error: "Pedido desconhecido" });
 			return;
 		}
@@ -2784,6 +3068,16 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 			chunks.push(ch);
 		}
 		busy = true;
+		if (req.url === "/xfoil") {
+			try {
+				send(200, await runXfoil(JSON.parse(Buffer.concat(chunks).toString("utf8")), (s) => console.log(s)));
+			} catch (e) {
+				send(500, { error: e.message });
+			} finally {
+				busy = false;
+			}
+			return;
+		}
 		const dir = mkdtempSync(join(tmpdir(), "cad-run-"));
 		try {
 			const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -2845,4 +3139,4 @@ if (process.argv[1] && /cad-runner\.(m?js|ts)$/.test(process.argv[1])) {
 		});
 	} else console.log("Uso: node cad-runner.mjs <pasta-do-caso> | --serve [--port 8765] | --status");
 }
-export { coarsened, runCase, serve, tools };
+export { coarsened, runCase, runXfoil, serve, tools };

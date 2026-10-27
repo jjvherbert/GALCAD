@@ -19,6 +19,7 @@ const call = (method: keyof ScriptHost, args: unknown[]) => new Promise<never>((
 const host: ScriptHost = {
   rebuild: (doc) => call("rebuild", [doc]),
   simulate: (doc, id, opts) => call("simulate", [doc, id, opts]),
+  xfoil: (req) => call("xfoil", [req]),
 };
 
 self.onmessage = async ({ data }: MessageEvent) => {

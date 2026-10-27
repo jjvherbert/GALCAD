@@ -4,6 +4,17 @@
 // para simulações automáticas em lote). O script trabalha sobre uma CÓPIA do documento; as
 // alterações só passam para o modelo se o utilizador as aplicar.
 import type { CadDocument } from "../doc/types.ts";
+import { CALCS, runCalc } from "../calc/library.ts";
+import { type XfoilRequest, nacaCoords } from "../sim/xfoil.ts";
+
+/** Polar do XFOIL resumida para scripts. */
+export interface ScriptPolar {
+  airfoil: string;
+  re: number;
+  polar: { alpha: number; cl: number; cd: number; cm: number }[];
+  summary: { clAlphaDeg: number | null; alpha0: number | null; clMax: number | null; alphaClMax: number | null; cdMin: number; ldMax: number; missing: number[] };
+  warnings: string[];
+}
 
 /** Resultado de uma reconstrução, resumido para scripts. */
 export interface ScriptRebuild {
@@ -30,6 +41,8 @@ export interface ScriptSimulation {
 export interface ScriptHost {
   rebuild(doc: CadDocument): Promise<ScriptRebuild>;
   simulate(doc: CadDocument, studyId: string, opts: { convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number } }): Promise<ScriptSimulation>;
+  /** Polar de um perfil no XFOIL do agente local (opcional: sem ela, cad.xfoil dá erro claro). */
+  xfoil?(req: XfoilRequest): Promise<ScriptPolar>;
 }
 
 export interface ScriptOutput {
@@ -143,6 +156,11 @@ cad.studies()                  // [{ id, name, physics, analysis }]
 cad.grid({ L: [80, 100], t: [2, 3] })            // plano fatorial completo → [{L, t}, …]
 cad.linspace(a, b, n)          // n valores entre a e b
 cad.surrogate(linhas, ["L", "t"], "massa")       // superfície de resposta RBF → { predict({L, t}), looRmse, looRelative, bounds }
+cad.calc(id, entradas)         // cálculo da biblioteca → { outputs: {chave: valor}, warnings, reference }; ids: ${CALCS.map((c) => c.id).join(", ")}
+cad.calcs()                    // lista dos cálculos com entradas (chave, unidade, valor por defeito)
+await cad.xfoil({ airfoil: { naca: "2412" } | { name, coords }, re, mach?, ncrit?, alpha: { from, to, step } })
+                               // polar no XFOIL do agente → { polar: [{alpha, cl, cd, cm}], summary: {clAlphaDeg, alpha0, clMax, cdMin, ldMax}, warnings }
+cad.naca(código, n?)           // coordenadas NACA de 4 dígitos (x/c, y/c), formato Selig
 cad.log(...valores)            // escreve na consola do script
 cad.table(linhas, nome?)       // mostra uma tabela (e permite descarregar CSV)
 // O valor devolvido pelo script (return …) aparece no fim. Sem acesso à rede, ao disco nem à interface.`;
@@ -185,6 +203,16 @@ export async function runScript(code: string, doc: Doc, host: ScriptHost, opts: 
     },
     studies: () => (cur.studies ?? []).map((s) => ({ id: s.id, name: s.name, physics: s.physics, analysis: s.physics === "fem" ? s.analysis : s.regime })),
     grid, linspace, surrogate,
+    calc: (id: string, inputs: Record<string, number> = {}) => {
+      const r = runCalc(id, inputs);
+      return { id: r.id, name: r.name, reference: r.reference, inputs: r.inputs, outputs: Object.fromEntries(r.outputs.map((o) => [o.key, o.value])), warnings: r.warnings };
+    },
+    calcs: () => CALCS.map((c) => ({ id: c.id, name: c.name, domain: c.domain, inputs: c.inputs.map((i) => ({ key: i.key, label: i.label, unit: i.unit, default: i.default })) })),
+    xfoil: (req: XfoilRequest) => {
+      if (!host.xfoil) throw new Error("cad.xfoil: este ambiente não tem o XFOIL ligado (agente local)");
+      return host.xfoil(structuredClone(req));
+    },
+    naca: (code: string, n = 60) => nacaCoords(code, n),
     log: (...a: unknown[]) => { const line = a.map(fmt).join(" "); logs.push(line); opts.onLog?.(line); if (logs.length > 5000) throw new Error("Demasiadas linhas na consola (máx. 5000)"); },
     table: (rows: Record<string, unknown>[], name = `Tabela ${tables.length + 1}`) => { if (!Array.isArray(rows)) throw new Error("cad.table: espera uma lista de linhas"); tables.push({ name, rows: structuredClone(rows) }); },
   });

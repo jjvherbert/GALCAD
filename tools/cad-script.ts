@@ -16,8 +16,8 @@ import { KernelService } from "../src/kernel/service.ts";
 import { type CadProject, type PartDoc, DEFAULT_DENSITY, parseProject, serializeProject } from "../src/doc/project.ts";
 import type { CadDocument } from "../src/doc/types.ts";
 import { type ScriptHost, runScript, tableCSV } from "../src/script/api.ts";
-import { rebuildSummary, simulationSummary } from "../src/script/summary.ts";
-import { runCase } from "./cad-runner.ts";
+import { polarForScript, rebuildSummary, simulationSummary } from "../src/script/summary.ts";
+import { runCase, runXfoil } from "./cad-runner.ts";
 
 /** Anfitrião de Node: reconstrói com o núcleo e simula com os solvers locais (pastas temporárias). */
 export function nodeHost(project: CadProject, partId: string, log: (s: string) => void = () => {}): ScriptHost {
@@ -34,6 +34,9 @@ export function nodeHost(project: CadProject, partId: string, log: (s: string) =
       const dir = mkdtempSync(join(tmpdir(), "cad-script-"));
       for (const [p, text] of Object.entries(r.files)) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), text); }
       return simulationSummary(await runCase(dir, log, false, opts));
+    },
+    async xfoil(req) {
+      return polarForScript(await runXfoil(req, log));
     },
   };
 }

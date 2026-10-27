@@ -4,9 +4,9 @@ import type { CadDocument } from "../doc/types.ts";
 import type { PartDoc } from "../doc/project.ts";
 import { DEFAULT_DENSITY } from "../doc/project.ts";
 import type { ScriptOutput } from "../script/api.ts";
-import { rebuildSummary, simulationSummary } from "../script/summary.ts";
+import { polarForScript, rebuildSummary, simulationSummary } from "../script/summary.ts";
 import { externalParts, store } from "./store.ts";
-import { runStudyFor } from "./sim-client.ts";
+import { runStudyFor, runXfoilAgent } from "./sim-client.ts";
 
 export interface ScriptRun { promise: Promise<ScriptOutput>; stop: () => void }
 
@@ -30,6 +30,9 @@ export function runScriptInWorker(code: string, onLog: (line: string) => void, t
           const [doc, id, opts] = data.args;
           const a = store.state.agent;
           result = simulationSummary((await runStudyFor(asPart(doc), id, a.url, a.token, opts?.convergence)).result);
+        } else if (data.method === "xfoil") {
+          const a = store.state.agent;
+          result = polarForScript(await runXfoilAgent(data.args[0], a.url, a.token));
         } else throw new Error(`Pedido desconhecido: ${data.method}`);
         worker.postMessage({ type: "reply", id: data.id, result });
       } catch (e) {

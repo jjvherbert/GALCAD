@@ -1,5 +1,5 @@
 // Agente local do CAD protótipo: corre os solvers abertos instalados nesta máquina (Gmsh + CalculiX,
-// OpenFOAM, SU2) para os casos que a aplicação prepara, e devolve os resultados.
+// code_aster, OpenFOAM, SU2, XFOIL) para os casos que a aplicação prepara, e devolve os resultados.
 //
 //   node cad-runner.mjs <pasta-do-caso>          corre um caso exportado (case.json + model.brep …)
 //        [--convergence 1.5]                     … em três malhas (h, 1,5·h, 2,25·h) com o GCI
@@ -27,6 +27,7 @@ import { asterCase, asterResult } from "../src/sim/aster.ts";
 import { type LayerField, type FoamMeshFull, patchLayer, readField, sliceLayer } from "../src/sim/foamfields.ts";
 import { type ResultLayer, type ResultView, femView } from "../src/sim/result.ts";
 import { type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci } from "../src/sim/convergence.ts";
+import { type XfoilRequest, type XfoilResult, XFOIL_HYPOTHESES, parsePolar, polarSummary, xfoilCommands, xfoilRetryCommands } from "../src/sim/xfoil.ts";
 
 export interface RunResult {
   ok: boolean;
@@ -69,6 +70,7 @@ export function tools() {
   const home = process.env.HOME ?? "";
   const condaAster = [process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`, `${home}/micromamba/envs/aster/bin/run_aster`, `${home}/miniforge3/envs/aster/bin/run_aster`, "/opt/mamba/root/envs/aster/bin/run_aster", "/opt/conda/envs/aster/bin/run_aster"].find((p) => p && existsSync(p));
   const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
+  const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
   const foamDirect = which("simpleFoam");
   const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
   const version = (cmd: string | null, args: string[]) => {
@@ -82,6 +84,7 @@ export function tools() {
     openfoam: foamDirect || foamRc ? { path: foamDirect ?? foamRc!, version: foamRc ? foamRc.replace(/\/etc\/bashrc$/, "") : "no PATH", rc: foamRc } : null,
     su2: su2 ? { path: su2, version: "SU2_CFD" } : null,
     code_aster: aster ? { path: aster, version: aster.endsWith("as_run") ? "as_run" : "run_aster" } : null,
+    xfoil: xfoil ? { path: xfoil, version: "XFOIL 6.9x", preload: process.env.CAD_XFOIL_PRELOAD ?? null } : null,
   };
 }
 
@@ -424,6 +427,75 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
 }
 
 // ---------------------------------------------------------------------------
+// XFOIL (perfis 2D)
+// ---------------------------------------------------------------------------
+
+/**
+ * Polar de um perfil no XFOIL. Os comandos são gerados a partir do pedido validado (só números e
+ * códigos NACA). Algumas compilações (ex.: Debian/Ubuntu 6.99) ativam exceções de vírgula flutuante e
+ * abortam no modo viscoso: CAD_XFOIL_PRELOAD aponta para uma biblioteca que as desliga (ver LEIA-ME).
+ */
+export async function runXfoil(req: XfoilRequest, log: Log = () => {}): Promise<XfoilResult> {
+  const t0 = Date.now();
+  const c = xfoilCommands(req);
+  const x = tools().xfoil;
+  if (!x) throw new Error("XFOIL não encontrado (https://web.mit.edu/drela/Public/web/xfoil/, apt install xfoil, ou defina CAD_XFOIL)");
+  const dir = mkdtempSync(join(tmpdir(), "cad-xfoil-"));
+  try {
+    for (const [p, text] of Object.entries(c.files)) writeFileSync(join(dir, p), text);
+    log(`$ ${x.path} < comandos (${c.request.alpha.from}…${c.request.alpha.to}°, Re ${c.request.re})`);
+    const env = { ...process.env, ...(x.preload ? { LD_PRELOAD: x.preload } : {}) };
+    // sem exceções de vírgula flutuante, uma camada-limite que diverge pode ficar em ciclo com NaN:
+    // guarda-se só o fim da saída e o processo é parado se a saída disparar
+    const xf = (stdin: string, seconds: number) => new Promise<string>((ok, fail) => {
+      const p = spawn(x.path, [], { cwd: dir, env });
+      let tailText = "", total = 0, stopped = "";
+      const take = (b: Buffer) => {
+        total += b.length;
+        tailText = (tailText + b.toString()).slice(-20000);
+        if (total > 50e6 && !stopped) { stopped = "saída descontrolada (camada-limite divergente, NaN)"; p.kill("SIGKILL"); }
+      };
+      p.stdout.on("data", take);
+      p.stderr.on("data", take);
+      const timer = setTimeout(() => { stopped = `não terminou em ${seconds} s`; p.kill("SIGKILL"); }, seconds * 1000);
+      p.on("error", (e) => { clearTimeout(timer); fail(new Error(`xfoil: ${e.message}`)); });
+      p.on("close", () => { clearTimeout(timer); ok(stopped ? `${tailText}\n[XFOIL parado: ${stopped}]` : tailText); });
+      p.stdin.end(stdin);
+    });
+    const nA = Math.abs(c.request.alpha.to - c.request.alpha.from) / c.request.alpha.step + 1;
+    const limit = Math.round(30 + 3 * nA);
+    const out = await xf(c.stdin, limit);
+    const file = join(dir, "polar.txt");
+    let polar = existsSync(file) ? parsePolar(readFileSync(file, "utf8")) : [];
+    let retried = 0;
+    const first = polar.length ? polarSummary(polar, c.request).missing : [];
+    if (first.length) {
+      // segunda passagem só para os ângulos pedidos que faltam (aproximação a partir do vizinho)
+      log(`XFOIL: segunda passagem para α = ${first.join(", ")}°`);
+      await xf(xfoilRetryCommands(c.request, first, polar.map((p) => p.alpha)).stdin, Math.round(30 + 6 * first.length));
+      const f2 = join(dir, "polar2.txt");
+      const extra = existsSync(f2) ? parsePolar(readFileSync(f2, "utf8")).filter((p) => first.some((m) => Math.abs(m - p.alpha) < 1e-3)) : [];
+      retried = extra.length;
+      polar = [...polar, ...extra].sort((a, b) => a.alpha - b.alpha);
+    }
+    if (!polar.length) {
+      const fpe = /SIGFPE|Floating-point exception/i.test(out);
+      throw new Error(fpe ? "O XFOIL abortou com uma exceção de vírgula flutuante (compilação com FPE ativas): defina CAD_XFOIL_PRELOAD (ver LEIA-ME)" : `O XFOIL não produziu nenhum ponto da polar:\n${out.split(/\r?\n/).slice(-12).join("\n")}`);
+    }
+    const summary = polarSummary(polar, c.request);
+    const warnings: string[] = [];
+    if (retried) warnings.push(`${retried} ângulo(s) obtidos numa segunda passagem (aproximação a partir do vizinho convergido, +10 painéis): confirmar a continuidade da polar`);
+    if (summary.missing.length) warnings.push(`Sem convergência em α = ${summary.missing.join(", ")}° (omitidos)`);
+    if (summary.clMax === null) warnings.push("CLmax não atingido na gama pedida");
+    if (c.request.mach! > 0.5) warnings.push("Mach > 0,5: verificar se há escoamento supersónico local (Cp mínimo)");
+    const name = "naca" in c.request.airfoil ? `NACA ${c.request.airfoil.naca}` : c.request.airfoil.name;
+    return { ok: true, solver: x.version, airfoil: name, re: c.request.re, mach: c.request.mach!, ncrit: c.request.ncrit!, polar, summary, warnings, hypotheses: XFOIL_HYPOTHESES, seconds: (Date.now() - t0) / 1000, log: out.split(/\r?\n/).slice(-20).join("\n") };
+  } finally {
+    if (!process.env.CAD_KEEP) rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Servidor local
 // ---------------------------------------------------------------------------
 
@@ -442,12 +514,18 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     const send = (code: number, body: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     if (req.headers["x-cad-token"] !== token) { send(401, { error: "Token do agente em falta ou errado" }); return; }
     if (req.method === "GET" && req.url === "/status") { send(200, { ok: true, tools: tools(), busy }); return; }
-    if (req.method !== "POST" || req.url !== "/run") { send(404, { error: "Pedido desconhecido" }); return; }
+    if (req.method !== "POST" || (req.url !== "/run" && req.url !== "/xfoil")) { send(404, { error: "Pedido desconhecido" }); return; }
     if (busy) { send(409, { error: "O agente está ocupado com outro cálculo" }); return; }
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const ch of req) { size += (ch as Buffer).length; if (size > 200e6) { send(413, { error: "Pedido demasiado grande" }); return; } chunks.push(ch as Buffer); }
     busy = true;
+    if (req.url === "/xfoil") {
+      try { send(200, await runXfoil(JSON.parse(Buffer.concat(chunks).toString("utf8")) as XfoilRequest, (s) => console.log(s))); }
+      catch (e) { send(500, { error: (e as Error).message }); }
+      finally { busy = false; }
+      return;
+    }
     const dir = mkdtempSync(join(tmpdir(), "cad-run-"));
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as RunRequest;

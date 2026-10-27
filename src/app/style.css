@@ -366,3 +366,10 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .galkeel-panel .row4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
 .galkeel-panel .row4 input, .galkeel-panel .row3 input, .galkeel-panel .row3 select, .galkeel-panel .row select { min-width: 0; width: 100%; }
 .galkeel-panel .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+/* cálculos */
+.calc-panel .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.calc-panel .row3 input, .calc-panel .row input, .calc-panel .row select, .calc-inputs select { min-width: 0; width: 100%; }
+.calc-inputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 6px; }
+.calc-panel .conv-plot { max-width: 48%; }
+.calc-results td:first-child { width: 55%; }
+.calc-panel .row > select[aria-label="Origem do perfil"] { flex: 0 0 auto; width: auto; }
