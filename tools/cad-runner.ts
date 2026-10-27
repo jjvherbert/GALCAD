@@ -26,7 +26,7 @@ import { su2Config } from "../src/sim/su2.ts";
 import { asterCase, asterResult } from "../src/sim/aster.ts";
 import { type LayerField, type FoamMeshFull, patchLayer, readField, sliceLayer } from "../src/sim/foamfields.ts";
 import { type ResultLayer, type ResultView, femView } from "../src/sim/result.ts";
-import { type ConvergenceReport, type Metric, convergenceReport } from "../src/sim/convergence.ts";
+import { type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci } from "../src/sim/convergence.ts";
 
 export interface RunResult {
   ok: boolean;
@@ -330,8 +330,13 @@ async function runSu2(c: CfdCase, dir: string, log: Log, regenerate: boolean): P
 const tail = (p: string, n = 25) => (existsSync(p) ? readFileSync(p, "utf8").split(/\r?\n/).slice(-n).join("\n") : "");
 
 export interface RunOptions {
-  /** Estudo de convergência: três malhas com tamanhos h, r·h, r²·h (a pedida é a mais fina). */
-  convergence?: { ratio: number };
+  /**
+   * Estudo de convergência. Sem `target`: três malhas h, r·h, r²·h (a pedida é a mais fina).
+   * Com `target` (GCI, fração): refina a partir de h (h, h/r, h/r², …) até o GCI da grandeza
+   * `metric` (por omissão a primeira sonda, ou o deslocamento máximo) ficar abaixo do alvo, com
+   * convergência monotónica, ou até `maxLevels` malhas (5) ou `maxCells` elementos/células.
+   */
+  convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number; maxCells?: number };
 }
 
 async function runOnce(c: SimCase, dir: string, log: Log, regenerate: boolean) {
@@ -354,21 +359,59 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
   const c = JSON.parse(readFileSync(join(dir, "case.json"), "utf8")) as SimCase;
   if (c.format !== "cadp-sim-case") throw new Error("case.json inválido");
   let r: Omit<RunResult, "seconds" | "hypotheses">;
-  if (opts.convergence) {
+  const prepare = (k: number, name: string) => {
+    const sub = join(dir, name);
+    mkdirSync(sub, { recursive: true });
+    const ck = coarsened(c, k);
+    writeFileSync(join(sub, "case.json"), JSON.stringify(ck));
+    writeFileSync(join(sub, "model.brep"), readFileSync(join(dir, "model.brep")));
+    if (existsSync(join(dir, "constant/triSurface"))) {
+      mkdirSync(join(sub, "constant/triSurface"), { recursive: true });
+      for (const fn of readdirSync(join(dir, "constant/triSurface"))) if (fn.endsWith(".stl")) writeFileSync(join(sub, "constant/triSurface", fn), readFileSync(join(dir, "constant/triSurface", fn)));
+    }
+    return { sub, ck };
+  };
+  if (opts.convergence?.target !== undefined) {
+    const { ratio, target } = opts.convergence;
+    const maxLevels = Math.min(8, Math.max(3, opts.convergence.maxLevels ?? 5)), maxCells = opts.convergence.maxCells ?? 1.5e6;
+    if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
+    if (!(target > 0 && target < 1)) throw new Error("GCI alvo fora de ]0; 1[ (fração, ex. 0,01 = 1 %)");
+    const runs: Omit<RunResult, "seconds" | "hypotheses">[] = [];
+    const steps: NonNullable<ConvergenceReport["auto"]>["steps"] = [];
+    let metric = opts.convergence.metric;
+    let achieved = false, stop = "";
+    for (let k = 0; k < maxLevels; k++) {
+      const { sub, ck } = prepare(ratio ** -k, `nivel${k + 1}`);
+      log(`— nível ${k + 1} (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+      const r1 = await runOnce(ck, sub, log, true);
+      runs.push(r1);
+      metric ??= r1.metrics.find((x) => x.key.startsWith("probe"))?.key ?? r1.metrics[0]?.key;
+      const val = r1.metrics.find((x) => x.key === metric)?.value ?? NaN;
+      let g: GciResult | undefined;
+      if (runs.length >= 3) {
+        const [f3, f2, f1] = runs.slice(-3).map((x) => x.metrics.find((y) => y.key === metric)?.value ?? NaN);
+        const [n3, n2, n1] = runs.slice(-3).map((x) => x.cells);
+        g = gci([n1, n2, n3], [f1, f2, f3]);
+      }
+      steps.push({ level: k + 1, size: ck.mesh.size, cells: r1.cells, value: val, gci: g?.gciFine, behaviour: g?.behaviour });
+      if (g && g.behaviour === "monotonic" && g.gciFine <= target) { achieved = true; stop = `GCI ${(100 * g.gciFine).toFixed(2)} % ≤ ${(100 * target).toFixed(2)} %`; break; }
+      if (g?.behaviour === "converged") { achieved = true; stop = "valores iguais nas duas malhas mais finas"; break; }
+      if (r1.cells * ratio ** 3 > maxCells) { stop = `a malha seguinte passaria de ${maxCells.toExponential(1)} células`; break; }
+    }
+    if (!stop) stop = `atingido o máximo de ${maxLevels} malhas`;
+    const last = runs.slice(-3).reverse();
+    const report = last.length === 3 ? convergenceReport(ratio, last.map((x) => ({ cells: x.cells, size: NaN, metrics: x.metrics }))) : { ratio, meshes: [], rows: [], hypotheses: [] };
+    report.meshes = last.map((x, i) => ({ cells: x.cells, size: steps[steps.length - 1 - i].size }));
+    report.auto = { target, metric: metric ?? "", achieved, stop, steps };
+    const fine = runs.at(-1)!;
+    r = { ...fine, convergence: report, warnings: [...fine.warnings, ...(achieved ? [] : [`Convergência não atingida: ${stop}`]), ...report.rows.filter((x) => x.key === metric).flatMap((x) => x.gci.notes.map((n) => `${x.label}: ${n}`))] };
+  } else if (opts.convergence) {
     const ratio = opts.convergence.ratio;
     if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
     // da mais grossa (mais rápida, falha cedo) para a pedida
     const runs: Omit<RunResult, "seconds" | "hypotheses">[] = [];
     for (const lvl of [2, 1, 0]) {
-      const sub = join(dir, `malha${lvl + 1}`);
-      mkdirSync(sub, { recursive: true });
-      const ck = coarsened(c, ratio ** lvl);
-      writeFileSync(join(sub, "case.json"), JSON.stringify(ck));
-      writeFileSync(join(sub, "model.brep"), readFileSync(join(dir, "model.brep")));
-      if (existsSync(join(dir, "constant/triSurface"))) {
-        mkdirSync(join(sub, "constant/triSurface"), { recursive: true });
-        for (const fn of readdirSync(join(dir, "constant/triSurface"))) if (fn.endsWith(".stl")) writeFileSync(join(sub, "constant/triSurface", fn), readFileSync(join(dir, "constant/triSurface", fn)));
-      }
+      const { sub, ck } = prepare(ratio ** lvl, `malha${lvl + 1}`);
       log(`— malha ${lvl + 1} de 3 (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
       runs[lvl] = await runOnce(ck, sub, log, true);
     }
@@ -385,7 +428,7 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
 // ---------------------------------------------------------------------------
 
 /** Pedido da aplicação: o caso, a geometria e (CFD/OpenFOAM) as superfícies STL de cada patch. */
-export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string>; convergence?: { ratio: number } }
+export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string>; convergence?: RunOptions["convergence"] }
 
 export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
   let busy = false;
@@ -418,7 +461,9 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
           writeFileSync(join(dir, `constant/triSurface/${name}.stl`), text);
         }
       }
-      const conv = body.convergence && Number.isFinite(Number(body.convergence.ratio)) ? { ratio: Number(body.convergence.ratio) } : undefined;
+      const cv = body.convergence;
+      const fin = (x: unknown) => (x === undefined || x === null ? undefined : Number.isFinite(Number(x)) ? Number(x) : undefined);
+      const conv = cv && Number.isFinite(Number(cv.ratio)) ? { ratio: Number(cv.ratio), target: fin(cv.target), metric: typeof cv.metric === "string" ? cv.metric : undefined, maxLevels: fin(cv.maxLevels), maxCells: fin(cv.maxCells) } : undefined;
       const r = await runCase(dir, (s) => console.log(s), true, { convergence: conv });
       send(200, r);
     } catch (e) {

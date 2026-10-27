@@ -49,7 +49,7 @@ export async function agentStatus(url: string, token: string): Promise<{ ok: boo
  * Gera o caso e calcula-o no agente local; devolve os resultados. `convergence`: corre também em duas
  * malhas mais grossas (tamanhos × r e × r²) e devolve o GCI de cada grandeza.
  */
-export async function runStudy(studyId: string, url: string, token: string, convergence?: { ratio: number }): Promise<{ case: SimCase; result: RunResult }> {
+export async function runStudy(studyId: string, url: string, token: string, convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number }): Promise<{ case: SimCase; result: RunResult }> {
   const r = await caseFiles(studyId);
   const stl = Object.fromEntries(Object.entries(r.files).filter(([p]) => p.startsWith("constant/triSurface/")).map(([p, t]) => [p.slice("constant/triSurface/".length, -4), t]));
   let res: Response;

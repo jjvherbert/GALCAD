@@ -72,6 +72,8 @@ export interface ConvergenceReport {
   meshes: { cells: number; size: number }[];
   rows: { key: string; label: string; unit: string; values: [number, number, number]; gci: GciResult }[];
   hypotheses: string[];
+  /** Refinamento automático: alvo, grandeza seguida, se foi atingido, porquê parou e cada nível. */
+  auto?: { target: number; metric: string; achieved: boolean; stop: string; steps: { level: number; size: number; cells: number; value: number; gci?: number; behaviour?: GciResult["behaviour"] }[] };
 }
 
 /** Junta as métricas das três malhas (fina → grossa) num relatório de convergência. */

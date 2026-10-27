@@ -347,3 +347,9 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .pmi-panel .row input, .pmi-panel .row3 select { min-width: 0; width: 100%; }
 .pmi-panel .info-table { table-layout: fixed; }
 .pmi-panel .info-table td { word-break: break-word; }
+.conv-plot { width: 100%; max-width: 320px; height: auto; font: 9px ui-monospace, monospace; }
+.conv-plot .axis { stroke: var(--line, #d1d5db); }
+.conv-plot .curve { fill: none; stroke: #2563eb; stroke-width: 1.5; }
+.conv-plot circle { fill: #2563eb; }
+.conv-plot .ext { stroke: #16a34a; stroke-dasharray: 4 3; }
+.conv-plot text { fill: var(--muted, #6b7280); }

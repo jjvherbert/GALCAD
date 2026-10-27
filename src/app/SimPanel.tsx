@@ -2,10 +2,10 @@
 // condições nas faces pelo nome topológico, malha, exportação do caso e cálculo no agente local.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemLoad, type FemStudy, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
+import { type CfdStudy, type FemLoad, type FemStudy, type Probe, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { store, useStore } from "./store.ts";
 import { Check, ExprInput, Field, RefList, Select } from "./forms.tsx";
-import { agentStatus, exportStudyCase, resultView, runStudy } from "./sim-client.ts";
+import { type RunResult, agentStatus, exportStudyCase, resultView, runStudy } from "./sim-client.ts";
 import { fieldRange, layerShown, toggleLayer } from "../sim/result.ts";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
@@ -173,6 +173,26 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
         <option value="">+ condição…</option>
         {kinds.map((k) => <option key={k} value={k}>{LOAD_LABELS[k]}</option>)}
       </select>
+      <h3>Sondas</h3>
+      {(s.probes ?? []).map((pr, i) => {
+        const set = (p: Partial<Probe>) => up({ probes: (s.probes ?? []).map((x, k) => (k === i ? { ...x, ...p } : x)) });
+        return (
+          <div class="kw-item" key={i}>
+            <div class="row">
+              <input aria-label={`Nome da sonda ${i + 1}`} value={pr.name} onChange={(e) => set({ name: (e.target as HTMLInputElement).value })} />
+              <button class="icon" aria-label={`Retirar sonda ${i + 1}`} onClick={() => up({ probes: (s.probes ?? []).filter((_, k) => k !== i) })}>✕</button>
+            </div>
+            <div class="row">
+              <Select label="Grandeza" value={pr.quantity} options={[["u", "|u| (mm)"], ["ux", "ux"], ["uy", "uy"], ["uz", "uz"], ["vm", "von Mises (MPa)"], ["T", "Temperatura (°C)"]]} onChange={(quantity) => set({ quantity })} />
+              <Select label="Onde" value={pr.at.kind} options={[["faces", "Média em faces"], ["point", "Ponto (nó mais próximo)"]]} onChange={(k) => set({ at: k === "faces" ? { kind: "faces", faces: [] } : { kind: "point", point: [0, 0, 0] } })} />
+            </div>
+            {pr.at.kind === "faces"
+              ? <RefList field={`probe${i}`} label="Faces" accept={["face"]} refs={pr.at.faces} onChange={(faces) => set({ at: { kind: "faces", faces } })} />
+              : <Vec3Input label="P" unit="mm" value={pr.at.point} onChange={(point) => set({ at: { kind: "point", point } })} />}
+          </div>
+        );
+      })}
+      <button class="small" onClick={() => up({ probes: [...(s.probes ?? []), { name: `Sonda ${(s.probes ?? []).length + 1}`, quantity: thermal ? "T" : "u", at: { kind: "faces", faces: [] } }] })}>+ sonda</button>
       <h3>Malha (Gmsh)</h3>
       <div class="row">
         <ExprInput label="Tamanho máx." value={s.mesh.size} onChange={(size) => up({ mesh: { ...s.mesh, size: size ?? 5 } })} />
@@ -239,12 +259,16 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
   const [status, setStatus] = useState("");
   const [conv, setConv] = useState(false);
   const [ratio, setRatio] = useState(1.5);
+  const [auto, setAuto] = useState(false);
+  const [target, setTarget] = useState(1);
+  const [levels, setLevels] = useState(5);
+  const [metric, setMetric] = useState("");
   const a = st.agent;
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult : null;
   const run = async () => {
     setBusy(true);
     try {
-      const { result } = await runStudy(s.id, a.url, a.token, conv ? { ratio } : undefined);
+      const { result } = await runStudy(s.id, a.url, a.token, conv ? { ratio, ...(auto ? { target: target / 100, maxLevels: levels, metric: metric || undefined } : {}) } : undefined);
       store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, message: `Calculado em ${result.seconds.toFixed(1)} s` });
     } catch (e) {
       store.set({ error: (e as Error).message });
@@ -269,9 +293,23 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
         <Field label="Token"><input type="password" autocomplete="off" value={a.token} onInput={(e) => store.set({ agent: { ...a, token: (e.target as HTMLInputElement).value.trim() } })} /></Field>
         <button class="small" onClick={async () => { const x = await agentStatus(a.url, a.token); setStatus(x.ok ? Object.entries(x.tools ?? {}).map(([k, t]) => `${k} ${t ? "✓" : "✗"}`).join(" · ") : x.error ?? "erro"); }}>Testar ligação</button>
       </details>
-      <Check label="Estudo de convergência da malha (3 malhas, GCI)" value={conv} onChange={setConv} />
-      {conv && <Field label="Razão r entre malhas"><input type="number" min="1.1" max="3" step="0.1" value={ratio} onChange={(e) => setRatio(Number((e.target as HTMLInputElement).value) || 1.5)} /></Field>}
-      {conv && <p class="field-hint">Corre também com malhas de tamanho r·h e r²·h (mais grossas, mais rápidas) e estima a incerteza da discretização da malha pedida (Celik et al. 2008 / ASME V&V 20).</p>}
+      <Check label="Estudo de convergência da malha (GCI)" value={conv} onChange={setConv} />
+      {conv && (
+        <fieldset class="checklist">
+          <Select label="Modo" value={auto ? "auto" : "three"} options={[["three", "3 malhas: h, r·h, r²·h"], ["auto", "Automático: refinar até ao GCI alvo"]]} onChange={(m) => setAuto(m === "auto")} />
+          <Field label="Razão r entre malhas"><input type="number" min="1.1" max="3" step="0.1" value={ratio} onChange={(e) => setRatio(Number((e.target as HTMLInputElement).value) || 1.5)} /></Field>
+          {auto && (
+            <>
+              <div class="row">
+                <Field label="GCI alvo (%)"><input type="number" min="0.05" max="50" step="0.1" value={target} onChange={(e) => setTarget(Number((e.target as HTMLInputElement).value) || 1)} /></Field>
+                <Field label="Máx. malhas"><input type="number" min="3" max="8" value={levels} onChange={(e) => setLevels(Number((e.target as HTMLInputElement).value) || 5)} /></Field>
+              </div>
+              <Select label="Grandeza seguida" value={metric} options={[["", "Primeira sonda (ou deslocamento máx.)"], ...((s.physics === "fem" ? s.probes ?? [] : []).map((p, i): [string, string] => [`probe${i + 1}`, `Sonda: ${p.name}`])), ["umax", "Deslocamento máx."], ["f1", "Frequência 1"], ["tmax", "Temperatura máx."], ["dp", "Queda de pressão (CFD)"], ["drag", "Arrasto (CFD)"]]} onChange={setMetric} />
+            </>
+          )}
+          <p class="field-hint">{auto ? "Refina a partir do tamanho pedido (h, h/r, h/r², …) até o GCI da grandeza ficar abaixo do alvo com convergência monotónica, ou até ao máximo de malhas." : "Corre também com malhas r·h e r²·h (mais grossas) e estima a incerteza da malha pedida."} Use sondas (valores em pontos ou médias em faces): os máximos junto a cantos vivos e apoios não convergem. Celik et al. 2008 / ASME V&V 20.</p>
+        </fieldset>
+      )}
       <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{busy ? "A calcular…" : "Calcular no agente local"}</button>
       {r && (
         <div class="kw-item ok">
@@ -319,6 +357,7 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
                   </tr>
                 ))}
               </table>
+              {r.convergence.auto && <ConvergencePlot auto={r.convergence.auto} ext={r.convergence.rows.find((x) => x.key === r.convergence!.auto!.metric)?.gci.extrapolated} label={r.convergence.rows.find((x) => x.key === r.convergence!.auto!.metric)?.label ?? r.convergence.auto.metric} />}
               <ul class="muted">{r.convergence.hypotheses.map((h) => <li key={h}>{h}</li>)}</ul>
             </details>
           )}
@@ -342,6 +381,37 @@ function SimLegend() {
     <>
       <div class="legend sequential" />
       <div class="legend-labels"><span>{fmt(range[0])}</span><span>{f.unit}</span><span>{fmt(range[1])}</span></div>
+    </>
+  );
+}
+
+/** Refinamento automático: valor da grandeza por nível contra o tamanho de malha, com o extrapolado. */
+function ConvergencePlot({ auto, ext, label }: { auto: NonNullable<NonNullable<RunResult["convergence"]>["auto"]>; ext?: number; label: string }) {
+  const pts = auto.steps.filter((x) => Number.isFinite(x.value));
+  if (!pts.length) return null;
+  const W = 260, H = 120, P = 28;
+  const hs = pts.map((x) => (1 / x.cells) ** (1 / 3));
+  const vs = [...pts.map((x) => x.value), ...(ext !== undefined && Number.isFinite(ext) ? [ext] : [])];
+  const h0 = 0, h1 = Math.max(...hs) * 1.05, v0 = Math.min(...vs), v1 = Math.max(...vs);
+  const X = (h: number) => P + ((h - h0) / (h1 - h0 || 1)) * (W - P - 6), Y = (v: number) => H - 18 - ((v - v0) / (v1 - v0 || 1)) * (H - 30);
+  return (
+    <>
+      <p class="muted">{auto.achieved ? "✓ convergido" : "✗ não convergido"}: {auto.stop} · {label}</p>
+      <svg class="conv-plot" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Convergência da malha">
+        <line x1={P} y1={H - 18} x2={W - 4} y2={H - 18} class="axis" />
+        <line x1={P} y1={6} x2={P} y2={H - 18} class="axis" />
+        {ext !== undefined && Number.isFinite(ext) && <line x1={P} x2={W - 4} y1={Y(ext)} y2={Y(ext)} class="ext" />}
+        <polyline points={pts.map((x, i) => `${X(hs[i])},${Y(x.value)}`).join(" ")} class="curve" />
+        {pts.map((x, i) => <circle key={i} cx={X(hs[i])} cy={Y(x.value)} r="2.5" />)}
+        <text x={P} y={H - 4}>0</text>
+        <text x={W - 6} y={H - 4} text-anchor="end">h = (1/N)^⅓</text>
+        <text x={P - 3} y={Y(v1) + 3} text-anchor="end">{num(v1)}</text>
+        <text x={P - 3} y={Y(v0) + 3} text-anchor="end">{num(v0)}</text>
+      </svg>
+      <table class="info-table">
+        <tr><td>Nível · tamanho</td><td>Elementos · valor · GCI</td></tr>
+        {auto.steps.map((x) => <tr key={x.level}><td>{x.level} · {num(x.size)} mm</td><td>{x.cells} · {num(x.value)} · {x.gci !== undefined ? pct(x.gci) : "—"}</td></tr>)}
+      </table>
     </>
   );
 }

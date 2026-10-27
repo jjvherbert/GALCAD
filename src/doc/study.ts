@@ -63,6 +63,16 @@ export interface FemNonlinear {
   increments?: number;
 }
 
+/**
+ * Sonda: grandeza num ponto (nó mais próximo) ou média ponderada pela área sobre faces. É o que se
+ * deve usar na convergência da malha (os máximos junto a singularidades não convergem).
+ */
+export interface Probe {
+  name: string;
+  quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T";
+  at: { kind: "faces"; faces: TopoRef[] } | { kind: "point"; point: [Expr, Expr, Expr] };
+}
+
 export interface FemStudy {
   id: string;
   name: string;
@@ -81,6 +91,8 @@ export interface FemStudy {
    * `material`. Nas montagens as faces das condições são "caminho/face".
    */
   bodyMaterials?: Record<string, SimMaterial>;
+  /** Sondas (grandezas em pontos ou médias em faces) para resultados e convergência. */
+  probes?: Probe[];
   /** Montagens: faces planas coincidentes entre corpos coladas (bonded) ou independentes. */
   contact?: { mode: "bonded" | "none"; tolerance?: number };
 }

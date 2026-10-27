@@ -422,6 +422,54 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
     if (c.analysis === "modal") d.frequencies.slice(0, c.modes).forEach((f, k) => { summary.push([`Frequência ${k + 1}`, `${f.toFixed(2)} Hz`]); metrics.push({ key: `f${k + 1}`, label: `Frequência ${k + 1}`, unit: "Hz", value: f }); });
     if (c.analysis === "buckling") d.buckling.forEach((f, k) => { summary.push([`Fator de encurvadura ${k + 1}`, f.toFixed(3)]); metrics.push({ key: `lambda${k + 1}`, label: `Fator de encurvadura ${k + 1}`, unit: "", value: f }); });
   }
+  // sondas: média por área nas faces (nós dos triângulos do grupo) ou nó mais próximo de um ponto
+  if (c.probes?.length && (c.analysis === "static" || c.analysis === "thermal")) {
+    const dispB = lastOf("DISP"), stB = lastOf("STRESS"), vmB = lastOf("VMIS"), tB = lastOf("NDTEMP");
+    const value = (t: number, q: string): number | undefined => {
+      if (q === "T") return tB?.data.get(t)?.[0];
+      if (q === "vm") {
+        const v = vmB?.data.get(t);
+        if (v) return v[0];
+        const sv = stB?.data.get(t);
+        return sv && Math.sqrt(0.5 * ((sv[0] - sv[1]) ** 2 + (sv[1] - sv[2]) ** 2 + (sv[2] - sv[0]) ** 2) + 3 * (sv[3] ** 2 + sv[4] ** 2 + sv[5] ** 2));
+      }
+      const u = dispB?.data.get(t);
+      if (!u) return undefined;
+      return q === "u" ? Math.hypot(u[0], u[1], u[2]) : u["xyz".indexOf(q[1])];
+    };
+    const UNIT: Record<string, string> = { u: "mm", ux: "mm", uy: "mm", uz: "mm", vm: "MPa", T: "°C" };
+    for (const pr of c.probes) {
+      let v: number | undefined, where = "";
+      if (pr.group) {
+        let sa = 0, sv = 0;
+        for (const b of physicalBlocks(m, pr.group).filter((x) => x.type === 2 || x.type === 9)) {
+          const per = b.type === 9 ? 6 : 3;
+          for (let k = 0; k < b.conn.length; k += per) {
+            const n = b.conn.slice(k, k + 3);
+            const [A, B, C] = n.map((t) => m.nodes.get(t)!);
+            const u1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], u2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+            const ar = 0.5 * Math.hypot(u1[1] * u2[2] - u1[2] * u2[1], u1[2] * u2[0] - u1[0] * u2[2], u1[0] * u2[1] - u1[1] * u2[0]);
+            const vals = n.map((t) => value(t, pr.quantity));
+            if (vals.some((x) => x === undefined)) continue;
+            sa += ar; sv += (ar * (vals as number[]).reduce((a, b2) => a + b2, 0)) / 3;
+          }
+        }
+        if (sa > 0) { v = sv / sa; where = "média na face"; }
+      } else if (pr.point) {
+        let best = Infinity, tag = -1;
+        for (const t of dispB?.data.keys() ?? tB?.data.keys() ?? []) {
+          const p = m.nodes.get(t);
+          if (!p) continue;
+          const d = Math.hypot(p[0] - pr.point[0], p[1] - pr.point[1], p[2] - pr.point[2]);
+          if (d < best) { best = d; tag = t; }
+        }
+        if (tag >= 0) { v = value(tag, pr.quantity); where = `nó a ${best.toFixed(2)} mm do ponto`; }
+      }
+      if (v === undefined) continue;
+      metrics.push({ key: pr.key, label: pr.name, unit: UNIT[pr.quantity], value: v });
+      summary.push([`Sonda: ${pr.name}`, `${v.toPrecision(5)} ${UNIT[pr.quantity]} (${where})`]);
+    }
+  }
   const history: FemResult["history"] = c.nonlinear && incremental ? allDisp.map((b) => ({
     time: b.value,
     umax: [...b.data.values()].reduce((m, v) => Math.max(m, Math.hypot(v[0], v[1], v[2])), 0),

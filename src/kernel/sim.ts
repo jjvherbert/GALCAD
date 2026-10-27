@@ -79,6 +79,14 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
     groups[g] = tags(l.faces, `Refinamento ${i + 1}`);
     return { group: g, size: evalParam(l.size, sc, "Tamanho local") };
   });
+  const probes = (s.probes ?? []).map((pr, i) => {
+    const key = `probe${i + 1}`;
+    if (pr.at.kind === "faces") {
+      groups[`P${i + 1}`] = tags(pr.at.faces, `Sonda ${pr.name || i + 1}`);
+      return { key, name: pr.name || `Sonda ${i + 1}`, quantity: pr.quantity, group: `P${i + 1}` };
+    }
+    return { key, name: pr.name || `Sonda ${i + 1}`, quantity: pr.quantity, point: n3(pr.at.point, sc, `Sonda ${i + 1}`) };
+  });
   const size = evalParam(s.mesh.size, sc, "Tamanho da malha");
   if (size <= 0) throw new Error("Tamanho da malha: tem de ser positivo");
   const thermal = s.analysis === "thermal";
@@ -92,7 +100,7 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
   const analysisHyp = !nl ? FEM_HYP[s.analysis]
     : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && "plasticidade de von Mises com encruamento isotrópico bilinear"].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
-    format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl,
+    format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, probes: probes.length ? probes : undefined,
     material: s.material, groups, faces, loads, bbox: box,
     mesh: { size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local },
     hypotheses: [

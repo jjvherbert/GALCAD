@@ -224,6 +224,35 @@ test("CalculiX: grandes deslocamentos (NLGEOM) — consola elástica de Bisshopp
   assert.equal(nl.fem!.history.length >= 10, true);
 });
 
+test("CalculiX: sondas (média na face, ponto) e refinamento automático até ao GCI alvo", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
+  const { doc, face } = await bar();
+  const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
+  const delta = (F * L ** 3) / (3 * E * I) + (F * L) / ((5 / 6) * G * A);
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -F] }];
+  const probes: FemStudy["probes"] = [
+    { name: "Flecha na ponta", quantity: "uz", at: { kind: "faces", faces: [face(0, 100)] } },
+    { name: "Tensão a meio vão (fibra superior)", quantity: "vm", at: { kind: "point", point: [50, 5, 10] } },
+  ];
+  // uma corrida: sondas contra a teoria (σ = M·c/I = 100·50·5/833,3 = 30 MPa)
+  const one = await (await solve(doc, fem({ mesh: { size: 2.5, order: 2, curvature: 0 }, loads, probes }))).run();
+  const m = Object.fromEntries(one.metrics.map((x) => [x.key, x.value]));
+  near(-m.probe1, delta, 0.03);
+  near(m.probe2, 30, 0.05);
+  assert.ok(one.summary.some(([k, v]) => /Sonda: Flecha/.test(k) && /média na face/.test(v)));
+  // automático com tetraedros lineares: refina até GCI < 3 % na flecha da ponta
+  const { dir } = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0 }, loads, probes }));
+  const r = await runCase(dir, () => {}, false, { convergence: { ratio: 1.5, target: 0.03, maxLevels: 6 } });
+  const a = r.convergence!.auto!;
+  assert.equal(a.metric, "probe1");
+  assert.ok(a.steps.length >= 3, `${a.steps.length} níveis`);
+  assert.ok(a.steps.every((s2, i) => i === 0 || s2.cells > a.steps[i - 1].cells), "malhas cada vez mais finas");
+  assert.ok(a.achieved, `${a.stop} ${JSON.stringify(a.steps)}`);
+  const row = r.convergence!.rows.find((x) => x.key === "probe1")!;
+  assert.ok(row.gci.gciFine <= 0.03);
+  assert.ok(Math.abs(-row.gci.extrapolated - delta) < Math.abs(-row.values[0] - delta), `extrapolado ${row.gci.extrapolated} vs ${delta} (fina ${row.values[0]})`);
+  assert.equal(r.cells, a.steps.at(-1)!.cells);
+});
+
 const hasFoam = !!T.openfoam;
 
 test("caso OpenFOAM: dicionários e STL por patch (sem solver)", async () => {
