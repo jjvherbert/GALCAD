@@ -14,6 +14,8 @@ import type { PartDoc } from "../doc/project.ts";
 import type { BuildEnv } from "./context.ts";
 import { freezeGeom, publish } from "./features/external.ts";
 import { type AsmBody, assemblyStudyCase, singleSolid, studyCase } from "./sim.ts";
+import { pmiStates } from "./pmi.ts";
+import { type ResolvedPmi, addSemanticPmi } from "./step-pmi.ts";
 import { SHEET_COLOR, SOLID_COLOR, type StepBody, type StepPart, stepAssembly, stepPart } from "./step242.ts";
 
 /** Hash curto (FNV-1a de 32 bits) de um texto, para revisões. */
@@ -165,7 +167,9 @@ export class KernelService {
       dimX: mass.bbox.max[0] - mass.bbox.min[0], dimY: mass.bbox.max[1] - mass.bbox.min[1], dimZ: mass.bbox.max[2] - mass.bbox.min[2],
     } : {};
     const checks = doc.checks?.length ? runChecks(doc.checks, (n) => r.variables.values[n] ?? measures[n]) : undefined;
+    const pmi = doc.pmi?.length ? pmiStates(r.ctx, doc.pmi) : undefined;
     return {
+      pmi,
       status: r.status,
       variables: r.variables,
       rules: r.rules.length ? r.rules : undefined,
@@ -349,9 +353,32 @@ export class KernelService {
     ];
     if (this.lastKind === "part") {
       if (!this.lastPart) throw new Error("Não há peça para exportar");
-      const bodies = bodiesOf(this.lastPart.ctx);
+      const { ctx, doc } = this.lastPart;
+      const bodies = bodiesOf(ctx);
       if (!bodies.length) throw new Error("A peça não tem corpos para exportar");
-      return stepPart({ key: "", name: title(this.lastPart.doc, this.lastPart.doc.configurations?.active), bodies });
+      // PMI semântico e atributos: as faces referidas ficam com nome no STEP e as entidades AP242 são acrescentadas
+      const pmi = doc.pmi ?? [], attrs = doc.attributes ?? [];
+      if (!ctx.body || (!pmi.length && !attrs.length)) return stepPart({ key: "", name: title(doc, doc.configurations?.active), bodies });
+      const faceIdx = new Map<string, number>();
+      const pmiFaces: TopoDS_Shape[] = [];
+      const idx = (name: string) => {
+        if (!faceIdx.has(name)) {
+          const f = ctx.body!.faces.find((x) => x.name === name);
+          if (!f) return -1;
+          faceIdx.set(name, pmiFaces.length);
+          pmiFaces.push(f.face);
+        }
+        return faceIdx.get(name)!;
+      };
+      const states = new Map(pmiStates(ctx, pmi).map((x) => [x.id, x]));
+      const resolved: ResolvedPmi[] = pmi.map((item) => ({ item, nominal: states.get(item.id)?.nominal, faces: (states.get(item.id)?.faces ?? []).map(idx).filter((k) => k >= 0) }));
+      const at = attrs.map((attr) => {
+        const k = attr.target.kind === "face" ? idx(attr.target.ref.name) : -1;
+        return { attr, face: k >= 0 ? k : undefined };
+      });
+      const raw = stepPart({ key: "", name: title(doc, doc.configurations?.active), bodies, pmiFaces });
+      const out = addSemanticPmi(new TextDecoder().decode(raw), resolved, at);
+      return new TextEncoder().encode(out.step);
     }
     if (!this.lastAsm) throw new Error("Não há montagem para exportar");
     const { project, id } = this.lastAsm;

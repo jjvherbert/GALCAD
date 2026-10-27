@@ -207,6 +207,8 @@ export interface RebuildResponse {
   rules?: RuleStatus[];
   checks?: CheckResult[];
   config?: string;
+  /** PMI: texto, valor medido, âncora e erros de cada item (Fase 5). */
+  pmi?: import("./pmi.ts").PmiState[];
 }
 
 export interface ExportResponse {

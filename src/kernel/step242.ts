@@ -4,7 +4,11 @@
 import { T, type TopoDS_Shape, oc } from "./occ.ts";
 
 export interface StepBody { name: string; shape: TopoDS_Shape; color: [number, number, number] }
-export interface StepPart { key: string; name: string; bodies: StepBody[] }
+export interface StepPart {
+  key: string; name: string; bodies: StepBody[];
+  /** Faces do primeiro corpo (sólido) a que o PMI se liga: ficam com nome "PMI#k" no STEP. */
+  pmiFaces?: TopoDS_Shape[];
+}
 export interface StepInstance { name: string; part: string; matrix: number[] }
 
 const str = (s: string) => T(new (oc().TCollection_ExtendedString)(s, true));
@@ -33,13 +37,28 @@ function write(doc: InstanceType<ReturnType<typeof oc>["TDocStd_Document"]>, tit
   o.Interface_Static.SetIVal("write.precision.mode", 0);
   o.Interface_Static.SetIVal("write.step.assembly", 1);
   o.Interface_Static.SetIVal("write.step.schema", 5); // AP242 DIS
+  // nomes das sub-formas (faces com PMI) nas entidades ADVANCED_FACE
+  o.Interface_Static.SetIVal("write.stepcaf.subshapes.name", 1);
   o.Interface_Static.SetCVal("write.step.product.name", title);
   const file = "/export242.step";
   const progress = T(new o.Message_ProgressRange());
   if (!writer.Perform(doc, file, progress)) throw new Error("A escrita do STEP AP242 falhou");
   const data = o.FS.readFile(file) as Uint8Array;
   o.FS.unlink(file);
-  return data;
+  return asciiStep(data);
+}
+
+/**
+ * O escritor do OCCT grava os nomes em UTF-8; o ISO 10303-21 pede ASCII com os outros carateres
+ * codificados (\X2\hhhh\X0\). Só aparecem dentro de textos, por isso a troca é direta.
+ */
+export function asciiStep(data: Uint8Array): Uint8Array {
+  if (data.every((b) => b < 128)) return data;
+  const txt = new TextDecoder().decode(data).replace(/[^\x00-\x7f]/gu, (ch) => {
+    const c = ch.codePointAt(0)!;
+    return c <= 0xffff ? `\\X2\\${c.toString(16).toUpperCase().padStart(4, "0")}\\X0\\` : `\\X4\\${c.toString(16).toUpperCase().padStart(8, "0")}\\X0\\`;
+  });
+  return new TextEncoder().encode(txt);
 }
 
 /** Acrescenta uma peça (com um ou mais corpos) e devolve o rótulo do produto. */
@@ -47,12 +66,17 @@ function addPart(t: ReturnType<typeof newDoc>, part: StepPart) {
   const o = oc();
   const C = o.XCAFDoc_ColorType.XCAFDoc_ColorSurf;
   const color = (c: [number, number, number]) => T(new o.Quantity_ColorRGBA(c[0], c[1], c[2], 1));
+  const tagFaces = (L: ReturnType<typeof t.tool.NewShape>) => (part.pmiFaces ?? []).forEach((f, k) => {
+    const sub = t.tool.AddSubShape(L, f);
+    o.TDataStd_Name.Set(sub, str(`PMI#${k}`));
+  });
   if (part.bodies.length === 1) {
     const b = part.bodies[0];
     const L = t.tool.NewShape();
     t.tool.SetShape(L, b.shape);
     o.TDataStd_Name.Set(L, str(part.name));
     t.colors.SetColor(L, color(b.color), C);
+    tagFaces(L);
     return L;
   }
   // vários corpos: produto da peça como subconjunto dos corpos (nomes e cores próprios)
@@ -65,6 +89,7 @@ function addPart(t: ReturnType<typeof newDoc>, part: StepPart) {
     t.colors.SetColor(B, color(b.color), C);
     const occ = t.tool.AddComponent(L, B, T(new o.TopLoc_Location()));
     o.TDataStd_Name.Set(occ, str(b.name));
+    if (b === part.bodies[0]) tagFaces(B);
   }
   return L;
 }

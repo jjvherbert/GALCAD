@@ -729,6 +729,10 @@ export interface CadDocument {
   publications?: Publication[];
   /** Estudos de simulação FEM/CFD (pré-processador). */
   studies?: import("./study.ts").Study[];
+  /** PMI 3D semântico, vistas de modelo e atributos (Fase 5). */
+  pmi?: import("./pmi.ts").PmiItem[];
+  modelViews?: import("./pmi.ts").ModelView[];
+  attributes?: import("./pmi.ts").Attribute[];
   /** Índice da barra de rollback: só as features antes deste índice são reconstruídas. Omitido = todas. */
   rollback?: number;
 }

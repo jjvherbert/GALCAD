@@ -36,6 +36,9 @@ export function parseDocument(text: string): CadDocument {
   if (d.configurations && Array.isArray(d.configurations.rows) && Array.isArray(d.configurations.columns)) out.configurations = d.configurations;
   if (Array.isArray(d.publications)) out.publications = d.publications;
   if (Array.isArray(d.studies)) out.studies = d.studies;
+  if (Array.isArray(d.pmi)) out.pmi = d.pmi;
+  if (Array.isArray(d.modelViews)) out.modelViews = d.modelViews;
+  if (Array.isArray(d.attributes)) out.attributes = d.attributes;
   return out;
 }
 
