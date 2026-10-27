@@ -11,7 +11,7 @@ import { EXPORTS, exportAs, importStep, openProject, saveProject } from "./filei
 export interface Command {
   id: string;
   label: string;
-  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Superfícies" | "Esboço" | "Referências" | "Avaliar" | "Módulos" | "Exportar";
+  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Superfícies" | "Esboço" | "Referências" | "Avaliar" | "Módulos" | "Exportar" | "Montagem" | "Desenho";
   /** Atalhos, no formato "Ctrl+Shift+Z", "F", "Space", "ArrowLeft". */
   keys?: string[];
   icon?: string;
@@ -41,6 +41,9 @@ function normalTo() {
 
 const FEATURE_GROUP: Partial<Record<FeatureType, Command["group"]>> = { sketch: "Esboço", plane: "Referências", axis: "Referências", csys: "Referências" };
 
+const MATE_NAMES = { coincident: "coincidente", concentric: "concêntrico", parallel: "paralelo", perpendicular: "perpendicular", distance: "distância", angle: "ângulo", tangent: "tangente", lock: "fixar" } as const;
+const MATE_ICON = { coincident: "⊼", concentric: "◎", parallel: "∥", perpendicular: "⟂", distance: "↔", angle: "∠", tangent: "◠", lock: "🔒" } as const;
+
 function featureCommand(type: FeatureType): Command {
   return {
     id: type === "sketch" ? "sketch.new" : `feature.${type}`,
@@ -48,7 +51,7 @@ function featureCommand(type: FeatureType): Command {
     group: FEATURE_GROUP[type] ?? (SURFACE_TYPES.includes(type) ? "Superfícies" : "Features"),
     icon: FEATURE_ICONS[type],
     repeatable: true,
-    run: () => { if (!busy()) store.startFeature(type); },
+    run: () => { if (busy()) return; if (store.state.active.kind !== "part") { store.set({ message: "Abra uma peça para usar features" }); return; } store.startFeature(type); },
   };
 }
 
@@ -102,8 +105,14 @@ export const COMMANDS: Command[] = [
   { id: "analysis.curvature", label: "Curvatura", group: "Avaliar", icon: "◍", run: () => void store.setAnalysis(store.state.analysis?.kind === "curvature" ? null : { kind: "curvature", mode: "gauss" }) },
   { id: "analysis.draft", label: "Análise de inclinação", group: "Avaliar", icon: "⏣", run: () => store.setAnalysis(store.state.analysis?.kind === "draft" ? null : { kind: "draft", dir: "Z", angle: 1 }) },
   { id: "analysis.deviation", label: "Análise de desvio (tangência nas arestas)", group: "Avaliar", icon: "∡", run: () => void store.setAnalysis(store.state.analysis?.kind === "deviation" ? null : { kind: "deviation" }) },
+  // montagem
+  ...(["coincident", "concentric", "parallel", "perpendicular", "distance", "angle", "tangent", "lock"] as const).map((k): Command => ({
+    id: `asm.mate.${k}`, label: `Mate: ${MATE_NAMES[k]}`, group: "Montagem", icon: MATE_ICON[k], repeatable: true,
+    run: () => { if (store.state.active.kind === "assembly" && !store.state.mateEdit) store.startMate(k); },
+  })),
+  { id: "asm.interference", label: "Deteção de interferências", group: "Montagem", icon: "⧯", run: () => { if (store.state.active.kind === "assembly") void store.checkInterference(); } },
   { id: "analysis.off", label: "Desligar análise", group: "Avaliar", run: () => store.setAnalysis(null) },
-  { id: "feature.cut", label: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy()) { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
+  { id: "feature.cut", label: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy() && store.state.active.kind === "part") { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
   ...PLUGINS.flatMap((p) => Object.entries(p.kinds).map(([k, kind]): Command => ({
     id: `plugin.${p.id}.${k}`, label: `${p.name}: ${kind.label}`, group: "Módulos", icon: "⧉", repeatable: true,
     run: () => { if (!busy()) store.startFeature("plugin", { plugin: p.id, kind: k }); },

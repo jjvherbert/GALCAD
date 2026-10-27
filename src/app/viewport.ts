@@ -114,6 +114,7 @@ export class Viewport {
   private el: HTMLElement;
   private lastResult: RebuildResponse | null = null;
   private analysis: Analysis | null = null;
+  private overlayGroup = new THREE.Group();
   private zebraMat: THREE.MeshMatcapMaterial | null = null;
   private shadedMat: THREE.Material | null = null;
   settings: Settings;
@@ -239,6 +240,21 @@ export class Viewport {
     this.edgeLines = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ vertexColors: true }));
     this.bodyGroup.add(this.faceMesh, this.edgeLines);
     this.recolor();
+  }
+
+  /** Malhas sobrepostas a vermelho (ex.: volumes de interferência), por cima do modelo. */
+  setOverlay(meshes: MeshData[]) {
+    this.disposeGroup(this.overlayGroup);
+    if (!this.overlayGroup.parent) this.scene.add(this.overlayGroup);
+    for (const m of meshes) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(m.vertices, 3));
+      g.setIndex(new THREE.BufferAttribute(m.triangles, 1));
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.6, depthTest: false, side: THREE.DoubleSide }));
+      mesh.renderOrder = 6;
+      this.overlayGroup.add(mesh);
+    }
+    this.el.dataset.overlay = String(meshes.length);
   }
 
   /** Mostra as regiões escolhíveis de um esboço (contornos selecionados), por cima do modelo. */
@@ -403,7 +419,9 @@ export class Viewport {
     const col = this.faceMesh.geometry.getAttribute("color") as THREE.BufferAttribute;
     const c = new THREE.Color();
     const hoverKey = this.hover ? this.keyOf(this.hover) : "";
-    const fh = this.featureHighlight ? `${this.featureHighlight}:` : null;
+    // "@c2" realça o componente c2 da montagem (nomes "c2|…" e "c2/…|…")
+    const fhComp = this.featureHighlight?.startsWith("@") ? this.featureHighlight.slice(1) : null;
+    const fh = this.featureHighlight && !fhComp ? `${this.featureHighlight}:` : null;
     const a = this.analysis;
     const nrm = this.mesh.normals;
     const dir = a?.kind === "draft" ? { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[a.dir] : null;
@@ -413,7 +431,8 @@ export class Viewport {
     this.mesh.faces.forEach((f, i) => {
       const k = `face:${f.name}`;
       const [lo, hi] = this.faceVerts[i];
-      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : fh && f.name.startsWith(fh) ? this.theme.feat : null;
+      const inComp = fhComp && (f.name.startsWith(`${fhComp}|`) || f.name.startsWith(`${fhComp}/`));
+      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : (fh && f.name.startsWith(fh)) || inComp ? this.theme.feat : null;
       if (flat === null && (dir || curv)) {
         for (let v = lo; v <= hi; v++) {
           if (dir) {

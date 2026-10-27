@@ -103,7 +103,7 @@ function splitTop(s: string): string[] {
 }
 
 /** Regista o handler de um campo de seleção no 3D; o campo fica ativo quando é o `pickTarget`. */
-function usePickTarget(field: string, onPick: (p: Pick) => void) {
+export function usePickTarget(field: string, onPick: (p: Pick) => void) {
   pickHandlers.set(field, onPick);
   useEffect(() => () => {
     pickHandlers.delete(field);

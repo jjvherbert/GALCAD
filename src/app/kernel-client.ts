@@ -1,13 +1,21 @@
 // Cliente do worker do núcleo: pedidos com id e reconstruções coalescidas (só a mais recente conta).
 import type { CadDocument } from "../doc/types.ts";
-import type { CurvatureKind, CurvatureResponse, DeviationResponse, ExportFormat, ExportResponse, RebuildResponse, Request, Response } from "../kernel/protocol.ts";
+import type { CadProject } from "../doc/project.ts";
+import type {
+  AssemblyResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, ExportResponse,
+  InterferenceResponse, RebuildResponse, Request, Response,
+} from "../kernel/protocol.ts";
+
+type Waiter<T> = { resolve: (r: T | null) => void; reject: (e: Error) => void };
+type Job = { req: Request; force: boolean; waiters: Waiter<unknown>[] };
 
 export class KernelClient {
   private worker = new Worker(new URL("../kernel/worker.ts", import.meta.url), { type: "module" });
   private seq = 0;
   private pending = new Map<number, { resolve: (v: never) => void; reject: (e: Error) => void }>();
   private inFlight = false;
-  private queued: { doc: CadDocument; force?: boolean; waiters: { resolve: (r: RebuildResponse | null) => void; reject: (e: Error) => void }[] } | null = null;
+  /** Um pedido de reconstrução em espera (peça, montagem ou desenho): o mais recente substitui os outros. */
+  private queued: Job | null = null;
 
   constructor() {
     this.worker.onmessage = ({ data }: MessageEvent<Response>) => {
@@ -28,14 +36,14 @@ export class KernelClient {
   }
 
   /**
-   * Reconstrói o documento. Se já houver uma reconstrução em curso, este pedido fica em espera
-   * e substitui qualquer outro em espera; os pedidos substituídos resolvem com null.
+   * Reconstrução coalescida: se já houver uma em curso, este pedido fica em espera e substitui
+   * qualquer outro em espera; os pedidos substituídos resolvem com null.
    */
-  rebuild(doc: CadDocument, force = false): Promise<RebuildResponse | null> {
+  private coalesce<T>(req: Request, force: boolean): Promise<T | null> {
     return new Promise((resolve, reject) => {
       const keepForce = !!this.queued?.force;
       if (this.queued) for (const w of this.queued.waiters) w.resolve(null);
-      this.queued = { doc, force: force || keepForce, waiters: [{ resolve, reject }] };
+      this.queued = { req: { ...req, force: force || keepForce } as Request, force: force || keepForce, waiters: [{ resolve: resolve as (r: unknown) => void, reject }] };
       void this.pump();
     });
   }
@@ -46,7 +54,7 @@ export class KernelClient {
     this.queued = null;
     this.inFlight = true;
     try {
-      const r = await this.call<RebuildResponse>({ type: "rebuild", doc: job.doc, force: job.force });
+      const r = await this.call<unknown>(job.req);
       for (const w of job.waiters) w.resolve(this.queued ? null : r);
     } catch (e) {
       for (const w of job.waiters) w.reject(e as Error);
@@ -54,6 +62,22 @@ export class KernelClient {
       this.inFlight = false;
       void this.pump();
     }
+  }
+
+  rebuild(doc: CadDocument, force = false): Promise<RebuildResponse | null> {
+    return this.coalesce<RebuildResponse>({ type: "rebuild", doc }, force);
+  }
+
+  assembly(project: CadProject, id: string, force = false): Promise<AssemblyResponse | null> {
+    return this.coalesce<AssemblyResponse>({ type: "assembly", project, asmId: id }, force);
+  }
+
+  drawing(project: CadProject, id: string, force = false): Promise<DrawingResponse | null> {
+    return this.coalesce<DrawingResponse>({ type: "drawing", project, drawingId: id }, force);
+  }
+
+  interference(): Promise<InterferenceResponse> {
+    return this.call<InterferenceResponse>({ type: "interference" });
   }
 
   export(format: ExportFormat, name: string): Promise<ExportResponse> {

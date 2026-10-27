@@ -1,0 +1,429 @@
+{
+  "format": "cadp-project",
+  "version": 1,
+  "name": "Conjunto exemplo",
+  "parts": [
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p1",
+      "name": "Base",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 100,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 100,
+              "y": 60
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 60
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": 100
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 60
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 20
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        }
+      ],
+      "properties": {
+        "number": "GK-001",
+        "description": "Placa base",
+        "material": "Aço S235JR",
+        "density": 7.85
+      }
+    },
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p2",
+      "name": "Cubo",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 20,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 20,
+              "y": 20
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 20
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": 20
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 20
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 20
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        }
+      ],
+      "properties": {
+        "number": "GK-002",
+        "description": "Bloco",
+        "material": "Alumínio EN AW-6082 T6",
+        "density": 2.7
+      }
+    }
+  ],
+  "assemblies": [
+    {
+      "id": "a1",
+      "name": "Montagem1",
+      "components": [
+        {
+          "id": "c1",
+          "name": "Base<1>",
+          "ref": {
+            "kind": "part",
+            "id": "p1"
+          },
+          "placement": {
+            "t": [
+              0,
+              0,
+              0
+            ],
+            "r": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "id": "c2",
+          "name": "Cubo<1>",
+          "ref": {
+            "kind": "part",
+            "id": "p2"
+          },
+          "placement": {
+            "t": [
+              30,
+              5,
+              40
+            ],
+            "r": [
+              0,
+              0,
+              10
+            ]
+          }
+        },
+        {
+          "id": "c3",
+          "name": "Cubo<2>",
+          "ref": {
+            "kind": "part",
+            "id": "p2"
+          },
+          "placement": {
+            "t": [
+              70,
+              30,
+              40
+            ],
+            "r": [
+              0,
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "mates": [
+        {
+          "id": "m1",
+          "name": "Coincidente1",
+          "kind": "coincident",
+          "a": {
+            "component": "c1",
+            "ref": {
+              "kind": "face",
+              "name": "f2:end:l5"
+            }
+          },
+          "b": {
+            "component": "c2",
+            "ref": {
+              "kind": "face",
+              "name": "f2:start:l5"
+            }
+          }
+        },
+        {
+          "id": "m2",
+          "name": "Coincidente2",
+          "kind": "coincident",
+          "a": {
+            "component": "c1",
+            "ref": {
+              "kind": "face",
+              "name": "f2:side:l8"
+            }
+          },
+          "b": {
+            "component": "c2",
+            "ref": {
+              "kind": "face",
+              "name": "f2:side:l8"
+            }
+          },
+          "align": "aligned"
+        },
+        {
+          "id": "m3",
+          "name": "Distância1",
+          "kind": "distance",
+          "a": {
+            "component": "c1",
+            "ref": {
+              "kind": "face",
+              "name": "f2:side:l5"
+            }
+          },
+          "b": {
+            "component": "c2",
+            "ref": {
+              "kind": "face",
+              "name": "f2:side:l5"
+            }
+          },
+          "align": "aligned",
+          "value": "-10"
+        },
+        {
+          "id": "m4",
+          "name": "Coincidente3",
+          "kind": "coincident",
+          "a": {
+            "component": "c1",
+            "ref": {
+              "kind": "face",
+              "name": "f2:end:l5"
+            }
+          },
+          "b": {
+            "component": "c3",
+            "ref": {
+              "kind": "face",
+              "name": "f2:start:l5"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "drawings": []
+}

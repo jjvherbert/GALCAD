@@ -1,5 +1,5 @@
 // Operações de ficheiro da interface: abrir, guardar, importar e exportar.
-import { FILE_EXTENSION, serialize } from "../doc/io.ts";
+import { FILE_EXTENSION } from "../doc/io.ts";
 import type { ExportFormat } from "../kernel/protocol.ts";
 import { store } from "./store.ts";
 
@@ -37,7 +37,7 @@ export async function openProject() {
 
 export function saveProject() {
   const st = store.state;
-  download(`${st.fileName || st.doc.name}${FILE_EXTENSION}`, serialize(st.doc), "application/json");
+  download(`${st.fileName || st.project.name}${FILE_EXTENSION}`, store.serialized(), "application/json");
   store.set({ dirty: false, message: "Projeto guardado" });
 }
 
@@ -50,7 +50,8 @@ export async function exportAs(format: ExportFormat) {
   const st = store.state;
   try {
     const r = await store.kernel.export(format, st.doc.name);
-    download(`${st.fileName || st.doc.name}.${r.ext}`, r.data as BlobPart, r.mime);
+    const name = st.active.kind === "part" ? st.doc.name : store.activeAssembly()?.name ?? st.fileName;
+    download(`${name}.${r.ext}`, r.data as BlobPart, r.mime);
     store.set({ message: `Exportado ${r.ext.toUpperCase()} (${Math.round(r.data.length / 1024)} kB, mm)` });
   } catch (e) {
     store.set({ error: (e as Error).message });

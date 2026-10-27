@@ -5,8 +5,9 @@ import { commandById, runCommand } from "./commands.ts";
 import { EXPORTS } from "./fileio.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
+import { DRAWING_TABS } from "./drawing-commands.ts";
 
-type Tab = "features" | "surfaces" | "sketch" | "refs" | "evaluate" | "modules";
+type Tab = "features" | "surfaces" | "sketch" | "refs" | "evaluate" | "modules" | "assembly" | "drawing" | "annotate";
 
 const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[] }[] = [
   {
@@ -36,13 +37,21 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
   { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
 ];
 
-const short = (label: string) => label.replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
+const ASM_TABS: typeof TABS = [
+  { id: "assembly", label: "Montagem", groups: [
+    { title: "Mates", ids: ["asm.mate.coincident", "asm.mate.concentric", "asm.mate.parallel", "asm.mate.perpendicular", "asm.mate.distance", "asm.mate.angle", "asm.mate.tangent", "asm.mate.lock"] },
+    { title: "Avaliar", ids: ["asm.interference"] },
+  ] },
+  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.rebuild", "edit.forceRebuild", "asm.interference"] }] },
+];
+
+const short = (label: string) => label.replace(/^Mate: /, "").replace("Deteção de interferências", "Interferências").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
   const st = useStore();
   const [tab, setTab] = useState<Tab>("features");
   const [menu, setMenu] = useState<"file" | null>(null);
-  const busy = !!st.edit || !!st.sketch;
+  const busy = !!st.edit || !!st.sketch || !!st.mateEdit;
 
   const cmdButton = (id: string) => {
     const c = commandById.get(id);
@@ -55,7 +64,8 @@ export function Toolbar() {
     );
   };
 
-  const current = TABS.find((t) => t.id === tab)!;
+  const tabs = st.active.kind === "assembly" ? ASM_TABS : st.active.kind === "drawing" ? DRAWING_TABS : TABS;
+  const current = tabs.find((t) => t.id === tab) ?? tabs[0];
   return (
     <header class="toolbar" onClick={() => menu && setMenu(null)}>
       <div class="tb-row">
@@ -79,7 +89,7 @@ export function Toolbar() {
         <button title="Variáveis globais e equações" disabled={!!st.sketch} onClick={() => runCommand("edit.variables")}>𝑥 = Variáveis</button>
         <button title="Barra de atalhos (S)" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); store.set({ shortcutBar: { at: [r.left, r.bottom + 4] } }); }}>🔍 Comandos <kbd>S</kbd></button>
         <nav class="tabs" role="tablist" aria-label="CommandManager">
-          {TABS.map((t) => <button key={t.id} role="tab" aria-selected={tab === t.id} class={tab === t.id ? "on" : ""} onClick={() => setTab(t.id)}>{t.label}</button>)}
+          {tabs.map((t) => <button key={t.id} role="tab" aria-selected={current.id === t.id} class={current.id === t.id ? "on" : ""} onClick={() => setTab(t.id)}>{t.label}</button>)}
         </nav>
       </div>
       <div class="tb-row commands" role="tabpanel">

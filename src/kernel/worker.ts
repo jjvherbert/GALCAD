@@ -24,13 +24,20 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
       const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force)
         : data.type === "curvature" ? service.curvature(data.kind)
         : data.type === "deviation" ? service.deviation()
+        : data.type === "assembly" ? await service.assembly(data.project, data.asmId, data.force)
+        : data.type === "interference" ? await service.interference()
+        : data.type === "drawing" ? await service.drawing(data.project, data.drawingId, data.force)
         : await service.export(data.format, data.name);
       msg = { id: data.id, ok: true, result };
     } catch (e) {
       msg = { id: data.id, ok: false, error: (e as Error)?.message ?? String(e) };
     }
     const transfer: Transferable[] = [];
-    if (msg.ok && "mesh" in msg.result && msg.result.mesh) {
+    if (msg.ok && "instances" in msg.result) {
+      for (const m of Object.values(msg.result.parts)) transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
+    } else if (msg.ok && "pairs" in msg.result) {
+      for (const { mesh: m } of msg.result.pairs) transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
+    } else if (msg.ok && "mesh" in msg.result && msg.result.mesh) {
       const m = msg.result.mesh;
       transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
     } else if (msg.ok && "data" in msg.result) {

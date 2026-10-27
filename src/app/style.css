@@ -234,3 +234,27 @@ kbd { font: 11px ui-monospace, monospace; padding: 0 4px; border: 1px solid var(
 .sheets h3 { margin: 8px 0 4px; font-size: 13px; }
 .points-editor .row3 { align-items: end; }
 .points-editor { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+
+/* abas de documentos */
+.doc-tabs { display: flex; gap: 2px; padding: 4px 8px 0; background: var(--panel2); border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
+.doc-tab { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-bottom: 0; border-radius: 6px 6px 0 0; cursor: pointer; white-space: nowrap; font-size: 13px; background: var(--panel2); }
+.doc-tab.on { background: var(--panel); font-weight: 600; }
+.doc-tab .icon { padding: 0 4px; border: 0; background: none; }
+.doc-tab .rename { width: 120px; }
+.doc-new { border: 0; background: none; font-size: 16px; }
+
+/* montagem */
+.assembly-tree { padding: 8px 10px; overflow: auto; flex: 1; min-height: 0; }
+.assembly-tree .tree-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.assembly-tree h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 10px 0 4px; }
+.assembly-tree .tree { list-style: none; margin: 0; padding: 0; }
+.assembly-tree .feat { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; }
+.assembly-tree .feat:hover { background: var(--panel2); }
+.assembly-tree .feat.suppressed { opacity: .5; }
+.assembly-tree .feat.error .name { color: #dc2626; }
+.assembly-tree .grow { flex: 1; }
+.assembly-tree .icon { border: 0; background: none; padding: 0 3px; }
+.ref-value { font-size: 12px; margin: 2px 0 4px; word-break: break-all; }
+.ok { color: #16a34a; }
+.modal.props .row { display: grid; grid-template-columns: 180px 1fr auto; gap: 6px; align-items: center; margin: 4px 0; }
+.modal.props .row:has(> span) { grid-template-columns: 180px 1fr; }

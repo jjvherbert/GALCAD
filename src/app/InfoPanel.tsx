@@ -24,7 +24,8 @@ export function StatusBlock({ status, title }: { status?: FeatureStatus; title?:
   );
 }
 
-export function MassBlock({ mass, density, onDensity }: { mass: MassProps | null; density: number; onDensity: (d: number) => void }) {
+/** `density` null: massa por peça (montagem: a massa total vem das densidades de cada peça). */
+export function MassBlock({ mass, density, onDensity, totalMass }: { mass: MassProps | null; density: number | null; onDensity: (d: number) => void; totalMass?: number }) {
   if (!mass) return <p class="muted">Ainda não há corpo.</p>;
   const size = mass.bbox.max.map((v, i) => v - mass.bbox.min[i]);
   return (
@@ -34,12 +35,16 @@ export function MassBlock({ mass, density, onDensity }: { mass: MassProps | null
         <tbody>
           <tr><td>Volume</td><td>{fmt(mass.volume / 1000, 3)} cm³</td></tr>
           <tr><td>Área de superfície</td><td>{fmt(mass.area / 100, 2)} cm²</td></tr>
-          <tr>
-            <td>
-              Massa (ρ <input class="tiny" type="number" step="0.01" value={density} aria-label="Massa volúmica em g/cm³" onInput={(e) => onDensity(Number((e.target as HTMLInputElement).value) || 0)} /> g/cm³)
-            </td>
-            <td>{fmt((mass.volume / 1000) * density, 2)} g</td>
-          </tr>
+          {density === null ? (
+            <tr><td>Massa (densidade de cada peça)</td><td>{fmt(totalMass ?? 0, 2)} g</td></tr>
+          ) : (
+            <tr>
+              <td>
+                Massa (ρ <input class="tiny" type="number" step="0.01" value={density} aria-label="Massa volúmica em g/cm³" onChange={(e) => onDensity(Number((e.target as HTMLInputElement).value) || 0)} /> g/cm³)
+              </td>
+              <td>{fmt((mass.volume / 1000) * density, 2)} g</td>
+            </tr>
+          )}
           <tr><td>Centro de massa</td><td>{mass.center.map((v) => fmt(v, 2)).join(" · ")} mm</td></tr>
           <tr><td>Caixa envolvente</td><td>{size.map((v) => fmt(v, 2)).join(" × ")} mm</td></tr>
           <tr><td>Sólidos</td><td>{mass.solids}</td></tr>

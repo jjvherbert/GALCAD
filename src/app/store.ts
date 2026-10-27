@@ -2,9 +2,13 @@
 import { useEffect, useReducer } from "preact/hooks";
 import type { AxisRef, CadDocument, Feature, FeatureData, FeatureType, GeoHint, PlaneRef, SketchFeature, StdAxis, Variable, Vec3 } from "../doc/types.ts";
 import { History } from "../doc/history.ts";
-import { addFeature, defaultFeatureName, newDocument, nextFeatureId, parseDocument, serialize, updateFeature } from "../doc/io.ts";
+import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "../doc/io.ts";
+import {
+  type AssemblyDoc, type CadProject, type Component, type Mate, type MateKind, type MateRef, containsAssembly, type DocKind, type DocRef, type DrawingDoc, type PartDoc, type PartProperties,
+  newAssembly, newDrawing, newPart, newProject, parseProject, serializeProject, usages,
+} from "../doc/project.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
-import type { CurvatureKind, CurvatureResponse, DeviationResponse, RebuildResponse } from "../kernel/protocol.ts";
+import type { AssemblyResponse, InterferenceResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, RebuildResponse } from "../kernel/protocol.ts";
 
 /** Análise de superfície ativa no 3D (separador Avaliar). */
 export type Analysis =
@@ -19,8 +23,8 @@ import { type Settings, loadSettings, saveSettings } from "./settings.ts";
 
 export type Pick =
   /** `body`: "" = corpo sólido, senão o id do corpo de superfície; `point`: ponto clicado. */
-  | { kind: "face"; name: string; hint: GeoHint; type: string; body?: string; point?: Vec3 }
-  | { kind: "edge"; name: string; hint: GeoHint; type: string }
+  | { kind: "face"; name: string; hint: GeoHint; type: string; body?: string; point?: Vec3; component?: string }
+  | { kind: "edge"; name: string; hint: GeoHint; type: string; component?: string }
   | { kind: "plane"; ref: PlaneRef; label: string }
   | { kind: "axis"; ref: AxisRef; label: string }
   | { kind: "region"; sketch: string; sig: string[]; seed: [number, number] };
@@ -52,7 +56,16 @@ export interface SketchEdit {
 }
 
 export interface State {
-  doc: CadDocument;
+  /** Projeto aberto (todas as peças, montagens e desenhos). */
+  project: CadProject;
+  /** Documento ativo. */
+  active: DocRef;
+  /** Peça ativa (ou a última peça ativa, quando se está numa montagem/desenho). */
+  doc: PartDoc;
+  /** Resultado da montagem ativa. */
+  asmResult: AssemblyResponse | null;
+  /** Resultado do desenho ativo. */
+  drawingResult: DrawingResponse | null;
   edit: FeatureEdit | null;
   sketch: SketchEdit | null;
   /** Escolha do plano antes de criar um esboço. */
@@ -80,32 +93,58 @@ export interface State {
   /** Último comando executado (Enter repete). */
   lastCommand: string | null;
   analysis: Analysis | null;
+  /** Mate em edição (montagem ativa). */
+  mateEdit: { draft: Mate; isNew: boolean } | null;
+  /** Componente cujas propriedades (posição, fixo) se editam. */
+  componentEdit: string | null;
+  /** Interferências calculadas (montagem ativa). */
+  interference: InterferenceResponse | null;
+  /** Painel lateral alternativo: BOM ou assistente. */
+  sidePanel: "bom" | "ai" | null;
 }
 
 const AUTOSAVE = "cad-prototipo:autosave";
 
 class Store {
-  history: History<CadDocument>;
   kernel = new KernelClient();
   state: State;
+  private histories = new Map<string, History<unknown>>();
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor() {
-    let doc = newDocument();
+    let project = newProject();
     try {
       const saved = localStorage.getItem(AUTOSAVE);
-      if (saved) doc = parseDocument(saved);
-    } catch { /* sem armazenamento local */ }
-    this.history = new History({ state: doc, label: "Abrir" });
+      if (saved) project = parseProject(saved);
+    } catch { /* sem armazenamento local ou autosave inválido */ }
+    if (!project.parts.length) project = { ...project, parts: [newPart(project)] };
+    const doc = project.parts[0];
     this.state = {
-      doc, edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
-      pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: doc.name, dirty: false,
+      project, active: { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
+      edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
+      pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings: loadSettings(), lastCommand: null, analysis: null,
+      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null,
     };
     this.rebuild(0);
   }
+
+  /** Histórico de desfazer do documento ativo. */
+  get history(): History<unknown> {
+    const { active } = this.state;
+    let h = this.histories.get(active.id);
+    if (!h) { h = new History<unknown>({ state: this.activeDoc(), label: "Abrir" }); this.histories.set(active.id, h); }
+    return h;
+  }
+
+  activeDoc(): PartDoc | AssemblyDoc | DrawingDoc {
+    const { project, active } = this.state;
+    const list = active.kind === "part" ? project.parts : active.kind === "assembly" ? project.assemblies : project.drawings;
+    return list.find((d) => d.id === active.id) ?? project.parts[0];
+  }
+  activeAssembly(): AssemblyDoc | undefined { return this.state.active.kind === "assembly" ? this.state.project.assemblies.find((a) => a.id === this.state.active.id) : undefined; }
+  activeDrawing(): DrawingDoc | undefined { return this.state.active.kind === "drawing" ? this.state.project.drawings.find((d) => d.id === this.state.active.id) : undefined; }
 
   subscribe(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   set(patch: Partial<State>) {
@@ -140,13 +179,194 @@ class Store {
     clearTimeout(this.timer);
     this.timer = setTimeout(async () => {
       this.set({ busy: true });
+      const active = this.state.active;
       try {
-        const r = await this.kernel.rebuild(this.displayDoc(), force);
-        if (r) { this.set({ result: r, busy: false, error: null }); void this.refreshAnalysis(); }
+        if (active.kind === "part") {
+          const r = await this.kernel.rebuild(this.displayDoc(), force);
+          if (r && this.state.active === active) { this.set({ result: r, busy: false, error: null }); void this.refreshAnalysis(); }
+        } else if (active.kind === "assembly") {
+          const r = await this.kernel.assembly(this.displayProject(), active.id, force);
+          if (r && this.state.active === active) this.set({ asmResult: r, busy: false, error: null });
+        } else {
+          const r = await this.kernel.drawing(this.state.project, active.id, force);
+          if (r && this.state.active === active) this.set({ drawingResult: r, busy: false, error: null });
+        }
       } catch (e) {
         this.set({ busy: false, error: (e as Error).message });
       }
     }, delay);
+  }
+
+  /** Projeto com o mate em edição aplicado (pré-visualização na montagem). */
+  displayProject(): CadProject {
+    const { project, mateEdit, active } = this.state;
+    if (!mateEdit || active.kind !== "assembly") return project;
+    return {
+      ...project,
+      assemblies: project.assemblies.map((a) => a.id !== active.id ? a : {
+        ...a, mates: mateEdit.isNew ? [...a.mates, mateEdit.draft] : a.mates.map((m) => (m.id === mateEdit.draft.id ? mateEdit.draft : m)),
+      }),
+    };
+  }
+
+  // --- montagens -----------------------------------------------------------------
+
+  private asm(): AssemblyDoc { const a = this.activeAssembly(); if (!a) throw new Error("Nenhuma montagem ativa"); return a; }
+
+  insertComponent(ref: { kind: "part" | "assembly"; id: string }) {
+    const a = this.asm();
+    if (ref.kind === "assembly" && containsAssembly(this.state.project, ref.id, a.id)) { this.set({ error: "Uma montagem não pode conter-se a si própria" }); return; }
+    const src = ref.kind === "part" ? this.state.project.parts.find((p) => p.id === ref.id) : this.state.project.assemblies.find((x) => x.id === ref.id);
+    if (!src) return;
+    const n = a.components.filter((c) => c.ref.id === ref.id).length + 1;
+    const ids = a.components.map((c) => Number(c.id.slice(1)) || 0);
+    const id = `c${Math.max(0, ...ids) + 1}`;
+    // ao lado do que já existe, para não sobrepor
+    const box = this.state.asmResult?.mass?.bbox;
+    const x = box && a.components.length ? box.max[0] + 20 : 0;
+    const c: Component = { id, name: `${src.name}<${n}>`, ref, placement: { t: [x, 0, 0], r: [0, 0, 0] }, fixed: a.components.length === 0 ? true : undefined };
+    this.commitAssembly({ ...a, components: [...a.components, c] }, `Inserir ${c.name}`);
+  }
+
+  updateComponent(id: string, patch: Partial<Component>) {
+    const a = this.asm();
+    this.commitAssembly({ ...a, components: a.components.map((c) => (c.id === id ? { ...c, ...patch } : c)) }, "Componente");
+  }
+
+  deleteComponent(id: string) {
+    const a = this.asm();
+    const c = a.components.find((x) => x.id === id);
+    const mates = a.mates.filter((m) => m.a.component !== id && m.b.component !== id);
+    this.commitAssembly({ ...a, components: a.components.filter((x) => x.id !== id), mates }, `Apagar ${c?.name}${mates.length < a.mates.length ? ` e ${a.mates.length - mates.length} mate(s)` : ""}`);
+  }
+
+  /** Começa um mate novo; usa as duas primeiras seleções de componentes, se houver. */
+  startMate(kind: MateKind = "coincident") {
+    const a = this.asm();
+    const ids = a.mates.map((m) => Number(m.id.slice(1)) || 0);
+    const refs = this.state.selection.flatMap((p) => this.mateRefOf(p) ?? []);
+    const labels: Record<MateKind, string> = { coincident: "Coincidente", concentric: "Concêntrico", parallel: "Paralelo", perpendicular: "Perpendicular", distance: "Distância", angle: "Ângulo", tangent: "Tangente", lock: "Fixar" };
+    const n = a.mates.filter((m) => m.kind === kind).length + 1;
+    const draft: Mate = { id: `m${Math.max(0, ...ids) + 1}`, name: `${labels[kind]}${n}`, kind, a: refs[0] ?? { component: "", std: "XY" }, b: refs[1] ?? { component: "", std: "XY" } };
+    this.set({ mateEdit: { draft, isNew: true }, selection: [], pickTarget: refs.length < 2 ? { field: refs.length ? "mateB" : "mateA", accept: ["face", "edge"] } : null });
+    this.rebuild();
+  }
+
+  /** Referência de mate a partir de uma seleção no 3D da montagem. */
+  mateRefOf(p: Pick): MateRef | null {
+    if ((p.kind !== "face" && p.kind !== "edge") || !p.component) return null;
+    return { component: p.component, ref: { kind: p.kind, name: p.name, hint: p.hint } };
+  }
+
+  editMate(id: string) {
+    const m = this.asm().mates.find((x) => x.id === id);
+    if (m) { this.set({ mateEdit: { draft: structuredClone(m), isNew: false }, pickTarget: null }); this.rebuild(); }
+  }
+
+  updateMateDraft(patch: Partial<Mate>) {
+    const e = this.state.mateEdit;
+    if (!e) return;
+    this.set({ mateEdit: { ...e, draft: { ...e.draft, ...patch } } });
+    this.rebuild();
+  }
+
+  confirmMate() {
+    const e = this.state.mateEdit;
+    if (!e) return;
+    const a = this.asm();
+    this.set({ mateEdit: null, pickTarget: null });
+    this.commitAssembly({ ...a, mates: e.isNew ? [...a.mates, e.draft] : a.mates.map((m) => (m.id === e.draft.id ? e.draft : m)) }, `${e.isNew ? "Criar" : "Editar"} ${e.draft.name}`);
+  }
+
+  cancelMate() { this.set({ mateEdit: null, pickTarget: null }); this.rebuild(0); }
+
+  deleteMate(id: string) {
+    const a = this.asm();
+    this.commitAssembly({ ...a, mates: a.mates.filter((m) => m.id !== id) }, "Apagar mate");
+  }
+
+  toggleMate(id: string) {
+    const a = this.asm();
+    this.commitAssembly({ ...a, mates: a.mates.map((m) => (m.id === id ? { ...m, suppressed: !m.suppressed } : m)) }, "Suprimir mate");
+  }
+
+  /** Aplica a posição resolvida pelos mates às posições iniciais (o solver parte daí da próxima vez). */
+  async checkInterference() {
+    try {
+      this.set({ busy: true });
+      const r = await this.kernel.interference();
+      this.set({ interference: r, busy: false, message: r.pairs.length ? `${r.pairs.length} interferência(s)` : "Sem interferências" });
+    } catch (e) {
+      this.set({ busy: false, error: (e as Error).message });
+    }
+  }
+
+  // --- projeto e documentos ------------------------------------------------------
+
+  /** Grava um documento no projeto (com desfazer). */
+  commitDoc(kind: DocKind, doc: PartDoc | AssemblyDoc | DrawingDoc, label: string, merge = false) {
+    const p = this.state.project;
+    const project: CadProject = kind === "part" ? { ...p, parts: p.parts.map((x) => (x.id === doc.id ? (doc as PartDoc) : x)) }
+      : kind === "assembly" ? { ...p, assemblies: p.assemblies.map((x) => (x.id === doc.id ? (doc as AssemblyDoc) : x)) }
+      : { ...p, drawings: p.drawings.map((x) => (x.id === doc.id ? (doc as DrawingDoc) : x)) };
+    if (this.state.active.id === doc.id) this.history.push(doc, label, merge);
+    this.set({ project, dirty: true, ...(kind === "part" && this.state.doc.id === doc.id ? { doc: doc as PartDoc } : {}) });
+    this.autosave();
+    this.rebuild();
+  }
+
+  commitAssembly(a: AssemblyDoc, label: string, merge = false) { this.commitDoc("assembly", a, label, merge); }
+  commitDrawing(d: DrawingDoc, label: string, merge = false) { this.commitDoc("drawing", d, label, merge); }
+
+  setActive(ref: DocRef) {
+    if (this.state.edit || this.state.sketch) { this.set({ message: "Termine primeiro a edição em curso" }); return; }
+    const doc = ref.kind === "part" ? this.state.project.parts.find((p) => p.id === ref.id) : undefined;
+    this.set({
+      active: ref, ...(doc ? { doc, result: null } : {}), selection: [], selectedFeature: null, pickTarget: null, analysis: null,
+      asmResult: ref.kind === "assembly" ? this.state.asmResult : null, drawingResult: null, contextToolbar: null,
+      mateEdit: null, componentEdit: null, interference: null,
+    });
+    this.rebuild(0);
+  }
+
+  addDocument(kind: DocKind) {
+    const p = this.state.project;
+    let project: CadProject, id: string;
+    if (kind === "part") { const d = newPart(p); project = { ...p, parts: [...p.parts, d] }; id = d.id; }
+    else if (kind === "assembly") { const d = newAssembly(p); project = { ...p, assemblies: [...p.assemblies, d] }; id = d.id; }
+    else { const d = newDrawing(p); project = { ...p, drawings: [...p.drawings, d] }; id = d.id; }
+    this.set({ project, dirty: true });
+    this.autosave();
+    this.setActive({ kind, id });
+  }
+
+  deleteDocument(ref: DocRef) {
+    const p = this.state.project;
+    const used = usages(p, ref.id);
+    if (used.length) { this.set({ error: `Não é possível apagar: usado em ${used.join(", ")}` }); return; }
+    if (ref.kind === "part" && p.parts.length === 1) { this.set({ error: "O projeto tem de ter pelo menos uma peça" }); return; }
+    const project: CadProject = {
+      ...p,
+      parts: p.parts.filter((x) => x.id !== ref.id),
+      assemblies: p.assemblies.filter((x) => x.id !== ref.id),
+      drawings: p.drawings.filter((x) => x.id !== ref.id),
+    };
+    this.histories.delete(ref.id);
+    this.set({ project, dirty: true });
+    this.autosave();
+    if (this.state.active.id === ref.id) this.setActive({ kind: "part", id: project.parts[0].id });
+  }
+
+  renameDocument(ref: DocRef, name: string) {
+    if (!name.trim()) return;
+    const p = this.state.project;
+    const list = ref.kind === "part" ? p.parts : ref.kind === "assembly" ? p.assemblies : p.drawings;
+    const d = list.find((x) => x.id === ref.id);
+    if (d) this.commitDoc(ref.kind, { ...d, name: name.trim() } as never, "Renomear");
+  }
+
+  setPartProperties(props: PartProperties) {
+    this.commitDoc("part", { ...this.state.doc, properties: props }, "Propriedades");
   }
 
   /** Liga/desliga uma análise; a curvatura é calculada no núcleo (exata, por vértice). */
@@ -166,45 +386,60 @@ class Store {
     }
   }
 
-  private autosave(doc: CadDocument) {
-    try { localStorage.setItem(AUTOSAVE, serialize(doc)); } catch { /* quota/privado: ignorar */ }
+  private autosave() {
+    try { localStorage.setItem(AUTOSAVE, serializeProject(this.state.project)); } catch { /* quota/privado: ignorar */ }
   }
 
+  /** Grava a peça ativa. */
   commit(doc: CadDocument, label: string, merge = false) {
-    this.history.push(doc, label, merge);
-    this.set({ doc, dirty: true });
-    this.autosave(doc);
-    this.rebuild();
+    this.commitDoc("part", { ...doc, id: this.state.doc.id, properties: this.state.doc.properties } as PartDoc, label, merge);
+  }
+
+  private restore(d: unknown, message: string) {
+    const kind = this.state.active.kind;
+    const p = this.state.project;
+    const doc = d as PartDoc & AssemblyDoc & DrawingDoc;
+    const project: CadProject = kind === "part" ? { ...p, parts: p.parts.map((x) => (x.id === doc.id ? doc : x)) }
+      : kind === "assembly" ? { ...p, assemblies: p.assemblies.map((x) => (x.id === doc.id ? doc : x)) }
+      : { ...p, drawings: p.drawings.map((x) => (x.id === doc.id ? doc : x)) };
+    this.set({ project, message, ...(kind === "part" ? { doc } : {}) });
+    this.autosave();
+    this.rebuild(0);
   }
 
   undo() {
     if (this.state.edit || this.state.sketch) return;
     const d = this.history.undo();
-    if (d) { this.set({ doc: d, message: `Desfeito` }); this.autosave(d); this.rebuild(0); }
+    if (d) this.restore(d, "Desfeito");
   }
   redo() {
     if (this.state.edit || this.state.sketch) return;
     const d = this.history.redo();
-    if (d) { this.set({ doc: d, message: `Refeito` }); this.autosave(d); this.rebuild(0); }
+    if (d) this.restore(d, "Refeito");
   }
 
   // --- ficheiros -------------------------------------------------------------
 
   newDoc() {
-    const d = newDocument();
-    this.history.reset(d, "Novo");
-    this.set({ doc: d, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: d.name, dirty: false, pickTarget: null });
-    this.autosave(d);
+    const project = newProject();
+    this.histories.clear();
+    this.set({ project, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: project.name, dirty: false, pickTarget: null });
+    this.autosave();
     this.rebuild(0);
   }
 
   open(text: string, fileName: string) {
-    const d = parseDocument(text);
-    this.history.reset(d, "Abrir");
-    this.set({ doc: d, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: fileName.replace(/\.cadp\.json$|\.json$/i, ""), dirty: false });
-    this.autosave(d);
+    const project = parseProject(text);
+    if (!project.parts.length) project.parts.push(newPart(project));
+    this.histories.clear();
+    const name = fileName.replace(/\.cadp\.json$|\.json$/i, "");
+    this.set({ project: { ...project, name: project.name || name }, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: name, dirty: false });
+    this.autosave();
     this.rebuild(0);
   }
+
+  /** Texto do projeto para guardar. */
+  serialized(): string { return serializeProject(this.state.project); }
 
   // --- features --------------------------------------------------------------
 

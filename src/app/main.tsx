@@ -1,6 +1,6 @@
 // Arranque da aplicação e disposição geral.
 import { render } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import gcsWasm from "@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm?url";
 import { initSolver } from "../sketch/solver.ts";
 import { store, useStore } from "./store.ts";
@@ -13,6 +13,13 @@ import { PlaneChooser, VariablesDialog } from "./Dialogs.tsx";
 import { MassBlock, SheetsBlock, StatusBlock } from "./InfoPanel.tsx";
 import { describeName } from "./forms.tsx";
 import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
+import { DocTabs } from "./DocTabs.tsx";
+import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
+import { DrawingEditor } from "./DrawingEditor.tsx";
+import { PartPropertiesDialog } from "./PropertiesDialog.tsx";
+import { assemblyMesh, meshNameOf } from "../assembly/combine.ts";
+import type { RebuildResponse } from "../kernel/protocol.ts";
+import { DEFAULT_DENSITY, docName } from "../doc/project.ts";
 import { AnalysisPanel, ContextMenu, ContextToolbar, GestureHud, HeadsUpToolbar, OrientationMenu, ShortcutBar, featureOfPick } from "./Overlays.tsx";
 
 const SURF: Record<string, string> = { plane: "plana", cylinder: "cilíndrica", cone: "cónica", sphere: "esférica", torus: "tórica", bspline: "livre (B-spline)", bezier: "livre (Bézier)", revolution: "de revolução", extrusion: "de extrusão" };
@@ -20,13 +27,14 @@ const CURVE: Record<string, string> = { line: "reta", circle: "circular", ellips
 import "./style.css";
 
 function selectedKeys(): string[] {
-  const { selection, edit } = store.state;
+  const { selection, edit, mateEdit } = store.state;
   const keys = selection.map((p) => (p.kind === "face" || p.kind === "edge" ? `${p.kind}:${p.name}` : p.kind === "region" ? `region:${p.sig.join("+")}` : `plane:${JSON.stringify(p.ref)}`));
   const d = edit?.draft as Record<string, unknown> | undefined;
   for (const field of ["refs", "faces"]) {
     const refs = d?.[field];
     if (Array.isArray(refs)) for (const r of refs as { kind: string; name: string }[]) keys.push(`${r.kind}:${r.name}`);
   }
+  if (mateEdit) for (const r of [mateEdit.draft.a, mateEdit.draft.b]) { const n = meshNameOf(r); if (n) keys.push(`${"ref" in r ? r.ref.kind : "face"}:${n}`); }
   const regions = d?.regions;
   if (Array.isArray(regions)) for (const r of regions as { sig: string[] }[]) keys.push(`region:${r.sig.join("+")}`);
   return keys;
@@ -38,7 +46,9 @@ function App() {
   const vp = useRef<Viewport | null>(null);
   const fitted = useRef(false);
   const [hover, setHover] = useState<{ kind: "face" | "edge" | "plane"; type: string; name: string } | null>(null);
-  const [density, setDensity] = useState(() => { try { return Number(localStorage.getItem("cad-prototipo:density")) || 7.85; } catch { return 7.85; } });
+  const [showProps, setShowProps] = useState(false);
+  const density = st.doc.properties?.density ?? DEFAULT_DENSITY;
+  const setDensity = (d: number) => store.setPartProperties({ ...st.doc.properties, density: d });
 
   useEffect(() => {
     const v = new Viewport(host.current!, store.state.settings);
@@ -56,6 +66,11 @@ function App() {
     v.onBoxSelect = (picks, add) => store.setSelection(picks, add);
     v.onDoubleClick = (p) => {
       // duplo clique numa face/aresta: editar a feature que a criou
+      if (store.state.active.kind === "assembly") {
+        const name = p.kind === "face" || p.kind === "edge" ? p.name : "";
+        if (name.includes("|")) store.set({ componentEdit: name.split("|")[0].split("/")[0] });
+        return;
+      }
       const fid = featureOfPick(p);
       if (fid && !store.state.edit && !store.state.sketch) store.editFeature(fid);
     };
@@ -63,13 +78,26 @@ function App() {
     setCommandViewport(v);
   }, []);
 
+  // a montagem mostra-se como uma "peça" com a malha de todas as instâncias
+  const asmView = useMemo<RebuildResponse | null>(() => {
+    const r = st.asmResult;
+    if (!r) return null;
+    return { status: {}, variables: { values: {}, errors: {} }, ms: r.ms, reused: 0, mesh: assemblyMesh(r), sketches: {}, planes: {}, axes: {}, csys: {}, mass: r.mass, sheets: [] };
+  }, [st.asmResult]);
+  const lastKind = useRef(st.active.kind);
   useEffect(() => {
     const v = vp.current;
     if (!v) return;
-    v.update(st.result, store.displayDoc(), { hideSketch: st.sketch?.id, showPlanes: !st.result?.mesh || !!st.pickTarget?.accept.includes("plane") || st.choosingPlane });
+    const kind = st.active.kind;
+    if (kind !== lastKind.current) { fitted.current = false; lastKind.current = kind; }
+    if (kind === "drawing") return;
+    const result = kind === "assembly" ? asmView : st.result;
+    const doc = kind === "assembly" ? { ...st.doc, features: [] } : store.displayDoc();
+    v.update(result, doc, { hideSketch: st.sketch?.id, showPlanes: !result?.mesh || !!st.pickTarget?.accept.includes("plane") || st.choosingPlane });
+    v.setOverlay(kind === "assembly" ? st.interference?.pairs.map((x) => x.mesh) ?? [] : []);
     v.setSelected(selectedKeys());
-    if (!fitted.current && st.result?.mesh) { v.view("iso", st.result); fitted.current = true; }
-  }, [st.result, st.selection, st.edit, st.pickTarget, st.choosingPlane, st.sketch?.id]);
+    if (!fitted.current && result?.mesh) { v.view("iso", result); fitted.current = true; }
+  }, [st.result, asmView, st.active, st.selection, st.edit, st.mateEdit, st.pickTarget, st.choosingPlane, st.sketch?.id, st.interference]);
 
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
@@ -82,7 +110,6 @@ function App() {
     vp.current?.setRegions(show ? sk : null, show && sk ? st.result?.sketches[sk] ?? null : null);
     vp.current?.setSelected(selectedKeys());
   }, [st.edit, st.pickTarget, st.result]);
-  useEffect(() => { try { localStorage.setItem("cad-prototipo:density", String(density)); } catch { /* ignorar */ } }, [density]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -105,18 +132,35 @@ function App() {
 
   const selFeature = st.selectedFeature ? st.doc.features.find((f) => f.id === st.selectedFeature) : undefined;
   const r = st.result;
-  const errors = r ? Object.values(r.status).filter((s) => s.state === "error").length : 0;
+  const kind = st.active.kind;
+  const errors = kind === "part" && r ? Object.values(r.status).filter((s) => s.state === "error").length : 0;
 
   return (
     <div class="app">
       <Toolbar />
-      <div class="main">
-        {!st.sketch && (
+      <DocTabs />
+      <div class={`main ${kind === "drawing" ? "hidden-3d" : ""}`}>
+        {kind === "drawing" && <DrawingEditor />}
+        {kind === "assembly" && (
+          <aside class="side">
+            {st.mateEdit ? <MatePanel /> : st.componentEdit ? <ComponentPanel /> : (
+              <>
+                <AssemblyTree />
+                <div class="side-info">
+                  <MassBlock mass={st.asmResult?.mass ?? null} density={null} onDensity={() => {}}
+                    totalMass={st.asmResult?.instances.reduce((m, i) => m + ((st.asmResult!.partMass[i.part]?.volume ?? 0) / 1000) * (st.project.parts.find((p) => p.id === i.part)?.properties?.density ?? DEFAULT_DENSITY), 0)} />
+                </div>
+              </>
+            )}
+          </aside>
+        )}
+        {kind === "part" && !st.sketch && (
           <aside class="side">
             {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : (
               <>
                 <FeatureTree />
                 <div class="side-info">
+                  <button class="small" onClick={() => setShowProps(true)}>Propriedades da peça…</button>
                   {selFeature && <StatusBlock status={r?.status[selFeature.id]} title={selFeature.name} />}
                   <MassBlock mass={r?.mass ?? null} density={density} onDensity={setDensity} />
                   <SheetsBlock sheets={r?.sheets ?? []} />
@@ -128,9 +172,10 @@ function App() {
             )}
           </aside>
         )}
-        <section class="view">
+        <section class="view" style={kind === "drawing" ? { display: "none" } : undefined}>
           <div ref={host} class="viewport" />
           {!st.sketch && <HeadsUpToolbar />}
+          {kind === "assembly" && st.asmResult && !st.asmResult.instances.length && <div class="pick-banner">Insira componentes: ＋ Inserir componente (na árvore) ou separador Montagem</div>}
           {st.analysis && !st.sketch && <AnalysisPanel />}
           {st.sketch && <SketchEditor key={st.sketch.id} result={r} />}
           {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[a]).join(" / ")} · Esc para terminar</div>}
@@ -149,9 +194,10 @@ function App() {
               : `Aresta ${CURVE[hover.type] ?? hover.type} · ${describeName(st.doc, hover.name).replace(/^Aresta: /, "")}`}
           </span>
         )}
-        <span class="muted">{st.doc.name}{st.dirty ? " •" : ""} · mm</span>
+        <span class="muted">{st.project.name} · {docName(st.project, st.active)}{st.dirty ? " •" : ""} · mm</span>
       </footer>
       {st.showVariables && <VariablesDialog />}
+      {showProps && <PartPropertiesDialog onClose={() => setShowProps(false)} />}
       {(st.contextMenu || st.shortcutBar || st.orientationMenu) && <div class="overlay-catcher" onPointerDown={() => store.closeOverlays()} onContextMenu={(e) => { e.preventDefault(); store.closeOverlays(); }} />}
       {st.contextMenu && <ContextMenu />}
       {st.contextToolbar && !st.edit && !st.sketch && <ContextToolbar />}

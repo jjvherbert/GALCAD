@@ -1,5 +1,6 @@
 // Protocolo de mensagens entre a interface e o worker do núcleo geométrico.
 import type { CadDocument, SketchEntity } from "../doc/types.ts";
+import type { CadProject } from "../doc/project.ts";
 import type { Profiles } from "../sketch/profiles.ts";
 import type { Axis, Frame } from "./frame.ts";
 import type { MeshData } from "./mesh.ts";
@@ -11,7 +12,90 @@ export type Request =
   | { type: "rebuild"; doc: CadDocument; force?: boolean }
   | { type: "export"; format: ExportFormat; name: string }
   | { type: "curvature"; kind: CurvatureKind }
-  | { type: "deviation" };
+  | { type: "deviation" }
+  | { type: "assembly"; project: CadProject; asmId: string; force?: boolean }
+  | { type: "interference" }
+  | { type: "drawing"; project: CadProject; drawingId: string; force?: boolean };
+
+// ---------------------------------------------------------------------------
+// Montagens
+// ---------------------------------------------------------------------------
+
+export interface MateStatus { ok: boolean; residual: number; error?: string }
+
+export interface AssemblyInstance {
+  /** Caminho de componentes (subconjuntos) até à peça, ex. "c2/c1". */
+  path: string;
+  /** Componente de topo (o que se escolhe na árvore da montagem ativa). */
+  top: string;
+  part: string;
+  name: string;
+  /** Matriz 4×4 (por colunas, como no three.js) do referencial da peça para o da montagem. */
+  matrix: number[];
+}
+
+export interface AssemblyResponse {
+  ok: boolean;
+  /** Graus de liberdade que ficam livres (0 = totalmente definida). */
+  dof: number;
+  messages: string[];
+  mates: Record<string, MateStatus>;
+  /** Malha de cada peça, nas coordenadas da peça. */
+  parts: Record<string, MeshData>;
+  instances: AssemblyInstance[];
+  /** Volume e área de cada peça (para massa e BOM). */
+  partMass: Record<string, { volume: number; area: number }>;
+  partErrors: Record<string, number>;
+  mass: MassProps | null;
+  ms: number;
+}
+
+export interface InterferenceResponse {
+  pairs: { a: string; b: string; volume: number; mesh: MeshData }[];
+}
+
+// ---------------------------------------------------------------------------
+// Desenhos
+// ---------------------------------------------------------------------------
+
+/** Curva 2D nas coordenadas da vista (mm do modelo). Arcos no sentido anti-horário, ângulos em radianos. */
+export type Curve2D =
+  | { k: "l"; a: [number, number]; b: [number, number] }
+  | { k: "a"; c: [number, number]; r: number; a0: number; a1: number }
+  | { k: "c"; c: [number, number]; r: number }
+  | { k: "p"; pts: [number, number][] };
+
+export interface ViewFrame { o: [number, number, number]; x: [number, number, number]; y: [number, number, number]; z: [number, number, number] }
+
+export interface ViewResult {
+  ok: boolean;
+  error?: string;
+  frame: ViewFrame;
+  /** Escala efetiva da vista. */
+  scale: number;
+  /** Caixa da geometria [xmin, ymin, xmax, ymax] (coordenadas da vista). */
+  bbox: [number, number, number, number];
+  visible: Curve2D[];
+  hidden: Curve2D[];
+  tangent: Curve2D[];
+  /** Polígonos das faces cortadas (cortes), para tracejar. */
+  hatch: [number, number][][][];
+  centerMarks: { c: [number, number]; r: number }[];
+  centerLines: [[number, number], [number, number]][];
+  /** Projeção de cada aresta do modelo com nome (para âncoras de cotas e notas). */
+  edges: Record<string, Curve2D>;
+  /** Cotas dos esboços paralelos ao plano da vista (importar cotas do modelo). */
+  modelDims: { feature: string; constraint: string; type: "linear" | "radius" | "diameter"; a: [number, number]; b: [number, number]; value: number }[];
+  /** Componente de cada aresta (vistas de montagem): nome da aresta → componente de topo. */
+  edgeComponent?: Record<string, string>;
+}
+
+export interface DrawingResponse {
+  views: Record<string, ViewResult>;
+  /** Massa (volume × densidade) da fonte de cada vista de modelo, para a legenda. */
+  sources: Record<string, { volume: number; material?: string }>;
+  ms: number;
+}
 
 /** Desvio de tangência (graus) de cada aresta entre duas faces: 0 = tangente; ~90 = aresta viva a 90°. */
 export interface DeviationResponse {
@@ -76,5 +160,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | AssemblyResponse | InterferenceResponse | DrawingResponse }
   | { id: number; ok: false; error: string };
