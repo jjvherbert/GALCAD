@@ -29,7 +29,7 @@ function resolve(ctx: Ctx, ref: { kind: "face"; name: string }): Resolved | null
   const p = faceProps(nf.face);
   // ponto da superfície (nas faces de revolução o centroide cai no eixo): meio da primeira aresta
   const e = explore(nf.face, "edge")[0];
-  const onSurf = p.type === "plane" || !e ? p.center : sampleEdge(e, 3)[1].p;
+  let onSurf = p.type === "plane" || !e ? p.center : sampleEdge(e, 3)[1].p;
   let radius: number | undefined;
   if (p.axis) {
     try {
@@ -39,6 +39,12 @@ function resolve(ctx: Ctx, ref: { kind: "face"; name: string }): Resolved | null
     } catch { radius = undefined; }
     // reserva: distância de um ponto da superfície ao eixo
     if (!(radius! > 0)) radius = v3.dist(v3.cross(v3.sub(onSurf, p.axis.o), p.axis.d), [0, 0, 0]);
+  }
+  // cilindro: âncora a meia altura da face (centroide no eixo deslocado radialmente até à superfície)
+  if (p.axis && radius! > 0) {
+    const rad = v3.sub(onSurf, p.center);
+    const radial = v3.sub(rad, v3.mul(p.axis.d, v3.dot(rad, p.axis.d)));
+    if (v3.dist(radial, [0, 0, 0]) > 1e-9) onSurf = v3.add(p.center, v3.mul(v3.norm(radial), radius!));
   }
   let normal: Vec3;
   try { normal = normalOnFace(nf.face, onSurf); } catch { normal = [0, 0, 1]; }

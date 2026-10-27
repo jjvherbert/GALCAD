@@ -331,3 +331,19 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .sim-panel .info-table select { width: 100%; min-width: 0; max-width: 100%; }
 .sim-panel .info-table td:first-child { word-break: break-word; }
 .sim-panel .info-table { table-layout: fixed; }
+/* PMI 3D */
+.pmi-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.pmi-leaders { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.pmi-leaders line { stroke: #0f766e; stroke-width: 1; }
+.pmi-label { position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer; white-space: nowrap; font: 12px/1.2 ui-monospace, "SF Mono", Menlo, monospace; padding: 2px 5px; border: 1px solid #0f766e; border-radius: 2px; background: color-mix(in srgb, var(--bg, #fff) 92%, transparent); color: #0f766e; }
+.pmi-label.pmi-datum { font-weight: 700; }
+.pmi-label.pmi-gdt { letter-spacing: 0.02em; }
+.pmi-label.error { border-color: #dc2626; color: #dc2626; }
+.pmi-label.on { outline: 2px solid #2563eb; }
+.pmi-panel .pmi-head { text-align: left; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pmi-panel .pmi-kind { color: var(--muted, #6b7280); font-size: 11px; }
+.pmi-panel .tabs-small .on { background: var(--accent-bg, #dbeafe); }
+.pmi-panel .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.pmi-panel .row input, .pmi-panel .row3 select { min-width: 0; width: 100%; }
+.pmi-panel .info-table { table-layout: fixed; }
+.pmi-panel .info-table td { word-break: break-word; }

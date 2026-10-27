@@ -135,7 +135,10 @@ export interface State {
   /** Interferências calculadas (montagem ativa). */
   interference: InterferenceResponse | null;
   /** Painel lateral alternativo: BOM ou assistente. */
-  sidePanel: "bom" | "ai" | "knowledge" | "sim" | null;
+  sidePanel: "bom" | "ai" | "knowledge" | "sim" | "pmi" | null;
+  /** PMI: item selecionado no painel e vista de modelo aplicada (filtra os rótulos no 3D). */
+  pmiSel: string | null;
+  pmiView: string | null;
   /** Simulação: último resultado do agente local, vista (campo, deformada, ampliação) e ligação ao agente. */
   /** `doc`: id da peça ou montagem do estudo. */
   simResult: { doc: string; studyId: string; result: import("./sim-client.ts").RunResult } | null;
@@ -184,7 +187,7 @@ class Store {
       edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
+      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: { url: "http://127.0.0.1:8765", token: "" },
     };
     this.rebuild(0);

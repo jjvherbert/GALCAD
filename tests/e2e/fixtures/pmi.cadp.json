@@ -1,0 +1,281 @@
+{
+  "format": "cadp-project",
+  "version": 1,
+  "name": "PMI",
+  "parts": [
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p1",
+      "name": "Placa",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 60,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 60,
+              "y": 40
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 40
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": 60
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 40
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 20
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        },
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 30,
+              "y": 20
+            },
+            "c2": {
+              "type": "circle",
+              "c": "p1",
+              "r": 5
+            }
+          },
+          "constraints": [],
+          "id": "f3",
+          "name": "Esboço2"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f3",
+          "op": "cut",
+          "end": {
+            "type": "throughAll"
+          },
+          "end2": {
+            "type": "throughAll"
+          },
+          "id": "f4",
+          "name": "Extrusão2"
+        }
+      ],
+      "pmi": [
+        {
+          "kind": "datum",
+          "id": "pmi1",
+          "label": "A",
+          "face": {
+            "kind": "face",
+            "name": "f2:start:l5"
+          }
+        },
+        {
+          "kind": "datum",
+          "id": "pmi2",
+          "label": "B",
+          "face": {
+            "kind": "face",
+            "name": "f2:side:l8"
+          }
+        },
+        {
+          "kind": "dimension",
+          "id": "pmi3",
+          "type": "distance",
+          "faces": [
+            {
+              "kind": "face",
+              "name": "f2:end:l5"
+            },
+            {
+              "kind": "face",
+              "name": "f2:start:l5"
+            }
+          ],
+          "tol": {
+            "kind": "deviation",
+            "upper": 0.1,
+            "lower": -0.1
+          }
+        },
+        {
+          "kind": "dimension",
+          "id": "pmi4",
+          "type": "diameter",
+          "faces": [
+            {
+              "kind": "face",
+              "name": "f4:side:c2"
+            }
+          ],
+          "tol": {
+            "kind": "fit",
+            "code": "H7"
+          }
+        },
+        {
+          "kind": "gdt",
+          "id": "pmi5",
+          "characteristic": "flatness",
+          "faces": [
+            {
+              "kind": "face",
+              "name": "f2:end:l5"
+            }
+          ],
+          "value": 0.02,
+          "datums": []
+        },
+        {
+          "kind": "gdt",
+          "id": "pmi6",
+          "characteristic": "position",
+          "faces": [
+            {
+              "kind": "face",
+              "name": "f4:side:c2"
+            }
+          ],
+          "value": 0.1,
+          "diameter": true,
+          "modifier": "M",
+          "datums": [
+            "A",
+            "B"
+          ]
+        },
+        {
+          "kind": "roughness",
+          "id": "pmi7",
+          "faces": [
+            {
+              "kind": "face",
+              "name": "f2:end:l5"
+            }
+          ],
+          "ra": 1.6,
+          "process": "remove"
+        }
+      ],
+      "attributes": [
+        {
+          "target": {
+            "kind": "body"
+          },
+          "key": "Processo",
+          "value": "Maquinação CNC"
+        }
+      ]
+    }
+  ],
+  "assemblies": [],
+  "drawings": []
+}

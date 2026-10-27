@@ -29,6 +29,7 @@ import { AnalysisPanel, ContextMenu, ContextToolbar, GestureHud, HeadsUpToolbar,
 const SURF: Record<string, string> = { plane: "plana", cylinder: "cilíndrica", cone: "cónica", sphere: "esférica", torus: "tórica", bspline: "livre (B-spline)", bezier: "livre (Bézier)", revolution: "de revolução", extrusion: "de extrusão" };
 const CURVE: Record<string, string> = { line: "reta", circle: "circular", ellipse: "elíptica", bsplinecurve: "livre", beziercurve: "livre" };
 import { resultView } from "./sim-client.ts";
+import { PmiPanel } from "./PmiPanel.tsx";
 import "./style.css";
 
 function selectedKeys(): string[] {
@@ -114,6 +115,19 @@ function App() {
     const show = st.sidePanel === "sim" && !st.simHidden && st.active.kind !== "drawing" && st.simResult?.doc === st.active.id;
     vp.current?.setSimResult(show ? resultView(st.simResult?.result) : null, st.simView);
   }, [st.simResult, st.simView, st.simHidden, st.sidePanel, st.active, st.result, st.asmResult]);
+  // PMI 3D: rótulos no modelo (todos os itens com o painel aberto ou quando há uma vista de modelo aplicada)
+  useEffect(() => {
+    const v = vp.current;
+    if (!v) return;
+    v.onPmiClick = (id) => store.set({ sidePanel: "pmi", pmiSel: id });
+    const doc = st.doc;
+    const states = st.result?.pmi ?? [];
+    const view = st.pmiView ? doc.modelViews?.find((x) => x.id === st.pmiView) : null;
+    const show = st.active.kind === "part" && !st.sketch && (st.sidePanel === "pmi" || !!view) && states.length > 0;
+    v.setPmi(show ? states.filter((x) => !view || view.items.includes(x.id)).map((x) => ({
+      id: x.id, text: x.text, anchor: x.anchor, normal: x.normal, kind: doc.pmi?.find((p) => p.id === x.id)?.kind ?? "note", error: x.errors.length > 0, selected: st.pmiSel === x.id,
+    })) : null);
+  }, [st.result, st.sidePanel, st.pmiView, st.pmiSel, st.active, st.sketch]);
   // rede de controlo da forma livre em edição
   useEffect(() => {
     const d = st.edit?.draft;
@@ -174,7 +188,7 @@ function App() {
         )}
         {kind === "part" && !st.sketch && (
           <aside class="side">
-            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : st.sidePanel === "sim" ? <SimPanel /> : (
+            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : st.sidePanel === "sim" ? <SimPanel /> : st.sidePanel === "pmi" ? <PmiPanel /> : (
               <>
                 <FeatureTree />
                 <div class="side-info">

@@ -230,7 +230,76 @@ export class Viewport {
     cv.addEventListener("contextmenu", (e) => e.preventDefault());
     cv.addEventListener("dblclick", (e) => this.onDblClick(e));
     cv.addEventListener("auxclick", (e) => e.preventDefault());
-    this.renderer.setAnimationLoop(() => this.renderer.render(this.scene, this.camera));
+    this.pmiSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    this.pmiSvg.setAttribute("class", "pmi-leaders");
+    this.pmiEl = Object.assign(document.createElement("div"), { className: "pmi-layer" });
+    el.append(this.pmiSvg, this.pmiEl);
+    this.renderer.setAnimationLoop(() => { this.renderer.render(this.scene, this.camera); this.placePmi(); });
+  }
+
+  // --- PMI 3D ------------------------------------------------------------------------
+
+  private pmiEl: HTMLDivElement;
+  private pmiSvg: SVGSVGElement;
+  private pmiLabels: { anchor: THREE.Vector3; at: THREE.Vector3; el: HTMLDivElement; line: SVGLineElement; stack: number }[] = [];
+  /** Chamado ao clicar num rótulo PMI (id do item). */
+  onPmiClick: ((id: string) => void) | null = null;
+
+  /**
+   * Rótulos PMI no 3D: o texto do item (quadro de tolerância, cota, referência) afastado da face pela
+   * normal, com linha de chamada até ao ponto de ancoragem. Acompanham a câmara a cada imagem.
+   */
+  setPmi(items: { id: string; text: string; anchor: Vec3; normal: Vec3; kind: string; error: boolean; selected: boolean }[] | null) {
+    this.pmiEl.replaceChildren();
+    this.pmiSvg.replaceChildren();
+    this.pmiLabels = [];
+    this.el.dataset.pmi = items ? String(items.length) : "";
+    if (!items) return;
+    const L = Math.max(4, this.modelSize(this.lastResult) * 0.18);
+    // rótulos com a mesma âncora e normal empilham-se no ecrã (uma linha cada)
+    const seen = new Map<string, number>();
+    for (const it of items) {
+      const key = `${it.anchor.map((x) => x.toFixed(2))}|${it.normal.map((x) => x.toFixed(2))}`;
+      const k = seen.get(key) ?? 0;
+      seen.set(key, k + 1);
+      const anchor = new THREE.Vector3(...it.anchor);
+      const at = anchor.clone().addScaledVector(new THREE.Vector3(...it.normal), L);
+      const el = Object.assign(document.createElement("div"), { className: `pmi-label pmi-${it.kind}${it.error ? " error" : ""}${it.selected ? " on" : ""}`, textContent: it.text, title: it.error ? "PMI com erros: ver o painel" : it.text });
+      el.dataset.id = it.id;
+      el.addEventListener("click", () => this.onPmiClick?.(it.id));
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      this.pmiEl.append(el);
+      this.pmiSvg.append(line);
+      this.pmiLabels.push({ anchor, at, el, line, stack: k });
+    }
+  }
+
+  private placePmi() {
+    if (!this.pmiLabels.length) return;
+    const r = this.renderer.domElement, w = r.clientWidth, h = r.clientHeight;
+    const v = new THREE.Vector3();
+    const px = (p: THREE.Vector3) => { v.copy(p).project(this.camera); return [((v.x + 1) / 2) * w, ((1 - v.y) / 2) * h]; };
+    for (const l of this.pmiLabels) {
+      const [ax, ay] = px(l.anchor), [bx, b0] = px(l.at);
+      const by = b0 + l.stack * 22;
+      l.el.style.transform = `translate(${bx.toFixed(1)}px, ${by.toFixed(1)}px) translate(-50%, -50%)`;
+      l.line.setAttribute("x1", ax.toFixed(1)); l.line.setAttribute("y1", ay.toFixed(1));
+      l.line.setAttribute("x2", bx.toFixed(1)); l.line.setAttribute("y2", by.toFixed(1));
+    }
+  }
+
+  /** Orientação atual da câmara (direção de visão, do alvo para a câmara, e "para cima"). */
+  cameraView(): { dir: Vec3; up: Vec3 } {
+    return { dir: this.viewDir().toArray() as Vec3, up: this.camera.up.toArray() as Vec3 };
+  }
+
+  /** Repõe uma orientação guardada (vista de modelo) e enquadra o modelo. */
+  setCameraView(dir: Vec3, up: Vec3) {
+    this.pushHistory();
+    this.camera.up.set(...up);
+    this.camera.position.copy(this.target).add(new THREE.Vector3(...dir).normalize().multiplyScalar(1000));
+    this.camera.lookAt(this.target);
+    this.fit(this.lastResult, false);
   }
 
   private resize() {
