@@ -1,5 +1,44 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: code_aster, convergência formal, scripts e IA, análise integrada Galkeel, cálculos/XFOIL, atrito e PMI nos desenhos
+
+Pedido de Juan: competitividade face ao SolidWorks/CATIA/FEM formal; instalação por conda-forge autorizada; estudo de convergência, simulações automáticas e scripts, copiloto, IA, análise integrada com relatório para a Galkeel, escantilhonamento e cálculos aeronáuticos com ferramentas abertas. Commits locais (**sem push**, por indicação de Juan): `3ee5531`, `7165e58`, `f176e6a`, `a5fdadc`, `a77ecc2`, `f4a7005` e o desta documentação.
+
+**Alterações**
+- **code_aster 18.1** (micromamba, conda-forge, ambiente `aster`): `src/sim/aster.ts` corrigido e verificado. O agente deteta os ambientes conda.
+- **Convergência**: sondas (`FemStudy.probes`) e refinamento automático até ao GCI alvo (`RunOptions.convergence.target`), gráfico no painel.
+- **Scripts**: `src/script/api.ts`, worker isolado (`src/app/script-worker.ts`), painel Scripts, lote `tools/cad-script.ts`; superfície de resposta RBF.
+- **Copiloto**: `src/ai/copilot.ts` (SDK oficial, saída estruturada zod, chave só em memória).
+- **Galkeel**: `vendor/galkeel-calculadora` (submódulo, `c41f83c`, não alterado), `src/galkeel/*`, `src/kernel/panels.ts`, painel Galkeel, contrato `galkeel:calculator-result` (tag `iso12215-5-frp`).
+- **Cálculos**: `src/calc/library.ts`, propriedades de secção de faces planas (`PanelGeom.section`), `src/sim/xfoil.ts`, `runXfoil` + `/xfoil` no agente, painel Cálculos, `tools/xfoil-nofpe.c`.
+- **Atrito**: `FemStudy.contact.mode = "friction"` + `mu`; deck com `*CONTACT PAIR` face a face, `*FRICTION` e passo incremental; reações por apoio (`FemResult.groupReactions`).
+- **PMI nos desenhos**: `ViewResult.pmi` (núcleo), anotações com `pmi: {item, view}`, `importPmi` e botão/comando «Importar PMI».
+
+**Testes:** 156 testes Node e 11 suites e2e a passar (Gmsh 4.15.2, CalculiX 2.21, code_aster 18.1, OpenFOAM v1912, XFOIL 6.99 reais).
+
+| Caso | Resultado | Referência |
+|---|---|---|
+| code_aster, flecha da consola | 0,1904 mm | 0,192 mm |
+| Convergência automática (6 malhas lineares) | GCI 2,08 %, extrapolado 0,1910 mm | 0,1920 mm |
+| Varrimento paramétrico L = 80/100/120 | < 3 % | Timoshenko |
+| Painel Galkeel 600×400×7, fundo | P 48,09 kN/m², t 6,57 mm | galkeel-calculadora |
+| FEM do painel (von Mises) | 62,5 MPa | Roark corrigido 63,4 MPa |
+| ISA 11 km | 216,65 K; 22 632 Pa; 0,36392 kg/m³ | ISO 2533 |
+| Secção da cantoneira L lida no CAD | A e Imin exatos | fórmulas de Green |
+| XFOIL NACA 0012, Re 1e6 | CLα 0,108/°, CDmin 0,0054 | ~0,105–0,110/°, ~0,0055 |
+| Atrito (bloco arrastado, μ = 0,3) | 1199,99 N; normal 4000 N | μ·N = 1200 N |
+| Separação (puxar o bloco) | ≈ 0 N (colado: > 10⁴ N) | sem tração |
+
+**Bloqueios e pendentes**
+- Push: nenhum até Juan indicar.
+- Copiloto: só testado com respostas simuladas (sem chave da API neste ambiente).
+- ISO 12215-5:2008 é edição retirada: a análise Galkeel fica como legada até a galkeel-calculadora ter a 2019 (não reimplementar aqui).
+- XFOIL Debian: precisa de `CAD_XFOIL_PRELOAD` (ver `tools/xfoil-nofpe.c`).
+- `PROPOSTO` à galkeel-app (não alterada): etiqueta `cad-analysis` e alojar o CAD em `public/cad` para o envio ao caso funcionar no mesmo origin. `galkeel-context` não foi alterado (Change Control/locks por verificar no Drive).
+- Ver «Posicionamento face ao SolidWorks, CATIA e FEM comercial» no ROADMAP: cascas/vigas, qualidade da malha, contacto geral e dossier NAFEMS/V&V são o caminho para FEM de nível formal.
+
+**Próxima ação recomendada:** dossier de V&V com benchmarks NAFEMS (LE1, LE10, R0031) no CalculiX e no code_aster, depois elementos de casca para PRFV (liga ao escantilhonamento Galkeel). Juan escolhe a ordem.
+
 ## Atualização: F2, não linear, estudos de montagem e Fase 5 (PMI 3D e tags)
 
 Pedido de Juan: "vamos correr todos" (F2 completa, montagens, code_aster/não linear, Fase 5). Feito pela ordem F2 → não linear → montagens → Fase 5. Commits locais (sem push, por indicação de Juan): `0f4dfb1`, `ad51738`, `4ba7d87`, `3c7af04`, `5992c13` e o desta documentação.

@@ -27,6 +27,10 @@ Resumo técnico, que não substitui aconselhamento jurídico:
 5. As bibliotecas MIT só exigem que se mantenha o aviso de copyright e a licença.
 6. A Apache-2.0 (SDK da Anthropic) exige distribuir o texto da licença e indicar alterações aos ficheiros dela (não há alterações). É compatível com um produto fechado.
 
-**Simulação — code_aster:** o adaptador escreve ficheiros para o code_aster (GPL-3.0), que o agente local corre como programa separado, se estiver instalado; não é incluído nem ligado.
+**Simulação — code_aster:** o adaptador escreve ficheiros para o code_aster (GPL-3.0), que o agente local corre como programa separado, se estiver instalado (verificado com o pacote conda-forge 18.1); não é incluído nem ligado.
+
+**Perfis — XFOIL:** o agente corre o XFOIL (M. Drela e H. Youngren, GPL-2.0) como programa separado, com comandos gerados pelo agente; não é incluído nem ligado. `tools/xfoil-nofpe.c` é código próprio (uma função vazia), carregado só no processo do XFOIL por `LD_PRELOAD`.
+
+**Galkeel — galkeel-calculadora:** submódulo em `vendor/galkeel-calculadora` (repositório da Galkeel); os módulos de cálculo são carregados sem alteração e o seu código não é copiado para este repositório.
 
 **Verificação do PMI (só desenvolvimento):** `tools/read-step-pmi.py` usa o OCP (`cadquery-ocp`, ligações Python do OpenCASCADE, LGPL-2.1 com exceção) para ler o STEP exportado. Não é dependência da aplicação nem distribuído com ela.

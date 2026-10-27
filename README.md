@@ -2,18 +2,21 @@
 
 CAD paramétrico no browser, para modelação de sólidos e de superfícies, com fluxos de trabalho ao estilo do SolidWorks: esboços com restrições, árvore de features editável, variáveis e equações. Os domínios específicos, como o boat design, são **plugins** opcionais por cima de um núcleo genérico.
 
-**Estado:** Fases 1 (peças), 2 (superfícies), 3 (montagens, desenhos 2D e BOM), 4 (inspirada no CATIA: GSD, classe A, forma livre, knowledgeware, publicações, STEP AP242) e 5 (PMI 3D semântico, vistas de modelo e atributos, inspirada no NX) implementadas. Pré-processador de simulação: F1 e F2 feitas (FEM linear e não linear, montagens com contacto colado, CFD com campos no 3D, convergência da malha). Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
+**Estado:** Fases 1 (peças), 2 (superfícies), 3 (montagens, desenhos 2D e BOM), 4 (inspirada no CATIA: GSD, classe A, forma livre, knowledgeware, publicações, STEP AP242) e 5 (PMI 3D semântico, vistas de modelo e atributos, inspirada no NX) implementadas. Pré-processador de simulação: F1 e F2 feitas (FEM linear e não linear no CalculiX e no code_aster, montagens com contacto colado ou com atrito, CFD com campos no 3D, convergência formal da malha). Automação: scripts `cad.*` (estudos paramétricos, superfície de resposta, lote em Node), copiloto Claude, análise integrada de painéis com a galkeel-calculadora e biblioteca de cálculos com XFOIL. Não substitui ainda um CAD/CAE comercial: ver a avaliação em [ROADMAP.md](ROADMAP.md#posicionamento-face-ao-solidworks-catia-e-fem-comercial-out-2026) e o estado em [HANDOFF.md](HANDOFF.md).
 
 ## Correr
 
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 127 testes (Node; os de solvers correm se o Gmsh/CalculiX/OpenFOAM estiverem instalados, e a leitura do PMI se houver o OCP em Python): documento, solver, motor, superfícies, montagens, desenhos, BOM, GSD, knowledgeware, referências externas, AP242, simulação, PMI
+npm test             # 156 testes (Node; os de solvers correm se o Gmsh/CalculiX/code_aster/OpenFOAM/XFOIL estiverem instalados, e a leitura do PMI se houver o OCP em Python)
 npm run typecheck    # TypeScript estrito
-npm run build && npm run test:e2e   # 8 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4, simulação, PMI
+npm run build && npm run test:e2e   # 11 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4, simulação, PMI, scripts, Galkeel, cálculos
 node public/cad-runner.mjs --status # solvers encontrados pelo agente local
+node --experimental-strip-types tools/cad-script.ts projeto.cadp.json script.js [--part Nome] [--csv t.csv] [--save novo.cadp.json]   # scripts em lote
 ```
+
+Solvers (instalados à parte, processos separados): Gmsh, CalculiX, OpenFOAM, SU2, **code_aster** (recomendado: `micromamba create -n aster -c conda-forge code-aster`; o agente encontra o ambiente `aster` ou `CAD_ASTER`) e **XFOIL** (`apt install xfoil`; na compilação Debian 6.99, que aborta com SIGFPE no modo viscoso, compilar `tools/xfoil-nofpe.c` e definir `CAD_XFOIL_PRELOAD`).
 
 ## O que faz
 
@@ -90,11 +93,17 @@ node public/cad-runner.mjs --status # solvers encontrados pelo agente local
 - **Exportar caso (.zip)**: BREP exato, script Gmsh, dicionários/deck, `case.json`, LEIA-ME com hipóteses e passos.
 - **Calcular no agente local**: `node cad-runner.mjs --serve` (descarrega-se no painel) corre os solvers instalados na máquina como processos separados e devolve os resultados: resumo (flecha, von Mises, fator de segurança, frequências, reações, caudal, balanço de massa, queda de pressão, arrasto de pressão) e, no FEM, os campos a cores no 3D com a deformada.
 - **Não linear** (estática): grandes deslocamentos e rotações (NLGEOM) e plasticidade de von Mises com encruamento bilinear (cedência e módulo tangente do material), em incrementos, com a curva carga–deslocamento e a deformação plástica equivalente.
-- **Montagens**: estudos FEM na própria montagem, um volume e um material por corpo, condições nas faces dos componentes e **contacto colado** (*TIE) detetado nas faces planas coincidentes entre corpos.
+- **Montagens**: estudos FEM na própria montagem, um volume e um material por corpo, condições nas faces dos componentes e contacto nas faces planas coincidentes entre corpos: **colado** (*TIE) ou **com atrito de Coulomb e separação** (penalidade face a face, carga em incrementos), com a reação de cada apoio (ex.: a força de atrito transmitida).
 - **CFD no 3D**: pressão nas paredes/entrada/saída e cortes planos pela malha do OpenFOAM com pressão e |U|, camadas que se ligam e desligam, escala comum.
-- **Convergência da malha**: corre também com malhas r·h e r²·h e dá, por grandeza, a ordem aparente, o valor extrapolado (Richardson) e o GCI (Celik et al. 2008 / ASME V&V 20).
-- **code_aster** como alternativa ao CalculiX (estática linear/não linear e modal): adaptador escrito, **ainda não verificado** com o code_aster real.
+- **Convergência da malha**: três malhas (h, r·h, r²·h) ou **refinamento automático até ao GCI alvo**, com a ordem aparente, o valor extrapolado (Richardson), o GCI (Celik et al. 2008 / ASME V&V 20) e o gráfico por nível; **sondas** (média ou máximo numa face, nó mais próximo de um ponto) como grandezas a seguir.
+- **code_aster 18.1** como alternativa ao CalculiX (estática linear e não linear — plasticidade, grandes deslocamentos —, modal e montagens coladas por LIAISON_MAIL), verificado com os mesmos casos analíticos.
 - Os resultados são apoio à decisão de engenharia, com as hipóteses à vista; não são certificação.
+
+**Automação e análise integrada (separador Automação):**
+- **Scripts** JavaScript sobre a API `cad.*` (variáveis, features, reconstrução com medidas, simulações no agente, `grid`/`linspace`, superfície de resposta RBF com erro por validação cruzada, tabelas CSV, cálculos e XFOIL): correm num worker isolado sem rede nem disco, sobre uma cópia do modelo, e em lote em Node (`tools/cad-script.ts`).
+- **Copiloto** (Claude, opcional, chave só em memória): gera e corrige scripts a partir de um pedido, e interpreta os resultados com prudência; o código aparece para revisão e nunca corre sozinho.
+- **Análise integrada Galkeel**: escolhem-se as faces do casco, a geometria do painel (b, l, flecha) é medida no modelo, as pressões e a espessura FRP vêm dos módulos da [galkeel-calculadora](https://github.com/jjvherbert/galkeel-calculadora) (submódulo, sem reimplementar; ISO 12215-5:2008, edição retirada) e um estudo FEM verifica a tensão com a mesma pressão; relatório HTML/JSON e envio ao caso da galkeel-app no contrato `galkeel:calculator-result`, sempre com veredito indeterminado.
+- **Cálculos e perfis**: atmosfera ISO 2533 com Reynolds/Mach, asa finita (DATCOM), perfis NACA de 4 dígitos, coluna de Euler–Johnson (com a secção lida de uma face plana do modelo), encurvadura de placas; cada um com referência, hipóteses, caso de verificação e relatório. **Polares XFOIL** no agente (NACA ou coordenadas), gráficos CL–α e CL–CD, CLα para a asa finita e esboço do perfil no CAD.
 
 **PMI 3D e atributos (separador PMI, Fase 5):**
 - **Anotações semânticas** ligadas às faces pelo nome topológico: referências (ISO 5459), cotas de distância, diâmetro, raio e ângulo com **o valor medido no modelo** e afastamentos ou **classe ISO 286** (tabelas IT5–IT11 e afastamentos fundamentais até 500 mm, com o ajustamento furo/veio e as folgas), quadros de **tolerância geométrica ISO 1101** (14 características, ⌀, Ⓜ/Ⓛ, até três referências), estados de superfície (Ra) e notas.
@@ -102,6 +111,7 @@ node public/cad-runner.mjs --status # solvers encontrados pelo agente local
 - **Rótulos no 3D** com linha de chamada, que acompanham a câmara; clicar num rótulo abre o item.
 - **Vistas de modelo** (MBD): orientação da câmara + PMI a mostrar.
 - **Atributos (tags)** no corpo, em features e em faces; pesquisa no projeto inteiro (sem acentos) e exportação CSV.
+- **PMI nos desenhos 2D** («Importar PMI»): cotas com tolerância na vista onde a grandeza está em verdadeira grandeza (⌀ na vista do círculo), GD&T, referências, rugosidade e notas na vista onde a face se vê de perfil; associativos (o conteúdo e a ancoragem seguem o modelo).
 - **STEP AP242 com PMI semântico**: datums, cotas com tolerância ou ajustamento, tolerâncias com sistema de referências, modificadores e zona cilíndrica, ligados às `ADVANCED_FACE`; rugosidade, notas e atributos como atributos definidos pelo utilizador. Verificado com o leitor GD&T do OpenCASCADE (`tools/read-step-pmi.py`).
 
 **Ficheiros:**
@@ -153,8 +163,11 @@ src/
   drawing/  folha de desenho: geometria 2D, primitivas, render, edição, exportação SVG/PDF/DXF (puros)
   ai/       assistente de BOM local e sugestões do Claude (opcional)
   geom/     matemática pura das superfícies GSD: splines, Gordon, Hermite, círculos
-  sim/      pré-processador (puro): caso neutro, Gmsh, CalculiX (deck e resultados), OpenFOAM, SU2
-tools/      agente local cad-runner (Node, sem dependências): corre os solvers e serve a aplicação
+  sim/      pré-processador (puro): caso neutro, Gmsh, CalculiX (deck e resultados), code_aster, OpenFOAM, SU2, XFOIL, GCI
+  script/   API dos scripts cad.*, estudos paramétricos, superfície de resposta (puros)
+  calc/     biblioteca de cálculos de engenharia com casos de verificação (pura)
+  galkeel/  análise integrada de painéis: carrega a galkeel-calculadora (vendor/, submódulo) sem a alterar
+tools/      agente local cad-runner (Node, sem dependências): corre os solvers e serve a aplicação; cad-script (lote)
   app/      interface Preact + Three.js: árvore, painel de propriedades, editor de esboço, visualizador
 tests/      testes Node (node:test) e e2e (Playwright)
 ```
@@ -196,15 +209,18 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
   - referências externas: a posição lida de uma montagem é guardada (não acompanha a montagem automaticamente: "Ler posição" de novo); peças em contexto completas (editar a peça dentro da montagem) continuam por fazer;
   - AP242: estrutura de montagem achatada (uma ocorrência por instância, sem subconjuntos aninhados).
 - Simulação:
-  - material isotrópico; sem contacto com atrito/separação (só colado, e só em faces planas coincidentes), sem transitório;
-  - estudos de montagem só no CalculiX; o adaptador do code_aster não foi verificado (o code_aster não pôde ser instalado neste ambiente);
+  - material isotrópico; só elementos sólidos tetraédricos (sem cascas, vigas, hexaedros nem métricas de qualidade da malha); contacto só em faces planas coincidentes (atrito só no CalculiX); sem transitório nem fadiga;
+  - o code_aster cobre estática, não linear, modal e contacto colado (não encurvadura, térmica nem atrito);
+  - XFOIL: a compilação Debian precisa da biblioteca `xfoil-nofpe`; ângulos que não convergem são omitidos (com uma segunda passagem automática);
+  - o copiloto só foi testado com respostas simuladas (sem chave da API neste ambiente);
   - SU2 não corrido neste ambiente; arrasto externo só de pressão; os cortes CFD interpolam valores de célula para os pontos (média das células vizinhas);
   - os solvers não são distribuídos com a aplicação: instalam-se à parte.
 - PMI (Fase 5):
   - só representação semântica no STEP (sem a apresentação gráfica: texto e linhas de chamada não vão no ficheiro); os visualizadores que só leem a apresentação não o mostram;
   - o afastamento inferior vai com sinal (−0,2), como pede a regra WR1 de `tolerance_value` (superior ≥ inferior); o leitor do OpenCASCADE 8.0 lê-o sem sinal (0,2), o que é uma divergência desse leitor;
   - ISO 286 só para furos E, F, G, H, JS e veios e, f, g, h, js, k, m, n, p, graus IT5–IT11, até 500 mm;
-  - não se mede a conformidade da peça (é a especificação de projeto, não a inspeção); o PMI ainda não passa para os desenhos 2D; só em peças (não em montagens).
+  - não se mede a conformidade da peça (é a especificação de projeto, não a inspeção); só em peças (não em montagens);
+  - no desenho: sem teste de visibilidade (um rótulo pode apontar para uma face oculta), ângulos como texto, colocação automática dos rótulos aproximada (arrastar para afinar).
 - O nome de uma face dividida pode mudar de sufixo (`~0`, `~1`) se a ordem geométrica das partes mudar. As referências por nome-base e por posição cobrem a maioria dos casos e deixam um aviso.
 
 ## Propriedade intelectual

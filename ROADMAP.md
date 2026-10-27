@@ -85,7 +85,9 @@ Pendente (passa para fases seguintes): concordância G3; *delete and heal* com p
 - ✅ Tags e atributos no corpo, em features e em faces, pesquisáveis em todo o projeto e exportáveis em CSV
 - ✅ Exportação STEP AP242 com PMI semântico (verificada com o leitor GD&T do OpenCASCADE); ✅ vistas de modelo (orientação + PMI mostrados) para MBD
 
-Pendente: apresentação gráfica do PMI no STEP (texto e linhas de chamada, polilinhas ou *tessellated annotation*), PMI importado para os desenhos 2D (cotas e quadros nas vistas), PMI em montagens, ISO 286 completa (todas as letras, IT01–IT18, até 3150 mm), leitura de PMI de STEP importados, comparação com medições (relatório de inspeção a partir do PMI).
+- ✅ PMI importado para os desenhos 2D (out. 2026): cotas com tolerância na vista em verdadeira grandeza (⌀ na vista do círculo), GD&T, referências, rugosidade e notas na vista de perfil, associativos ao modelo
+
+Pendente: apresentação gráfica do PMI no STEP (texto e linhas de chamada, polilinhas ou *tessellated annotation*), visibilidade e ângulos do PMI no desenho, PMI em montagens, ISO 286 completa (todas as letras, IT01–IT18, até 3150 mm), leitura de PMI de STEP importados, comparação com medições (relatório de inspeção a partir do PMI).
 
 ## Módulos (plugins), desenvolvidos em paralelo quando o núcleo o permitir
 - **nautica** (já existe um casco paramétrico simples com hidrostática de conceção):
@@ -122,12 +124,13 @@ Pendente: apresentação gráfica do PMI no STEP (texto e linhas de chamada, pol
 
 | Domínio | Escolha | Porquê | Estado na app |
 |---|---|---|---|
-| Estruturas e térmica (linear, modal, encurvadura, não linear, contacto) | **CalculiX** (ccx 2.23, GPL-2) | Formato tipo Abaqus muito usado e estável, binário leve em Linux/Windows, ótimo para PME (é o do PrePoMax e do FreeCAD) | ✅ F1: estática, modal, encurvadura, térmica; ✅ não linear (NLGEOM, plasticidade bilinear); ✅ montagens com contacto colado (*TIE); verificado com valores analíticos |
-| Estruturas avançadas (plasticidade, fadiga, cascas compósitas, dinâmica, civil) | **code_aster** (18.x, GPL-3) | O mais completo dos abertos (EDF), com validação industrial | Adaptador escrito (malha ASTER nativa + `.comm` + `.export`; estática linear/não linear e modal) — **por verificar**: o code_aster não pôde ser instalado neste ambiente |
+| Estruturas e térmica (linear, modal, encurvadura, não linear, contacto) | **CalculiX** (ccx 2.23, GPL-2) | Formato tipo Abaqus muito usado e estável, binário leve em Linux/Windows, ótimo para PME (é o do PrePoMax e do FreeCAD) | ✅ F1: estática, modal, encurvadura, térmica; ✅ não linear (NLGEOM, plasticidade bilinear); ✅ montagens com contacto colado (*TIE) e com atrito de Coulomb e separação (penalidade face a face); verificado com valores analíticos (atrito: μ·N a 0,001 %) |
+| Estruturas avançadas (plasticidade, fadiga, cascas compósitas, dinâmica, civil) | **code_aster** (18.x, GPL-3) | O mais completo dos abertos (EDF), com validação industrial | ✅ Verificado com o code_aster 18.1 (conda-forge): consola, pressão, modal, plasticidade uniaxial, elástica (GREEN_LAGRANGE) e montagens coladas (LIAISON_MAIL, material por corpo). Por fazer: encurvadura, térmica, contacto com atrito, cascas |
 | Dinâmica explícita (impacto, queda, *slamming*) | **OpenCourant** (ex-OpenRadioss, AGPL-3) | Único explícito aberto de nível industrial | Proposto: adaptador `_0000.rad`/`_0001.rad` (VALIDAR o estado do fork) |
 | Multifísica (térmico-fluido, eletromagnetismo, acústica) | **Elmer** (GPL / ElmerSolver LGPL) | Amplo e com boa documentação | Proposto (mais tarde) |
 | CFD geral (interno/externo, turbulência RANS, térmico, superfície livre VOF para cascos) | **OpenFOAM**, linha openfoam.com (v2606, GPL-3) | Referência aberta da indústria; dicionários estáveis entre versões anuais; pacotes Windows; *snappyHexMesh* para malhas hexa-dominantes com camadas | ✅ F1: simpleFoam interno/externo (laminar, k-ω SST, k-ε) com snappyHexMesh; verificado; ✅ F2: campos no 3D (patches e cortes) |
 | CFD compressível/aerodinâmica e otimização de forma (adjunto) | **SU2** (8.x, LGPL-2.1) | Solver adjunto para otimizar a forma — liga ao `rom-fea`/otimizador do esboço adaptativo | ✅ F1: configuração incompressível + malha Gmsh com marcadores (sem SU2 instalado neste ambiente: configuração não corrida) |
+| Perfis 2D (polares) | **XFOIL** (6.99, GPL-2) | Referência aberta para perfis subsónicos (painéis + camada-limite e^n) | ✅ polar no agente (NACA ou coordenadas), segunda passagem para ângulos sem convergência; verificado NACA 0012 a Re 1e6 (CLα 0,108/°, CDmin 0,0054) |
 | Malhador FEM e SU2 | **Gmsh** (4.15, GPL-2+) | O melhor malhador aberto de uso geral (tetra, quadráticos, grupos físicos, exporta `.inp`, `.su2`, `.msh`, `.med`) | ✅ F1 |
 | Malhador CFD | **snappyHexMesh** (OpenFOAM) | Hexa-dominante com camadas, a partir de STL | ✅ F1 |
 | Malhador embebido (futuro) | **Netgen** (LGPL) | Pode correr dentro da app como módulo substituível | Proposto |
@@ -147,7 +150,7 @@ Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, con
 
 Implementado: estudos FEM (CalculiX) e CFD (OpenFOAM/SU2) na peça, com as condições ligadas às faces pelo nome topológico; caso neutro (`case.json`) com as faces numeradas como no OpenCASCADE/Gmsh (verificado) e conferência dos grupos pelo centroide depois da malha; script Gmsh com grupos físicos e tamanhos; deck CalculiX escrito a partir da malha (C3D10/C3D4, nós dos C3D10 reordenados, faces dos elementos para pressão/convecção/fluxo, forças nodais consistentes, unidades mm–N–MPa–t); caso OpenFOAM completo (blockMesh, surfaceFeatureExtract, snappyHexMesh, simpleFoam, condições de turbulência, STL por patch em metros); configuração SU2; exportação em `.zip` com LEIA-ME e hipóteses. Verificado com os solvers reais: consola (flecha de Timoshenko a < 3 %, tensão de flexão M·c/I, reações), frequência própria (Euler–Bernoulli a < 3 %), condução 1D exata, conduta laminar (balanço de massa 0 %, queda de pressão coerente com Shah & London), caso externo com k-ω SST e camadas.
 
-Limitações: só material isotrópico; contacto só colado e só em faces planas coincidentes; sem transitório; forças só uniformes por área; SU2 não corrido neste ambiente; nos casos externos o resumo dá só a força de pressão (a parcela viscosa precisa do function object `forces`).
+Limitações: só material isotrópico; contacto (colado ou com atrito) só em faces planas coincidentes; sem transitório; forças só uniformes por área; SU2 não corrido neste ambiente; nos casos externos o resumo dá só a força de pressão (a parcela viscosa precisa do function object `forces`).
 
 Feito depois da F1 (out. 2026):
 - **Não linear no CalculiX**: grandes deslocamentos (NLGEOM) e plasticidade de von Mises com encruamento bilinear, em incrementos, com curva carga–deslocamento e deformação plástica equivalente. Verificado: tração uniaxial elastoplástica (ε = σ/E + (σ − σy)/Hp, erro < 0,5 %, εp médio < 1 %) e consola de Bisshopp–Drucker com PL²/EI = 1 (v/L = 0,3017 a < 3 %, u/L = 0,0566 a < 8 %).
@@ -210,6 +213,28 @@ Objetivo: o utilizador define o estudo e carrega em "Calcular"; a malha e o fich
 - `rom-fea`: os estudos parametrizados (variáveis → geometria → malha → ficheiro) são a base da amostragem do modelo de ordem reduzida.
 - `compósitos`: cascas laminadas (sequência de plies, orientação por roseta) exportadas como secções compostas (`*SHELL SECTION, COMPOSITE` / `PCOMP`).
 - `nautica`: casos de carga a partir das pressões de projeto calculadas na `galkeel-calculadora`.
+
+## Automação, análise integrada e cálculos (out. 2026) ✅ (com as limitações listadas)
+
+- ✅ **Convergência formal**: sondas (média/máximo numa face, nó mais próximo de um ponto) e refinamento automático até ao GCI alvo; verificado com tetraedros lineares (6 malhas, 434 → 162 981 elementos, GCI 2,1 %, extrapolado 0,1910 vs 0,1920 mm).
+- ✅ **Scripts** `cad.*` num worker isolado e em lote (`tools/cad-script.ts`): estudos paramétricos, superfície de resposta RBF com erro por validação cruzada, tabelas CSV, `cad.calc` e `cad.xfoil`; verificado contra Timoshenko (varrimento de L a < 3 %, previsão a < 5 %).
+- ✅ **Copiloto Claude** para gerar, corrigir e interpretar scripts (revisão humana obrigatória antes de correr). Testado só com respostas simuladas.
+- ✅ **Análise integrada Galkeel**: painéis do casco medidos no modelo → galkeel-calculadora (submódulo, ISO 12215-5:2008 legada) → verificação FEM com a mesma pressão (Roark corrigido a < 3 %) → relatório e envio ao caso no contrato `galkeel:calculator-result`, veredito sempre indeterminado.
+- ✅ **Biblioteca de cálculos** (ISA ISO 2533, asa finita DATCOM, NACA 4 dígitos, Euler–Johnson com a secção lida de uma face plana, encurvadura de placas), cada uma com referência, hipóteses e caso de verificação à mão; **XFOIL** no agente.
+
+Pendente: migrar a análise Galkeel para a ISO 12215-5:2019 quando a galkeel-calculadora a tiver (nunca reimplementar aqui); propor à galkeel-app uma etiqueta `cad-analysis` e alojar o CAD em `public/cad` (decisão de Juan; nada alterado na galkeel-app); mais cálculos (juntas aparafusadas VDI 2230, vigas, fadiga) só com referência e caso de verificação; AVL/VLM para asas; copiloto testado com a API real.
+
+## Posicionamento face ao SolidWorks, CATIA e FEM comercial (out. 2026)
+
+**Conclusão: ainda não compete como substituto.** É um CAD paramétrico com CAE integrado credível para peças e montagens pequenas, com os solvers abertos de referência (CalculiX, code_aster, OpenFOAM, XFOIL) verificados contra soluções analíticas, automação por scripts e IA e ligação ao fluxo da Galkeel. Para uso profissional faltam, por ordem de impacto:
+
+1. **Robustez do núcleo**: o OpenCASCADE em WASM falha em casos que o Parasolid/CGM resolvem (filetes complexos, cascas, booleanas degeneradas); falta medir a taxa de sucesso num conjunto de peças reais.
+2. **Escala**: montagens grandes (centenas de peças), modos leves, PDM/versões e trabalho em equipa.
+3. **Funcionalidades de produção**: chapa metálica, soldaduras/perfis, moldes, desenhos com cortes por patamares e normas completas, DWG.
+4. **FEM de nível formal**: cascas e vigas (estruturas de PRFV e chapa), hexaedros e métricas de qualidade da malha, contacto geral (faces curvas, auto-contacto), dinâmica e fadiga, compósitos laminados, e um **dossier de V&V** (benchmarks NAFEMS LE1/LE10/LE11, R0031, comparação com resultados publicados) — sem isto, não se defende um resultado perante um cliente ou um ON.
+5. **Certificação de software**: nenhum. Os resultados são apoio à decisão de engenharia, com hipóteses à vista.
+
+Onde já é diferenciador: CAD + FEM/CFD + scripts + IA no mesmo documento, solvers abertos sem custo de licença, rastreabilidade (hipóteses, edição da norma, versão da ferramenta) em cada resultado, e a ligação direta ao caso da Galkeel.
 
 ## API de plugins (evolução)
 - Hoje: features de plugin que geram um sólido e um painel de resultados.
