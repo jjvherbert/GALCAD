@@ -185,7 +185,7 @@ export function assemblyStudyCase(bodies: AsmBody[], s: FemStudy, scope: Ctx["sc
       const [sl, ms] = faces[pr.a].area <= faces[pr.b].area ? [pr.a, pr.b] : [pr.b, pr.a];
       c.groups[`T${k + 1}_S`] = [faces[sl].tag];
       c.groups[`T${k + 1}_M`] = [faces[ms].tag];
-      c.ties!.push({ name: `T${k + 1}`, slave: `T${k + 1}_S`, master: `T${k + 1}_M`, tolerance: tol });
+      c.ties!.push({ name: `T${k + 1}`, slave: `T${k + 1}_S`, master: `T${k + 1}_M`, tolerance: tol, slaveBody: `B${bodyOfTag(faces[sl].tag) + 1}`, masterBody: `B${bodyOfTag(faces[ms].tag) + 1}` });
     });
   }
   // corpos soltos: sem apoio e sem contacto colado

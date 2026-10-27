@@ -124,7 +124,7 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
   const m = s.material;
   return (
     <>
-      {!assembly && <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX (verificado)"], ["code_aster", "code_aster (adaptador por verificar)"]]} onChange={(solver) => up({ solver })} />}
+      <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX"], ["code_aster", "code_aster (EDF)"]]} onChange={(solver) => up({ solver })} />
       <Select label="Análise" value={s.analysis} options={[["static", "Estática linear"], ["modal", "Modal (frequências próprias)"], ["buckling", "Encurvadura linear"], ["thermal", "Térmica (regime permanente)"]]}
         onChange={(analysis) => up({ analysis, loads: s.loads.filter((l) => (analysis === "thermal" ? THERM : STRUCT).includes(l.kind)) })} />
       {s.analysis === "static" && (

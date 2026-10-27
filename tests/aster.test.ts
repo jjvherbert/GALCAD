@@ -82,7 +82,7 @@ test("code_aster: comandos da estática linear, não linear e modal", () => {
   assert.match(nl, /NOMBRE=8/);
   assert.match(nl, /_F\(CHARGE=CH, FONC_MULT=RAMPE\)/);
   assert.match(nl, /VARI_INTERNE=\('VARI_NOEU',\)/);
-  assert.match(asterCase({ ...base, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m).files["job.comm"], /RELATION='ELAS', DEFORMATION='GROT_GDEP'/);
+  assert.match(asterCase({ ...base, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m).files["job.comm"], /RELATION='ELAS', DEFORMATION='GREEN_LAGRANGE'/);
   const modal = asterCase({ ...base, analysis: "modal" }, m);
   assert.match(modal.files["job.comm"], /CALC_MODES\(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F\(NMAX_FREQ=4\)\)/);
   assert.ok(!/CH = AFFE_CHAR_MECA/.test(modal.files["job.comm"]));
@@ -104,7 +104,7 @@ test("code_aster: tabelas IMPR_TABLE → resultado com deslocamentos, von Mises 
   assert.equal(r.metrics.find((x) => x.key === "umax")!.value, 0.5);
   assert.equal(r.metrics.find((x) => x.key === "vmmax")!.value, 20);
   assert.deepEqual(r.reactions[0], [0, 0, 10]);
-  assert.ok(r.hypotheses.some((h) => /não verificado/.test(h)));
+  assert.ok(r.hypotheses.some((h) => /code_aster 18\.1/.test(h)));
   const f = asterResult({ ...base, analysis: "modal" }, parseMsh(MSH), { u: u.replace(/ 1 1\.0 /g, " 1 0.0 "), freq: " NUME_ORDRE FREQ\n 1 123.4\n 2 456.7\n" }, [1, 2, 3, 4]);
   assert.deepEqual(f.frequencies, [123.4, 456.7]);
 });

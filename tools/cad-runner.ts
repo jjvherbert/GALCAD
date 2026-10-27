@@ -65,7 +65,10 @@ export function tools() {
   const gmsh = process.env.CAD_GMSH ?? which("gmsh");
   const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
   const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
-  const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run");
+  // code_aster: PATH, ou um ambiente conda/micromamba "aster" (instalação recomendada: conda-forge)
+  const home = process.env.HOME ?? "";
+  const condaAster = [process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`, `${home}/micromamba/envs/aster/bin/run_aster`, `${home}/miniforge3/envs/aster/bin/run_aster`, "/opt/mamba/root/envs/aster/bin/run_aster", "/opt/conda/envs/aster/bin/run_aster"].find((p) => p && existsSync(p));
+  const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
   const foamDirect = which("simpleFoam");
   const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
   const version = (cmd: string | null, args: string[]) => {
@@ -169,7 +172,7 @@ async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean):
   const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab") }, ac.nodeOrder);
   const elements = solidBlocks(msh, c.bodies).reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
   const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
-  return { ok: true, physics: "fem", solver: "code_aster", summary, warnings: [...warnings, "Adaptador do code_aster ainda não verificado contra os casos analíticos: compare com o CalculiX"], fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
+  return { ok: true, physics: "fem", solver: "code_aster", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
 }
 
 async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
