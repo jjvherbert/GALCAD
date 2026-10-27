@@ -93,3 +93,9 @@ export function physicalBlocks(m: Msh, name: string): MshElementBlock[] {
   if (!p) return [];
   return m.blocks.filter((b) => b.dim === p.dim && (m.entityPhysicals.get(`${b.dim}:${b.entity}`) ?? []).includes(p.tag));
 }
+
+/** Blocos de tetraedros do caso: o grupo SOLID ou, nas montagens, os grupos dos corpos (B1, B2, …). */
+export function solidBlocks(m: Msh, bodies?: { group: string }[]): MshElementBlock[] {
+  const names = bodies?.length ? bodies.map((b) => b.group) : ["SOLID"];
+  return names.flatMap((n) => physicalBlocks(m, n)).filter((b) => b.type === 4 || b.type === 11);
+}

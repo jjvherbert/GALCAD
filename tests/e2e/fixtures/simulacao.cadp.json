@@ -147,6 +147,7 @@
             "alpha": 0.000012,
             "k": 50,
             "yield": 235,
+            "tangent": 2100,
             "source": "EN 10025-2 (valores nominais)"
           },
           "loads": [
@@ -225,8 +226,380 @@
           }
         }
       ]
+    },
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p2",
+      "name": "Lâmina A",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 100,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 100,
+              "y": 10
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 10
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": 100
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 10
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 5
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        }
+      ]
+    },
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p3",
+      "name": "Lâmina B",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 100,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 100,
+              "y": 10
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 10
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": 100
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 10
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 5
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        }
+      ]
     }
   ],
-  "assemblies": [],
+  "assemblies": [
+    {
+      "id": "a1",
+      "name": "Lâminas",
+      "components": [
+        {
+          "id": "c1",
+          "name": "Lâmina A<1>",
+          "ref": {
+            "kind": "part",
+            "id": "p2"
+          },
+          "placement": {
+            "t": [
+              0,
+              0,
+              0
+            ],
+            "r": [
+              0,
+              0,
+              0
+            ]
+          },
+          "fixed": true
+        },
+        {
+          "id": "c2",
+          "name": "Lâmina B<1>",
+          "ref": {
+            "kind": "part",
+            "id": "p3"
+          },
+          "placement": {
+            "t": [
+              0,
+              0,
+              5
+            ],
+            "r": [
+              0,
+              0,
+              0
+            ]
+          },
+          "fixed": true
+        }
+      ],
+      "mates": [],
+      "studies": [
+        {
+          "id": "s1",
+          "name": "Lâminas coladas — estática",
+          "physics": "fem",
+          "solver": "calculix",
+          "analysis": "static",
+          "material": {
+            "name": "Aço S235JR",
+            "E": 210000,
+            "nu": 0.3,
+            "density": 7.85,
+            "alpha": 0.000012,
+            "k": 50,
+            "yield": 235,
+            "tangent": 2100,
+            "source": "EN 10025-2 (valores nominais)"
+          },
+          "contact": {
+            "mode": "bonded"
+          },
+          "loads": [
+            {
+              "kind": "fixed",
+              "faces": [
+                {
+                  "kind": "face",
+                  "name": "c1/f2:side:l8"
+                },
+                {
+                  "kind": "face",
+                  "name": "c2/f2:side:l8"
+                }
+              ]
+            },
+            {
+              "kind": "force",
+              "faces": [
+                {
+                  "kind": "face",
+                  "name": "c1/f2:side:l6"
+                },
+                {
+                  "kind": "face",
+                  "name": "c2/f2:side:l6"
+                }
+              ],
+              "f": [
+                0,
+                0,
+                -100
+              ]
+            }
+          ],
+          "modes": 6,
+          "mesh": {
+            "size": 3,
+            "order": 2,
+            "curvature": 0
+          }
+        }
+      ]
+    }
+  ],
   "drawings": []
 }

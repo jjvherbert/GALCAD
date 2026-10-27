@@ -49,6 +49,7 @@ const ASM_TABS: typeof TABS = [
     { title: "BOM", ids: ["asm.bom"] },
   ] },
   { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.rebuild", "edit.forceRebuild", "asm.interference"] }] },
+  { id: "simulation", label: "Simulação", groups: [{ title: "Pré-processador", ids: ["sim.panel"] }] },
 ];
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

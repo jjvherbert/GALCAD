@@ -72,6 +72,10 @@ export class KernelClient {
     return this.call<StudyCaseResponse>({ type: "studyCase", doc, parts, study });
   }
 
+  assemblyStudyCase(project: CadProject, assembly: string, study: string): Promise<StudyCaseResponse> {
+    return this.call<StudyCaseResponse>({ type: "assemblyStudyCase", project, assembly, study });
+  }
+
   snapshot(doc: PartDoc, parts: PartDoc[], feature: string): Promise<SnapshotResponse> {
     return this.call<SnapshotResponse>({ type: "snapshot", doc, parts, feature });
   }

@@ -83,6 +83,7 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
 
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 export function asterCase(c: FemCase, m: Msh): AsterFiles {
+  if (c.bodies?.length) throw new Error("code_aster: os estudos de montagem (vários corpos, contacto colado) ainda só correm no CalculiX");
   if (c.analysis !== "static" && c.analysis !== "modal") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
   const { mail, nodeOrder, areas } = asterMesh(c, m);
   const warnings: string[] = [];

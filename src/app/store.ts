@@ -137,7 +137,8 @@ export interface State {
   /** Painel lateral alternativo: BOM ou assistente. */
   sidePanel: "bom" | "ai" | "knowledge" | "sim" | null;
   /** Simulação: último resultado do agente local, vista (campo, deformada, ampliação) e ligação ao agente. */
-  simResult: { studyId: string; result: import("./sim-client.ts").RunResult } | null;
+  /** `doc`: id da peça ou montagem do estudo. */
+  simResult: { doc: string; studyId: string; result: import("./sim-client.ts").RunResult } | null;
   simView: { field: number; disp: number; scale: number; hidden: string[] };
   simHidden: boolean;
   agent: { url: string; token: string };

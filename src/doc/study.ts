@@ -76,6 +76,13 @@ export interface FemStudy {
   /** Modos próprios (modal) ou de encurvadura. */
   modes?: number;
   mesh: SimMesh;
+  /**
+   * Montagens: material de cada corpo pelo caminho da instância ("c1", "c2/c1"); os restantes usam
+   * `material`. Nas montagens as faces das condições são "caminho/face".
+   */
+  bodyMaterials?: Record<string, SimMaterial>;
+  /** Montagens: faces planas coincidentes entre corpos coladas (bonded) ou independentes. */
+  contact?: { mode: "bonded" | "none"; tolerance?: number };
 }
 
 export interface CfdMesh {

@@ -111,9 +111,9 @@ function App() {
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
   // resultados de simulação (FEM) no 3D
   useEffect(() => {
-    const show = st.sidePanel === "sim" && !st.simHidden && st.active.kind === "part";
+    const show = st.sidePanel === "sim" && !st.simHidden && st.active.kind !== "drawing" && st.simResult?.doc === st.active.id;
     vp.current?.setSimResult(show ? resultView(st.simResult?.result) : null, st.simView);
-  }, [st.simResult, st.simView, st.simHidden, st.sidePanel, st.active, st.result]);
+  }, [st.simResult, st.simView, st.simHidden, st.sidePanel, st.active, st.result, st.asmResult]);
   // rede de controlo da forma livre em edição
   useEffect(() => {
     const d = st.edit?.draft;
@@ -161,7 +161,7 @@ function App() {
         {kind === "drawing" && <DrawingEditor />}
         {kind === "assembly" && (
           <aside class="side">
-            {st.mateEdit ? <MatePanel /> : st.componentEdit ? <ComponentPanel /> : st.sidePanel === "bom" ? <BomPanel /> : (
+            {st.mateEdit ? <MatePanel /> : st.componentEdit ? <ComponentPanel /> : st.sidePanel === "bom" ? <BomPanel /> : st.sidePanel === "sim" ? <SimPanel /> : (
               <>
                 <AssemblyTree />
                 <div class="side-info">

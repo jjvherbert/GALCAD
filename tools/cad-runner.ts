@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CfdCase, FemCase, SimCase } from "../src/sim/case.ts";
 import { femGeo, su2Geo } from "../src/sim/gmsh.ts";
-import { parseMsh, physicalBlocks, type Msh } from "../src/sim/msh.ts";
+import { parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
 import { calculixDeck, femResult, type FemResult } from "../src/sim/calculix.ts";
 import { openfoamCase } from "../src/sim/openfoam.ts";
 import { patchAverage, patchFlux, patchPressureForce, readBoundary, readFaces, readLabels, readPoints, readScalarField } from "../src/sim/foamread.ts";
@@ -139,6 +139,13 @@ function checkGroups(c: FemCase, m: Msh): string[] {
     const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
     if (d > 0.02 * diag || Math.abs(a - A) > 0.05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
   }
+  // montagens: cada volume da malha tem de cair na caixa do corpo correspondente
+  for (const b of c.bodies ?? []) {
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const bl of physicalBlocks(m, b.group)) for (const t of bl.conn) { const p = m.nodes.get(t)!; for (let q = 0; q < 3; q++) { lo[q] = Math.min(lo[q], p[q]); hi[q] = Math.max(hi[q], p[q]); } }
+    const dev = Math.max(...[0, 1, 2].map((q) => Math.max(Math.abs(lo[q] - b.bbox.min[q]), Math.abs(hi[q] - b.bbox.max[q]))));
+    if (!Number.isFinite(dev) || dev > 0.02 * diag) out.push(`Corpo ${b.name} (${b.group}): o volume da malha não corresponde ao corpo do CAD`);
+  }
   return out;
 }
 
@@ -160,7 +167,7 @@ async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean):
   const u = rd("u.tab");
   if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
   const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab") }, ac.nodeOrder);
-  const elements = physicalBlocks(msh, "SOLID").reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
+  const elements = solidBlocks(msh, c.bodies).reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
   const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
   return { ok: true, physics: "fem", solver: "code_aster", summary, warnings: [...warnings, "Adaptador do code_aster ainda não verificado contra os casos analíticos: compare com o CalculiX"], fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
 }

@@ -11,8 +11,10 @@ export function femGeo(c: FemCase): string {
     `// Unidades: mm. Elementos tetraédricos de ordem ${c.mesh.order}.`,
     `SetFactory("OpenCASCADE");`,
     `Merge "model.brep";`,
-    `Physical Volume("SOLID") = Volume{:};`,
   ];
+  // um corpo: grupo SOLID; montagem: um grupo por volume (B1, B2, … pela ordem do composto)
+  if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
+  else out.push(`Physical Volume("SOLID") = Volume{:};`);
   for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
   out.push(
     `Mesh.MeshSizeMax = ${c.mesh.size};`,

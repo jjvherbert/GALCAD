@@ -328,3 +328,6 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .sim-panel .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
 .sim-panel .row3 input, .sim-panel .row input { min-width: 0; width: 100%; }
 .sim-panel .row > * { min-width: 0; }
+.sim-panel .info-table select { width: 100%; min-width: 0; max-width: 100%; }
+.sim-panel .info-table td:first-child { word-break: break-word; }
+.sim-panel .info-table { table-layout: fixed; }

@@ -14,6 +14,7 @@ export const resultView = (r: RunResult | undefined | null): ResultView | null =
 
 async function caseFiles(studyId: string) {
   const st = store.state;
+  if (st.active.kind === "assembly") return store.kernel.assemblyStudyCase(st.project, st.active.id, studyId);
   return store.kernel.studyCase(st.doc, externalParts(st.project, st.doc), studyId);
 }
 

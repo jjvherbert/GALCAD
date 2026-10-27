@@ -4,7 +4,7 @@
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
 import type { FemCase } from "./case.ts";
-import { type Msh, physicalBlocks } from "./msh.ts";
+import { type Msh, physicalBlocks, solidBlocks } from "./msh.ts";
 import type { Metric } from "./convergence.ts";
 
 /** Faces de um tetraedro (cantos, base 0) pela numeração do CalculiX: F1 = 1-2-3, F2 = 1-4-2, F3 = 2-4-3, F4 = 3-4-1. */
@@ -32,15 +32,22 @@ const key3 = (a: number, b: number, c: number) => [a, b, c].sort((x, y) => x - y
 
 export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];
-  const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
-  if (!vol.length) throw new Error("A malha não tem tetraedros no grupo SOLID");
+  const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
+  const vol = solidBlocks(m, c.bodies);
+  if (!vol.length) throw new Error(`A malha não tem tetraedros nos grupos ${groupsOfBodies.join(", ")}`);
   const quad = vol[0].type === 11;
   const per = quad ? 10 : 4;
-  // elementos de volume (numeração sequencial) e mapa face → (elemento, n.º da face)
+  // elementos de volume (numeração sequencial, corpo a corpo) e mapa face → (elemento, n.º da face)
   const elems: number[][] = [];
-  for (const b of vol) for (let k = 0; k < b.conn.length; k += per) {
-    const e = b.conn.slice(k, k + per);
-    elems.push(quad ? TET10_ORDER.map((i) => e[i]) : e);
+  const bodyRange: [number, number][] = [];
+  for (const g of groupsOfBodies) {
+    const first = elems.length + 1;
+    for (const b of physicalBlocks(m, g).filter((x) => x.type === 4 || x.type === 11)) for (let k = 0; k < b.conn.length; k += per) {
+      const e = b.conn.slice(k, k + per);
+      elems.push(quad ? TET10_ORDER.map((i) => e[i]) : e);
+    }
+    if (elems.length < first) throw new Error(`O corpo ${g} não tem elementos na malha`);
+    bodyRange.push([first, elems.length]);
   }
   const faceOf = new Map<string, [number, number]>();
   elems.forEach((e, i) => TET_FACES.forEach((f, j) => faceOf.set(key3(e[f[0]], e[f[1]], e[f[2]]), [i + 1, j + 1])));
@@ -93,20 +100,40 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   // de um nó é a carga aplicada nele, que não é reação)
   const dofSets = [0, 1, 2].map((k) => c.loads.flatMap((ld) => (ld.kind === "fixed" || (ld.kind === "displacement" && ld.u[k] !== null) ? [`N_${ld.group}`] : [])));
   if (!thermal) dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`)); });
-  const mat = c.material;
-  L.push("*MATERIAL, NAME=MAT", `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
-  if (thermal) {
-    L.push("*CONDUCTIVITY", fmt(mat.k ?? 50));
-  } else {
+  const material = (name: string, mat: FemCase["material"]) => {
+    L.push(`*MATERIAL, NAME=${name}`, `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
+    if (thermal) {
+      L.push("*CONDUCTIVITY", fmt(mat.k ?? 50));
+      return;
+    }
     L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
     if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
     if (c.nonlinear?.plasticity) {
+      if (!(mat.yield! > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
       // bilinear: σ = σy + Hp·εp, com o módulo plástico Hp = E·Et/(E − Et) (Et = módulo tangente)
       const Et = mat.tangent ?? 0, Hp = (mat.E * Et) / (mat.E - Et);
       L.push("*PLASTIC", `${fmt(mat.yield!)}, 0.`, `${fmt(mat.yield! + Hp)}, 1.`);
     }
+  };
+  if (c.bodies?.length) {
+    // um conjunto de elementos e um material por corpo da montagem
+    c.bodies.forEach((b, k) => {
+      L.push(`*ELSET, ELSET=${b.group}, GENERATE`, `${bodyRange[k][0]}, ${bodyRange[k][1]}, 1`);
+      material(`MAT_${b.group}`, b.material);
+      L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
+    });
+  } else {
+    material("MAT", c.material);
+    L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
   }
-  L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
+  // contacto colado: nós da face escrava presos (por MPC) às faces dos elementos da face mestra
+  for (const t of c.ties ?? []) {
+    const master = tris[t.master].filter((x) => x.face);
+    if (!tris[t.slave]?.length || !master.length) { warnings.push(`Contacto ${t.name}: faces sem malha`); continue; }
+    L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=NODE`, `N_${t.slave}`);
+    L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face![0]}, S${x.face![1]}`));
+    L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
+  }
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 
   const bcs: string[] = [], loads: string[] = [];
@@ -321,7 +348,7 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportL
 export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnType<typeof parseDat>): FemResult {
   const r = { blocks };
   // superfície exterior: faces de tetraedro usadas uma só vez
-  const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
+  const vol = solidBlocks(m, c.bodies);
   const count = new Map<string, { n: number[]; k: number }>();
   for (const b of vol) {
     const per = b.type === 11 ? 10 : 4;

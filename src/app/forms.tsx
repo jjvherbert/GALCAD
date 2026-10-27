@@ -117,9 +117,10 @@ export function RefList({ field, label, accept, refs, onChange, single }: { fiel
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => {
     if (p.kind !== "face" && p.kind !== "edge") return;
-    const ref: TopoRef = { kind: p.kind, name: p.name, hint: p.hint };
-    const has = refs.some((r) => r.name === p.name);
-    onChange(single ? [ref] : has ? refs.filter((r) => r.name !== p.name) : [...refs, ref]);
+    // na montagem, a face leva o caminho do componente: "c2/f2:side:l8" (estudos da montagem)
+    const ref: TopoRef = { kind: p.kind, name: p.component ? `${p.component}/${p.name}` : p.name, hint: p.hint };
+    const has = refs.some((r) => r.name === ref.name);
+    onChange(single ? [ref] : has ? refs.filter((r) => r.name !== ref.name) : [...refs, ref]);
   });
   const what = accept.map((a) => (a === "face" ? "faces" : "arestas")).join(" ou ");
   return (

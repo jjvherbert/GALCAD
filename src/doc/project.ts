@@ -3,6 +3,7 @@
 // Um ficheiro antigo de uma só peça (format "cadp") abre como um projeto com essa peça.
 import type { CadDocument, Expr, Feature, StdAxis, StdPlane, TopoRef, Variable, Vec3 } from "./types.ts";
 import { parseDocument } from "./io.ts";
+import type { FemStudy } from "./study.ts";
 
 // ---------------------------------------------------------------------------
 // Propriedades (BOM, legenda)
@@ -75,6 +76,8 @@ export interface AssemblyDoc {
   mates: Mate[];
   properties?: PartProperties;
   variables?: Variable[];
+  /** Estudos FEM da montagem (vários corpos, material por corpo, contacto colado). */
+  studies?: FemStudy[];
 }
 
 // ---------------------------------------------------------------------------

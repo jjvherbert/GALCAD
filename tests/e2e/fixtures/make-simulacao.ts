@@ -2,7 +2,7 @@
 import { writeFileSync } from "node:fs";
 import { SketchBuilder } from "../../helpers.ts";
 import { addFeature } from "../../../src/doc/io.ts";
-import { type CadProject, newPart, newProject, serializeProject } from "../../../src/doc/project.ts";
+import { type CadProject, newAssembly, newPart, newProject, serializeProject } from "../../../src/doc/project.ts";
 import { SIM_MATERIALS } from "../../../src/doc/study.ts";
 
 const pr: CadProject = { ...newProject("Simulação"), parts: [] };
@@ -23,5 +23,28 @@ p.studies = [{
   iterations: 300, mesh: { size: 1.25, surfaceLevel: [0, 0], layers: 0 },
 }];
 pr.parts.push(p);
+// montagem: duas lâminas 100 × 10 × 5 empilhadas e coladas (comportam-se como a consola 100 × 10 × 10)
+for (const name of ["Lâmina A", "Lâmina B"]) {
+  const k = new SketchBuilder();
+  k.rect(0, 0, 100, 10, 100, 10);
+  let q = newPart(pr, name);
+  q = { ...q, ...addFeature(q, k.build()).doc };
+  q = { ...q, ...addFeature(q, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 5 } }).doc };
+  pr.parts.push(q);
+}
+const asm = newAssembly(pr, "Lâminas");
+asm.components = [
+  { id: "c1", name: "Lâmina A<1>", ref: { kind: "part", id: pr.parts[1].id }, placement: { t: [0, 0, 0], r: [0, 0, 0] }, fixed: true },
+  { id: "c2", name: "Lâmina B<1>", ref: { kind: "part", id: pr.parts[2].id }, placement: { t: [0, 0, 5], r: [0, 0, 0] }, fixed: true },
+];
+asm.studies = [{
+  id: "s1", name: "Lâminas coladas — estática", physics: "fem", solver: "calculix", analysis: "static", material: { ...SIM_MATERIALS[0] }, contact: { mode: "bonded" },
+  loads: [
+    { kind: "fixed", faces: [{ kind: "face", name: "c1/f2:side:l8" }, { kind: "face", name: "c2/f2:side:l8" }] },
+    { kind: "force", faces: [{ kind: "face", name: "c1/f2:side:l6" }, { kind: "face", name: "c2/f2:side:l6" }], f: [0, 0, -100] },
+  ],
+  modes: 6, mesh: { size: 3, order: 2, curvature: 0 },
+}];
+pr.assemblies.push(asm);
 writeFileSync(new URL("./simulacao.cadp.json", import.meta.url), serializeProject(pr));
 console.log("ok");

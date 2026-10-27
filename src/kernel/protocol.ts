@@ -15,6 +15,7 @@ export type Request =
   | { type: "snapshot"; doc: PartDoc; parts: PartDoc[]; feature: string }
   /** Ficheiros do caso de simulação de um estudo da peça (pré-processador). */
   | { type: "studyCase"; doc: PartDoc; parts: PartDoc[]; study: string }
+  | { type: "assemblyStudyCase"; project: CadProject; assembly: string; study: string }
   | { type: "export"; format: ExportFormat; name: string }
   | { type: "curvature"; kind: CurvatureKind }
   | { type: "deviation" }

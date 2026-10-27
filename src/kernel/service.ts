@@ -8,11 +8,12 @@ import type { NamedEdge } from "./naming.ts";
 import type { CadDocument } from "../doc/types.ts";
 import { Engine } from "./rebuild.ts";
 import { type CadProject, type PartProperties, DEFAULT_DENSITY } from "../doc/project.ts";
+import { resolveVariables } from "../doc/variables.ts";
 import { configuredDoc, runChecks, splitPartKey } from "../doc/knowledge.ts";
 import type { PartDoc } from "../doc/project.ts";
 import type { BuildEnv } from "./context.ts";
 import { freezeGeom, publish } from "./features/external.ts";
-import { studyCase } from "./sim.ts";
+import { type AsmBody, assemblyStudyCase, singleSolid, studyCase } from "./sim.ts";
 import { SHEET_COLOR, SOLID_COLOR, type StepBody, type StepPart, stepAssembly, stepPart } from "./step242.ts";
 
 /** Hash curto (FNV-1a de 32 bits) de um texto, para revisões. */
@@ -377,6 +378,42 @@ export class KernelService {
     const files: Record<string, string> = {};
     for (const [k, v] of Object.entries(out.files)) files[k] = typeof v === "string" ? v : new TextDecoder().decode(v);
     return { case: out.case, files, warnings: out.warnings };
+  }
+
+  /**
+   * Caso de simulação de um estudo da montagem: resolve os mates, posiciona o sólido de cada
+   * instância e junta-os num composto (um volume por corpo), com o contacto colado detetado.
+   */
+  async assemblyStudyCase(project: CadProject, id: string, studyId: string): Promise<StudyCaseResponse> {
+    const asmDoc = project.assemblies.find((a) => a.id === id);
+    if (!asmDoc) throw new Error("Montagem inexistente");
+    const study = asmDoc.studies?.find((s) => s.id === studyId);
+    if (!study) throw new Error("Estudo inexistente");
+    const builds = new Map<string, PartBuild>();
+    const get = async (pid: string) => { let b = builds.get(pid); if (!b) { b = await this.partBuild(project, pid); builds.set(pid, b); } return b; };
+    const asm = await solveAssembly(project, id, get);
+    if (!asm.ok) throw new Error(`A montagem não está resolvida: ${asm.messages.join("; ")}`);
+    const arena = new Arena();
+    setArena(arena);
+    try {
+      const o = oc();
+      const bodies: AsmBody[] = asm.instances.flatMap((i) => {
+        const b = builds.get(i.part);
+        if (!b?.ctx.body) return [];
+        const solid = singleSolid(b.ctx);
+        const t = T(new o.gp_Trsf());
+        const R = i.pose.R, p = i.pose.t;
+        t.SetValues(R[0], R[1], R[2], p[0], R[3], R[4], R[5], p[1], R[6], R[7], R[8], p[2]);
+        return [{ path: i.path.join("/"), name: i.names.join(" / "), ctx: b.ctx, solid, placed: T(T(new o.BRepBuilderAPI_Transform(solid, t, true, false)).Shape()) }];
+      });
+      const out = assemblyStudyCase(bodies, study, resolveVariables(asmDoc.variables ?? []).scope, study.name);
+      const files: Record<string, string> = {};
+      for (const [k, v] of Object.entries(out.files)) files[k] = typeof v === "string" ? v : new TextDecoder().decode(v);
+      return { case: out.case, files, warnings: out.warnings };
+    } finally {
+      arena.free();
+      setArena(this.asmArena);
+    }
   }
 
   /** Normais exatas por vértice da última malha. */

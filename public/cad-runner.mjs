@@ -11,9 +11,10 @@ function femGeo(c) {
 		`// Gerado pelo CAD protótipo — ${c.title}`,
 		`// Unidades: mm. Elementos tetraédricos de ordem ${c.mesh.order}.`,
 		`SetFactory("OpenCASCADE");`,
-		`Merge "model.brep";`,
-		`Physical Volume("SOLID") = Volume{:};`
+		`Merge "model.brep";`
 	];
+	if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
+	else out.push(`Physical Volume("SOLID") = Volume{:};`);
 	for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
 	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${c.mesh.minSize};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${c.mesh.order};`, `Mesh.HighOrderOptimize = ${c.mesh.order === 2 ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = 1;`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = 0;`, `Mesh.SaveAll = 0;`);
 	for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
@@ -141,6 +142,10 @@ function physicalBlocks(m, name) {
 	if (!p) return [];
 	return m.blocks.filter((b) => b.dim === p.dim && (m.entityPhysicals.get(`${b.dim}:${b.entity}`) ?? []).includes(p.tag));
 }
+/** Blocos de tetraedros do caso: o grupo SOLID ou, nas montagens, os grupos dos corpos (B1, B2, …). */
+function solidBlocks(m, bodies) {
+	return (bodies?.length ? bodies.map((b) => b.group) : ["SOLID"]).flatMap((n) => physicalBlocks(m, n)).filter((b) => b.type === 4 || b.type === 11);
+}
 // src/sim/calculix.ts
 /** Faces de um tetraedro (cantos, base 0) pela numeração do CalculiX: F1 = 1-2-3, F2 = 1-4-2, F3 = 2-4-3, F4 = 3-4-1. */
 const TET_FACES = [
@@ -186,14 +191,21 @@ const key3 = (a, b, c) => [
 ].sort((x, y) => x - y).join(",");
 function calculixDeck(c, m) {
 	const warnings = [];
-	const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
-	if (!vol.length) throw new Error("A malha não tem tetraedros no grupo SOLID");
+	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
+	const vol = solidBlocks(m, c.bodies);
+	if (!vol.length) throw new Error(`A malha não tem tetraedros nos grupos ${groupsOfBodies.join(", ")}`);
 	const quad = vol[0].type === 11;
 	const per = quad ? 10 : 4;
 	const elems = [];
-	for (const b of vol) for (let k = 0; k < b.conn.length; k += per) {
-		const e = b.conn.slice(k, k + per);
-		elems.push(quad ? TET10_ORDER$1.map((i) => e[i]) : e);
+	const bodyRange = [];
+	for (const g of groupsOfBodies) {
+		const first = elems.length + 1;
+		for (const b of physicalBlocks(m, g).filter((x) => x.type === 4 || x.type === 11)) for (let k = 0; k < b.conn.length; k += per) {
+			const e = b.conn.slice(k, k + per);
+			elems.push(quad ? TET10_ORDER$1.map((i) => e[i]) : e);
+		}
+		if (elems.length < first) throw new Error(`O corpo ${g} não tem elementos na malha`);
+		bodyRange.push([first, elems.length]);
 	}
 	const faceOf = /* @__PURE__ */ new Map();
 	elems.forEach((e, i) => TET_FACES.forEach((f, j) => faceOf.set(key3(e[f[0]], e[f[1]], e[f[2]]), [i + 1, j + 1])));
@@ -258,18 +270,39 @@ function calculixDeck(c, m) {
 	if (!thermal) dofSets.forEach((sets, k) => {
 		if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`));
 	});
-	const mat = c.material;
-	L.push("*MATERIAL, NAME=MAT", `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
-	if (thermal) L.push("*CONDUCTIVITY", fmt(mat.k ?? 50));
-	else {
+	const material = (name, mat) => {
+		L.push(`*MATERIAL, NAME=${name}`, `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
+		if (thermal) {
+			L.push("*CONDUCTIVITY", fmt(mat.k ?? 50));
+			return;
+		}
 		L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
 		if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
 		if (c.nonlinear?.plasticity) {
+			if (!(mat.yield > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
 			const Et = mat.tangent ?? 0, Hp = mat.E * Et / (mat.E - Et);
 			L.push("*PLASTIC", `${fmt(mat.yield)}, 0.`, `${fmt(mat.yield + Hp)}, 1.`);
 		}
+	};
+	if (c.bodies?.length) c.bodies.forEach((b, k) => {
+		L.push(`*ELSET, ELSET=${b.group}, GENERATE`, `${bodyRange[k][0]}, ${bodyRange[k][1]}, 1`);
+		material(`MAT_${b.group}`, b.material);
+		L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
+	});
+	else {
+		material("MAT", c.material);
+		L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
 	}
-	L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
+	for (const t of c.ties ?? []) {
+		const master = tris[t.master].filter((x) => x.face);
+		if (!tris[t.slave]?.length || !master.length) {
+			warnings.push(`Contacto ${t.name}: faces sem malha`);
+			continue;
+		}
+		L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=NODE`, `N_${t.slave}`);
+		L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
+		L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
+	}
 	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 	const bcs = [], loads = [];
 	const cload = /* @__PURE__ */ new Map();
@@ -521,7 +554,7 @@ function femResult(c, m, frd, dat, supportLoad = [
 */
 function femResultFrom(c, m, blocks, d) {
 	const r = { blocks };
-	const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
+	const vol = solidBlocks(m, c.bodies);
 	const count = /* @__PURE__ */ new Map();
 	for (const b of vol) {
 		const per = b.type === 11 ? 10 : 4;
@@ -1433,6 +1466,7 @@ function asterMesh(c, m) {
 }
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 function asterCase(c, m) {
+	if (c.bodies?.length) throw new Error("code_aster: os estudos de montagem (vários corpos, contacto colado) ainda só correm no CalculiX");
 	if (c.analysis !== "static" && c.analysis !== "modal") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
 	const { mail, nodeOrder, areas } = asterMesh(c, m);
 	const warnings = [];
@@ -2079,6 +2113,30 @@ function checkGroups(c, m) {
 		const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
 		if (d > .02 * diag || Math.abs(a - A) > .05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
 	}
+	for (const b of c.bodies ?? []) {
+		const lo = [
+			Infinity,
+			Infinity,
+			Infinity
+		], hi = [
+			-Infinity,
+			-Infinity,
+			-Infinity
+		];
+		for (const bl of physicalBlocks(m, b.group)) for (const t of bl.conn) {
+			const p = m.nodes.get(t);
+			for (let q = 0; q < 3; q++) {
+				lo[q] = Math.min(lo[q], p[q]);
+				hi[q] = Math.max(hi[q], p[q]);
+			}
+		}
+		const dev = Math.max(...[
+			0,
+			1,
+			2
+		].map((q) => Math.max(Math.abs(lo[q] - b.bbox.min[q]), Math.abs(hi[q] - b.bbox.max[q]))));
+		if (!Number.isFinite(dev) || dev > .02 * diag) out.push(`Corpo ${b.name} (${b.group}): o volume da malha não corresponde ao corpo do CAD`);
+	}
 	return out;
 }
 /** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
@@ -2112,7 +2170,7 @@ async function runAster(c, dir, log, regenerate) {
 		reac: rd("reac.tab"),
 		peeq: rd("peeq.tab")
 	}, ac.nodeOrder);
-	const elements = physicalBlocks(msh, "SOLID").reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
+	const elements = solidBlocks(msh, c.bodies).reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
 	return {
 		ok: true,
 		physics: "fem",

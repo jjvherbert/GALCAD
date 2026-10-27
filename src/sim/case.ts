@@ -35,6 +35,13 @@ export interface FemCase {
   loads: FemCaseLoad[];
   mesh: { size: number; minSize: number; curvature: number; order: 1 | 2; local: { group: string; size: number }[] };
   bbox: { min: V3; max: V3 };
+  /**
+   * Montagens: um corpo por volume (volume Gmsh k+1 → grupo B<k+1>) com o seu material e caixa
+   * envolvente; sem `bodies` o caso tem um só corpo (grupo SOLID).
+   */
+  bodies?: { group: string; path: string; name: string; material: SimMaterial; bbox: { min: V3; max: V3 } }[];
+  /** Contacto colado entre faces de corpos diferentes: grupos de faces escravo/mestre. */
+  ties?: { name: string; slave: string; master: string; tolerance: number }[];
   hypotheses: string[];
 }
 

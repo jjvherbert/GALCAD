@@ -38,25 +38,29 @@ function Vec3Input({ label, unit, value, onChange }: { label: string; unit: stri
 
 export function SimPanel() {
   const st = useStore();
-  const studies = st.doc.studies ?? [];
+  // estudos da peça ativa ou, na montagem, da montagem (só FEM: vários corpos e contacto colado)
+  const asm = store.activeAssembly() ?? null;
+  const studies: Study[] = asm ? asm.studies ?? [] : st.doc.studies ?? [];
   const [sel, setSel] = useState<string>(studies[0]?.id ?? "");
   const s = studies.find((x) => x.id === sel) ?? studies[0];
-  const save = (next: Study[], label = "Estudos") => store.commitDoc("part", { ...st.doc, studies: next }, label, true);
+  const save = (next: Study[], label = "Estudos") => (asm ? store.commitAssembly({ ...asm, studies: next as FemStudy[] }, label, true) : store.commitDoc("part", { ...st.doc, studies: next }, label, true));
   const up = (patch: Partial<Study>) => s && save(studies.map((x) => (x.id === s.id ? ({ ...x, ...patch } as Study) : x)));
   const add = (kind: "fem" | "cfd") => {
     const n = studies.reduce((m, x) => Math.max(m, Number(x.id.slice(1)) || 0), 0) + 1;
     const ns = kind === "fem" ? newFemStudy(`s${n}`, n) : newCfdStudy(`s${n}`, n);
-    if (kind === "fem" && st.doc.properties?.material) {
+    if (kind === "fem" && st.doc.properties?.material && !asm) {
       const m = SIM_MATERIALS.find((x) => x.name === st.doc.properties!.material);
       if (m) (ns as FemStudy).material = { ...m };
     }
+    if (asm && ns.physics === "fem") ns.contact = { mode: "bonded" };
     save([...studies, ns], "Novo estudo");
     setSel(ns.id);
   };
+  const docId = asm?.id ?? st.doc.id;
   return (
     <div class="knowledge-panel sim-panel">
       <div class="tree-head">
-        <b>Simulação — {st.doc.name}</b>
+        <b>Simulação — {asm?.name ?? st.doc.name}</b>
         <button class="small" onClick={() => store.set({ sidePanel: null, simResult: null })}>← Árvore</button>
       </div>
       <div class="row">
@@ -65,26 +69,62 @@ export function SimPanel() {
           {!studies.length && <option value="">— sem estudos —</option>}
         </select>
         <button class="small" onClick={() => add("fem")}>+ FEM</button>
-        <button class="small" onClick={() => add("cfd")}>+ CFD</button>
+        {!asm && <button class="small" onClick={() => add("cfd")}>+ CFD</button>}
         {s && <button class="icon" aria-label="Apagar estudo" onClick={() => { save(studies.filter((x) => x.id !== s.id), "Apagar estudo"); setSel(""); }}>✕</button>}
       </div>
       {s && <Field label="Nome"><input value={s.name} onChange={(e) => up({ name: (e.target as HTMLInputElement).value })} /></Field>}
-      {s?.physics === "fem" && <FemEditor s={s} up={up} />}
+      {s?.physics === "fem" && <FemEditor s={s} up={up} assembly={!!asm} />}
+      {s?.physics === "fem" && asm && <AssemblyBodies s={s} up={up} />}
       {s?.physics === "cfd" && <CfdEditor s={s} up={up} />}
-      {s && <RunBox s={s} />}
-      {!s && <p class="field-hint">Os estudos preparam o modelo de análise dentro do CAD: condições ligadas às faces pelo nome topológico, malha e ficheiros dos solvers abertos (CalculiX para estruturas e térmica; OpenFOAM ou SU2 para escoamentos).</p>}
+      {s && <RunBox s={s} doc={docId} />}
+      {!s && <p class="field-hint">{asm
+        ? "Os estudos da montagem analisam vários corpos de uma vez: cada instância com o seu material e as faces planas coincidentes entre corpos coladas (contacto colado, *TIE no CalculiX). As faces das condições escolhem-se nos componentes."
+        : "Os estudos preparam o modelo de análise dentro do CAD: condições ligadas às faces pelo nome topológico, malha e ficheiros dos solvers abertos (CalculiX para estruturas e térmica; OpenFOAM ou SU2 para escoamentos)."}</p>}
     </div>
   );
 }
 
-function FemEditor({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
+/** Montagem: material de cada corpo (instância) e modo de contacto entre corpos. */
+function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
+  const st = useStore();
+  const inst = st.asmResult?.instances ?? [];
+  const mats = s.bodyMaterials ?? {};
+  return (
+    <>
+      <h3>Corpos e contacto</h3>
+      <Select label="Contacto entre corpos" value={s.contact?.mode ?? "bonded"} options={[["bonded", "Colado nas faces planas coincidentes"], ["none", "Sem ligação (corpos independentes)"]]} onChange={(mode) => up({ contact: { ...s.contact, mode } })} />
+      <table class="info-table">
+        {inst.map((i) => (
+          <tr key={i.path}>
+            <td>{i.name}</td>
+            <td>
+              <select aria-label={`Material de ${i.name}`} value={mats[i.path]?.name ?? ""} onChange={(e) => {
+                const m = SIM_MATERIALS.find((x) => x.name === (e.target as HTMLSelectElement).value);
+                const next = { ...mats };
+                if (m) next[i.path] = { ...m }; else delete next[i.path];
+                up({ bodyMaterials: next });
+              }}>
+                <option value="">Material do estudo</option>
+                {SIM_MATERIALS.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
+              </select>
+            </td>
+          </tr>
+        ))}
+      </table>
+      {!inst.length && <p class="muted">Sem instâncias resolvidas.</p>}
+      <p class="field-hint">Faces curvas em contacto (pinos, veios) não são coladas automaticamente; o contacto com atrito/separação fica para uma etapa seguinte.</p>
+    </>
+  );
+}
+
+function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>) => void; assembly?: boolean }) {
   const thermal = s.analysis === "thermal";
   const kinds = thermal ? THERM : STRUCT;
   const setLoad = (i: number, l: FemLoad) => up({ loads: s.loads.map((x, k) => (k === i ? l : x)) });
   const m = s.material;
   return (
     <>
-      <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX (verificado)"], ["code_aster", "code_aster (adaptador por verificar)"]]} onChange={(solver) => up({ solver })} />
+      {!assembly && <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX (verificado)"], ["code_aster", "code_aster (adaptador por verificar)"]]} onChange={(solver) => up({ solver })} />}
       <Select label="Análise" value={s.analysis} options={[["static", "Estática linear"], ["modal", "Modal (frequências próprias)"], ["buckling", "Encurvadura linear"], ["thermal", "Térmica (regime permanente)"]]}
         onChange={(analysis) => up({ analysis, loads: s.loads.filter((l) => (analysis === "thermal" ? THERM : STRUCT).includes(l.kind)) })} />
       {s.analysis === "static" && (
@@ -193,19 +233,19 @@ const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(2)} %` : "
 const num = (x: number) => (Number.isFinite(x) ? (Math.abs(x) >= 1e4 || (Math.abs(x) < 1e-3 && x !== 0) ? x.toExponential(3) : x.toPrecision(5)) : "—");
 const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida" } as const;
 
-function RunBox({ s }: { s: Study }) {
+function RunBox({ s, doc }: { s: Study; doc: string }) {
   const st = useStore();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [conv, setConv] = useState(false);
   const [ratio, setRatio] = useState(1.5);
   const a = st.agent;
-  const res = st.simResult?.studyId === s.id ? st.simResult : null;
+  const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult : null;
   const run = async () => {
     setBusy(true);
     try {
       const { result } = await runStudy(s.id, a.url, a.token, conv ? { ratio } : undefined);
-      store.set({ simResult: { studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, message: `Calculado em ${result.seconds.toFixed(1)} s` });
+      store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, message: `Calculado em ${result.seconds.toFixed(1)} s` });
     } catch (e) {
       store.set({ error: (e as Error).message });
     } finally {

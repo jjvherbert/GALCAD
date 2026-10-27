@@ -84,6 +84,21 @@ async function main() {
       } else R.push("- CFD no agente saltado (OpenFOAM não instalado)");
       await p.click(".sim-panel button:has-text('Árvore')");
       check("corpo volta a aparecer", (await p.$eval(".viewport", (e) => e.dataset.sim)) === "");
+      // estudo da montagem: duas lâminas coladas ≈ a consola inteira
+      await p.click(".doc-tab:has-text('Lâminas')");
+      await p.waitForFunction(() => /Lâmina B<1>/.test(document.querySelector(".assembly-tree")?.textContent ?? ""), null, { timeout: 90000 });
+      await p.click("[role=tab]:has-text('Simulação')");
+      await p.click(".commands button[title^='Simulação']");
+      await p.waitForSelector(".sim-panel");
+      const ap = await p.textContent(".sim-panel");
+      check("montagem: painel com corpos e contacto", /Lâminas coladas/.test(ap) && /Colado nas faces planas/.test(ap) && /Lâmina A<1>/.test(ap), ap.slice(0, 200));
+      await p.click(".sim-panel button:has-text('Calcular no agente local')");
+      await p.waitForFunction(() => /Deslocamento máx\./.test(document.querySelector(".sim-panel .info-table:last-of-type")?.textContent ?? "") || /CalculiX/.test(document.querySelector(".sim-panel .kw-item.ok")?.textContent ?? ""), null, { timeout: 240000 });
+      const at = (await p.textContent(".sim-panel .kw-item.ok")).replace(/\s+/g, " ");
+      const ad = Number(at.match(/Deslocamento máx\.\s*([\d.]+) mm/)?.[1]);
+      check("montagem: flecha das lâminas coladas ≈ 0,192 mm", Math.abs(ad - 0.192) < 0.01 && /contacto colado/.test(await p.textContent(".sim-panel details:has(summary:text('Hipóteses'))")), at.slice(0, 160));
+      check("montagem: resultado no 3D", (await p.$eval(".viewport", (e) => e.dataset.sim)) === "1");
+      await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-simulacao-montagem.png") });
     } else R.push("- cálculo no agente saltado (Gmsh/CalculiX não instalados)");
     check("sem erros na página", logs.length === 0, logs.join(" | "));
     await b.close();
