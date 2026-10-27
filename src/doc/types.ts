@@ -643,6 +643,44 @@ export type Feature = FeatureData & {
 
 export type FeatureOf<T extends FeatureType> = Extract<Feature, { type: T }>;
 
+// ---------------------------------------------------------------------------
+// Knowledgeware (Fase 4.4): regras, verificações e tabela de configurações
+// ---------------------------------------------------------------------------
+
+/** Regra: se a condição for verdadeira (≠ 0), atribui valores a variáveis (aplicadas por ordem). */
+export interface Rule {
+  name: string;
+  /** Condição (expressão); vazia = sempre. */
+  condition?: string;
+  /** Atribuições "variável = expressão". */
+  assign: { variable: string; expr: string }[];
+  /** Senão: atribuições quando a condição é falsa. */
+  otherwise?: { variable: string; expr: string }[];
+  disabled?: boolean;
+}
+
+/**
+ * Verificação: expressão que tem de ser verdadeira, avaliada depois da reconstrução com as variáveis
+ * e as medidas do modelo (volume, area, massa, dimX, dimY, dimZ).
+ */
+export interface Check {
+  name: string;
+  expr: string;
+  message?: string;
+  severity: "info" | "warning" | "error";
+}
+
+/**
+ * Tabela de configurações (famílias de peças, "design table"): cada linha é uma configuração e cada
+ * coluna uma variável ("L"), o estado de supressão de uma feature ("$s:f7", valor S/U) ou uma
+ * propriedade da peça ("$p:number", "$p:description").
+ */
+export interface ConfigTable {
+  active?: string;
+  columns: string[];
+  rows: { name: string; values: Record<string, string> }[];
+}
+
 export interface CadDocument {
   format: "cadp";
   version: 1;
@@ -650,6 +688,9 @@ export interface CadDocument {
   units: "mm";
   variables: Variable[];
   features: Feature[];
+  rules?: Rule[];
+  checks?: Check[];
+  configurations?: ConfigTable;
   /** Índice da barra de rollback: só as features antes deste índice são reconstruídas. Omitido = todas. */
   rollback?: number;
 }

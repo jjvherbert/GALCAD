@@ -1,7 +1,7 @@
 // Projeto: o ficheiro .cadp.json guarda várias peças, montagens e desenhos (como os ficheiros
 // .sldprt/.sldasm/.slddrw de um projeto SolidWorks, mas num só documento aberto e legível).
 // Um ficheiro antigo de uma só peça (format "cadp") abre como um projeto com essa peça.
-import type { CadDocument, Expr, StdAxis, StdPlane, TopoRef, Variable, Vec3 } from "./types.ts";
+import type { CadDocument, Expr, Feature, StdAxis, StdPlane, TopoRef, Variable, Vec3 } from "./types.ts";
 import { parseDocument } from "./io.ts";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,8 @@ export interface Component {
   /** Fixo: o solver não o move (o primeiro componente é fixo por defeito). */
   fixed?: boolean;
   suppressed?: boolean;
+  /** Configuração da peça usada por este componente (tabela de configurações); omitida = a ativa. */
+  config?: string;
 }
 
 export type MateKind = "coincident" | "concentric" | "parallel" | "perpendicular" | "distance" | "angle" | "tangent" | "lock";
@@ -170,6 +172,24 @@ export interface DrawingDoc {
 // Projeto
 // ---------------------------------------------------------------------------
 
+/**
+ * Template de features (estilo PowerCopy/UDF do CATIA): um grupo de features copiado com as suas
+ * entradas (referências exteriores ao grupo, a substituir na instância) e parâmetros (variáveis).
+ */
+export interface FeatureTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  features: Feature[];
+  inputs: TemplateInput[];
+  parameters: Variable[];
+}
+
+/** Entrada de um template: uma feature (esboço, plano, corpo de superfície, curva) ou uma face/aresta. */
+export type TemplateInput =
+  | { key: string; label: string; kind: "feature"; type: string; original: string }
+  | { key: string; label: string; kind: "face" | "edge"; original: string };
+
 export interface CadProject {
   format: "cadp-project";
   version: 1;
@@ -178,6 +198,7 @@ export interface CadProject {
   parts: (CadDocument & { id: string; properties?: PartProperties })[];
   assemblies: AssemblyDoc[];
   drawings: DrawingDoc[];
+  templates?: FeatureTemplate[];
 }
 
 export type PartDoc = CadProject["parts"][number];

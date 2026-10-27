@@ -2,6 +2,7 @@
 // e das propriedades do projeto, propõe sugestões que o utilizador aceita ou ignora, uma a uma.
 // Nunca altera nada sozinho. As tabelas de normalizados são valores nominais de referência:
 // confirmar sempre na norma ou no catálogo do fornecedor.
+import { splitPartKey } from "../doc/knowledge.ts";
 import { type CadProject, type PartProperties, DEFAULT_DENSITY } from "../doc/project.ts";
 import type { PartSignature } from "../kernel/signature.ts";
 import { computeBom, itemOfComponent } from "../assembly/bom.ts";
@@ -127,7 +128,7 @@ export function localSuggestions(project: CadProject, sigs: Record<string, PartS
   const out: Suggestion[] = [];
   let n = 0;
   const add = (s: Omit<Suggestion, "id" | "source">) => out.push({ ...s, id: `s${++n}`, source: "local" });
-  const scope = asmId ? new Set(computeBom(project, asmId, "parts", {}).map((r) => r.id)) : null;
+  const scope = asmId ? new Set(computeBom(project, asmId, "parts", {}).map((r) => splitPartKey(r.id).id)) : null;
   const parts = project.parts.filter((p) => !scope || scope.has(p.id));
 
   for (const p of parts) {

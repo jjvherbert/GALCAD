@@ -1,4 +1,5 @@
 // Interface da montagem: árvore (componentes e mates), painel de mate e painel de componente.
+import { partKey } from "../doc/knowledge.ts";
 import { useEffect, useState } from "preact/hooks";
 import type { Component, Mate, MateKind, MateRef } from "../doc/project.ts";
 import type { StdAxis, StdPlane } from "../doc/types.ts";
@@ -57,7 +58,7 @@ export function AssemblyTree() {
             onDblClick={() => store.set({ componentEdit: c.id })}>
             <span class="ic">{c.ref.kind === "part" ? "▮" : "⧉"}</span>
             <span class="name">{(c.fixed ?? i === 0) ? "(f) " : ""}{c.name}</span>
-            <span class="muted">{srcName(c)}{r?.partErrors[c.ref.id] ? " ⚠" : ""}</span>
+            <span class="muted">{srcName(c)}{r?.partErrors[partKey(c)] ? " ⚠" : ""}</span>
             <span class="grow" />
             <button class="icon" title="Propriedades do componente" aria-label={`Propriedades de ${c.name}`} onClick={() => store.set({ componentEdit: c.id })}>⚙</button>
             {c.ref.kind === "part" && <button class="icon" title="Abrir a peça" aria-label={`Abrir ${srcName(c)}`} onClick={() => store.setActive({ kind: "part", id: c.ref.id })}>↗</button>}
@@ -182,6 +183,19 @@ export function ComponentPanel() {
       </header>
       <Field label="Nome"><input value={c.name} onChange={(ev) => set({ name: (ev.target as HTMLInputElement).value })} /></Field>
       <Check label="Fixo (não se move com os mates)" value={c.fixed ?? idx === 0} onChange={(fixed) => set({ fixed })} />
+      {(() => {
+        const part = c.ref.kind === "part" ? st.project.parts.find((p) => p.id === c.ref.id) : undefined;
+        const rows = part?.configurations?.rows ?? [];
+        if (!rows.length) return null;
+        return (
+          <Field label="Configuração">
+            <select value={c.config ?? ""} onChange={(ev) => set({ config: (ev.target as HTMLSelectElement).value || undefined })}>
+              <option value="">Ativa da peça ({part!.configurations!.active ?? rows[0].name})</option>
+              {rows.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+            </select>
+          </Field>
+        );
+      })()}
       <Check label="Suprimido" value={c.suppressed} onChange={(suppressed) => set({ suppressed })} />
       <fieldset class="checklist">
         <legend class="field-label">Posição inicial (o solver parte daqui)</legend>

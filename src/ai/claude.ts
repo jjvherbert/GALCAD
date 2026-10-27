@@ -3,6 +3,7 @@
 // diretamente para a API da Anthropic. Envia-se só a BOM (nomes, propriedades, quantidades) e um
 // resumo da geometria — nunca os ficheiros do modelo. A resposta é JSON validado (saídas estruturadas);
 // cada sugestão é para o utilizador aceitar ou ignorar.
+import { splitPartKey } from "../doc/knowledge.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
@@ -56,7 +57,7 @@ export function bomPayload(project: CadProject, asmId: string, sigs: Record<stri
       revolution: !!s.revolution,
       local_guess: classify(s).description,
     } : null;
-    const p = project.parts.find((x) => x.id === r.id);
+    const p = project.parts.find((x) => x.id === splitPartKey(r.id).id);
     return { part: r.id, name: r.name, qty: r.qty, properties: p?.properties ?? {}, geometry: geo };
   });
 }

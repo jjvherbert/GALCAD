@@ -1,4 +1,5 @@
 // Arranque da aplicação e disposição geral.
+import { partDensity } from "../assembly/bom.ts";
 import { render } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import gcsWasm from "@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm?url";
@@ -15,6 +16,7 @@ import { describeName } from "./forms.tsx";
 import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
 import { DocTabs } from "./DocTabs.tsx";
 import { BomPanel } from "./BomPanel.tsx";
+import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
 import { DrawingEditor } from "./DrawingEditor.tsx";
 import { PartPropertiesDialog } from "./PropertiesDialog.tsx";
@@ -157,7 +159,7 @@ function App() {
                 <AssemblyTree />
                 <div class="side-info">
                   <MassBlock mass={st.asmResult?.mass ?? null} density={null} onDensity={() => {}}
-                    totalMass={st.asmResult?.instances.reduce((m, i) => m + ((st.asmResult!.partMass[i.part]?.volume ?? 0) / 1000) * (st.project.parts.find((p) => p.id === i.part)?.properties?.density ?? DEFAULT_DENSITY), 0)} />
+                    totalMass={st.asmResult?.instances.reduce((m, i) => m + ((st.asmResult!.partMass[i.part]?.volume ?? 0) / 1000) * partDensity(st.project, i.part), 0)} />
                 </div>
               </>
             )}
@@ -165,13 +167,20 @@ function App() {
         )}
         {kind === "part" && !st.sketch && (
           <aside class="side">
-            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : (
+            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : (
               <>
                 <FeatureTree />
                 <div class="side-info">
                   <button class="small" onClick={() => setShowProps(true)}>Propriedades da peça…</button>
                   {selFeature && <StatusBlock status={r?.status[selFeature.id]} title={selFeature.name} />}
                   <MassBlock mass={r?.mass ?? null} density={density} onDensity={setDensity} />
+                  {r?.checks?.length ? (
+                    <p class={r.checks.every((c) => c.ok) ? "muted" : "error-text"} role="status" aria-label="Verificações">
+                      Verificações: {r.checks.filter((c) => c.ok).length}/{r.checks.length} cumpridas
+                      {r.checks.filter((c) => !c.ok).map((c) => ` · ✗ ${c.name}`).join("")}
+                      {r.config ? ` · configuração ${r.config}` : ""}
+                    </p>
+                  ) : r?.config ? <p class="muted">Configuração: {r.config}</p> : null}
                   <SheetsBlock sheets={r?.sheets ?? []} />
                   {st.selection.length > 0 && (
                     <p class="muted">{st.selection.length} selecionado(s) · os comandos usam a seleção (ex.: Filete com arestas, Esboço numa face).</p>

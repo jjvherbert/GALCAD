@@ -6,8 +6,10 @@ import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "..
 import {
   type AssemblyDoc, type CadProject, type Component, type Mate, type MateKind, type MateRef, containsAssembly, type DocKind, type DocRef, type DrawingDoc, type PartDoc, type PartProperties,
   newAssembly, newDrawing, newPart, newProject, parseProject, serializeProject, usages,
+  type FeatureTemplate,
 } from "../doc/project.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
+import { instantiateTemplate, makeTemplate } from "../doc/knowledge.ts";
 import type { AssemblyResponse, InterferenceResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, RebuildResponse } from "../kernel/protocol.ts";
 
 /** Análise de superfície ativa no 3D (separador Avaliar). */
@@ -105,7 +107,7 @@ export interface State {
   /** Interferências calculadas (montagem ativa). */
   interference: InterferenceResponse | null;
   /** Painel lateral alternativo: BOM ou assistente. */
-  sidePanel: "bom" | "ai" | null;
+  sidePanel: "bom" | "ai" | "knowledge" | null;
   /** Forma livre em edição: polo selecionado e restrição do arrasto. */
   poleSel: [number, number] | null;
   poleAxis: "free" | "X" | "Y" | "Z";
@@ -521,6 +523,48 @@ class Store {
     if (f.type === "sketch") { this.editSketch(id); return; }
     this.set({ edit: { id, isNew: false, draft: structuredClone(f), index }, selectedFeature: id, pickTarget: null });
     this.rebuild();
+  }
+
+  // --- templates de features (knowledgeware) ------------------------------------
+
+  private setTemplates(templates: FeatureTemplate[], message: string) {
+    this.set({ project: { ...this.state.project, templates }, dirty: true, message });
+    this.autosave();
+  }
+
+  createTemplate(ids: string[], name: string) {
+    try {
+      const all = this.state.project.templates ?? [];
+      const n = all.reduce((m, t) => Math.max(m, Number(t.id.slice(1)) || 0), 0);
+      const t = makeTemplate(this.state.doc, ids, name, `t${n + 1}`);
+      this.setTemplates([...all, t], `Template "${name}": ${t.inputs.length} entrada(s), ${t.parameters.length} parâmetro(s)`);
+    } catch (e) {
+      this.set({ error: (e as Error).message });
+    }
+  }
+
+  deleteTemplate(id: string) {
+    this.setTemplates((this.state.project.templates ?? []).filter((t) => t.id !== id), "Template apagado");
+  }
+
+  importTemplate(text: string) {
+    const j = JSON.parse(text) as { format?: string; template?: FeatureTemplate };
+    if (j.format !== "cadp-template" || !j.template?.features) throw new Error("Ficheiro de template inválido");
+    const all = this.state.project.templates ?? [];
+    const n = all.reduce((m, t) => Math.max(m, Number(t.id.slice(1)) || 0), 0);
+    this.setTemplates([...all, { ...j.template, id: `t${n + 1}` }], `Template "${j.template.name}" importado`);
+  }
+
+  instantiateTemplate(tpl: FeatureTemplate, bindings: Record<string, string>, values: Record<string, string>): boolean {
+    try {
+      const { doc, created } = instantiateTemplate(this.state.doc, tpl, bindings, values);
+      this.commitDoc("part", doc as PartDoc, `Instância de ${tpl.name}`);
+      this.set({ message: `${created.length} feature(s) criadas a partir de "${tpl.name}"` });
+      return true;
+    } catch (e) {
+      this.set({ error: (e as Error).message });
+      return false;
+    }
   }
 
   /** Acrescenta um deslocamento a um polo da forma livre em edição (soma ao que já tiver). */

@@ -1,7 +1,7 @@
 // Motor de reconstrução: aplica as features por ordem, com cache incremental.
 // Editar a feature k só reconstrói de k em diante; as anteriores vêm da cache.
 import type { CadDocument, Feature } from "../doc/types.ts";
-import { resolveVariables } from "../doc/variables.ts";
+import { type RuleStatus, resolveWithRules } from "../doc/knowledge.ts";
 import { PLUGIN_BUILDERS } from "../plugins/geometry.ts";
 import type { Ctx, StepReport } from "./context.ts";
 import { Arena, T, explore, setArena } from "./occ.ts";
@@ -31,6 +31,7 @@ export interface RebuildResult {
   ctx: Ctx;
   status: Record<string, FeatureStatus>;
   variables: { values: Record<string, number>; errors: Record<string, string> };
+  rules: RuleStatus[];
   ms: number;
   reused: number;
 }
@@ -118,7 +119,7 @@ export class Engine {
   async rebuild(doc: CadDocument): Promise<RebuildResult> {
     const t0 = performance.now();
     this.scratch.free();
-    const vars = resolveVariables(doc.variables);
+    const vars = resolveWithRules(doc.variables, doc.rules);
     let key = JSON.stringify([...vars.values]);
     let ctx: Ctx = { doc, scope: vars.scope, body: null, sketches: new Map(), planes: new Map(), axes: new Map(), csys: new Map(), tools: new Map(), sheets: new Map(), curves: new Map() };
     const status: Record<string, FeatureStatus> = {};
@@ -169,6 +170,7 @@ export class Engine {
       ctx,
       status,
       variables: { values: Object.fromEntries(vars.values), errors: Object.fromEntries(vars.errors) },
+      rules: vars.rules,
       ms: Math.round(performance.now() - t0),
       reused,
     };

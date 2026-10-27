@@ -7,7 +7,8 @@ import { combs, continuity, curvature, deviation } from "./analysis.ts";
 import type { NamedEdge } from "./naming.ts";
 import type { CadDocument } from "../doc/types.ts";
 import { Engine } from "./rebuild.ts";
-import type { CadProject } from "../doc/project.ts";
+import { type CadProject, type PartProperties, DEFAULT_DENSITY } from "../doc/project.ts";
+import { configuredDoc, runChecks, splitPartKey } from "../doc/knowledge.ts";
 import type { Vec3 } from "../doc/types.ts";
 import { type PartBuild, assemblyMass, solveAssembly, toInstances } from "./assembly.ts";
 import { buildDrawing } from "./drawing.ts";
@@ -53,7 +54,9 @@ export class KernelService {
   }
 
   /** Reconstrói; `force` descarta a cache (reconstrução completa, Ctrl+Q). */
-  async rebuild(doc: CadDocument & { id?: string }, force = false): Promise<RebuildResponse> {
+  async rebuild(input: CadDocument & { id?: string; properties?: PartProperties }, force = false): Promise<RebuildResponse> {
+    // configuração ativa da tabela de configurações (variáveis, supressões, propriedades)
+    const doc = configuredDoc(input);
     const engine = this.engineFor(doc.id ?? "_");
     if (force) engine.clear();
     const r = await engine.rebuild(doc);
@@ -86,9 +89,19 @@ export class KernelService {
       const area = surfaceArea(body.shape);
       mass = { volume: v.volume, area, center: v.center, bbox: bbox(body.shape), solids: explore(body.shape, "solid").length };
     }
+    // verificações: variáveis + medidas do modelo (massa com a massa volúmica da configuração)
+    const density = doc.properties?.density ?? DEFAULT_DENSITY;
+    const measures: Record<string, number> = mass ? {
+      volume: mass.volume, area: mass.area, massa: (mass.volume / 1000) * density,
+      dimX: mass.bbox.max[0] - mass.bbox.min[0], dimY: mass.bbox.max[1] - mass.bbox.min[1], dimZ: mass.bbox.max[2] - mass.bbox.min[2],
+    } : {};
+    const checks = doc.checks?.length ? runChecks(doc.checks, (n) => r.variables.values[n] ?? measures[n]) : undefined;
     return {
       status: r.status,
       variables: r.variables,
+      rules: r.rules.length ? r.rules : undefined,
+      checks,
+      config: doc.configurations?.active,
       ms: r.ms,
       reused: r.reused,
       mesh,
@@ -110,16 +123,21 @@ export class KernelService {
   readonly drawingArena = new Arena();
 
   /** Peça reconstruída (cache do motor da peça) e a sua malha (cache por conteúdo). */
-  async partBuild(project: CadProject, id: string): Promise<PartBuild> {
-    const doc = project.parts.find((p) => p.id === id);
-    if (!doc) throw new Error(`Peça ${id} inexistente`);
-    const r = await this.engineFor(id).rebuild(doc);
-    const key = JSON.stringify(doc);
-    let cached = this.meshCache.get(id);
-    if (!cached || cached.key !== key) {
+  async partBuild(project: CadProject, key: string): Promise<PartBuild> {
+    // "p1#Longa": a peça p1 na configuração "Longa" (motor e malha próprios por configuração)
+    const { id, config } = splitPartKey(key);
+    const base = project.parts.find((p) => p.id === id);
+    if (!base) throw new Error(`Peça ${id} inexistente`);
+    if (config && !base.configurations?.rows.some((r) => r.name === config)) throw new Error(`A peça "${base.name}" não tem a configuração "${config}"`);
+    const doc = configuredDoc(base, config ?? base.configurations?.active);
+    const r = await this.engineFor(key).rebuild(doc);
+    const id_ = key;
+    const ckey = JSON.stringify(doc);
+    let cached = this.meshCache.get(id_);
+    if (!cached || cached.key !== ckey) {
       const { scene, owner } = sceneOf(r.ctx);
-      cached = { key, mesh: scene ? meshBody(scene, undefined, owner) : null };
-      this.meshCache.set(id, cached);
+      cached = { key: ckey, mesh: scene ? meshBody(scene, undefined, owner) : null };
+      this.meshCache.set(id_, cached);
     }
     const body = r.ctx.body;
     const v = body ? volume(body.shape) : { volume: 0, center: [0, 0, 0] as Vec3 };

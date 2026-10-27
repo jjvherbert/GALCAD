@@ -1,6 +1,7 @@
 // Montagens no núcleo: reconstrói as peças (com a cache de cada uma), extrai a geometria das
 // referências dos mates, resolve os mates (subconjuntos como corpos rígidos) e devolve as instâncias.
 import type { AssemblyDoc, CadProject, Component, MateRef } from "../doc/project.ts";
+import { partKey } from "../doc/knowledge.ts";
 import { resolveVariables, evalParam } from "../doc/variables.ts";
 import type { StdAxis, StdPlane, Vec3 } from "../doc/types.ts";
 import {
@@ -84,7 +85,7 @@ export async function solveAssembly(
   for (const c of comps) {
     if (c.ref.kind === "part") {
       if (!project.parts.some((p) => p.id === c.ref.id)) { messages.push(`${c.name}: peça inexistente`); continue; }
-      content.set(c.id, { part: await getPart(c.ref.id) });
+      content.set(c.id, { part: await getPart(partKey(c)) });
     } else {
       const sub = await solveAssembly(project, c.ref.id, getPart, [...stack, asmId]);
       if (!sub.ok) messages.push(`${c.name}: o subconjunto tem mates por resolver`);
@@ -115,7 +116,7 @@ export async function solveAssembly(
   const partCtxOf = (inst: SolvedInstance) => partCtxs.get(inst.part) ?? null;
   for (const c of live) {
     const k = content.get(c.id)!;
-    if (k.part) partCtxs.set(c.ref.id, k.part.ctx);
+    if (k.part) partCtxs.set(partKey(c), k.part.ctx);
   }
   // as peças dos subconjuntos também precisam do contexto (para a geometria das referências)
   for (const c of live) {
@@ -149,7 +150,7 @@ export async function solveAssembly(
   for (const c of live) {
     const P = r.poses.get(c.id) ?? posePlacement(c);
     const k = content.get(c.id)!;
-    if (k.part) instances.push({ path: [c.id], part: c.ref.id, pose: P, names: [c.name] });
+    if (k.part) instances.push({ path: [c.id], part: partKey(c), pose: P, names: [c.name] });
     else for (const i of k.sub!.instances) instances.push({ path: [c.id, ...i.path], part: i.part, pose: composePose(P, i.pose), names: [c.name, ...i.names] });
   }
   const ok = Object.values(status).every((s) => s.ok) && !messages.length;

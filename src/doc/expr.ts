@@ -2,7 +2,8 @@
 //
 // Sintaxe: números (com sufixo de unidade opcional: mm, cm, m, in, deg, rad), variáveis,
 // + - * / % ^ (potência, associativa à direita), parênteses e funções.
-// Trigonometria em graus: sin(30) = 0.5, asin(0.5) = 30.
+// Comparações (< <= > >= == !=) e lógica (and/&&, or/||, not/!) dão 1 ou 0, para regras e
+// verificações: if(L > 100 and t < 3, 5, 3). Trigonometria em graus: sin(30) = 0.5, asin(0.5) = 30.
 
 export class ExprError extends Error {
   readonly pos: number;
@@ -16,6 +17,7 @@ type Node =
   | { k: "num"; v: number }
   | { k: "var"; name: string; pos: number }
   | { k: "neg"; a: Node }
+  | { k: "not"; a: Node }
   | { k: "bin"; op: string; a: Node; b: Node }
   | { k: "call"; fn: string; args: Node[]; pos: number };
 
@@ -45,7 +47,11 @@ const FUNCS: Record<string, { n: [number, number]; f: (...a: number[]) => number
   min: { n: [1, 64], f: Math.min },
   max: { n: [1, 64], f: Math.max },
   if: { n: [3, 3], f: (c, a, b) => (c ? a : b) }, // if(cond, sim, não): cond ≠ 0
+  clamp: { n: [3, 3], f: (x, a, b) => Math.min(Math.max(x, a), b) },
+  sign: { n: [1, 1], f: Math.sign },
 };
+/** Palavras reservadas dos operadores lógicos. */
+const WORD_OPS: Record<string, string> = { and: "&&", or: "||", not: "!" };
 const CONSTS: Record<string, number> = { pi: Math.PI, e: Math.E };
 
 type Tok = { t: "num" | "id" | "op" | "end"; v: string; pos: number };
@@ -65,11 +71,13 @@ function tokenize(src: string): Tok[] {
     }
     if (/[\p{L}_]/u.test(ch)) {
       const m = /^[\p{L}_][\p{L}\p{N}_]*/u.exec(src.slice(i))!;
-      toks.push({ t: "id", v: m[0], pos: i });
+      toks.push(m[0] in WORD_OPS ? { t: "op", v: WORD_OPS[m[0]], pos: i } : { t: "id", v: m[0], pos: i });
       i += m[0].length;
       continue;
     }
-    if ("+-*/%^(),".includes(ch)) { toks.push({ t: "op", v: ch, pos: i }); i++; continue; }
+    const two = src.slice(i, i + 2);
+    if (["<=", ">=", "==", "!=", "&&", "||"].includes(two)) { toks.push({ t: "op", v: two, pos: i }); i += 2; continue; }
+    if ("+-*/%^(),<>!".includes(ch)) { toks.push({ t: "op", v: ch, pos: i }); i++; continue; }
     throw new ExprError(`Carácter inesperado "${ch}"`, i);
   }
   toks.push({ t: "end", v: "", pos: src.length });
@@ -88,8 +96,25 @@ export function parse(src: string): Node {
     return t;
   };
 
-  // expr := term (("+"|"-") term)*
+  const isOp = (...v: string[]) => peek().t === "op" && v.includes(peek().v);
+  // expr := and ("||" and)* ; and := cmp ("&&" cmp)* ; cmp := sum (("<"|"<="|…) sum)?
   const expr = (): Node => {
+    let a = and();
+    while (isOp("||")) { eat(); a = { k: "bin", op: "||", a, b: and() }; }
+    return a;
+  };
+  const and = (): Node => {
+    let a = cmp();
+    while (isOp("&&")) { eat(); a = { k: "bin", op: "&&", a, b: cmp() }; }
+    return a;
+  };
+  const cmp = (): Node => {
+    const a = sum();
+    if (isOp("<", "<=", ">", ">=", "==", "!=")) { const op = eat().v; return { k: "bin", op, a, b: sum() }; }
+    return a;
+  };
+  // sum := term (("+"|"-") term)*
+  const sum = (): Node => {
     let a = term();
     while (peek().t === "op" && (peek().v === "+" || peek().v === "-")) {
       const op = eat().v;
@@ -108,6 +133,7 @@ export function parse(src: string): Node {
   };
   // unary := ("-"|"+") unary | power
   const unary = (): Node => {
+    if (peek().t === "op" && peek().v === "!") { eat(); return { k: "not", a: unary() }; }
     if (peek().t === "op" && peek().v === "-") { eat(); return { k: "neg", a: unary() }; }
     if (peek().t === "op" && peek().v === "+") { eat(); return unary(); }
     return power();
@@ -155,11 +181,13 @@ export function parse(src: string): Node {
 }
 
 export type Scope = (name: string) => number | undefined;
+const EQ_TOL = 1e-9;
 
 export function evaluate(node: Node, scope: Scope): number {
   switch (node.k) {
     case "num": return node.v;
     case "neg": return -evaluate(node.a, scope);
+    case "not": return evaluate(node.a, scope) ? 0 : 1;
     case "var": {
       if (node.name in CONSTS) return CONSTS[node.name];
       const v = scope(node.name);
@@ -176,6 +204,15 @@ export function evaluate(node: Node, scope: Scope): number {
         case "/": return a / b;
         case "%": return a % b;
         case "^": return Math.pow(a, b);
+        // comparações com tolerância relativa na igualdade (os comprimentos vêm de contas em vírgula flutuante)
+        case "<": return a < b ? 1 : 0;
+        case "<=": return a <= b + EQ_TOL * Math.max(1, Math.abs(b)) ? 1 : 0;
+        case ">": return a > b ? 1 : 0;
+        case ">=": return a >= b - EQ_TOL * Math.max(1, Math.abs(b)) ? 1 : 0;
+        case "==": return Math.abs(a - b) <= EQ_TOL * Math.max(1, Math.abs(a), Math.abs(b)) ? 1 : 0;
+        case "!=": return Math.abs(a - b) > EQ_TOL * Math.max(1, Math.abs(a), Math.abs(b)) ? 1 : 0;
+        case "&&": return a && b ? 1 : 0;
+        case "||": return a || b ? 1 : 0;
       }
     }
   }
@@ -185,7 +222,7 @@ export function evaluate(node: Node, scope: Scope): number {
 /** Nomes de variáveis referidos (sem constantes nem funções). */
 export function identifiers(node: Node, out = new Set<string>()): Set<string> {
   if (node.k === "var" && !(node.name in CONSTS)) out.add(node.name);
-  else if (node.k === "neg") identifiers(node.a, out);
+  else if (node.k === "neg" || node.k === "not") identifiers(node.a, out);
   else if (node.k === "bin") { identifiers(node.a, out); identifiers(node.b, out); }
   else if (node.k === "call") node.args.forEach((a) => identifiers(a, out));
   return out;
@@ -214,4 +251,4 @@ export function exprIdentifiers(value: number | string): Set<string> {
   return typeof value === "number" ? new Set() : identifiers(parseCached(value));
 }
 
-export const isValidName = (s: string) => /^[\p{L}_][\p{L}\p{N}_]*$/u.test(s) && !(s in CONSTS) && !(s in FUNCS) && !(s in UNITS);
+export const isValidName = (s: string) => /^[\p{L}_][\p{L}\p{N}_]*$/u.test(s) && !(s in CONSTS) && !(s in FUNCS) && !(s in UNITS) && !(s in WORD_OPS);

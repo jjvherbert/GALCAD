@@ -1,6 +1,18 @@
 // Lista de materiais (BOM) de uma montagem: só o nível de topo, só peças (achatada) ou indentada.
 // Pura: recebe o projeto e o volume de cada peça (mm³) e devolve as linhas.
 import { type CadProject, type PartProperties, DEFAULT_DENSITY } from "../doc/project.ts";
+import { configuredDoc, partKey, splitPartKey } from "../doc/knowledge.ts";
+
+/** Peça (com a configuração da chave "id#config" aplicada às propriedades). */
+function partOf(project: CadProject, key: string) {
+  const { id, config } = splitPartKey(key);
+  const p = project.parts.find((x) => x.id === id);
+  // sem configuração escolhida: a ativa da peça
+  return p && { doc: configuredDoc(p, config), config };
+}
+
+/** Massa volúmica (g/cm³) da peça de uma chave de componente. */
+export const partDensity = (project: CadProject, key: string) => partOf(project, key)?.doc.properties?.density ?? DEFAULT_DENSITY;
 
 export type BomMode = "top" | "parts" | "indented";
 
@@ -29,9 +41,9 @@ export const BOM_COLUMNS: { key: string; label: string }[] = [
 /** Massa (g) de uma peça ou montagem. */
 export function docMass(project: CadProject, kind: "part" | "assembly", id: string, volumes: Record<string, number>, seen = new Set<string>()): number | null {
   if (kind === "part") {
-    const p = project.parts.find((x) => x.id === id);
+    const p = partOf(project, id);
     const v = volumes[id];
-    return p && v !== undefined ? (v / 1000) * (p.properties?.density ?? DEFAULT_DENSITY) : null;
+    return p && v !== undefined ? (v / 1000) * (p.doc.properties?.density ?? DEFAULT_DENSITY) : null;
   }
   if (seen.has(id)) return null;
   seen.add(id);
@@ -40,7 +52,7 @@ export function docMass(project: CadProject, kind: "part" | "assembly", id: stri
   let m = 0;
   for (const c of a.components) {
     if (c.suppressed) continue;
-    const x = docMass(project, c.ref.kind, c.ref.id, volumes, new Set(seen));
+    const x = docMass(project, c.ref.kind, c.ref.kind === "part" ? partKey(c) : c.ref.id, volumes, new Set(seen));
     if (x === null) return null;
     m += x;
   }
@@ -48,7 +60,11 @@ export function docMass(project: CadProject, kind: "part" | "assembly", id: stri
 }
 
 function propsOf(project: CadProject, kind: "part" | "assembly", id: string): { name: string; p: PartProperties } {
-  const d = kind === "part" ? project.parts.find((x) => x.id === id) : project.assemblies.find((x) => x.id === id);
+  if (kind === "part") {
+    const p = partOf(project, id);
+    return { name: p ? `${p.doc.name}${p.config ? ` [${p.config}]` : ""}` : id, p: p?.doc.properties ?? {} };
+  }
+  const d = project.assemblies.find((x) => x.id === id);
   return { name: d?.name ?? id, p: d?.properties ?? {} };
 }
 
@@ -66,9 +82,11 @@ function groups(project: CadProject, asmId: string): { kind: "part" | "assembly"
   const out: { kind: "part" | "assembly"; id: string; qty: number }[] = [];
   for (const c of a?.components ?? []) {
     if (c.suppressed) continue;
-    const g = out.find((x) => x.id === c.ref.id);
+    // peças em configurações diferentes são itens diferentes
+    const id = c.ref.kind === "part" ? partKey(c) : c.ref.id;
+    const g = out.find((x) => x.id === id && x.kind === c.ref.kind);
     if (g) g.qty++;
-    else out.push({ kind: c.ref.kind, id: c.ref.id, qty: 1 });
+    else out.push({ kind: c.ref.kind, id, qty: 1 });
   }
   return out;
 }
@@ -126,6 +144,7 @@ export function itemOfComponent(project: CadProject, asmId: string, componentId:
   const a = project.assemblies.find((x) => x.id === asmId);
   const c = a?.components.find((x) => x.id === componentId);
   if (!c) return null;
-  const i = groups(project, asmId).findIndex((g) => g.id === c.ref.id);
+  const key = c.ref.kind === "part" ? partKey(c) : c.ref.id;
+  const i = groups(project, asmId).findIndex((g) => g.id === key);
   return i < 0 ? null : String(i + 1);
 }

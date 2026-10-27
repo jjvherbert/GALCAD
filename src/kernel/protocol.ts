@@ -169,6 +169,8 @@ export interface MassProps {
   solids: number;
 }
 
+import type { CheckResult, RuleStatus } from "../doc/knowledge.ts";
+
 export interface RebuildResponse {
   status: Record<string, FeatureStatus>;
   variables: { values: Record<string, number>; errors: Record<string, string> };
@@ -181,6 +183,10 @@ export interface RebuildResponse {
   csys: Record<string, Frame>;
   mass: MassProps | null;
   sheets: SheetInfo[];
+  /** Knowledgeware: estado das regras, resultado das verificações e configuração aplicada. */
+  rules?: RuleStatus[];
+  checks?: CheckResult[];
+  config?: string;
 }
 
 export interface ExportResponse {
