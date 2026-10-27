@@ -281,3 +281,24 @@ kbd { font: 11px ui-monospace, monospace; padding: 0 4px; border: 1px solid var(
 .gdt-grid svg line, .gdt-grid svg circle, .gdt-grid svg path, .gdt-grid svg polygon, .gdt-grid svg polyline { stroke-width: 0.8; }
 button.on { background: var(--accent-soft); border-color: var(--accent); }
 .main.hidden-3d .view { display: none; }
+
+/* BOM e assistente */
+.bom-panel { padding: 8px 10px; overflow: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.bom-panel .tree-head { display: flex; justify-content: space-between; align-items: center; }
+.bom-panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 10px 0 2px; }
+.bom-scroll { overflow-x: auto; }
+.bom-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.bom-table th, .bom-table td { border: 1px solid var(--line); padding: 2px 4px; text-align: left; white-space: nowrap; }
+.bom-table th { background: var(--panel2); }
+.suggestions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.sug { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.sug p { margin: 2px 0; }
+.sug-head { display: flex; gap: 6px; align-items: center; }
+.tag { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 0 6px; font-size: 11px; }
+.tag.claude { border-color: #d97706; color: #b45309; }
+.sug.consistency, .sug.duplicate { border-left: 3px solid #f59e0b; }
+.sug.standard { border-left: 3px solid #16a34a; }
+.rates .row { display: flex; justify-content: space-between; gap: 6px; }
+.rates input { width: 70px; }
+.claude-box { border: 1px dashed var(--line); border-radius: 6px; padding: 4px 8px; }
+.claude-box input { width: 100%; margin: 4px 0; }

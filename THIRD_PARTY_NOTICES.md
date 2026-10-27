@@ -9,6 +9,8 @@ O código deste projeto é proprietário (ver `LICENSE`). Usa as bibliotecas aba
 | replicad | 1.2.0 | MIT | Utilitários sobre o OpenCASCADE | https://github.com/sgenoud/replicad |
 | three.js | 0.186.1 | MIT | Visualização 3D | https://github.com/mrdoob/three.js |
 | Preact | 11.0.2 | MIT | Interface | https://github.com/preactjs/preact |
+| Anthropic TypeScript SDK, `@anthropic-ai/sdk` | 1.3.0 | Apache-2.0 | Sugestões de BOM com o Claude (opcional, só com a chave do utilizador) | https://github.com/anthropics/anthropic-sdk-typescript |
+| Zod | 4.6.7 | MIT | Esquema da resposta estruturada do assistente | https://github.com/colinhacks/zod |
 
 ## Obrigações das bibliotecas LGPL num produto fechado
 
@@ -19,3 +21,4 @@ Resumo técnico, que não substitui aconselhamento jurídico:
 3. **Código-fonte das bibliotecas.** Disponibilizar, ou indicar com oferta válida, o código-fonte exato das versões LGPL usadas, incluindo eventuais modificações. As versões usadas não são modificadas.
 4. **Termos de utilização.** A licença do produto não pode proibir a modificação das bibliotecas LGPL nem a engenharia reversa necessária para depurar essas modificações (LGPL-2.1, §6).
 5. As bibliotecas MIT só exigem que se mantenha o aviso de copyright e a licença.
+6. A Apache-2.0 (SDK da Anthropic) exige distribuir o texto da licença e indicar alterações aos ficheiros dela (não há alterações). É compatível com um produto fechado.

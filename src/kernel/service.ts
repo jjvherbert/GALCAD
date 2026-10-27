@@ -1,6 +1,6 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { AssemblyResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { AssemblyResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
 import { curvature, deviation } from "./analysis.ts";
@@ -10,6 +10,7 @@ import type { CadProject } from "../doc/project.ts";
 import type { Vec3 } from "../doc/types.ts";
 import { type PartBuild, assemblyMass, solveAssembly, toInstances } from "./assembly.ts";
 import { buildDrawing } from "./drawing.ts";
+import { partSignature } from "./signature.ts";
 import { nameFresh } from "./naming.ts";
 import { assemblyMesh } from "../assembly/combine.ts";
 import { meshBody, type MeshData } from "./mesh.ts";
@@ -203,6 +204,21 @@ export class KernelService {
       arena.free();
       setArena(this.asmArena);
     }
+  }
+
+  /** Assinaturas geométricas de todas as peças (assistente de BOM). */
+  async signatures(project: CadProject): Promise<SignatureResponse> {
+    const parts: SignatureResponse["parts"] = {};
+    for (const p of project.parts) {
+      try {
+        const b = await this.partBuild(project, p.id);
+        setArena(this.asmArena);
+        parts[p.id] = b.ctx.body ? partSignature(b.ctx.body, b.area) : { error: "Sem corpo sólido" };
+      } catch (e) {
+        parts[p.id] = { error: (e as Error).message };
+      }
+    }
+    return { parts };
   }
 
   async drawing(project: CadProject, id: string, force = false): Promise<DrawingResponse> {

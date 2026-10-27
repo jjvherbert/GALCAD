@@ -3,7 +3,7 @@ import type { CadDocument } from "../doc/types.ts";
 import type { CadProject } from "../doc/project.ts";
 import type {
   AssemblyResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, ExportResponse,
-  InterferenceResponse, RebuildResponse, Request, Response,
+  InterferenceResponse, RebuildResponse, Request, Response, SignatureResponse,
 } from "../kernel/protocol.ts";
 
 type Waiter<T> = { resolve: (r: T | null) => void; reject: (e: Error) => void };
@@ -74,6 +74,10 @@ export class KernelClient {
 
   drawing(project: CadProject, id: string, force = false): Promise<DrawingResponse | null> {
     return this.coalesce<DrawingResponse>({ type: "drawing", project, drawingId: id }, force);
+  }
+
+  signatures(project: CadProject): Promise<SignatureResponse> {
+    return this.call<SignatureResponse>({ type: "signatures", project });
   }
 
   interference(): Promise<InterferenceResponse> {

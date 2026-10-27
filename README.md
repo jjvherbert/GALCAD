@@ -2,7 +2,7 @@
 
 CAD paramétrico no browser, para modelação de sólidos e de superfícies, com fluxos de trabalho ao estilo do SolidWorks: esboços com restrições, árvore de features editável, variáveis e equações. Os domínios específicos, como o boat design, são **plugins** opcionais por cima de um núcleo genérico.
 
-**Estado:** Fases 1 (modelação de peças) e 2 (superfícies) implementadas. A seguir: Fase 3 (montagens, desenhos 2D e BOM) e o pré-processador FEM. Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
+**Estado:** Fases 1 (peças), 2 (superfícies) e 3 (montagens, desenhos 2D e BOM) implementadas. A seguir: pré-processador FEM e Fase 4 (CATIA). Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
 
 ## Correr
 
@@ -58,6 +58,13 @@ npm run build && npm run test:e2e   # 9 fluxos de aplicação + 23 verificaçõe
 - Reconstrução **incremental** com cache: editar a feature k só reconstrói de k em diante.
 - Desfazer e refazer; propriedades de massa com massa volúmica configurável.
 
+**Projeto, montagens, desenhos e BOM (Fase 3):**
+- **Projeto** com várias peças, montagens e desenhos num só `.cadp.json`, em abas (＋ para criar). Cada peça tem propriedades (número, descrição, material com massa volúmica típica, acabamento, fornecedor, propriedades personalizadas).
+- **Montagens**: inserir peças ou subconjuntos; mates coincidente, concêntrico, paralelo, perpendicular, distância, ângulo, tangente e fixar, escolhidos no 3D (faces planas, cilíndricas/cónicas, arestas retas/circulares) ou nos planos/eixos padrão; a árvore mostra os graus de liberdade livres e os mates não cumpridos. Massa total com a densidade de cada peça; deteção de interferências (volume comum a vermelho).
+- **Desenhos**: folha ISO (A4–A0, 1.º ou 3.º diedro, escala), legenda preenchida a partir da peça; "3 vistas + iso" de uma vez; vistas projetadas alinhadas, cortes, pormenores e auxiliares; cotas importadas do modelo e cota inteligente; GD&T, referências, rugosidade, soldadura, notas, balões automáticos e tabela de BOM. Tudo é associativo: muda com o modelo. Exportação PDF, DXF e SVG em tamanho real.
+- **BOM** (separador Montagem → BOM): nível de topo, só peças ou indentada, CSV/XLSX. O **assistente** propõe descrições, normalizados reconhecidos pela geometria, processo, material de partida, duplicados, incoerências e custo indicativo — cada sugestão aceita-se ou ignora-se. Opcionalmente, com uma chave API da Anthropic (fica só em memória), pede sugestões ao Claude (`claude-opus-5-5`, resposta estruturada; envia a BOM e um resumo da geometria, não os ficheiros).
+- Os valores de normalizados, densidades e custos são de referência: confirmar na norma, na ficha do material e com cotações. Nada disto é certificação.
+
 **Ficheiros:**
 - Projeto em JSON aberto e legível (`.cadp.json`).
 - Exportação para **STEP** (sólido exato), **STL**, **3MF**, **OBJ** e **glTF (.glb)**, sempre em milímetros.
@@ -103,6 +110,9 @@ src/
   kernel/   OpenCASCADE: nomeação topológica, motor de reconstrução, features (sólidos e superfícies), malha, análises, worker
   io/       exportação de malhas (3MF, OBJ, glTF)
   plugins/  módulos de domínio (metadados para a UI + geometria para o worker)
+  assembly/ solver de mates, BOM, malha de montagem (puros)
+  drawing/  folha de desenho: geometria 2D, primitivas, render, edição, exportação SVG/PDF/DXF (puros)
+  ai/       assistente de BOM local e sugestões do Claude (opcional)
   app/      interface Preact + Three.js: árvore, painel de propriedades, editor de esboço, visualizador
 tests/      testes Node (node:test) e e2e (Playwright)
 ```
@@ -117,7 +127,7 @@ tests/      testes Node (node:test) e e2e (Playwright)
 
 Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resultado técnico deve indicar as hipóteses e os limites no `note`.
 
-## Limitações conhecidas (Fases 1 e 2)
+## Limitações conhecidas (Fases 1 a 3)
 
 - Aparar não trata splines (apaga-as) e as entidades convertidas não se aparam. O deslocamento assume que a cadeia tem uma orientação coerente.
 - Sem regiões escolhidas, contornos que se intersetam ou ramificam dão erro e pedem a escolha das regiões. Por agora, a escolha de regiões só existe na extrusão e na revolução.
@@ -130,6 +140,9 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
   - apagar e remendar preenche o buraco mas não prolonga as faces vizinhas, por isso não reconstrói cantos vivos. O *delete and heal* do OCC não existe nesta compilação WASM;
   - substituir face pressupõe faces laterais aproximadamente paralelas à normal da face substituída;
   - a projeção de curvas é feita segundo a normal do esboço, por interseção com uma extrusão do esboço. Não há projeção segundo a normal da superfície.
+- Montagens: os componentes movem-se pelos mates e pela posição inicial (painel do componente), ainda não arrastando com o rato; sem peças em contexto nem vistas explodidas. Os subconjuntos são rígidos.
+- Desenhos: a linha de corte é reta (sem cortes por patamares); o pormenor não desenha a fronteira irregular; não há DWG nativo (usar o DXF); as cotas de desenho medem a projeção (verdadeira grandeza só em faces paralelas à vista).
+- Assistente de BOM: o reconhecimento de normalizados usa tabelas nominais pequenas (M3–M24, anilhas ISO 7089, 12 rolamentos) e geometria sem rosca modelada.
 - O nome de uma face dividida pode mudar de sufixo (`~0`, `~1`) se a ordem geométrica das partes mudar. As referências por nome-base e por posição cobrem a maioria dos casos e deixam um aviso.
 
 ## Propriedade intelectual

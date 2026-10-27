@@ -14,6 +14,7 @@ import { MassBlock, SheetsBlock, StatusBlock } from "./InfoPanel.tsx";
 import { describeName } from "./forms.tsx";
 import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
 import { DocTabs } from "./DocTabs.tsx";
+import { BomPanel } from "./BomPanel.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
 import { DrawingEditor } from "./DrawingEditor.tsx";
 import { PartPropertiesDialog } from "./PropertiesDialog.tsx";
@@ -143,7 +144,7 @@ function App() {
         {kind === "drawing" && <DrawingEditor />}
         {kind === "assembly" && (
           <aside class="side">
-            {st.mateEdit ? <MatePanel /> : st.componentEdit ? <ComponentPanel /> : (
+            {st.mateEdit ? <MatePanel /> : st.componentEdit ? <ComponentPanel /> : st.sidePanel === "bom" ? <BomPanel /> : (
               <>
                 <AssemblyTree />
                 <div class="side-info">

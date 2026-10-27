@@ -3,7 +3,7 @@ import { zipStore } from "./mesh-export.ts";
 
 /** CSV com separador ";" (o Excel em pt-PT usa a vírgula como separador decimal). */
 export function toCSV(header: string[], rows: string[][], sep = ";"): string {
-  const esc = (v: string) => (/[";\n\r,]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const esc = (v: string) => (v.includes(sep) || /["\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   return "﻿" + [header, ...rows].map((r) => r.map(esc).join(sep)).join("\r\n") + "\r\n";
 }
 

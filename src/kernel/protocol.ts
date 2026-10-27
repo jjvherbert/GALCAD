@@ -1,6 +1,7 @@
 // Protocolo de mensagens entre a interface e o worker do núcleo geométrico.
 import type { CadDocument, SketchEntity } from "../doc/types.ts";
 import type { CadProject } from "../doc/project.ts";
+import type { PartSignature } from "./signature.ts";
 import type { Profiles } from "../sketch/profiles.ts";
 import type { Axis, Frame } from "./frame.ts";
 import type { MeshData } from "./mesh.ts";
@@ -15,7 +16,12 @@ export type Request =
   | { type: "deviation" }
   | { type: "assembly"; project: CadProject; asmId: string; force?: boolean }
   | { type: "interference" }
-  | { type: "drawing"; project: CadProject; drawingId: string; force?: boolean };
+  | { type: "drawing"; project: CadProject; drawingId: string; force?: boolean }
+  | { type: "signatures"; project: CadProject };
+
+export interface SignatureResponse {
+  parts: Record<string, PartSignature | { error: string }>;
+}
 
 // ---------------------------------------------------------------------------
 // Montagens
@@ -162,5 +168,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | AssemblyResponse | InterferenceResponse | DrawingResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
   | { id: number; ok: false; error: string };

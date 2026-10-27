@@ -54,27 +54,21 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
 
 Limitações que passam para a Fase 4 (geometria de classe A e cura): o remendo não prolonga as faces vizinhas (não reconstrói cantos vivos, *delete and heal* verdadeiro); substituir face pressupõe faces laterais aproximadamente paralelas à normal da face; o loft não tem condições de tangência nos extremos (usar a superfície limite); tangência difícil com faces vizinhas quase perpendiculares ao remendo (detetada e avisada).
 
-## Fase 3: montagens, desenhos 2D e BOM
-- Montagens com mates (coincidente, concêntrico, distância, ângulo) e solver de restrições 3D
-- Peças em contexto e deteção de interferências
-- **Desenhos técnicos 2D**, associativos (atualizam com o modelo):
-  - folhas e formatos ISO/ASME com legenda e carimbo;
-  - vistas padrão, projetadas (1.º/3.º diedro), isométricas, de corte, de detalhe e auxiliares, com linhas ocultas por HLR;
-  - cotas importadas do modelo e cotas de desenho;
-  - tolerâncias e GD&T (ISO 1101), símbolos de rugosidade e de soldadura;
-  - notas e balões;
-  - exportação DXF/DWG e PDF.
-- **Lista de materiais (BOM)**:
-  - por peça e por montagem (níveis, quantidades, propriedades personalizadas);
-  - tabela no desenho com balões ligados;
-  - exportação CSV/Excel.
-- **BOM com IA** (sempre sugestões para o utilizador validar, nunca alterações automáticas):
-  - classificação das peças e descrições normalizadas;
-  - reconhecimento de peças normalizadas (parafusos, porcas, rolamentos, com designação ISO/DIN) a partir da geometria;
-  - sugestão de material e processo;
-  - deteção de duplicados e de quase-duplicados no catálogo;
-  - estimativa de custo e de prazo, e sugestão de fornecedores;
-  - verificação de coerência entre a BOM, o desenho e o modelo.
+## Fase 3: montagens, desenhos 2D e BOM ✅ (com as limitações listadas)
+- ✅ **Projeto multi-documento** (`.cadp.json`): peças, montagens e desenhos, com abas; propriedades da peça (número, descrição, material, massa volúmica, propriedades personalizadas); ficheiros antigos de peça única abrem como projeto
+- ✅ **Montagens**: componentes (peças e subconjuntos rígidos), mates coincidente, concêntrico, paralelo, perpendicular, distância, ângulo, tangente e fixar, com solver próprio (Levenberg–Marquardt, arranques múltiplos), graus de liberdade e mates em conflito; mates a faces de dentro de subconjuntos; massa com a densidade de cada peça; deteção de interferências; exportação da montagem (STEP/STL/malhas)
+- ✅ **Desenhos técnicos 2D associativos**:
+  - formatos ISO 216 (A4–A0), esquadria e zonas (ISO 5457), legenda (ISO 7200) com símbolo do método de projeção, massa e material;
+  - vistas de modelo, projetadas (1.º/3.º diedro, alinhadas), isométrica, corte (com tracejado), pormenor e auxiliar, por HLR; ocultas e tangentes; marcas e linhas de centro;
+  - cotas do modelo (esboços paralelos à vista) e cotas de desenho (horizontal, vertical, alinhada, raio, diâmetro, ângulo) com tolerâncias e ajustes ISO 286; cota inteligente;
+  - GD&T (ISO 1101, 14 características), referências, estado de superfície, soldadura (ISO 2553), notas, balões (automáticos) e tabela de BOM;
+  - exportação PDF vetorial, DXF R12 (camadas e tipos de linha) e SVG.
+- ✅ **BOM**: nível de topo, só peças, indentada; massas; painel na montagem; exportação CSV e XLSX; tabela no desenho com os balões ligados
+- ✅ **BOM com IA** (sempre sugestões a aceitar uma a uma):
+  - assistente local, sem rede: reconhecimento de parafusos ISO 4017, porcas ISO 4032, anilhas ISO 7089, rolamentos (ISO 15), cavilhas ISO 2338 a partir da geometria; descrições normalizadas; processo provável; material de partida; duplicados e quase-duplicados; massa volúmica incoerente com o material; números repetidos; itens sem balão; custo indicativo (€/kg editável) e prazo indicativo; categoria de fornecedor (nunca empresas);
+  - opcional: sugestões do Claude (API da Anthropic, chave do utilizador só em memória; envia a BOM e um resumo da geometria; resposta estruturada validada).
+
+Pendente (passa para fases seguintes): peças em contexto (editar uma peça com referências à montagem); arrastar componentes com o rato respeitando os mates; vistas explodidas; DWG nativo (formato fechado: usar o DXF ou um conversor externo); cotas por coordenadas/cadeia e quebras de vista; numeração de balões própria em BOM "só peças"; ligação a ERP/PLM; catálogo de normalizados mais completo (DIN, ISO 4762, 4014…).
 
 ## Fase 4: funcionalidades inspiradas no CATIA
 - Wireframe e superfícies ao estilo do GSD: multi-section com guias e spine, blend, sweeps avançados, extrapolação, junção e cura de geometria

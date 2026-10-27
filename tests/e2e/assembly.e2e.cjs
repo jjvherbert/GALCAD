@@ -18,7 +18,8 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500));
     }
     const b = await chromium.launch({ args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
-    const p = await b.newPage({ viewport: { width: 1400, height: 860 } });
+    const ctx = await b.newContext({ viewport: { width: 1400, height: 860 }, acceptDownloads: true });
+    const p = await ctx.newPage();
     const logs = []; p.on("pageerror", (e) => logs.push(e.message));
     const settle = async () => { await p.waitForTimeout(300); await p.waitForFunction(() => !/A reconstruir/.test(document.querySelector(".statusbar")?.textContent ?? "") && /Reconstruído|mm/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 }); await p.waitForTimeout(200); };
     await p.goto(URL);
@@ -57,6 +58,25 @@ async function main() {
     const t2 = await p.textContent(".assembly-tree");
     check("mate criado", /Paralelo1/.test(t2) && /2 grau\(s\) de liberdade/.test(t2), t2.match(/\d+ grau[^C]*/)?.[0] ?? "");
     await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-montagem.png") });
+
+    // BOM e assistente
+    await p.click("[role=tab]:has-text('Montagem')");
+    await p.click(".commands button[title^='Lista de materiais']");
+    await p.waitForSelector(".bom-table");
+    const bomText = await p.textContent(".bom-table");
+    check("tabela de BOM", /GK-001/.test(bomText) && /GK-002/.test(bomText) && /Placa base/.test(bomText), bomText.slice(0, 160));
+    const [dl] = await Promise.all([p.waitForEvent("download"), p.click(".bom-panel button:has-text('CSV')")]);
+    const csv = fs.readFileSync(await dl.path(), "utf8");
+    check("CSV da BOM", csv.startsWith("\uFEFFItem;Qtd.") && /\n2;2;GK-002;Bloco;Alumínio EN AW-6082 T6;0,022;0,043/.test(csv), csv.slice(0, 120).replace(/\r?\n/g, " | "));
+    check("Claude só com chave", await p.$eval(".claude-box button", (e) => e.disabled));
+    await p.click(".bom-panel button:has-text('Analisar (local)')");
+    await p.waitForSelector(".sug", { timeout: 60000 });
+    const nSug = (await p.$$(".sug")).length;
+    check("sugestões locais", nSug >= 4, String(nSug));
+    const accept = p.locator(".sug:has(.tag:has-text('Processo')) button:has-text('Aceitar')").first();
+    await accept.click(); await p.waitForTimeout(400);
+    check("aceitar uma sugestão", (await p.$$(".sug")).length === nSug - 1 && /Processo/.test(await p.textContent(".bom-table")));
+    await p.click(".bom-panel button:has-text('Árvore')");
 
     // nova peça e voltar
     await p.click(".doc-tab:has-text('Base')"); await settle();

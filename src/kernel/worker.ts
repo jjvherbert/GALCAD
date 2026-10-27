@@ -27,6 +27,7 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
         : data.type === "assembly" ? await service.assembly(data.project, data.asmId, data.force)
         : data.type === "interference" ? await service.interference()
         : data.type === "drawing" ? await service.drawing(data.project, data.drawingId, data.force)
+        : data.type === "signatures" ? await service.signatures(data.project)
         : await service.export(data.format, data.name);
       msg = { id: data.id, ok: true, result };
     } catch (e) {

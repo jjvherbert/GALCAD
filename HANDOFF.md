@@ -1,4 +1,23 @@
-# Handoff — Fases 1 e 2
+# Handoff — Fases 1 a 3
+
+## Atualização: Fase 3 (projeto, montagens, desenhos 2D, BOM e BOM com IA)
+
+**Alterações**
+- `src/doc/project.ts`: `CadProject` (peças com `id` e `properties`, montagens, desenhos), tipos de mates, vistas e anotações; `parseProject` aceita o formato antigo de peça única.
+- Store: `project`, `active`, históricos por documento, `commitDoc`, reconstrução por tipo (peça/montagem/desenho); mover vistas/anotações não chama o núcleo (`drawingKernelKey`).
+- Núcleo: um `Engine` por peça; `kernel/assembly.ts` (geometria das referências, subconjuntos, massa); `kernel/drawing.ts` (HLR, projeções, corte com `BRepPrimAPI_MakeHalfSpace` + `Common`, pormenor por recorte 2D, auxiliar, centros, cotas dos esboços); `kernel/signature.ts` (assinatura para o assistente). **Atenção:** o campo `id` dos pedidos ao worker colidia com o id da mensagem — os pedidos usam `asmId`/`drawingId`.
+- Puros: `assembly/solver.ts` (LM com Jacobiano numérico, 6 incógnitas por componente livre, 8 arranques), `assembly/bom.ts`, `assembly/combine.ts`; `drawing/{geom2d,prims,render,edit,svg,pdf,dxf}.ts`; `io/table.ts` (CSV com `;` e XLSX mínimo); `ai/bom-assistant.ts` e `ai/claude.ts` (SDK oficial no browser, `claude-opus-5-5`, `fallbacks: "default"`, saída estruturada Zod, chave só em memória, carregado a pedido).
+- UI: `DocTabs`, `AssemblyUI` (árvore, painel de mate com pré-visualização, componente), `DrawingEditor` (folha SVG, ferramentas, painéis), `BomPanel`, `PropertiesDialog`; separadores Montagem / Esquema de vistas / Anotação.
+- Licenças: `@anthropic-ai/sdk` (Apache-2.0) e `zod` (MIT) acrescentados a `THIRD_PARTY_NOTICES.md` e `licenses/`.
+
+**Testes:** 75 em Node (solver e montagens, desenhos e folha, exportadores, BOM, assistente local, pedido ao Claude com `fetch` simulado) e 5 suites e2e (montagem com BOM/CSV/assistente; desenhos com vistas, cotas do modelo, nota, PDF/DXF/SVG, BOM e balões). Todos a passar. O pedido real ao Claude não foi feito (precisa de uma chave e tem custo); está testado o formato do pedido e a leitura da resposta.
+
+**Bloqueios:** nenhum técnico. Validar os valores nominais de normalizados e as taxas de custo antes de os usar com clientes.
+
+**Próxima ação:** etapa F1 do pré-processador FEM, ou Fase 4 (CATIA), conforme a prioridade de Juan. Sem push: o repositório remoto ainda não existe; o titular da licença continua por confirmar.
+
+---
+
 
 ## Atualização: fecho da Fase 2 e plano do pré-processador FEM
 

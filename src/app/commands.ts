@@ -126,6 +126,7 @@ export const COMMANDS: Command[] = [
     id: `asm.mate.${k}`, label: `Mate: ${MATE_NAMES[k]}`, group: "Montagem", icon: MATE_ICON[k], repeatable: true,
     run: () => { if (store.state.active.kind === "assembly" && !store.state.mateEdit) store.startMate(k); },
   })),
+  { id: "asm.bom", label: "Lista de materiais (BOM) e assistente", group: "Montagem", icon: "☰", run: () => { if (store.state.active.kind === "assembly") store.set({ sidePanel: store.state.sidePanel === "bom" ? null : "bom", mateEdit: null, componentEdit: null }); } },
   { id: "asm.interference", label: "Deteção de interferências", group: "Montagem", icon: "⧯", run: () => { if (store.state.active.kind === "assembly") void store.checkInterference(); } },
   // desenho
   ...([
