@@ -727,6 +727,8 @@ export interface CadDocument {
   checks?: Check[];
   configurations?: ConfigTable;
   publications?: Publication[];
+  /** Estudos de simulação FEM/CFD (pré-processador). */
+  studies?: import("./study.ts").Study[];
   /** Índice da barra de rollback: só as features antes deste índice são reconstruídas. Omitido = todas. */
   rollback?: number;
 }

@@ -35,6 +35,7 @@ export function parseDocument(text: string): CadDocument {
   if (Array.isArray(d.checks)) out.checks = d.checks;
   if (d.configurations && Array.isArray(d.configurations.rows) && Array.isArray(d.configurations.columns)) out.configurations = d.configurations;
   if (Array.isArray(d.publications)) out.publications = d.publications;
+  if (Array.isArray(d.studies)) out.studies = d.studies;
   return out;
 }
 
