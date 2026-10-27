@@ -19,6 +19,11 @@ export interface Deck {
   elements: number;
   /** Área de cada grupo de faces (mm²) medida na malha (para conferir com o CAD). */
   groupArea: Record<string, number>;
+  /**
+   * Cargas aplicadas diretamente nos graus de liberdade restringidos (N), com a carga total: o RF do
+   * CalculiX é a força interna, e a reação verdadeira é RF − esta parcela (f_int = f_ext + R).
+   */
+  supportLoad: [number, number, number];
   warnings: string[];
 }
 
@@ -84,6 +89,10 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     L.push(`*NSET, NSET=N_${name}`);
     for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
   }
+  // reações: um conjunto por grau de liberdade com os apoios que o restringem (nos graus livres o RF
+  // de um nó é a carga aplicada nele, que não é reação)
+  const dofSets = [0, 1, 2].map((k) => c.loads.flatMap((ld) => (ld.kind === "fixed" || (ld.kind === "displacement" && ld.u[k] !== null) ? [`N_${ld.group}`] : [])));
+  if (!thermal) dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`)); });
   const mat = c.material;
   L.push("*MATERIAL, NAME=MAT", `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
   if (thermal) {
@@ -91,6 +100,11 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   } else {
     L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
     if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
+    if (c.nonlinear?.plasticity) {
+      // bilinear: σ = σy + Hp·εp, com o módulo plástico Hp = E·Et/(E − Et) (Et = módulo tangente)
+      const Et = mat.tangent ?? 0, Hp = (mat.E * Et) / (mat.E - Et);
+      L.push("*PLASTIC", `${fmt(mat.yield!)}, 0.`, `${fmt(mat.yield! + Hp)}, 1.`);
+    }
   }
   L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
@@ -135,28 +149,52 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         break;
     }
   }
+  // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses
+  // nós, uma fração mínima da massa, não entra)
+  const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => tris[n.slice(2)]?.flatMap((t) => t.n) ?? [])));
+  const supportLoad: [number, number, number] = [0, 0, 0];
+  for (const [n, f] of cload) for (let k = 0; k < 3; k++) if (dofNodes[k].has(n)) supportLoad[k] += f[k];
+  for (const ld of c.loads) {
+    if (ld.kind !== "pressure") continue;
+    for (const t of tris[ld.group]) {
+      if (!t.face) continue;
+      const [A, B, C] = t.n.slice(0, 3).map((x) => m.nodes.get(x)!);
+      const u = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], v = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+      const nrm = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+      // normal para fora do elemento (afastada do canto oposto)
+      const e = elems[t.face[0] - 1].slice(0, 4).map((x) => m.nodes.get(x)!);
+      const ce = [0, 1, 2].map((q) => (e[0][q] + e[1][q] + e[2][q] + e[3][q]) / 4);
+      const sgn = Math.sign(nrm[0] * (A[0] - ce[0]) + nrm[1] * (A[1] - ce[1]) + nrm[2] * (A[2] - ce[2])) || 1;
+      const len = Math.hypot(nrm[0], nrm[1], nrm[2]);
+      const nodes = t.n.length === 6 ? t.n.slice(3) : t.n;
+      for (const nd of nodes) for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += (-ld.p * sgn * nrm[k] / len) * (t.area / 3);
+    }
+  }
   if (cload.size) {
     loads.push("*CLOAD");
     for (const [n, f] of cload) f.forEach((x, k) => { if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`); });
   }
 
-  L.push("*STEP");
-  if (c.analysis === "static") L.push("*STATIC");
-  else if (c.analysis === "modal") L.push("*FREQUENCY", String(c.modes));
-  else if (c.analysis === "buckling") L.push("*BUCKLE", String(c.modes));
-  else L.push("*HEAT TRANSFER, STEADY STATE");
+  const nl = c.analysis === "static" ? c.nonlinear : undefined;
+  if (nl) {
+    const inc = 1 / nl.increments;
+    L.push(`*STEP${nl.geometry ? ", NLGEOM" : ""}, INC=${Math.max(100, 20 * nl.increments)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
+  } else if (c.analysis === "static") L.push("*STEP", "*STATIC");
+  else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
+  else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
+  else L.push("*STEP", "*HEAT TRANSFER, STEADY STATE");
   if (bcs.length) L.push("*BOUNDARY", ...bcs);
   if (c.analysis !== "modal") L.push(...loads);
   if (thermal) L.push("*NODE FILE", "NT");
   else {
     L.push("*NODE FILE", "U");
-    if (c.analysis === "static") L.push("*EL FILE", "S");
+    if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
     // reações nos apoios (verificação do equilíbrio)
-    if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
+    if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF"); });
   }
   L.push("*END STEP");
   if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
-  return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, warnings };
+  return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, supportLoad, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -204,10 +242,14 @@ export function parseFrd(text: string): { nodes: Map<number, [number, number, nu
   return { nodes, blocks };
 }
 
-/** Valores próprios do `.dat`: frequências (Hz) ou fatores de encurvadura; e reações totais. */
-export function parseDat(text: string): { frequencies: number[]; buckling: number[]; reactions: [number, number, number][] } {
+/**
+ * Valores próprios do `.dat`: frequências (Hz) ou fatores de encurvadura; reações totais de cada
+ * conjunto no último tempo e, nas análises incrementais, a soma das reações em cada tempo.
+ */
+export function parseDat(text: string): { frequencies: number[]; buckling: number[]; reactions: [number, number, number][]; reactionHistory: { time: number; f: [number, number, number] }[] } {
   const lines = text.split(/\r?\n/);
-  const frequencies: number[] = [], buckling: number[] = [], reactions: [number, number, number][] = [];
+  const frequencies: number[] = [], buckling: number[] = [];
+  const sets = new Map<string, Map<number, [number, number, number]>>();
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (/E I G E N V A L U E\s+O U T P U T/.test(l)) {
@@ -224,10 +266,23 @@ export function parseDat(text: string): { frequencies: number[]; buckling: numbe
       }
     } else if (/total force/.test(l)) {
       const v = lines[i + 2]?.trim().split(/\s+/).map(Number);
-      if (v && v.length >= 3 && v.every(Number.isFinite)) reactions.push([v[0], v[1], v[2]]);
+      if (!v || v.length < 3 || !v.every(Number.isFinite)) continue;
+      const m = /for set (\S+) and time\s+(\S+)/.exec(l);
+      const set = (m?.[1] ?? `#${sets.size}`).toUpperCase(), t = Number(m?.[2] ?? 1);
+      if (!sets.has(set)) sets.set(set, new Map());
+      sets.get(set)!.set(t, [v[0], v[1], v[2]]);
     }
   }
-  return { frequencies, buckling, reactions };
+  // componente k da reação: do conjunto N_RX/N_RY/N_RZ (decks deste módulo) ou, noutros decks, a soma dos conjuntos
+  const times = [...new Set([...sets.values()].flatMap((x) => [...x.keys()]))].sort((a, b) => a - b);
+  const perDof = ["N_RX", "N_RY", "N_RZ"].map((n) => sets.get(n));
+  const reactionHistory = times.map((time) => {
+    const f: [number, number, number] = [0, 0, 0];
+    if (perDof.some(Boolean)) perDof.forEach((st, k) => { f[k] = st?.get(time)?.[k] ?? 0; });
+    else for (const st of sets.values()) { const v = st.get(time); if (v) for (let k = 0; k < 3; k++) f[k] += v[k]; }
+    return { time, f };
+  });
+  return { frequencies, buckling, reactions: reactionHistory.length ? [reactionHistory.at(-1)!.f] : [], reactionHistory };
 }
 
 export interface FemResult {
@@ -245,13 +300,26 @@ export interface FemResult {
   summary: [string, string][];
   /** Grandezas escalares (para a convergência da malha e comparações). */
   metrics: Metric[];
+  /** Estática não linear: por incremento, fração da carga, deslocamento máx. (mm) e reação total (N). */
+  history: { time: number; umax: number; reaction: [number, number, number] | null }[];
   hypotheses: string[];
 }
 
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
-export function femResult(c: FemCase, m: Msh, frd: string, dat: string): FemResult {
-  const r = parseFrd(frd);
+export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportLoad: [number, number, number] = [0, 0, 0]): FemResult {
   const d = parseDat(dat);
+  // reação = força interna (RF) − carga aplicada nos graus restringidos (proporcional ao tempo nos incrementais)
+  for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= supportLoad[k] * h.time;
+  if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1)!.f];
+  return femResultFrom(c, m, parseFrd(frd).blocks, d);
+}
+
+/**
+ * Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
+ * valores do solver (frequências, fatores, reações): comum ao CalculiX e ao code_aster.
+ */
+export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnType<typeof parseDat>): FemResult {
+  const r = { blocks };
   // superfície exterior: faces de tetraedro usadas uma só vez
   const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
   const count = new Map<string, { n: number[]; k: number }>();
@@ -280,7 +348,11 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string): FemResu
   const field = (b: FrdBlock | undefined, f: (v: number[]) => number) => order.map((t) => { const v = b?.data.get(t); return v ? f(v) : 0; });
   const fields: FemResult["fields"] = [];
   const displacements: FemResult["displacements"] = [];
-  const disp = r.blocks.filter((b) => b.name === "DISP");
+  const allDisp = r.blocks.filter((b) => b.name === "DISP");
+  // estática (incremental ou não): só o último incremento; modal/encurvadura: um bloco por modo
+  const incremental = c.analysis === "static";
+  const disp = incremental ? allDisp.slice(-1) : allDisp;
+  const lastOf = (name: string) => r.blocks.filter((b) => b.name === name).at(-1);
   const summary: [string, string][] = [];
   const metrics: Metric[] = [];
   const max = (a: number[]) => a.reduce((x, y) => Math.max(x, y), 0);
@@ -301,13 +373,21 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string): FemResu
     if (c.analysis === "static" && disp[0]) {
       const U = field(disp[0], (v) => Math.hypot(v[0], v[1], v[2]));
       fields.push({ name: "Deslocamento", unit: "mm", values: U });
-      const s = r.blocks.find((b) => b.name === "STRESS");
-      if (s) {
-        const vm = field(s, (v) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
+      const s = lastOf("STRESS"), sv = lastOf("VMIS");
+      if (s || sv) {
+        const vm = sv ? field(sv, (v) => v[0]) : field(s, (v) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
         fields.push({ name: "Tensão de von Mises", unit: "MPa", values: vm });
         summary.push(["Tensão de von Mises máx.", `${max(vm).toFixed(2)} MPa`]);
         metrics.push({ key: "vmmax", label: "Tensão de von Mises máx.", unit: "MPa", value: max(vm) });
-        if (c.material.yield) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
+        if (c.material.yield && !c.nonlinear?.plasticity) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
+      }
+      const pe = lastOf("PE");
+      if (pe) {
+        const peeq = field(pe, (v) => v[0]);
+        fields.push({ name: "Deformação plástica equivalente", unit: "—", values: peeq });
+        summary.push(["Deformação plástica equiv. máx.", `${(100 * max(peeq)).toFixed(3)} %`]);
+        metrics.push({ key: "peeq", label: "Deformação plástica equiv. máx.", unit: "", value: max(peeq) });
+        if (max(peeq) > 0) summary.push(["Zona plastificada", "sim — ver o campo da deformação plástica"]);
       }
       summary.unshift(["Deslocamento máx.", `${max(U).toFixed(4)} mm`]);
       metrics.unshift({ key: "umax", label: "Deslocamento máx.", unit: "mm", value: max(U) });
@@ -315,9 +395,17 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string): FemResu
     if (c.analysis === "modal") d.frequencies.slice(0, c.modes).forEach((f, k) => { summary.push([`Frequência ${k + 1}`, `${f.toFixed(2)} Hz`]); metrics.push({ key: `f${k + 1}`, label: `Frequência ${k + 1}`, unit: "Hz", value: f }); });
     if (c.analysis === "buckling") d.buckling.forEach((f, k) => { summary.push([`Fator de encurvadura ${k + 1}`, f.toFixed(3)]); metrics.push({ key: `lambda${k + 1}`, label: `Fator de encurvadura ${k + 1}`, unit: "", value: f }); });
   }
+  const history: FemResult["history"] = c.nonlinear && incremental ? allDisp.map((b) => ({
+    time: b.value,
+    umax: [...b.data.values()].reduce((m, v) => Math.max(m, Math.hypot(v[0], v[1], v[2])), 0),
+    // o .frd escreve o tempo com 6 algarismos e o .dat com 7
+    reaction: d.reactionHistory.find((h) => Math.abs(h.time - b.value) < 1e-5 * Math.max(1, Math.abs(b.value)))?.f ?? null,
+  })) : [];
+  if (history.length) summary.push(["Incrementos", `${history.length} (até ${(100 * history.at(-1)!.time).toFixed(0)} % da carga)`]);
+  if (c.nonlinear && history.length && history.at(-1)!.time < 1 - 1e-6) summary.push(["Aviso", "O cálculo parou antes de aplicar toda a carga"]);
   if (d.reactions.length) {
     const R = d.reactions.reduce((a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]] as [number, number, number], [0, 0, 0] as [number, number, number]);
     summary.push(["Reações totais (N)", R.map((x) => x.toFixed(2)).join(" · ")]);
   }
-  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, summary, metrics, hypotheses: c.hypotheses };
+  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, summary, metrics, history, hypotheses: c.hypotheses };
 }

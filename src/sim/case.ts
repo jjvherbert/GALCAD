@@ -22,9 +22,11 @@ export interface FemCase {
   format: "cadp-sim-case";
   version: 1;
   physics: "fem";
-  solver: "calculix";
+  solver: "calculix" | "code_aster";
   title: string;
   analysis: "static" | "modal" | "buckling" | "thermal";
+  /** Estática não linear: geometria (grandes deslocamentos), plasticidade bilinear, incrementos. */
+  nonlinear?: { geometry: boolean; plasticity: boolean; increments: number };
   modes: number;
   material: SimMaterial;
   /** Grupo físico → tags das faces. */

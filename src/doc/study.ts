@@ -17,8 +17,10 @@ export interface SimMaterial {
   alpha?: number;
   /** Condutividade térmica (W/(m·K)). */
   k?: number;
-  /** Tensão de cedência (MPa), para o fator de segurança. */
+  /** Tensão de cedência (MPa), para o fator de segurança e a plasticidade. */
   yield?: number;
+  /** Módulo tangente depois da cedência (MPa), curva bilinear com encruamento isotrópico. */
+  tangent?: number;
   source?: string;
 }
 
@@ -51,12 +53,24 @@ export interface SimMesh {
   local?: { faces: TopoRef[]; size: Expr }[];
 }
 
+/** Não linearidades da análise estática. */
+export interface FemNonlinear {
+  /** Grandes deslocamentos e rotações (NLGEOM / GROT_GDEP). */
+  geometry?: boolean;
+  /** Plasticidade de von Mises com encruamento isotrópico bilinear (cedência e módulo tangente do material). */
+  plasticity?: boolean;
+  /** N.º de incrementos de carga (mínimo; o solver pode subdividir). */
+  increments?: number;
+}
+
 export interface FemStudy {
   id: string;
   name: string;
   physics: "fem";
-  solver: "calculix";
+  /** CalculiX (por omissão) ou code_aster (EDF, GPL), para os mesmos casos. */
+  solver: "calculix" | "code_aster";
   analysis: "static" | "modal" | "buckling" | "thermal";
+  nonlinear?: FemNonlinear;
   material: SimMaterial;
   loads: FemLoad[];
   /** Modos próprios (modal) ou de encurvadura. */
@@ -98,10 +112,10 @@ export type Study = FemStudy | CfdStudy;
 
 /** Materiais de referência (valores nominais à temperatura ambiente; confirmar na ficha do material). */
 export const SIM_MATERIALS: SimMaterial[] = [
-  { name: "Aço S235JR", E: 210000, nu: 0.3, density: 7.85, alpha: 12e-6, k: 50, yield: 235, source: "EN 10025-2 (valores nominais)" },
-  { name: "Aço inox AISI 316L", E: 193000, nu: 0.3, density: 8.0, alpha: 16e-6, k: 16, yield: 170, source: "EN 10088-2 (valores nominais)" },
-  { name: "Alumínio EN AW-6082 T6", E: 70000, nu: 0.33, density: 2.7, alpha: 23e-6, k: 170, yield: 250, source: "EN 755-2 (valores nominais)" },
-  { name: "Alumínio EN AW-5083 H111", E: 70000, nu: 0.33, density: 2.66, alpha: 24e-6, k: 117, yield: 125, source: "EN 485-2 (valores nominais)" },
+  { name: "Aço S235JR", E: 210000, nu: 0.3, density: 7.85, alpha: 12e-6, k: 50, yield: 235, tangent: 2100, source: "EN 10025-2 (valores nominais)" },
+  { name: "Aço inox AISI 316L", E: 193000, nu: 0.3, density: 8.0, alpha: 16e-6, k: 16, yield: 170, tangent: 1930, source: "EN 10088-2 (valores nominais)" },
+  { name: "Alumínio EN AW-6082 T6", E: 70000, nu: 0.33, density: 2.7, alpha: 23e-6, k: 170, yield: 250, tangent: 700, source: "EN 755-2 (valores nominais)" },
+  { name: "Alumínio EN AW-5083 H111", E: 70000, nu: 0.33, density: 2.66, alpha: 24e-6, k: 117, yield: 125, tangent: 700, source: "EN 485-2 (valores nominais)" },
   { name: "PRFV (laminado E-vidro/poliéster, isotrópico equivalente)", E: 12000, nu: 0.3, density: 1.6, alpha: 25e-6, k: 0.3, yield: 100, source: "Valor indicativo — laminados reais são ortotrópicos: usar o módulo de compósitos" },
 ];
 

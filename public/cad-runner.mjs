@@ -166,7 +166,7 @@ const TET_FACES = [
 	]
 ];
 /** Gmsh tet10 → CalculiX C3D10: as arestas 2-4 e 3-4 vêm trocadas (nós 9 e 10). */
-const TET10_ORDER = [
+const TET10_ORDER$1 = [
 	0,
 	1,
 	2,
@@ -193,7 +193,7 @@ function calculixDeck(c, m) {
 	const elems = [];
 	for (const b of vol) for (let k = 0; k < b.conn.length; k += per) {
 		const e = b.conn.slice(k, k + per);
-		elems.push(quad ? TET10_ORDER.map((i) => e[i]) : e);
+		elems.push(quad ? TET10_ORDER$1.map((i) => e[i]) : e);
 	}
 	const faceOf = /* @__PURE__ */ new Map();
 	elems.forEach((e, i) => TET_FACES.forEach((f, j) => faceOf.set(key3(e[f[0]], e[f[1]], e[f[2]]), [i + 1, j + 1])));
@@ -250,12 +250,24 @@ function calculixDeck(c, m) {
 		L.push(`*NSET, NSET=N_${name}`);
 		for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
 	}
+	const dofSets = [
+		0,
+		1,
+		2
+	].map((k) => c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" && ld.u[k] !== null ? [`N_${ld.group}`] : []));
+	if (!thermal) dofSets.forEach((sets, k) => {
+		if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`));
+	});
 	const mat = c.material;
 	L.push("*MATERIAL, NAME=MAT", `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
 	if (thermal) L.push("*CONDUCTIVITY", fmt(mat.k ?? 50));
 	else {
 		L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
 		if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
+		if (c.nonlinear?.plasticity) {
+			const Et = mat.tangent ?? 0, Hp = mat.E * Et / (mat.E - Et);
+			L.push("*PLASTIC", `${fmt(mat.yield)}, 0.`, `${fmt(mat.yield + Hp)}, 1.`);
+		}
 	}
 	L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
 	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
@@ -310,26 +322,67 @@ function calculixDeck(c, m) {
 			loads.push("*DFLUX");
 			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * .001)}`);
 	}
+	const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => tris[n.slice(2)]?.flatMap((t) => t.n) ?? [])));
+	const supportLoad = [
+		0,
+		0,
+		0
+	];
+	for (const [n, f] of cload) for (let k = 0; k < 3; k++) if (dofNodes[k].has(n)) supportLoad[k] += f[k];
+	for (const ld of c.loads) {
+		if (ld.kind !== "pressure") continue;
+		for (const t of tris[ld.group]) {
+			if (!t.face) continue;
+			const [A, B, C] = t.n.slice(0, 3).map((x) => m.nodes.get(x));
+			const u = [
+				B[0] - A[0],
+				B[1] - A[1],
+				B[2] - A[2]
+			], v = [
+				C[0] - A[0],
+				C[1] - A[1],
+				C[2] - A[2]
+			];
+			const nrm = [
+				u[1] * v[2] - u[2] * v[1],
+				u[2] * v[0] - u[0] * v[2],
+				u[0] * v[1] - u[1] * v[0]
+			];
+			const e = elems[t.face[0] - 1].slice(0, 4).map((x) => m.nodes.get(x));
+			const ce = [
+				0,
+				1,
+				2
+			].map((q) => (e[0][q] + e[1][q] + e[2][q] + e[3][q]) / 4);
+			const sgn = Math.sign(nrm[0] * (A[0] - ce[0]) + nrm[1] * (A[1] - ce[1]) + nrm[2] * (A[2] - ce[2])) || 1;
+			const len = Math.hypot(nrm[0], nrm[1], nrm[2]);
+			const nodes = t.n.length === 6 ? t.n.slice(3) : t.n;
+			for (const nd of nodes) for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += -ld.p * sgn * nrm[k] / len * (t.area / 3);
+		}
+	}
 	if (cload.size) {
 		loads.push("*CLOAD");
 		for (const [n, f] of cload) f.forEach((x, k) => {
 			if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`);
 		});
 	}
-	L.push("*STEP");
-	if (c.analysis === "static") L.push("*STATIC");
-	else if (c.analysis === "modal") L.push("*FREQUENCY", String(c.modes));
-	else if (c.analysis === "buckling") L.push("*BUCKLE", String(c.modes));
-	else L.push("*HEAT TRANSFER, STEADY STATE");
+	const nl = c.analysis === "static" ? c.nonlinear : void 0;
+	if (nl) {
+		const inc = 1 / nl.increments;
+		L.push(`*STEP${nl.geometry ? ", NLGEOM" : ""}, INC=${Math.max(100, 20 * nl.increments)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
+	} else if (c.analysis === "static") L.push("*STEP", "*STATIC");
+	else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
+	else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
+	else L.push("*STEP", "*HEAT TRANSFER, STEADY STATE");
 	if (bcs.length) L.push("*BOUNDARY", ...bcs);
 	if (c.analysis !== "modal") L.push(...loads);
 	if (thermal) L.push("*NODE FILE", "NT");
 	else {
 		L.push("*NODE FILE", "U");
-		if (c.analysis === "static") L.push("*EL FILE", "S");
-		if (c.analysis === "static") {
-			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
-		}
+		if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
+		if (c.analysis === "static") dofSets.forEach((sets, k) => {
+			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF");
+		});
 	}
 	L.push("*END STEP");
 	if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
@@ -338,6 +391,7 @@ function calculixDeck(c, m) {
 		nodes: used.size,
 		elements: elems.length,
 		groupArea,
+		supportLoad,
 		warnings
 	};
 }
@@ -386,10 +440,14 @@ function parseFrd(text) {
 		blocks
 	};
 }
-/** Valores próprios do `.dat`: frequências (Hz) ou fatores de encurvadura; e reações totais. */
+/**
+* Valores próprios do `.dat`: frequências (Hz) ou fatores de encurvadura; reações totais de cada
+* conjunto no último tempo e, nas análises incrementais, a soma das reações em cada tempo.
+*/
 function parseDat(text) {
 	const lines = text.split(/\r?\n/);
-	const frequencies = [], buckling = [], reactions = [];
+	const frequencies = [], buckling = [];
+	const sets = /* @__PURE__ */ new Map();
 	for (let i = 0; i < lines.length; i++) {
 		const l = lines[i];
 		if (/E I G E N V A L U E\s+O U T P U T/.test(l)) for (let j = i + 1; j < lines.length; j++) {
@@ -404,23 +462,65 @@ function parseDat(text) {
 		}
 		else if (/total force/.test(l)) {
 			const v = lines[i + 2]?.trim().split(/\s+/).map(Number);
-			if (v && v.length >= 3 && v.every(Number.isFinite)) reactions.push([
+			if (!v || v.length < 3 || !v.every(Number.isFinite)) continue;
+			const m = /for set (\S+) and time\s+(\S+)/.exec(l);
+			const set = (m?.[1] ?? `#${sets.size}`).toUpperCase(), t = Number(m?.[2] ?? 1);
+			if (!sets.has(set)) sets.set(set, /* @__PURE__ */ new Map());
+			sets.get(set).set(t, [
 				v[0],
 				v[1],
 				v[2]
 			]);
 		}
 	}
+	const times = [...new Set([...sets.values()].flatMap((x) => [...x.keys()]))].sort((a, b) => a - b);
+	const perDof = [
+		"N_RX",
+		"N_RY",
+		"N_RZ"
+	].map((n) => sets.get(n));
+	const reactionHistory = times.map((time) => {
+		const f = [
+			0,
+			0,
+			0
+		];
+		if (perDof.some(Boolean)) perDof.forEach((st, k) => {
+			f[k] = st?.get(time)?.[k] ?? 0;
+		});
+		else for (const st of sets.values()) {
+			const v = st.get(time);
+			if (v) for (let k = 0; k < 3; k++) f[k] += v[k];
+		}
+		return {
+			time,
+			f
+		};
+	});
 	return {
 		frequencies,
 		buckling,
-		reactions
+		reactions: reactionHistory.length ? [reactionHistory.at(-1).f] : [],
+		reactionHistory
 	};
 }
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
-function femResult(c, m, frd, dat) {
-	const r = parseFrd(frd);
+function femResult(c, m, frd, dat, supportLoad = [
+	0,
+	0,
+	0
+]) {
 	const d = parseDat(dat);
+	for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= supportLoad[k] * h.time;
+	if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1).f];
+	return femResultFrom(c, m, parseFrd(frd).blocks, d);
+}
+/**
+* Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
+* valores do solver (frequências, fatores, reações): comum ao CalculiX e ao code_aster.
+*/
+function femResultFrom(c, m, blocks, d) {
+	const r = { blocks };
 	const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
 	const count = /* @__PURE__ */ new Map();
 	for (const b of vol) {
@@ -462,7 +562,10 @@ function femResult(c, m, frd, dat) {
 	});
 	const fields = [];
 	const displacements = [];
-	const disp = r.blocks.filter((b) => b.name === "DISP");
+	const allDisp = r.blocks.filter((b) => b.name === "DISP");
+	const incremental = c.analysis === "static";
+	const disp = incremental ? allDisp.slice(-1) : allDisp;
+	const lastOf = (name) => r.blocks.filter((b) => b.name === name).at(-1);
 	const summary = [];
 	const metrics = [];
 	const max = (a) => a.reduce((x, y) => Math.max(x, y), 0);
@@ -506,9 +609,9 @@ function femResult(c, m, frd, dat) {
 				unit: "mm",
 				values: U
 			});
-			const s = r.blocks.find((b) => b.name === "STRESS");
-			if (s) {
-				const vm = field(s, (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
+			const s = lastOf("STRESS"), sv = lastOf("VMIS");
+			if (s || sv) {
+				const vm = sv ? field(sv, (v) => v[0]) : field(s, (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
 				fields.push({
 					name: "Tensão de von Mises",
 					unit: "MPa",
@@ -521,7 +624,24 @@ function femResult(c, m, frd, dat) {
 					unit: "MPa",
 					value: max(vm)
 				});
-				if (c.material.yield) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
+				if (c.material.yield && !c.nonlinear?.plasticity) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
+			}
+			const pe = lastOf("PE");
+			if (pe) {
+				const peeq = field(pe, (v) => v[0]);
+				fields.push({
+					name: "Deformação plástica equivalente",
+					unit: "—",
+					values: peeq
+				});
+				summary.push(["Deformação plástica equiv. máx.", `${(100 * max(peeq)).toFixed(3)} %`]);
+				metrics.push({
+					key: "peeq",
+					label: "Deformação plástica equiv. máx.",
+					unit: "",
+					value: max(peeq)
+				});
+				if (max(peeq) > 0) summary.push(["Zona plastificada", "sim — ver o campo da deformação plástica"]);
 			}
 			summary.unshift(["Deslocamento máx.", `${max(U).toFixed(4)} mm`]);
 			metrics.unshift({
@@ -550,6 +670,13 @@ function femResult(c, m, frd, dat) {
 			});
 		});
 	}
+	const history = c.nonlinear && incremental ? allDisp.map((b) => ({
+		time: b.value,
+		umax: [...b.data.values()].reduce((m, v) => Math.max(m, Math.hypot(v[0], v[1], v[2])), 0),
+		reaction: d.reactionHistory.find((h) => Math.abs(h.time - b.value) < 1e-5 * Math.max(1, Math.abs(b.value)))?.f ?? null
+	})) : [];
+	if (history.length) summary.push(["Incrementos", `${history.length} (até ${(100 * history.at(-1).time).toFixed(0)} % da carga)`]);
+	if (c.nonlinear && history.length && history.at(-1).time < 1 - 1e-6) summary.push(["Aviso", "O cálculo parou antes de aplicar toda a carga"]);
 	if (d.reactions.length) {
 		const R = d.reactions.reduce((a, b) => [
 			a[0] + b[0],
@@ -573,6 +700,7 @@ function femResult(c, m, frd, dat) {
 		reactions: d.reactions,
 		summary,
 		metrics,
+		history,
 		hypotheses: c.hypotheses
 	};
 }
@@ -1211,6 +1339,258 @@ function su2Config(c) {
 		""
 	].join("\n");
 }
+// src/sim/aster.ts
+/** Gmsh → ASTER/Abaqus: tetraedro de 10 nós com as arestas 2-4 e 3-4 trocadas (como no CalculiX). */
+const TET10_ORDER = [
+	0,
+	1,
+	2,
+	3,
+	4,
+	5,
+	6,
+	7,
+	9,
+	8
+];
+const num = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
+/** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
+function asterMesh(c, m) {
+	const vol = physicalBlocks(m, "SOLID").filter((b) => b.type === 4 || b.type === 11);
+	if (!vol.length) throw new Error("A malha não tem tetraedros no grupo SOLID");
+	const quad = vol[0].type === 11;
+	const L = [
+		"TITRE",
+		` ${c.title.replace(/[^\x20-\x7e]/g, "_").slice(0, 70)}`,
+		"FINSF",
+		"%"
+	];
+	const used = /* @__PURE__ */ new Set();
+	const cells = [];
+	for (const b of vol) for (let k = 0; k < b.conn.length; k += quad ? 10 : 4) {
+		const e = b.conn.slice(k, k + (quad ? 10 : 4));
+		const n = quad ? TET10_ORDER.map((i) => e[i]) : e;
+		n.forEach((x) => used.add(x));
+		cells.push({
+			name: `M${cells.length + 1}`,
+			nodes: n
+		});
+	}
+	const nodeOrder = [...used].sort((a, b) => a - b);
+	L.push("COOR_3D");
+	for (const t of nodeOrder) L.push(`N${t} ${m.nodes.get(t).map(num).join(" ")}`);
+	L.push("FINSF", "%", quad ? "TETRA10" : "TETRA4");
+	for (const e of cells) L.push(`${e.name} ${e.nodes.map((x) => `N${x}`).join(" ")}`);
+	L.push("FINSF", "%");
+	const faceGroups = {};
+	const nodeGroups = {};
+	const areas = {};
+	const faces = [];
+	for (const name of Object.keys(c.groups)) {
+		const bl = physicalBlocks(m, name).filter((b) => b.type === 2 || b.type === 9);
+		faceGroups[name] = [];
+		const ns = /* @__PURE__ */ new Set();
+		let A = 0;
+		for (const b of bl) {
+			const per = b.type === 9 ? 6 : 3;
+			for (let k = 0; k < b.conn.length; k += per) {
+				const n = b.conn.slice(k, k + per);
+				n.forEach((x) => ns.add(x));
+				const [P, Q, R] = n.slice(0, 3).map((x) => m.nodes.get(x));
+				const u = [
+					Q[0] - P[0],
+					Q[1] - P[1],
+					Q[2] - P[2]
+				], v = [
+					R[0] - P[0],
+					R[1] - P[1],
+					R[2] - P[2]
+				];
+				A += .5 * Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
+				const id = `F${faces.length + 1}`;
+				faces.push(`${id} ${n.map((x) => `N${x}`).join(" ")}`);
+				faceGroups[name].push(id);
+			}
+		}
+		nodeGroups[name] = [...ns].sort((a, b) => a - b);
+		areas[name] = A;
+	}
+	if (faces.length) L.push(quad ? "TRIA6" : "TRIA3", ...faces, "FINSF", "%");
+	const block = (kw, name, ids) => {
+		L.push(kw, name);
+		for (let k = 0; k < ids.length; k += 10) L.push(ids.slice(k, k + 10).join(" "));
+		L.push("FINSF", "%");
+	};
+	block("GROUP_MA", "SOLID", cells.map((e) => e.name));
+	for (const [g, ids] of Object.entries(faceGroups)) if (ids.length) block("GROUP_MA", g, ids);
+	for (const [g, ns] of Object.entries(nodeGroups)) if (ns.length) block("GROUP_NO", g, ns.map((x) => `N${x}`));
+	L.push("FIN");
+	return {
+		mail: L.join("\n") + "\n",
+		nodeOrder,
+		areas
+	};
+}
+/** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
+function asterCase(c, m) {
+	if (c.analysis !== "static" && c.analysis !== "modal") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
+	const { mail, nodeOrder, areas } = asterMesh(c, m);
+	const warnings = [];
+	const mat = c.material;
+	const nl = c.analysis === "static" ? c.nonlinear : void 0;
+	const C = [];
+	C.push(`# ${c.title.replace(/[^\x20-\x7e]/g, "_")} -- gerado pelo CAD prototipo (unidades: mm, N, MPa, t, s)`);
+	for (const h of c.hypotheses) C.push(`# ${h.replace(/[^\x20-\x7e]/g, "_")}`);
+	C.push("DEBUT(LANG='FR')", "MA = LIRE_MAILLAGE(FORMAT='ASTER', UNITE=20)");
+	const presGroups = c.loads.flatMap((ld) => ld.kind === "pressure" ? [`'${ld.group}'`] : []);
+	if (presGroups.length) C.push(`MA = MODI_MAILLAGE(reuse=MA, MAILLAGE=MA, ORIE_PEAU=_F(GROUP_MA_PEAU=(${presGroups.join(", ")},)))`);
+	C.push("MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='3D'))");
+	const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(mat.tangent ?? 0)}, SY=${num(mat.yield)})` : "";
+	C.push(`MAT = DEFI_MATERIAU(ELAS=_F(E=${num(mat.E)}, NU=${num(mat.nu)}, RHO=${num(mat.density * 1e-9)})${plast})`, "CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
+	const ddl = [], force = [], pres = [];
+	let grav = "";
+	for (const ld of c.loads) switch (ld.kind) {
+		case "fixed":
+			ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.)`);
+			break;
+		case "displacement": {
+			const comps = ld.u.map((u, k) => u === null ? "" : `D${"XYZ"[k]}=${num(u)}`).filter(Boolean);
+			if (comps.length) ddl.push(`_F(GROUP_NO='${ld.group}', ${comps.join(", ")})`);
+			break;
+		}
+		case "force": {
+			const A = areas[ld.group];
+			if (!(A > 0)) {
+				warnings.push(`Força no grupo ${ld.group} sem área`);
+				break;
+			}
+			force.push(`_F(GROUP_MA='${ld.group}', FX=${num(ld.f[0] / A)}, FY=${num(ld.f[1] / A)}, FZ=${num(ld.f[2] / A)})`);
+			break;
+		}
+		case "pressure":
+			pres.push(`_F(GROUP_MA='${ld.group}', PRES=${num(ld.p)})`);
+			break;
+		case "gravity": {
+			const g = Math.hypot(...ld.g);
+			if (g > 0) grav = `PESANTEUR=_F(GRAVITE=${num(g)}, DIRECTION=(${ld.g.map((x) => num(x / g)).join(", ")}))`;
+			break;
+		}
+		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
+	}
+	if (!ddl.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
+	C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddl.join(", ")},))`);
+	const chParts = [
+		force.length && `FORCE_FACE=(${force.join(", ")},)`,
+		pres.length && `PRES_REP=(${pres.join(", ")},)`,
+		grav
+	].filter(Boolean);
+	const hasCh = chParts.length > 0 && c.analysis === "static";
+	if (hasCh) C.push(`CH = AFFE_CHAR_MECA(MODELE=MO, ${chParts.join(", ")})`);
+	const supports = c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? [`'${ld.group}'`] : []);
+	if (c.analysis === "modal") C.push("ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM, CHARGE=BC, NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))", `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes}))`, "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
+	else if (!nl) C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH)," : ""}))`);
+	else {
+		const rel = nl.plasticity ? "VMIS_ISOT_LINE" : "ELAS";
+		const def = nl.geometry ? nl.plasticity ? "GDEF_LOG" : "GROT_GDEP" : "PETIT";
+		C.push("RAMPE = DEFI_FONCTION(NOM_PARA='INST', VALE=(0., 0., 1., 1.))", `LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=1., NOMBRE=${nl.increments}))`, "LINST = DEFI_LIST_INST(DEFI_LIST=_F(LIST_INST=LR), ECHEC=_F(EVENEMENT='ERREUR', ACTION='DECOUPE', SUBD_METHODE='MANUEL', SUBD_PAS=4, SUBD_NIVEAU=5))", `RES = STAT_NON_LINE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH, FONC_MULT=RAMPE)," : ""}), COMPORTEMENT=_F(RELATION='${rel}', DEFORMATION='${def}', TOUT='OUI'), INCREMENT=_F(LIST_INST=LINST), NEWTON=_F(REAC_ITER=1), CONVERGENCE=_F(ITER_GLOB_MAXI=25))`);
+	}
+	if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
+	C.push("TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
+	if (c.analysis === "static") {
+		C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', TOUT='OUI', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
+		if (supports.length) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
+		if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', TOUT='OUI', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
+	}
+	C.push("IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES))", "FIN()");
+	return {
+		files: {
+			"mesh.mail": mail,
+			"job.comm": C.join("\n") + "\n",
+			"job.export": [
+				"P actions make_etude",
+				"P time_limit 1800",
+				"P memory_limit 4096",
+				"P ncpus 1",
+				"P mpi_nbcpu 1",
+				"P mode interactif",
+				"F comm job.comm D 1",
+				"F mail mesh.mail D 20",
+				"F mess job.mess R 6",
+				"F resu job.resu R 8",
+				"F rmed job.rmed R 80",
+				"F libr u.tab R 38",
+				"F libr vm.tab R 39",
+				"F libr freq.tab R 40",
+				"F libr reac.tab R 41",
+				"F libr peeq.tab R 42"
+			].join("\n") + "\n"
+		},
+		nodeOrder,
+		warnings
+	};
+}
+/** Tabela de IMPR_TABLE (FORMAT='TABLEAU'): linhas de comentário com "#", cabeçalho e valores. */
+function parseAsterTable(text) {
+	const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+	if (!lines.length) return [];
+	const head = lines[0].split(/\s+/);
+	return lines.slice(1).map((l) => {
+		const v = l.split(/\s+/);
+		return Object.fromEntries(head.map((h, i) => [h, v[i] ?? ""]));
+	}).filter((r) => Object.keys(r).length === head.length);
+}
+/** Tag Gmsh de um nó da tabela: nome "N<tag>" ou, nas versões que numeram, o índice (1…) na ordem escrita. */
+const asterNode = (s, order) => /^N\d+$/.test(s) ? Number(s.slice(1)) : order[Number(s) - 1];
+/** Resultado (mesmo formato do CalculiX) a partir das tabelas escritas pelo .comm deste adaptador. */
+function asterResult(c, m, t, nodeOrder) {
+	const nodal = (text, name, cols) => {
+		const byOrder = /* @__PURE__ */ new Map();
+		for (const row of parseAsterTable(text ?? "")) {
+			const ord = Number(row.NUME_ORDRE ?? 1);
+			let b = byOrder.get(ord);
+			if (!b) {
+				b = {
+					name,
+					value: c.analysis === "static" && c.nonlinear ? Number(row.INST ?? 1) : ord,
+					components: cols,
+					data: /* @__PURE__ */ new Map()
+				};
+				byOrder.set(ord, b);
+			}
+			const tag = asterNode(row.NOEUD ?? "", nodeOrder);
+			if (tag !== void 0) b.data.set(tag, cols.map((k) => Number(row[k])));
+		}
+		return [...byOrder].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
+	};
+	const blocks = [
+		...nodal(t.u, "DISP", [
+			"DX",
+			"DY",
+			"DZ"
+		]),
+		...nodal(t.vm, "VMIS", ["VMIS"]),
+		...nodal(t.peeq, "PE", ["V1"])
+	];
+	const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite);
+	const reactionHistory = parseAsterTable(t.reac ?? "").map((r) => ({
+		time: c.nonlinear ? Number(r.INST ?? 1) : 1,
+		f: [
+			Number(r.DX),
+			Number(r.DY),
+			Number(r.DZ)
+		]
+	})).filter((r) => r.f.every(Number.isFinite));
+	const res = femResultFrom(c, m, blocks, {
+		frequencies,
+		buckling: [],
+		reactions: reactionHistory.length ? [reactionHistory.at(-1).f] : [],
+		reactionHistory
+	});
+	return {
+		...res,
+		hypotheses: [...res.hypotheses, "Calculado com o code_aster: adaptador ainda não verificado contra os casos analíticos nesta instalação"]
+	};
+}
 // src/sim/foamfields.ts
 const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/FoamFile\s*\{[\s\S]*?\}/, "");
 /**
@@ -1586,6 +1966,7 @@ function tools() {
 	const gmsh = process.env.CAD_GMSH ?? which("gmsh");
 	const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
 	const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
+	const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run");
 	const foamDirect = which("simpleFoam");
 	const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
 	const version = (cmd, args) => {
@@ -1613,6 +1994,10 @@ function tools() {
 		su2: su2 ? {
 			path: su2,
 			version: "SU2_CFD"
+		} : null,
+		code_aster: aster ? {
+			path: aster,
+			version: aster.endsWith("as_run") ? "as_run" : "run_aster"
 		} : null
 	};
 }
@@ -1696,7 +2081,53 @@ function checkGroups(c, m) {
 	}
 	return out;
 }
+/** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
+async function runAster(c, dir, log, regenerate) {
+	const t = tools();
+	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+	if (!t.code_aster) throw new Error("code_aster (run_aster) não encontrado (https://code-aster.org, ou defina CAD_ASTER)");
+	if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
+	await run(t.gmsh.path, [
+		"mesh.geo",
+		"-3",
+		"-o",
+		"mesh.msh",
+		"-nt",
+		"1"
+	], dir, "log.gmsh", log);
+	const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+	const warnings = checkGroups(c, msh);
+	if (warnings.length) throw new Error(warnings.join("\n"));
+	const ac = asterCase(c, msh);
+	warnings.push(...ac.warnings);
+	for (const [p, text] of Object.entries(ac.files)) writeFileSync(join(dir, p), text);
+	await run(t.code_aster.path, ["job.export"], dir, "log.aster", log);
+	const rd = (f) => existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : void 0;
+	const u = rd("u.tab");
+	if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
+	const fem = asterResult(c, msh, {
+		u,
+		vm: rd("vm.tab"),
+		freq: rd("freq.tab"),
+		reac: rd("reac.tab"),
+		peeq: rd("peeq.tab")
+	}, ac.nodeOrder);
+	const elements = physicalBlocks(msh, "SOLID").reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
+	return {
+		ok: true,
+		physics: "fem",
+		solver: "code_aster",
+		summary: [["Malha", `${ac.nodeOrder.length} nós · ${elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary],
+		warnings: [...warnings, "Adaptador do code_aster ainda não verificado contra os casos analíticos: compare com o CalculiX"],
+		fem,
+		view: femView(fem),
+		metrics: fem.metrics,
+		cells: elements,
+		log: tail(join(dir, "job.mess"))
+	};
+}
 async function runFem(c, dir, log, regenerate) {
+	if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
 	const t = tools();
 	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
 	if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
@@ -1717,7 +2148,7 @@ async function runFem(c, dir, log, regenerate) {
 	writeFileSync(join(dir, "job.inp"), deck.inp);
 	log(`malha: ${deck.nodes} nós, ${deck.elements} elementos`);
 	await run(t.calculix.path, ["-i", "job"], dir, "log.ccx", log, { OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "2" });
-	const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "");
+	const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "", deck.supportLoad);
 	const summary = [["Malha", `${deck.nodes} nós · ${deck.elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
 	return {
 		ok: true,

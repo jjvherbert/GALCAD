@@ -23,6 +23,7 @@ import { calculixDeck, femResult, type FemResult } from "../src/sim/calculix.ts"
 import { openfoamCase } from "../src/sim/openfoam.ts";
 import { patchAverage, patchFlux, patchPressureForce, readBoundary, readFaces, readLabels, readPoints, readScalarField } from "../src/sim/foamread.ts";
 import { su2Config } from "../src/sim/su2.ts";
+import { asterCase, asterResult } from "../src/sim/aster.ts";
 import { type LayerField, type FoamMeshFull, patchLayer, readField, sliceLayer } from "../src/sim/foamfields.ts";
 import { type ResultLayer, type ResultView, femView } from "../src/sim/result.ts";
 import { type ConvergenceReport, type Metric, convergenceReport } from "../src/sim/convergence.ts";
@@ -64,6 +65,7 @@ export function tools() {
   const gmsh = process.env.CAD_GMSH ?? which("gmsh");
   const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
   const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
+  const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run");
   const foamDirect = which("simpleFoam");
   const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
   const version = (cmd: string | null, args: string[]) => {
@@ -76,6 +78,7 @@ export function tools() {
     calculix: ccx ? { path: ccx, version: version(ccx, ["-v"]) } : null,
     openfoam: foamDirect || foamRc ? { path: foamDirect ?? foamRc!, version: foamRc ? foamRc.replace(/\/etc\/bashrc$/, "") : "no PATH", rc: foamRc } : null,
     su2: su2 ? { path: su2, version: "SU2_CFD" } : null,
+    code_aster: aster ? { path: aster, version: aster.endsWith("as_run") ? "as_run" : "run_aster" } : null,
   };
 }
 
@@ -139,7 +142,31 @@ function checkGroups(c: FemCase, m: Msh): string[] {
   return out;
 }
 
+/** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
+async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
+  const t = tools();
+  if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+  if (!t.code_aster) throw new Error("code_aster (run_aster) não encontrado (https://code-aster.org, ou defina CAD_ASTER)");
+  if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
+  await run(t.gmsh.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], dir, "log.gmsh", log);
+  const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const warnings = checkGroups(c, msh);
+  if (warnings.length) throw new Error(warnings.join("\n"));
+  const ac = asterCase(c, msh);
+  warnings.push(...ac.warnings);
+  for (const [p, text] of Object.entries(ac.files)) writeFileSync(join(dir, p), text);
+  await run(t.code_aster.path, ["job.export"], dir, "log.aster", log);
+  const rd = (f: string) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : undefined);
+  const u = rd("u.tab");
+  if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
+  const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab") }, ac.nodeOrder);
+  const elements = physicalBlocks(msh, "SOLID").reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
+  const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
+  return { ok: true, physics: "fem", solver: "code_aster", summary, warnings: [...warnings, "Adaptador do code_aster ainda não verificado contra os casos analíticos: compare com o CalculiX"], fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
+}
+
 async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
+  if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
   if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
@@ -153,7 +180,7 @@ async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): P
   writeFileSync(join(dir, "job.inp"), deck.inp);
   log(`malha: ${deck.nodes} nós, ${deck.elements} elementos`);
   await run(t.calculix.path, ["-i", "job"], dir, "log.ccx", log, { OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "2" });
-  const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "");
+  const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "", deck.supportLoad);
   const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
   return { ok: true, physics: "fem", solver: `CalculiX ${t.calculix.version ?? ""}`.trim(), summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, "log.ccx")) };
 }

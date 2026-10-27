@@ -142,10 +142,10 @@ test("CalculiX: consola — flecha (Timoshenko), reações e pressão", { skip: 
   near(-mean, delta, 0.03);
   const R = f.reactions[0];
   near(R[2], F, 1e-3);
-  // pressão de 1 MPa na face de topo (100 × 10 mm²) → reação vertical de 1000 N; a parcela que cai
-  // nos nós do próprio apoio (aresta x = 0) não entra na reação (≈ meio elemento em 100 mm)
+  // pressão de 1 MPa na face de topo (100 × 10 mm²) → reação vertical de 1000 N (a parcela que cai
+  // nos nós do apoio também é reação: só se somam os graus de liberdade restringidos)
   const p = await (await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "pressure", faces: [face(2, 10)], p: 1 }] }))).run();
-  near(p.fem!.reactions[0][2], 1000, 0.006);
+  near(p.fem!.reactions[0][2], 1000, 1e-4);
   assert.deepEqual(p.warnings, []);
   assert.ok(p.summary.some(([k]) => /von Mises/.test(k)));
 });
@@ -181,6 +181,47 @@ test("CalculiX: convergência da malha da consola (GCI) com tetraedros lineares"
   assert.ok(Math.abs(u.gci.extrapolated - delta) < Math.abs(u.values[0] - delta), `${u.gci.extrapolated} vs ${delta} (fina ${u.values[0]})`);
   assert.ok(u.gci.gciFine > 0 && u.gci.gciFine < 0.5);
   assert.equal(r.cells, c.meshes[0].cells);
+});
+
+test("CalculiX: plasticidade bilinear em tração uniaxial (ε = σ/E + (σ − σy)/Hp)", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 300000 }, async () => {
+  const { doc, face } = await bar();
+  // apoios de simetria (sem restrição lateral): estado de tensão uniforme σ = F/A
+  const sym: FemStudy["loads"] = [{ kind: "displacement", faces: [face(0, 0)], ux: 0 }, { kind: "displacement", faces: [face(1, 0)], uy: 0 }, { kind: "displacement", faces: [face(2, 0)], uz: 0 }];
+  const E = 210000, sy = 235, Et = 2100, Hp = (E * Et) / (E - Et), sigma = 300;
+  const r = await (await solve(doc, fem({ mesh: { size: 5, order: 2, curvature: 0 }, nonlinear: { plasticity: true, increments: 6 }, loads: [...sym, { kind: "force", faces: [face(0, 100)], f: [sigma * 100, 0, 0] }] }))).run();
+  const f = r.fem!;
+  const eps = sigma / E + (sigma - sy) / Hp;
+  const tip = f.positions.reduce<number[]>((a, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...a, f.displacements[0].values[i]] : a), []);
+  near(tip.reduce((a, b) => a + b, 0) / tip.length, eps * 100, 0.005);
+  const peeq = f.fields.find((x) => /plástica/.test(x.name))!.values;
+  near(peeq.reduce((a, b) => a + b, 0) / peeq.length, (sigma - sy) / Hp, 0.01);
+  near(Math.max(...f.fields.find((x) => /von Mises/.test(x.name))!.values), sigma, 0.005);
+  // curva carga–deslocamento: elástica até σy (u = σ·L/E), depois com a inclinação de Et
+  assert.equal(f.history.length, 6);
+  assert.ok(Math.abs(f.history.at(-1)!.time - 1) < 1e-9);
+  const h1 = f.history[0]; // 50 MPa: ainda elástico
+  near(h1.umax, (sigma / 6) * 100 / E, 0.02);
+  near(-h1.reaction![0], sigma * 100 / 6, 1e-5);
+  assert.ok(r.metrics.some((m) => m.key === "peeq"));
+});
+
+test("CalculiX: grandes deslocamentos (NLGEOM) — consola elástica de Bisshopp–Drucker, PL²/EI = 1", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 300000 }, async () => {
+  const { doc, face } = await bar();
+  const E = 210000, I = (10 * 10 ** 3) / 12, L = 100, P = (E * I) / L ** 2;
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -P] }];
+  const tipOf = (f: NonNullable<Awaited<ReturnType<typeof runCase>>["fem"]>) => {
+    const idx = f.positions.map((_, i) => i).filter((i) => i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6);
+    const avg = (k: number) => idx.reduce((a, i) => a + f.displacements[0].values[i + k], 0) / idx.length;
+    return { u: avg(0), w: avg(2) };
+  };
+  const nl = await (await solve(doc, fem({ nonlinear: { geometry: true, increments: 10 }, loads }))).run();
+  const lin = await (await solve(doc, fem({ loads }))).run();
+  const a = tipOf(nl.fem!), b = tipOf(lin.fem!);
+  // elástica (carga de direção fixa): v/L = 0,3017, u/L = 0,0566; linear: L/3 (+ corte)
+  near(-a.w, 0.3017 * L, 0.03);
+  near(-a.u, 0.0566 * L, 0.08);
+  assert.ok(-b.w > 33.3 && Math.abs(b.u) < 1, `linear ${b.w}`);
+  assert.equal(nl.fem!.history.length >= 10, true);
 });
 
 const hasFoam = !!T.openfoam;

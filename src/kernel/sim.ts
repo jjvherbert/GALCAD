@@ -80,13 +80,20 @@ export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
   if (thermal && !s.loads.some((l) => l.kind === "temperature" || l.kind === "convection")) report.warnings.push("Térmica sem temperatura nem convecção imposta: o problema não tem solução única");
   if (!thermal && s.analysis !== "modal" && !s.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) report.warnings.push("Sem apoios: movimento de corpo rígido");
   const b = bbox(solid);
+  const nl = s.analysis === "static" && (s.nonlinear?.geometry || s.nonlinear?.plasticity)
+    ? { geometry: !!s.nonlinear.geometry, plasticity: !!s.nonlinear.plasticity, increments: Math.max(1, Math.round(s.nonlinear.increments ?? 10)) } : undefined;
+  const m = s.material;
+  if (nl?.plasticity && !(m.yield! > 0)) throw new Error("Plasticidade: indique a tensão de cedência do material");
+  if (nl?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) throw new Error("Plasticidade: o módulo tangente tem de estar entre 0 e E");
+  const analysisHyp = !nl ? FEM_HYP[s.analysis]
+    : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && "plasticidade de von Mises com encruamento isotrópico bilinear"].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
-    format: "cadp-sim-case", version: 1, physics: "fem", solver: "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6,
+    format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl,
     material: s.material, groups, faces, loads, bbox: { min: b.min as V3, max: b.max as V3 },
     mesh: { size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local },
     hypotheses: [
-      FEM_HYP[s.analysis],
-      `Material: ${s.material.name} (E = ${s.material.E} MPa, ν = ${s.material.nu}${thermal ? `, k = ${s.material.k ?? 50} W/(m·K)` : `, ρ = ${s.material.density} g/cm³`})${s.material.source ? ` — ${s.material.source}` : ""}`,
+      analysisHyp,
+      `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k ?? 50} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, Et = ${m.tangent} MPa` : ""})${m.source ? ` — ${m.source}` : ""}`,
       `Malha: tetraedros de ordem ${s.mesh.order} (Gmsh), tamanho máx. ${size} mm — confirmar a convergência refinando`,
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
       "Apoio à decisão de engenharia: não é certificação nem decisão de uma autoridade ou de um organismo notificado",
@@ -217,7 +224,9 @@ function stlPatches(ctx: Ctx, solid: TopoDS_Shape, c: CfdCase): Record<string, s
 
 function readme(c: SimCase): string {
   const steps = c.physics === "fem"
-    ? ["gmsh mesh.geo -3 -o mesh.msh", "(o agente local escreve job.inp a partir de mesh.msh e case.json)", "ccx job", "Resultados: job.frd (ParaView/CGX) e job.dat"]
+    ? c.solver === "code_aster"
+      ? ["gmsh mesh.geo -3 -o mesh.msh", "(o agente local escreve mesh.mail, job.comm e job.export a partir de mesh.msh e case.json)", "run_aster job.export", "Resultados: job.rmed (ParaView/SALOME) e tabelas *.tab"]
+      : ["gmsh mesh.geo -3 -o mesh.msh", "(o agente local escreve job.inp a partir de mesh.msh e case.json)", "ccx job", "Resultados: job.frd (ParaView/CGX) e job.dat"]
     : c.solver === "openfoam"
       ? ["sh Allrun   (blockMesh, surfaceFeatureExtract, snappyHexMesh, checkMesh, simpleFoam — com o ambiente do OpenFOAM carregado)", "Resultados: último tempo; paraFoam ou foamToVTK"]
       : ["gmsh mesh.geo -3 -format su2 -o mesh.su2", "SU2_CFD case.cfg"];

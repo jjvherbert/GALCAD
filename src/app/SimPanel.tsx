@@ -84,8 +84,17 @@ function FemEditor({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void 
   const m = s.material;
   return (
     <>
-      <Select label="Análise (CalculiX)" value={s.analysis} options={[["static", "Estática linear"], ["modal", "Modal (frequências próprias)"], ["buckling", "Encurvadura linear"], ["thermal", "Térmica (regime permanente)"]]}
+      <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX (verificado)"], ["code_aster", "code_aster (adaptador por verificar)"]]} onChange={(solver) => up({ solver })} />
+      <Select label="Análise" value={s.analysis} options={[["static", "Estática linear"], ["modal", "Modal (frequências próprias)"], ["buckling", "Encurvadura linear"], ["thermal", "Térmica (regime permanente)"]]}
         onChange={(analysis) => up({ analysis, loads: s.loads.filter((l) => (analysis === "thermal" ? THERM : STRUCT).includes(l.kind)) })} />
+      {s.analysis === "static" && (
+        <fieldset class="checklist">
+          <legend class="field-label">Não linear</legend>
+          <Check label="Grandes deslocamentos e rotações" value={!!s.nonlinear?.geometry} onChange={(geometry) => up({ nonlinear: { ...s.nonlinear, geometry } })} />
+          <Check label="Plasticidade (von Mises, bilinear)" value={!!s.nonlinear?.plasticity} onChange={(plasticity) => up({ nonlinear: { ...s.nonlinear, plasticity } })} />
+          {(s.nonlinear?.geometry || s.nonlinear?.plasticity) && <Field label="Incrementos de carga"><input type="number" min="1" max="200" value={s.nonlinear?.increments ?? 10} onChange={(e) => up({ nonlinear: { ...s.nonlinear, increments: Number((e.target as HTMLInputElement).value) || 10 } })} /></Field>}
+        </fieldset>
+      )}
       {(s.analysis === "modal" || s.analysis === "buckling") && <Field label="N.º de modos"><input type="number" min="1" max="50" value={s.modes ?? 6} onChange={(e) => up({ modes: Number((e.target as HTMLInputElement).value) || 6 })} /></Field>}
       <fieldset class="checklist">
         <legend class="field-label">Material</legend>
@@ -101,7 +110,9 @@ function FemEditor({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void 
         <div class="row3">
           <Field label="k (W/(m·K))"><input type="number" value={m.k ?? ""} onChange={(e) => up({ material: { ...m, k: Number((e.target as HTMLInputElement).value) } })} /></Field>
           <Field label="Cedência (MPa)"><input type="number" value={m.yield ?? ""} onChange={(e) => up({ material: { ...m, yield: Number((e.target as HTMLInputElement).value) } })} /></Field>
+          <Field label="Et (MPa)"><input type="number" value={m.tangent ?? ""} onChange={(e) => up({ material: { ...m, tangent: Number((e.target as HTMLInputElement).value) } })} /></Field>
         </div>
+        {s.nonlinear?.plasticity && <p class="field-hint">Et (módulo tangente depois da cedência) dos materiais de referência é indicativo (≈ E/100): use a curva do certificado do material quando a plasticidade decide.</p>}
         {m.source && <p class="muted">{m.source}</p>}
       </fieldset>
       <h3>Condições</h3>
@@ -246,6 +257,15 @@ function RunBox({ s }: { s: Study }) {
               )}
               <SimLegend />
             </>
+          )}
+          {r.fem && r.fem.history.length > 1 && (
+            <details class="history">
+              <summary>Curva carga–deslocamento ({r.fem.history.length} incrementos)</summary>
+              <table class="info-table">
+                <tr><td>Carga</td><td>Desl. máx. (mm) · reação (N)</td></tr>
+                {r.fem.history.map((h) => <tr key={h.time}><td>{(100 * h.time).toFixed(1)} %</td><td>{num(h.umax)} · {h.reaction ? num(Math.hypot(...h.reaction)) : "—"}</td></tr>)}
+              </table>
+            </details>
           )}
           {r.convergence && (
             <details open class="convergence">
