@@ -135,7 +135,12 @@ export interface State {
   /** Interferências calculadas (montagem ativa). */
   interference: InterferenceResponse | null;
   /** Painel lateral alternativo: BOM ou assistente. */
-  sidePanel: "bom" | "ai" | "knowledge" | null;
+  sidePanel: "bom" | "ai" | "knowledge" | "sim" | null;
+  /** Simulação: último resultado do agente local, vista (campo, deformada, ampliação) e ligação ao agente. */
+  simResult: { studyId: string; result: import("./sim-client.ts").RunResult } | null;
+  simView: { field: number; disp: number; scale: number };
+  simHidden: boolean;
+  agent: { url: string; token: string };
   /** Forma livre em edição: polo selecionado e restrição do arrasto. */
   poleSel: [number, number] | null;
   poleAxis: "free" | "X" | "Y" | "Z";
@@ -179,6 +184,7 @@ class Store {
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
+      simResult: null, simView: { field: 0, disp: 0, scale: 0 }, simHidden: false, agent: { url: "http://127.0.0.1:8765", token: "" },
     };
     this.rebuild(0);
   }
@@ -381,7 +387,7 @@ class Store {
     this.set({
       active: ref, ...(doc ? { doc, result: null } : {}), selection: [], selectedFeature: null, pickTarget: null, analysis: null,
       asmResult: ref.kind === "assembly" ? this.state.asmResult : null, drawingResult: null, contextToolbar: null,
-      mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null,
+      mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null, simResult: null,
     });
     this.rebuild(0);
   }

@@ -114,7 +114,24 @@ Pendente (passa para fases seguintes): concordância G3; *delete and heal* com p
   - ligação ao FEA de cascas laminadas.
 - **cam / fabrico** (opcional): exportação para impressão 3D (3MF, já existe) e corte (DXF).
 
-## Pré-processador FEM compatível com solvers abertos (módulo `fem`)
+## Pré-processador FEM/CFD compatível com solvers abertos (módulo `fem`)
+
+**Escolha dos solvers (out. 2026)** — os melhores abertos por domínio, integrados como processos separados:
+
+| Domínio | Escolha | Porquê | Estado na app |
+|---|---|---|---|
+| Estruturas e térmica (linear, modal, encurvadura, não linear, contacto) | **CalculiX** (ccx 2.23, GPL-2) | Formato tipo Abaqus muito usado e estável, binário leve em Linux/Windows, ótimo para PME (é o do PrePoMax e do FreeCAD) | ✅ F1: estática, modal, encurvadura, térmica; verificado com valores analíticos |
+| Estruturas avançadas (plasticidade, fadiga, cascas compósitas, dinâmica, civil) | **code_aster** (18.x, GPL-3) | O mais completo dos abertos (EDF), com validação industrial | Proposto: F3 (malha `.med` + `.comm`) |
+| Dinâmica explícita (impacto, queda, *slamming*) | **OpenCourant** (ex-OpenRadioss, AGPL-3) | Único explícito aberto de nível industrial | Proposto: adaptador `_0000.rad`/`_0001.rad` (VALIDAR o estado do fork) |
+| Multifísica (térmico-fluido, eletromagnetismo, acústica) | **Elmer** (GPL / ElmerSolver LGPL) | Amplo e com boa documentação | Proposto (mais tarde) |
+| CFD geral (interno/externo, turbulência RANS, térmico, superfície livre VOF para cascos) | **OpenFOAM**, linha openfoam.com (v2606, GPL-3) | Referência aberta da indústria; dicionários estáveis entre versões anuais; pacotes Windows; *snappyHexMesh* para malhas hexa-dominantes com camadas | ✅ F1: simpleFoam interno/externo (laminar, k-ω SST, k-ε) com snappyHexMesh; verificado |
+| CFD compressível/aerodinâmica e otimização de forma (adjunto) | **SU2** (8.x, LGPL-2.1) | Solver adjunto para otimizar a forma — liga ao `rom-fea`/otimizador do esboço adaptativo | ✅ F1: configuração incompressível + malha Gmsh com marcadores (sem SU2 instalado neste ambiente: configuração não corrida) |
+| Malhador FEM e SU2 | **Gmsh** (4.15, GPL-2+) | O melhor malhador aberto de uso geral (tetra, quadráticos, grupos físicos, exporta `.inp`, `.su2`, `.msh`, `.med`) | ✅ F1 |
+| Malhador CFD | **snappyHexMesh** (OpenFOAM) | Hexa-dominante com camadas, a partir de STL | ✅ F1 |
+| Malhador embebido (futuro) | **Netgen** (LGPL) | Pode correr dentro da app como módulo substituível | Proposto |
+| Pós-processamento externo | **ParaView** (BSD) | Abre `.frd` (com leitor), VTK e casos OpenFOAM | Ligação por ficheiros |
+
+Não escolhidos (sobreposição): code_saturne (CFD da EDF, excelente mas redundante com o OpenFOAM), FEniCSx/MFEM/deal.II (bibliotecas para quem programa o modelo, não solvers de produto — candidatas a um solver linear embebido).
 
 Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, condições, malha) e escrever os ficheiros de entrada dos solvers abertos, sem depender de nenhum em particular. A integração dos solvers **dentro da aplicação** (o utilizador nunca exporta à mão: corre e lê resultados sem sair) usa a mesma interface e entra na etapa F3, com os solvers GPL/AGPL como processos separados e os permissivos podendo correr embebidos.
 
@@ -124,7 +141,13 @@ Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, con
 - **Unidades explícitas:** sistema coerente mm–N–MPa–t (tonelada), escrito no cabeçalho de cada ficheiro exportado.
 - **Transparência:** cada exportação e cada relatório indicam as hipóteses (linear/não linear, pequenas deformações), o tipo e a ordem dos elementos, o tamanho de malha, as idealizações aplicadas e as limitações. Nunca é apresentado como certificação nem como decisão de uma autoridade ou de um organismo notificado.
 
-**Etapa F1: definição do estudo e exportação (sem solver na aplicação)**
+**Etapa F1: definição do estudo e exportação ✅ (com as limitações listadas)**
+
+Implementado: estudos FEM (CalculiX) e CFD (OpenFOAM/SU2) na peça, com as condições ligadas às faces pelo nome topológico; caso neutro (`case.json`) com as faces numeradas como no OpenCASCADE/Gmsh (verificado) e conferência dos grupos pelo centroide depois da malha; script Gmsh com grupos físicos e tamanhos; deck CalculiX escrito a partir da malha (C3D10/C3D4, nós dos C3D10 reordenados, faces dos elementos para pressão/convecção/fluxo, forças nodais consistentes, unidades mm–N–MPa–t); caso OpenFOAM completo (blockMesh, surfaceFeatureExtract, snappyHexMesh, simpleFoam, condições de turbulência, STL por patch em metros); configuração SU2; exportação em `.zip` com LEIA-ME e hipóteses. Verificado com os solvers reais: consola (flecha de Timoshenko a < 3 %, tensão de flexão M·c/I, reações), frequência própria (Euler–Bernoulli a < 3 %), condução 1D exata, conduta laminar (balanço de massa 0 %, queda de pressão coerente com Shah & London), caso externo com k-ω SST e camadas.
+
+Limitações: um só sólido por estudo; só material isotrópico; sem contacto, sem não linear, sem transitório; forças só uniformes por área; SU2 não corrido neste ambiente; nos casos externos o resumo dá só a força de pressão (a parcela viscosa precisa do function object `forces`).
+
+Plano original da F1:
 - Tipos de estudo: estático linear, modal (frequências próprias), encurvadura linear, térmico em regime permanente; mais tarde não linear geométrico, contacto e transitório.
 - Materiais: isotrópico (E, ν, ρ, α, k), biblioteca com origem dos valores; ortotrópico e laminados vindos do módulo `compósitos`.
 - Idealização: configuração de análise que suprime features pequenas (filetes, furos) sem alterar o projeto; superfície média de peças finas (usa as ferramentas de superfícies da Fase 2) com espessura por face; vigas a partir de curvas com perfil; simetria e linhas de divisão para regiões de carga.
@@ -140,12 +163,12 @@ Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, con
   - neutros: Gmsh `.msh` v4 com grupos físicos, `.vtu` para visualização.
 - Testes de referência automáticos, comparados com soluções analíticas e benchmarks publicados: consola em flexão (Euler–Bernoulli), placa com furo (fator de concentração de tensões), cilindro sob pressão (Lamé), modos de uma consola, NAFEMS LE1/LE10 quando disponíveis.
 
-**Etapa F2: resultados no visualizador**
+**Etapa F2: resultados no visualizador** (FEM ✅: deslocamento, von Mises, temperatura, deformada ampliada, modos; CFD: só o resumo por agora)
 - Leitura de `.frd` (CalculiX), `.vtu`/`.med` e resultados de MYSTRAN.
 - Mapas de cores (tensão de von Mises, principais, deslocamento, fator de segurança face ao limite elástico), deformada amplificada, modos animados, sondas, reações nos apoios, verificação do equilíbrio (soma das reações vs. cargas).
 - Estudo de convergência de malha assistido (refinamento sucessivo e variação da grandeza de interesse).
 
-**Etapa F3: integração dos solvers dentro da aplicação (sem exportar à mão)**
+**Etapa F3: integração dos solvers dentro da aplicação (sem exportar à mão)** — **agente local ✅** (`tools/cad-runner.ts` → `cad-runner.mjs`: linha de comandos e servidor em 127.0.0.1 com token; regenera as entradas dos solvers a partir do caso, recusa diretivas que executam código; botão "Calcular" no painel Simulação). Por fazer: fila remota, WASM, gestor de corridas com histórico.
 
 Objetivo: o utilizador define o estudo e carrega em "Calcular"; a malha e o ficheiro do solver são gerados em memória, o solver corre em segundo plano e os resultados voltam ao visualizador. O ficheiro de entrada continua a existir, mas como detalhe interno (e fica disponível para quem o queira auditar ou correr à parte). É assim que o FreeCAD FEM e o Salome-Meca trabalham com CalculiX e Code_Aster.
 

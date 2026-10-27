@@ -318,3 +318,13 @@ button.on { background: var(--accent-soft); border-color: var(--accent); }
 .kw-table input { width: 6em; }
 .kw-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .error-text { color: #dc2626; font-size: 12px; margin: 2px 0; }
+
+/* simulação */
+.legend.sequential { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #440154, #3e4989, #26828e, #35b779, #b5de2b, #fde725); }
+.info-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.info-table td { padding: 1px 4px; border-bottom: 1px solid var(--line); }
+.info-table td:last-child { text-align: right; }
+a.button { text-decoration: none; display: inline-block; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; color: inherit; }
+.sim-panel .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.sim-panel .row3 input, .sim-panel .row input { min-width: 0; width: 100%; }
+.sim-panel .row > * { min-width: 0; }

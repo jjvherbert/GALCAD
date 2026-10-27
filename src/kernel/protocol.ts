@@ -13,6 +13,8 @@ export type Request =
   /** `parts`: as outras peças de que esta depende (referências externas), para as reconstruir. */
   | { type: "rebuild"; doc: CadDocument; force?: boolean; parts?: PartDoc[] }
   | { type: "snapshot"; doc: PartDoc; parts: PartDoc[]; feature: string }
+  /** Ficheiros do caso de simulação de um estudo da peça (pré-processador). */
+  | { type: "studyCase"; doc: PartDoc; parts: PartDoc[]; study: string }
   | { type: "export"; format: ExportFormat; name: string }
   | { type: "curvature"; kind: CurvatureKind }
   | { type: "deviation" }
@@ -115,6 +117,9 @@ export interface DeviationResponse {
   edges: { name: string; deg: number }[];
 }
 
+/** Caso de simulação: descrição neutra, ficheiros (texto) e avisos. */
+export interface StudyCaseResponse { case: import("../sim/case.ts").SimCase; files: Record<string, string>; warnings: string[] }
+
 /** Normais exatas por vértice da última malha (linhas de realce). */
 export interface NormalsResponse { normals: Float32Array }
 
@@ -210,5 +215,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | NormalsResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | NormalsResponse | StudyCaseResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
   | { id: number; ok: false; error: string };

@@ -12,6 +12,10 @@ O código deste projeto é proprietário (ver `LICENSE`). Usa as bibliotecas aba
 | Anthropic TypeScript SDK, `@anthropic-ai/sdk` | 1.3.0 | Apache-2.0 | Sugestões de BOM com o Claude (opcional, só com a chave do utilizador) | https://github.com/anthropics/anthropic-sdk-typescript |
 | Zod | 4.6.7 | MIT | Esquema da resposta estruturada do assistente | https://github.com/colinhacks/zod |
 
+## Solvers e malhadores externos (não distribuídos)
+
+O pré-processador escreve ficheiros para o Gmsh (GPL-2+), o CalculiX (GPL-2), o OpenFOAM (GPL-3) e o SU2 (LGPL-2.1), e o agente local (`cad-runner.mjs`, código próprio, sem dependências) corre-os como **programas separados** já instalados na máquina do utilizador. Nenhum deles é incluído nem ligado à aplicação. Se um dia forem distribuídos em conjunto (instalador, imagem de servidor), cumprir as respetivas licenças (texto, código-fonte; na AGPL do OpenCourant, também em serviço de rede) — **VALIDAR com aconselhamento jurídico**.
+
 ## Obrigações das bibliotecas LGPL num produto fechado
 
 Resumo técnico, que não substitui aconselhamento jurídico:

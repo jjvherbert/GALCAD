@@ -1,6 +1,6 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { AssemblyInstance, AssemblyResponse, NormalsResponse, SnapshotResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { AssemblyInstance, AssemblyResponse, NormalsResponse, SnapshotResponse, StudyCaseResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
 import { combs, continuity, curvature, deviation, exactNormals } from "./analysis.ts";
@@ -12,6 +12,7 @@ import { configuredDoc, runChecks, splitPartKey } from "../doc/knowledge.ts";
 import type { PartDoc } from "../doc/project.ts";
 import type { BuildEnv } from "./context.ts";
 import { freezeGeom, publish } from "./features/external.ts";
+import { studyCase } from "./sim.ts";
 import { SHEET_COLOR, SOLID_COLOR, type StepBody, type StepPart, stepAssembly, stepPart } from "./step242.ts";
 
 /** Hash curto (FNV-1a de 32 bits) de um texto, para revisões. */
@@ -364,6 +365,18 @@ export class KernelService {
     }
     setArena(this.asmArena);
     return stepAssembly(title(asm), parts.filter((p) => p.bodies.length), this.lastAsmInstances.map((i) => ({ name: i.name, part: i.part, matrix: i.matrix })));
+  }
+
+  /** Caso de simulação de um estudo (a peça é reconstruída com a cache, na configuração ativa). */
+  async studyCase(input: PartDoc, parts: PartDoc[], studyId: string): Promise<StudyCaseResponse> {
+    const doc = configuredDoc(input);
+    const study = doc.studies?.find((s) => s.id === studyId);
+    if (!study) throw new Error("Estudo inexistente");
+    const r = await this.engineFor(doc.id).rebuild(doc, this.envFor({ parts: [...parts.filter((p) => p.id !== doc.id), doc] }, [doc.id]));
+    const out = studyCase(r.ctx, study);
+    const files: Record<string, string> = {};
+    for (const [k, v] of Object.entries(out.files)) files[k] = typeof v === "string" ? v : new TextDecoder().decode(v);
+    return { case: out.case, files, warnings: out.warnings };
   }
 
   /** Normais exatas por vértice da última malha. */

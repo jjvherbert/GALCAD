@@ -219,7 +219,7 @@ function readme(c: SimCase): string {
   const steps = c.physics === "fem"
     ? ["gmsh mesh.geo -3 -o mesh.msh", "(o agente local escreve job.inp a partir de mesh.msh e case.json)", "ccx job", "Resultados: job.frd (ParaView/CGX) e job.dat"]
     : c.solver === "openfoam"
-      ? ["./Allrun   (blockMesh, surfaceFeatureExtract, snappyHexMesh, checkMesh, simpleFoam)", "Resultados: últimos tempos; paraFoam ou foamToVTK"]
+      ? ["sh Allrun   (blockMesh, surfaceFeatureExtract, snappyHexMesh, checkMesh, simpleFoam — com o ambiente do OpenFOAM carregado)", "Resultados: último tempo; paraFoam ou foamToVTK"]
       : ["gmsh mesh.geo -3 -format su2 -o mesh.su2", "SU2_CFD case.cfg"];
   return [
     `${c.title}`,

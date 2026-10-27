@@ -44,6 +44,23 @@ const themes: Record<"light" | "dark", Theme> = {
  * das luzes; a coordenada desse ponto em `s` dá a risca. Ao contrário da zebra, não depende da vista
  * e é sensível ao sinal da curvatura (descontinuidades G1/G2 aparecem como quebras ou cotovelos).
  */
+/** Paleta sequencial (tipo viridis) para campos de resultados: t ∈ [0, 1]. */
+const VIRIDIS = [0x440154, 0x482878, 0x3e4989, 0x31688e, 0x26828e, 0x1f9e89, 0x35b779, 0x6ece58, 0xb5de2b, 0xfde725];
+export function sequentialColor(t: number, out: THREE.Color) {
+  const x = Math.max(0, Math.min(1, t)) * (VIRIDIS.length - 1);
+  const i = Math.min(VIRIDIS.length - 2, Math.floor(x));
+  const a = new THREE.Color(VIRIDIS[i]), b = new THREE.Color(VIRIDIS[i + 1]);
+  out.copy(a).lerp(b, x - i);
+}
+
+/** O que o visualizador precisa de um resultado FEM. */
+export interface FemResultView {
+  positions: number[];
+  triangles: number[];
+  fields: { name: string; unit: string; values: number[] }[];
+  displacements: { label: string; values: number[] }[];
+}
+
 /** Cores das classes de continuidade: folga, G0, G1, G2, G3. */
 export const CONTINUITY_COLORS: Record<-1 | 0 | 1 | 2 | 3, number> = { [-1]: 0xdc2626, 0: 0x6b7280, 1: 0xeab308, 2: 0x16a34a, 3: 0x2563eb };
 
@@ -261,7 +278,7 @@ export class Viewport {
   private disposeGroup(g: THREE.Group) {
     g.traverse((o) => {
       const m = o as THREE.Mesh;
-      m.geometry?.dispose();
+      if (!m.userData?.shared) m.geometry?.dispose();
       const mat = m.material as THREE.Material | THREE.Material[] | undefined;
       if (Array.isArray(mat)) mat.forEach((x) => x.dispose()); else mat?.dispose();
     });
@@ -339,6 +356,51 @@ export class Viewport {
   private zebra() {
     this.zebraMat ??= new THREE.MeshMatcapMaterial({ matcap: zebraTexture(), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     return this.zebraMat;
+  }
+
+  private simGroup = new THREE.Group();
+
+  /**
+   * Resultados FEM na superfície da malha: cores do campo escolhido (paleta sequencial) e deformada
+   * ampliada. O corpo fica escondido enquanto se mostram resultados.
+   */
+  setSimResult(r: FemResultView | null, view: { field: number; disp: number; scale: number }) {
+    this.disposeGroup(this.simGroup);
+    if (!this.simGroup.parent) this.scene.add(this.simGroup);
+    const showBody = !r;
+    if (this.faceMesh) this.faceMesh.visible = showBody;
+    if (this.edgeLines) this.edgeLines.visible = showBody && this.settings.displayStyle !== "shaded";
+    this.el.dataset.sim = r ? "1" : "";
+    if (!r) return;
+    const pos = new Float32Array(r.positions);
+    const d = r.displacements[view.disp]?.values;
+    if (d) {
+      let max = 0;
+      for (let i = 0; i < d.length; i += 3) max = Math.max(max, Math.hypot(d[i], d[i + 1], d[i + 2]));
+      const k = view.scale > 0 ? view.scale : max > 0 ? (0.08 * this.size) / max : 0;
+      for (let i = 0; i < pos.length; i++) pos[i] += d[i] * k;
+      this.el.dataset.simScale = k.toPrecision(3);
+    }
+    const f = r.fields[view.field];
+    const col = new Float32Array(pos.length);
+    const c = new THREE.Color();
+    if (f && f.values.length) {
+      let lo = Infinity, hi = -Infinity;
+      for (const x of f.values) { if (x < lo) lo = x; if (x > hi) hi = x; }
+      f.values.forEach((x, i) => { sequentialColor(hi > lo ? (x - lo) / (hi - lo) : 0, c); col.set([c.r, c.g, c.b], i * 3); });
+    } else col.fill(0.7);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setIndex(r.triangles);
+    g.computeVertexNormals();
+    this.simGroup.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.7, side: THREE.DoubleSide })));
+    // contorno da peça não deformada, a cinzento, como referência
+    if (this.edgeLines && d) {
+      const ref = new THREE.LineSegments(this.edgeLines.geometry, new THREE.LineBasicMaterial({ color: 0x9ca3af, transparent: true, opacity: 0.6 }));
+      ref.userData.shared = true;
+      this.simGroup.add(ref);
+    }
   }
 
   /** Mostra (ou esconde) a rede de controlo da forma livre em edição e o polo selecionado. */

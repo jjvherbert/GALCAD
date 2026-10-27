@@ -1,4 +1,24 @@
-# Handoff — Fases 1 a 4
+# Handoff — Fases 1 a 4 e pré-processador F1
+
+## Atualização: pré-processador FEM/CFD (F1) e agente local (F3, parcial)
+
+**Escolha dos solvers** (ver ROADMAP): CalculiX (estruturas/térmica), OpenFOAM linha openfoam.com (CFD), SU2 (CFD/adjunto), Gmsh (malhador), snappyHexMesh; code_aster, OpenCourant e Elmer propostos para depois.
+
+**Alterações**
+- `src/doc/study.ts`: tipos `FemStudy`/`CfdStudy`, materiais e fluidos de referência; `CadDocument.studies` (guardado no ficheiro).
+- `src/sim/` (puro): `case.ts` (caso neutro), `gmsh.ts` (`.geo` FEM e SU2), `msh.ts` (MSH 4.1), `calculix.ts` (deck, `.frd`, `.dat`, resultado para o 3D), `openfoam.ts` (caso simpleFoam completo), `foamread.ts` (fluxos, pressão média e força de pressão a partir dos campos — independente de function objects), `su2.ts`.
+- `src/kernel/sim.ts`: estudo → caso (faces → tags na ordem do OCC, que é a do Gmsh: verificado), BREP, STL por patch em metros, LEIA-ME. Pedido `studyCase` ao worker.
+- `tools/cad-runner.ts` (empacotado em `public/cad-runner.mjs` por `npm run build:runner`, que o `build` já corre): CLI e servidor 127.0.0.1 com token; regenera os ficheiros dos solvers a partir de `case.json` (não executa scripts recebidos) e recusa diretivas `#codeStream`/`#calc`/… ; deteta Gmsh/ccx/OpenFOAM (com o bashrc da instalação)/SU2; confere os grupos da malha com as faces do CAD.
+- UI: separador e painel **Simulação** (`SimPanel`), exportação `.zip`, ligação ao agente, resultados FEM a cores (paleta sequencial) com deformada ampliada e contorno original.
+- **Nota de ambiente:** o OpenFOAM v1912 do Ubuntu 24.04 falha em qualquer function object (erro "sha1"); o agente repete com `-noFunctionObjects` e tira o resumo dos campos.
+
+**Testes:** 107 em Node (8 novos em `tests/sim.test.ts`, os de solvers correm com Gmsh 4.15.2, CalculiX 2.21 e OpenFOAM v1912 instalados neste contentor) e 7 suites e2e (nova `tests/e2e/simulacao.e2e.cjs`, com o agente real: flecha 0,191 mm vs 0,192 teórica, von Mises 60,05 MPa vs 60 MPa). Todos a passar.
+
+**Bloqueios:** SU2 não instalado aqui (configuração gerada mas não corrida). VALIDAR licenças antes de distribuir solvers.
+
+**Próxima ação:** F2 completa (campos CFD no 3D via VTK, convergência de malha assistida), estudos de montagens (vários sólidos, contacto colado), code_aster para não linear, ou Fase 5, conforme a prioridade de Juan.
+
+---
 
 ## Atualização: Fase 4 (funcionalidades inspiradas no CATIA)
 

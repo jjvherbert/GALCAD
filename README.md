@@ -9,9 +9,10 @@ CAD paramétrico no browser, para modelação de sólidos e de superfícies, com
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 99 testes (Node): documento, solver, motor, superfícies, montagens, desenhos, BOM, GSD, knowledgeware, referências externas, AP242
+npm test             # 107 testes (Node; os de solvers correm se o Gmsh/CalculiX/OpenFOAM estiverem instalados): documento, solver, motor, superfícies, montagens, desenhos, BOM, GSD, knowledgeware, referências externas, AP242
 npm run typecheck    # TypeScript estrito
-npm run build && npm run test:e2e   # 6 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4
+npm run build && npm run test:e2e   # 7 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4, simulação
+node public/cad-runner.mjs --status # solvers encontrados pelo agente local
 ```
 
 ## O que faz
@@ -84,6 +85,12 @@ npm run build && npm run test:e2e   # 6 suites no Chromium: aplicação, navega�
 - **Publicações e referências externas**: cada peça publica geometria com nomes estáveis (faces, arestas, planos, eixos, esboços, superfícies, o corpo); outra peça copia uma publicação **ligada** (acompanha a origem) ou **congelada** (fica a cópia, com aviso se a origem mudar), na origem comum ou com a posição lida de uma montagem; ciclos são detetados. Os mates podem referir publicações (`@Nome`).
 - **STEP AP242**: produtos com nome (número + nome), cores, corpos sólidos e de superfície separados e, nas montagens, a estrutura de produto com uma ocorrência por instância.
 
+**Simulação (pré-processador FEM/CFD, separador Simulação):**
+- **Estudos** na peça: FEM com o **CalculiX** (estática linear, modal, encurvadura, térmica em regime permanente) e CFD com o **OpenFOAM** (simpleFoam + snappyHexMesh, interno ou externo, laminar/k-ω SST/k-ε) ou o **SU2**. Condições nas faces pelo nome topológico (encastramento, deslocamento, força, pressão, gravidade, temperatura, convecção, fluxo; entrada/saída ou escoamento livre); materiais e fluidos de referência; malha **Gmsh** (tetraedros quadráticos) ou snappyHexMesh.
+- **Exportar caso (.zip)**: BREP exato, script Gmsh, dicionários/deck, `case.json`, LEIA-ME com hipóteses e passos.
+- **Calcular no agente local**: `node cad-runner.mjs --serve` (descarrega-se no painel) corre os solvers instalados na máquina como processos separados e devolve os resultados: resumo (flecha, von Mises, fator de segurança, frequências, reações, caudal, balanço de massa, queda de pressão, arrasto de pressão) e, no FEM, os campos a cores no 3D com a deformada.
+- Os resultados são apoio à decisão de engenharia, com as hipóteses à vista; não são certificação.
+
 **Ficheiros:**
 - Projeto em JSON aberto e legível (`.cadp.json`), com regras, verificações, configurações, publicações e templates.
 - Exportação para **STEP AP214** (sólido exato), **STEP AP242** (produtos, cores, estrutura), **STL**, **3MF**, **OBJ** e **glTF (.glb)**, sempre em milímetros.
@@ -133,6 +140,8 @@ src/
   drawing/  folha de desenho: geometria 2D, primitivas, render, edição, exportação SVG/PDF/DXF (puros)
   ai/       assistente de BOM local e sugestões do Claude (opcional)
   geom/     matemática pura das superfícies GSD: splines, Gordon, Hermite, círculos
+  sim/      pré-processador (puro): caso neutro, Gmsh, CalculiX (deck e resultados), OpenFOAM, SU2
+tools/      agente local cad-runner (Node, sem dependências): corre os solvers e serve a aplicação
   app/      interface Preact + Three.js: árvore, painel de propriedades, editor de esboço, visualizador
 tests/      testes Node (node:test) e e2e (Playwright)
 ```
@@ -173,6 +182,7 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
   - templates: as coordenadas dentro dos esboços copiados são relativas ao plano/face de entrada (o referencial da face escolhida pode ter os eixos invertidos);
   - referências externas: a posição lida de uma montagem é guardada (não acompanha a montagem automaticamente: "Ler posição" de novo); peças em contexto completas (editar a peça dentro da montagem) continuam por fazer;
   - AP242: estrutura de montagem achatada (uma ocorrência por instância, sem subconjuntos aninhados); **sem PMI semântico** (Fase 5).
+- Simulação: um só sólido por estudo, material isotrópico, sem contacto/não linear/transitório; CFD sem campos no 3D (só resumo); SU2 não corrido neste ambiente; arrasto externo só de pressão. Os solvers não são distribuídos com a aplicação: instalam-se à parte.
 - O nome de uma face dividida pode mudar de sufixo (`~0`, `~1`) se a ordem geométrica das partes mudar. As referências por nome-base e por posição cobrem a maioria dos casos e deixam um aviso.
 
 ## Propriedade intelectual

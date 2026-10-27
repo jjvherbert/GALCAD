@@ -27,7 +27,7 @@ function drawingAction(what: "modelDims" | "balloons") {
 export interface Command {
   id: string;
   label: string;
-  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Superfícies" | "Esboço" | "Referências" | "Avaliar" | "Conhecimento" | "Módulos" | "Exportar" | "Montagem" | "Desenho";
+  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Superfícies" | "Esboço" | "Referências" | "Avaliar" | "Conhecimento" | "Simulação" | "Módulos" | "Exportar" | "Montagem" | "Desenho";
   /** Atalhos, no formato "Ctrl+Shift+Z", "F", "Space", "ArrowLeft". */
   keys?: string[];
   icon?: string;
@@ -137,6 +137,7 @@ export const COMMANDS: Command[] = [
     id: `asm.mate.${k}`, label: `Mate: ${MATE_NAMES[k]}`, group: "Montagem", icon: MATE_ICON[k], repeatable: true,
     run: () => { if (store.state.active.kind === "assembly" && !store.state.mateEdit) store.startMate(k); },
   })),
+  { id: "sim.panel", label: "Simulação: estudos FEM/CFD, malha e solvers abertos", group: "Simulação", icon: "≋", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "sim" ? null : "sim", edit: null }); } },
   { id: "kw.panel", label: "Conhecimento: regras, verificações, configurações e templates", group: "Conhecimento", icon: "⚙", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "knowledge" ? null : "knowledge" }); } },
   { id: "asm.bom", label: "Lista de materiais (BOM) e assistente", group: "Montagem", icon: "☰", run: () => { if (store.state.active.kind === "assembly") store.set({ sidePanel: store.state.sidePanel === "bom" ? null : "bom", mateEdit: null, componentEdit: null }); } },
   { id: "asm.interference", label: "Deteção de interferências", group: "Montagem", icon: "⧯", run: () => { if (store.state.active.kind === "assembly") void store.checkInterference(); } },

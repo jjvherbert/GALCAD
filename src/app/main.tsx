@@ -17,6 +17,7 @@ import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
 import { DocTabs } from "./DocTabs.tsx";
 import { BomPanel } from "./BomPanel.tsx";
 import { KnowledgePanel } from "./KnowledgePanel.tsx";
+import { SimPanel } from "./SimPanel.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
 import { DrawingEditor } from "./DrawingEditor.tsx";
 import { PartPropertiesDialog } from "./PropertiesDialog.tsx";
@@ -107,6 +108,11 @@ function App() {
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
+  // resultados de simulação (FEM) no 3D
+  useEffect(() => {
+    const show = st.sidePanel === "sim" && !st.simHidden && st.active.kind === "part";
+    vp.current?.setSimResult(show ? st.simResult?.result.fem ?? null : null, st.simView);
+  }, [st.simResult, st.simView, st.simHidden, st.sidePanel, st.active, st.result]);
   // rede de controlo da forma livre em edição
   useEffect(() => {
     const d = st.edit?.draft;
@@ -167,7 +173,7 @@ function App() {
         )}
         {kind === "part" && !st.sketch && (
           <aside class="side">
-            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : (
+            {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : st.sidePanel === "sim" ? <SimPanel /> : (
               <>
                 <FeatureTree />
                 <div class="side-info">
