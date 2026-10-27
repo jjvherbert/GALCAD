@@ -1,7 +1,8 @@
 // Painel de propriedades da feature em edição (equivalente ao PropertyManager).
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { BlendSide, BodyOp, Continuity, CurveDef, Feature, HoleKind, SectionTangent } from "../doc/types.ts";
 import { FEATURE_LABELS, SHEET_SOURCES, TOOL_FEATURES, featureLabel } from "../doc/features.ts";
+import type { CadProject } from "../doc/project.ts";
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
@@ -12,6 +13,34 @@ const OPS: [BodyOp, string][] = [["add", "Adicionar material"], ["cut", "Remover
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 3 });
 const CONT: [Continuity, string][] = [["contact", "Contacto (G0)"], ["tangent", "Tangente (G1)"], ["curvature", "Curvatura (G2)"]];
 const CURVE_KINDS: [CurveDef["kind"], string][] = [["points", "Spline por pontos"], ["projected", "Esboço projetado em faces"], ["intersection", "Interseção de superfícies"], ["composite", "Curva composta (arestas)"], ["helix", "Hélice"], ["extend", "Curva prolongada (extrapolar)"]];
+
+const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+/** Instâncias de peças de uma montagem (com subconjuntos): caminho "c2/c1" e peça. */
+function instancesOf(project: CadProject, asmId: string, prefix = "", names = "", depth = 0): { path: string; part: string; name: string }[] {
+  const a = project.assemblies.find((x) => x.id === asmId);
+  if (!a || depth > 16) return [];
+  return a.components.filter((c) => !c.suppressed).flatMap((c) => {
+    const path = prefix ? `${prefix}/${c.id}` : c.id;
+    const name = names ? `${names} / ${c.name}` : c.name;
+    return c.ref.kind === "part" ? [{ path, part: c.ref.id, name }] : instancesOf(project, c.ref.id, path, name, depth + 1);
+  });
+}
+
+/** Escolha das instâncias de origem e desta peça numa montagem, e leitura da posição relativa. */
+function PlacementPick({ insts, srcPart, thisPart, asmId, value }: { insts: { path: string; part: string; name: string }[]; srcPart: string; thisPart: string; asmId: string; value: { from?: string; to?: string } | undefined }) {
+  const fromOpts = insts.filter((i) => i.part === srcPart), toOpts = insts.filter((i) => i.part === thisPart);
+  const [from, setFrom] = useState(value?.from ?? fromOpts[0]?.path ?? "");
+  const [to, setTo] = useState(value?.to ?? toOpts[0]?.path ?? "");
+  if (!fromOpts.length || !toOpts.length) return <p class="muted">A montagem tem de conter as duas peças.</p>;
+  return (
+    <>
+      <Field label="Instância da origem"><select value={from} onChange={(ev) => setFrom((ev.target as HTMLSelectElement).value)}>{fromOpts.map((i) => <option key={i.path} value={i.path}>{i.name}</option>)}</select></Field>
+      <Field label="Instância desta peça"><select value={to} onChange={(ev) => setTo((ev.target as HTMLSelectElement).value)}>{toOpts.map((i) => <option key={i.path} value={i.path}>{i.name}</option>)}</select></Field>
+      <button class="small" onClick={() => void store.readPlacement(asmId, from, to)}>Ler posição da montagem</button>
+    </>
+  );
+}
 
 /** Tangência de um extremo da multi-secção (face de suporte, tensão, inverter). */
 function TangentEditor({ field, label, value, onChange }: { field: string; label: string; value: SectionTangent | undefined; onChange: (v: SectionTangent | undefined) => void }) {
@@ -594,6 +623,52 @@ export function PropertyPanel() {
           ) : <p class="field-hint">Arraste os polos (roxo) no 3D; um clique seleciona o polo para editar o deslocamento.</p>}
           <p class="muted">{f.moves.length} polo(s) deslocado(s){net ? ` · rede ${net.nu} × ${net.nv}` : ""}</p>
           {f.moves.length > 0 && <button class="small" onClick={() => up({ moves: [] })}>Repor todos os polos</button>}
+        </>
+      );
+      break;
+    }
+    case "external": {
+      const others = st.project.parts.filter((p) => p.id !== st.doc.id);
+      const src = st.project.parts.find((p) => p.id === f.part);
+      const pubs = src?.publications ?? [];
+      const asms = st.project.assemblies;
+      const pl = f.placement;
+      const asmId = pl?.assembly ?? asms[0]?.id ?? "";
+      const insts = asmId ? instancesOf(st.project, asmId) : [];
+      body = (
+        <>
+          <Field label="Peça de origem">
+            <select value={f.part} onChange={(ev) => up({ part: (ev.target as HTMLSelectElement).value, publication: "" })}>
+              <option value="">— escolher —</option>
+              {others.map((p) => <option key={p.id} value={p.id}>{p.name}{p.publications?.length ? ` (${p.publications.length} publicações)` : " (sem publicações)"}</option>)}
+            </select>
+          </Field>
+          <Field label="Publicação">
+            <select value={f.publication} onChange={(ev) => up({ publication: (ev.target as HTMLSelectElement).value })}>
+              <option value="">— escolher —</option>
+              {pubs.map((p) => <option key={p.name} value={p.name}>{p.name} ({p.ref.kind === "feature" ? "feature" : p.ref.kind === "body" ? "corpo" : p.ref.kind === "face" ? "face" : "aresta"})</option>)}
+            </select>
+          </Field>
+          {src && !pubs.length && <p class="field-hint">Publique primeiro a geometria na peça de origem (Conhecimento → Publicações).</p>}
+          <p class="muted">Estado: {f.mode === "frozen" ? "congelada (não acompanha a origem)" : "ligada (atualiza com a origem)"}</p>
+          <div class="row">
+            {f.mode === "linked"
+              ? <button class="small" disabled={!f.part || !f.publication} onClick={() => void store.freezeExternal()}>Congelar agora</button>
+              : <button class="small" onClick={() => up({ mode: "linked", frozen: undefined })}>Voltar a ligar</button>}
+          </div>
+          <Select label="Corpo publicado: operação" value={f.op ?? "new"} options={OPS} onChange={(op) => up({ op })} />
+          <fieldset class="checklist">
+            <legend class="field-label">Posição</legend>
+            <p class="muted">{pl ? `Matriz lida${pl.assembly ? ` de "${asms.find((a) => a.id === pl.assembly)?.name ?? pl.assembly}"` : ""}` : "Mesma origem da peça de origem"}</p>
+            {asms.length > 0 && (
+              <>
+                <Field label="Montagem"><select value={asmId} onChange={(ev) => up({ placement: { m: pl?.m ?? IDENTITY, assembly: (ev.target as HTMLSelectElement).value } })}>{asms.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
+                <PlacementPick insts={insts} srcPart={f.part} thisPart={st.doc.id} asmId={asmId} value={pl} />
+              </>
+            )}
+            {pl && <button class="small" onClick={() => up({ placement: undefined })}>Usar a mesma origem</button>}
+          </fieldset>
+          <p class="field-hint">A cópia fica nesta peça: planos e eixos publicados servem de referência para esboços; faces e superfícies passam a corpo de superfície; arestas e esboços a curva 3D; o corpo junta-se com a operação escolhida.</p>
         </>
       );
       break;

@@ -1,6 +1,6 @@
 // Estado da aplicação: documento, histórico, edição de features/esboços e resultado da reconstrução.
 import { useEffect, useReducer } from "preact/hooks";
-import type { AxisRef, CadDocument, Feature, FeatureData, FeatureType, GeoHint, PlaneRef, SketchFeature, StdAxis, Variable, Vec3 } from "../doc/types.ts";
+import type { AxisRef, CadDocument, Feature, FeatureData, FeatureType, GeoHint, PlaneRef, Publication, SketchFeature, StdAxis, Variable, Vec3 } from "../doc/types.ts";
 import { History } from "../doc/history.ts";
 import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "../doc/io.ts";
 import {
@@ -10,6 +10,34 @@ import {
 } from "../doc/project.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
 import { instantiateTemplate, makeTemplate } from "../doc/knowledge.ts";
+
+/** Peças de que um documento depende por referências externas (transitivamente). */
+export function externalParts(project: CadProject, doc: CadDocument): PartDoc[] {
+  const out = new Map<string, PartDoc>();
+  const visit = (d: CadDocument) => {
+    for (const f of d.features) {
+      if (f.type !== "external" || out.has(f.part)) continue;
+      const p = project.parts.find((x) => x.id === f.part);
+      if (p) { out.set(p.id, p); visit(p); }
+    }
+  };
+  visit(doc);
+  return [...out.values()];
+}
+
+/** inv(B) · A para matrizes rígidas 4×4 em coluna maior. */
+function relativeMatrix(B: ArrayLike<number>, A: ArrayLike<number>): number[] {
+  // inv(B): rotação transposta e translação −Rᵀt
+  const R = [B[0], B[1], B[2], B[4], B[5], B[6], B[8], B[9], B[10]]; // colunas
+  const t = [B[12], B[13], B[14]];
+  const inv = new Array(16).fill(0);
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) inv[j * 4 + i] = R[i * 3 + j];
+  for (let i = 0; i < 3; i++) inv[12 + i] = -(R[i * 3] * t[0] + R[i * 3 + 1] * t[1] + R[i * 3 + 2] * t[2]);
+  inv[15] = 1;
+  const out = new Array(16).fill(0);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += inv[k * 4 + r] * A[c * 4 + k]; out[c * 4 + r] = s; }
+  return out;
+}
 import type { AssemblyResponse, InterferenceResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, RebuildResponse } from "../kernel/protocol.ts";
 
 /** Análise de superfície ativa no 3D (separador Avaliar). */
@@ -207,7 +235,8 @@ class Store {
       const active = this.state.active;
       try {
         if (active.kind === "part") {
-          const r = await this.kernel.rebuild(this.displayDoc(), force);
+          const doc = this.displayDoc();
+          const r = await this.kernel.rebuild(doc, force, externalParts(this.state.project, doc));
           if (r && this.state.active === active) { this.set({ result: r, busy: false, error: null }); void this.refreshAnalysis(); }
         } else if (active.kind === "assembly") {
           const r = await this.kernel.assembly(this.displayProject(), active.id, force);
@@ -564,6 +593,47 @@ class Store {
     } catch (e) {
       this.set({ error: (e as Error).message });
       return false;
+    }
+  }
+
+  // --- publicações e referências externas ---------------------------------------
+
+  setPublications(publications: Publication[], label = "Publicações") {
+    this.commitDoc("part", { ...this.state.doc, publications }, label, true);
+  }
+
+  /** Congela a referência externa em edição (guarda a geometria atual da origem). */
+  async freezeExternal() {
+    const e = this.state.edit;
+    if (!e || e.draft.type !== "external") return;
+    try {
+      const doc = { ...this.state.doc, features: this.state.doc.features.map((f) => (f.id === e.draft.id ? e.draft : f)) };
+      if (!doc.features.some((f) => f.id === e.draft.id)) doc.features = [...doc.features, e.draft];
+      const snap = await this.kernel.snapshot(doc, externalParts(this.state.project, doc), e.draft.id);
+      this.updateDraft({ mode: "frozen", frozen: snap } as Partial<Feature>);
+      this.set({ message: "Referência congelada: a cópia guardada já não acompanha a origem" });
+    } catch (err) {
+      this.set({ error: (err as Error).message });
+    }
+  }
+
+  /**
+   * Lê a posição relativa de duas instâncias numa montagem (origem → esta peça) para a referência
+   * externa em edição: M = (M_destino)⁻¹ · M_origem.
+   */
+  async readPlacement(asmId: string, from: string, to: string) {
+    const e = this.state.edit;
+    if (!e || e.draft.type !== "external") return;
+    try {
+      const r = await this.kernel.assembly(this.state.project, asmId, false);
+      if (!r) return;
+      const A = r.instances.find((i) => i.path === from), B = r.instances.find((i) => i.path === to);
+      if (!A || !B) throw new Error("Instâncias não encontradas na montagem");
+      const m = relativeMatrix(B.matrix, A.matrix).map((x) => Math.round(x * 1e9) / 1e9);
+      this.updateDraft({ placement: { m, assembly: asmId, from, to } } as Partial<Feature>);
+      if (!r.ok) this.set({ message: "A montagem tem mates por resolver: a posição lida pode não ser a final" });
+    } catch (err) {
+      this.set({ error: (err as Error).message });
     }
   }
 

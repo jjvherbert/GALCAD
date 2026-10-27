@@ -116,6 +116,7 @@ export const COMMANDS: Command[] = [
   // features
   ...(["sketch", "extrude", "revolve", "sweep", "loft", "rib", "hole", "fillet", "chamfer", "shell", "draft", "linearPattern", "circularPattern", "mirror", "plane", "axis", "csys"] as FeatureType[]).map(featureCommand),
   ...SURFACE_TYPES.map(featureCommand),
+  featureCommand("external"),
   // análises (Avaliar)
   { id: "analysis.zebra", label: "Riscas de zebra", group: "Avaliar", icon: "▥", run: () => store.setAnalysis(store.state.analysis?.kind === "zebra" ? null : { kind: "zebra" }) },
   { id: "analysis.curvature", label: "Curvatura", group: "Avaliar", icon: "◍", run: () => void store.setAnalysis(store.state.analysis?.kind === "curvature" ? null : { kind: "curvature", mode: "gauss" }) },

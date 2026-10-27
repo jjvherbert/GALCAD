@@ -42,6 +42,7 @@ export const FEATURE_LABELS: Record<FeatureType, string> = {
   extrapolate: "Extrapolar",
   heal: "Curar",
   freeform: "Forma livre (polos)",
+  external: "Referência externa",
 };
 
 export function featureLabel(f: Feature): string {
@@ -58,7 +59,7 @@ export const TOOL_FEATURES: ReadonlySet<FeatureType> = new Set(["extrude", "revo
 export const SURFACE_TYPES: FeatureType[] = ["curve", "surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "trimSurface", "untrim", "knit", "thicken", "replaceFace", "deleteFace", "multiSection", "blend", "circleSweep", "extrapolate", "heal", "freeform"];
 
 /** Features que criam um corpo de superfície novo (com a chave do seu id). */
-export const SHEET_SOURCES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "untrim", "knit", "deleteFace", "linearPattern", "circularPattern", "mirror", "multiSection", "blend", "circleSweep", "extrapolate", "heal", "freeform"];
+export const SHEET_SOURCES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "untrim", "knit", "deleteFace", "linearPattern", "circularPattern", "mirror", "multiSection", "blend", "circleSweep", "extrapolate", "heal", "freeform", "external"];
 
 /** A feature cria um corpo de superfície com a chave do seu id (e não altera um existente)? */
 export const createsSheet = (f: Feature) =>
@@ -69,7 +70,7 @@ export const FEATURE_ICONS: Record<FeatureType, string> = {
   draft: "⏢", rib: "⊿", linearPattern: "⁞", circularPattern: "✲", mirror: "⇋", plane: "▱", axis: "┆", csys: "⌖", import: "⇩", plugin: "⧉",
   surfaceExtrude: "⬒", surfaceRevolve: "◑", surfaceSweep: "≈", surfaceLoft: "⧖", fill: "⬠", offsetSurface: "⇶", knit: "⨝",
   thicken: "▤", trimSurface: "✂", deleteFace: "⌫", curve: "∿", boundary: "⬚", ruled: "⫼", untrim: "⤧", replaceFace: "⇄",
-  multiSection: "⧗", blend: "⌒", circleSweep: "◯", extrapolate: "⇥", heal: "✚", freeform: "⌗",
+  multiSection: "⧗", blend: "⌒", circleSweep: "◯", extrapolate: "⇥", heal: "✚", freeform: "⌗", external: "⇲",
 };
 
 /** Ids de features referidos num nome topológico (ex.: "f3:side:l2" → f3). */
@@ -164,6 +165,7 @@ export function dependencies(f: Feature): Set<string> {
     case "extrapolate": d.add(f.sheet); f.edges.forEach((r) => topoDeps(r, d)); break;
     case "heal": f.sheets.forEach((s) => d.add(s)); break;
     case "freeform": if (f.source.kind === "patch") planeDeps(f.source.plane, d); else topoDeps(f.source.face, d); break;
+    case "external": break; // depende de outra peça, não de features desta
   }
   d.delete(f.id);
   return d;

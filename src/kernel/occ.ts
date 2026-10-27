@@ -32,6 +32,8 @@ export class Arena {
 let current = new Arena();
 export const setArena = (a: Arena) => { current = a; };
 export const T = <T extends { delete(): void }>(o: T): T => current.track(o);
+/** Arena atual (para a repor depois de um passo que reconstrói outra peça a meio). */
+export const getArena = () => current;
 
 export const hash = (s: TopoDS_Shape) => oc().ReplicadShapeHasher.HashCode(s, HASH_CODE_MAX) as number;
 

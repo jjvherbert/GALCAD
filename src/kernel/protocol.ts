@@ -1,6 +1,6 @@
 // Protocolo de mensagens entre a interface e o worker do núcleo geométrico.
-import type { CadDocument, SketchEntity } from "../doc/types.ts";
-import type { CadProject } from "../doc/project.ts";
+import type { CadDocument, SketchEntity, Vec3 } from "../doc/types.ts";
+import type { CadProject, PartDoc } from "../doc/project.ts";
 import type { PartSignature } from "./signature.ts";
 import type { Profiles } from "../sketch/profiles.ts";
 import type { Axis, Frame } from "./frame.ts";
@@ -10,7 +10,9 @@ import type { FeatureStatus } from "./rebuild.ts";
 export type ExportFormat = "step" | "stl" | "3mf" | "obj" | "glb";
 
 export type Request =
-  | { type: "rebuild"; doc: CadDocument; force?: boolean }
+  /** `parts`: as outras peças de que esta depende (referências externas), para as reconstruir. */
+  | { type: "rebuild"; doc: CadDocument; force?: boolean; parts?: PartDoc[] }
+  | { type: "snapshot"; doc: PartDoc; parts: PartDoc[]; feature: string }
   | { type: "export"; format: ExportFormat; name: string }
   | { type: "curvature"; kind: CurvatureKind }
   | { type: "deviation" }
@@ -112,6 +114,14 @@ export interface DeviationResponse {
   edges: { name: string; deg: number }[];
 }
 
+/** Cópia congelada de uma referência externa. */
+export interface SnapshotResponse {
+  revision: string;
+  brep?: string;
+  frame?: { o: Vec3; x: Vec3; y: Vec3; z: Vec3 };
+  axis?: { o: Vec3; d: Vec3 };
+}
+
 /**
  * Continuidade de cada aresta entre duas faces (classe A): folga (G0), ângulo entre normais (G1),
  * diferença relativa da curvatura normal transversal (G2) e da sua derivada (G3).
@@ -196,5 +206,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
   | { id: number; ok: false; error: string };

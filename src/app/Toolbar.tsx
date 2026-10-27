@@ -37,7 +37,7 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
   { id: "sketch", label: "Esboço", groups: [{ title: "Esboço", ids: ["sketch.new"] }] },
   { id: "refs", label: "Referências", groups: [{ title: "Geometria de referência", ids: ["feature.plane", "feature.axis", "feature.csys"] }] },
   { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }, { title: "Análise de superfícies", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation", "analysis.continuity", "analysis.highlight", "analysis.combs"] }] },
-  { id: "knowledge", label: "Conhecimento", groups: [{ title: "Knowledgeware", ids: ["kw.panel", "edit.variables"] }] },
+  { id: "knowledge", label: "Conhecimento", groups: [{ title: "Knowledgeware", ids: ["kw.panel", "edit.variables"] }, { title: "Publicação", ids: ["feature.external"] }] },
   { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
 ];
 

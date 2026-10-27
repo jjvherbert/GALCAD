@@ -36,12 +36,28 @@ export interface Ctx {
   sheets: Map<string, NamedBody>;
   /** Curvas 3D, pelo id da feature que as criou. */
   curves: Map<string, NamedCurve>;
+  /** Acesso às outras peças (referências externas); ausente numa peça isolada. */
+  env?: BuildEnv;
 }
 
 /** Curva 3D: forma (aresta, contorno ou composto) e as arestas com nomes `fN:cK`. */
 export interface NamedCurve {
   shape: TopoDS_Shape;
   edges: NamedEdge[];
+}
+
+/** Geometria publicada por uma peça, já no referencial pedido. */
+export type ExternalGeom =
+  | { kind: "plane"; frame: Frame }
+  | { kind: "axis"; axis: Axis }
+  | { kind: "shape"; shape: TopoDS_Shape; as: "sheet" | "curve" | "solid" };
+
+/** Ambiente de reconstrução: acesso às publicações de outras peças do projeto. */
+export interface BuildEnv {
+  external(part: string, publication: string): Promise<ExternalGeom>;
+  /** Revisão (hash do conteúdo) de uma peça e das que ela refere. */
+  revision(part: string): string;
+  partName(part: string): string;
 }
 
 /** Avisos e informação produzidos por uma feature. */

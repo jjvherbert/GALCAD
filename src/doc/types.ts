@@ -591,6 +591,40 @@ export interface FreeformFeature {
   moves: PoleMove[];
 }
 
+// ---------------------------------------------------------------------------
+// Publicações e referências externas (Fase 4.5)
+// ---------------------------------------------------------------------------
+
+/** O que uma peça publica: uma face/aresta, uma feature (plano, eixo, esboço, curva, superfície) ou o corpo. */
+export type PublishedRef = TopoRef | { kind: "feature"; feature: string } | { kind: "body" };
+
+/** Geometria publicada com um nome estável: outras peças e os mates referem-na por esse nome. */
+export interface Publication {
+  name: string;
+  ref: PublishedRef;
+  comment?: string;
+}
+
+export interface FrameData { o: Vec3; x: Vec3; y: Vec3; z: Vec3 }
+
+/**
+ * Referência externa controlada: cópia de uma publicação de outra peça. Ligada (atualiza com a
+ * origem) ou congelada (fica a cópia guardada). A posição é a da origem da peça de origem ou uma
+ * matriz lida de uma montagem (componente de origem → componente desta peça).
+ */
+export interface ExternalFeature {
+  type: "external";
+  part: string;
+  publication: string;
+  mode: "linked" | "frozen";
+  /** Matriz 4×4 (coluna maior, como a das instâncias) da peça de origem no referencial desta peça. */
+  placement?: { m: number[]; assembly?: string; from?: string; to?: string };
+  /** Cópia congelada: revisão da origem e geometria (BRep em texto, plano ou eixo). */
+  frozen?: { revision: string; brep?: string; frame?: FrameData; axis?: { o: Vec3; d: Vec3 } };
+  /** Corpo publicado: operação com o corpo desta peça. */
+  op?: BodyOp;
+}
+
 export type FeatureData =
   | SketchFeature
   | ExtrudeFeature
@@ -631,7 +665,8 @@ export type FeatureData =
   | CircleSweepFeature
   | ExtrapolateFeature
   | HealFeature
-  | FreeformFeature;
+  | FreeformFeature
+  | ExternalFeature;
 
 export type FeatureType = FeatureData["type"];
 
@@ -691,6 +726,7 @@ export interface CadDocument {
   rules?: Rule[];
   checks?: Check[];
   configurations?: ConfigTable;
+  publications?: Publication[];
   /** Índice da barra de rollback: só as features antes deste índice são reconstruídas. Omitido = todas. */
   rollback?: number;
 }

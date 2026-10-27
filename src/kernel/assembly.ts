@@ -43,6 +43,20 @@ export function refGeometry(ctx: Ctx | null, ref: MateRef): MateGeom {
     return { kind: "axis", p: [0, 0, 0], d: STD_AXES[s as StdAxis].d };
   }
   if (!ctx) throw new Error("Referência sem peça");
+  // "@Nome": publicação da peça (face/aresta publicada, plano ou eixo de referência publicado)
+  if (ref.ref.name.startsWith("@")) {
+    const pubName = ref.ref.name.slice(1);
+    const pub = ctx.doc.publications?.find((p) => p.name === pubName);
+    if (!pub) throw new Error(`A peça não publica "${pubName}"`);
+    if (pub.ref.kind === "face" || pub.ref.kind === "edge") return refGeometry(ctx, { component: ref.component, ref: pub.ref });
+    if (pub.ref.kind === "feature") {
+      const pl = ctx.planes.get(pub.ref.feature);
+      if (pl) return { kind: "plane", p: pl.o, n: pl.z };
+      const ax = ctx.axes.get(pub.ref.feature);
+      if (ax) return { kind: "axis", p: ax.o, d: ax.d };
+    }
+    throw new Error(`A publicação "${pubName}" não serve para mates: use faces, arestas, planos ou eixos`);
+  }
   const report: StepReport = { warnings: [] };
   if (ref.ref.kind === "face") {
     const [nf] = resolveFaces(ctx, [ref.ref], report);

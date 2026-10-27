@@ -21,7 +21,8 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
     let msg: Response;
     try {
       await ready;
-      const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force)
+      const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force, data.parts)
+        : data.type === "snapshot" ? await service.snapshot(data.doc, data.parts, data.feature)
         : data.type === "curvature" ? service.curvature(data.kind)
         : data.type === "deviation" ? service.deviation()
         : data.type === "continuity" ? service.continuity()

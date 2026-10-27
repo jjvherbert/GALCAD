@@ -172,7 +172,7 @@ export function PlaneSelect({ field, label, value, onChange, before }: { field: 
   const prior = st.doc.features.slice(0, before);
   const opts: [string, string, PlaneRef][] = [
     ...(["XY", "XZ", "YZ"] as const).map((n) => [`std:${n}`, `Plano ${n}`, { kind: "std", name: n }] as [string, string, PlaneRef]),
-    ...prior.filter((f) => f.type === "plane").map((f) => [`datum:${f.id}`, f.name, { kind: "datum", feature: f.id }] as [string, string, PlaneRef]),
+    ...prior.filter((f) => f.type === "plane" || (f.type === "external" && st.result?.planes[f.id])).map((f) => [`datum:${f.id}`, f.name, { kind: "datum", feature: f.id }] as [string, string, PlaneRef]),
     ...prior.filter((f) => f.type === "csys").flatMap((f) => (["XY", "XZ", "YZ"] as const).map((n) => [`csys:${f.id}:${n}`, `${f.name} · ${n}`, { kind: "csys", feature: f.id, name: n }] as [string, string, PlaneRef])),
   ];
   const key = planeKey(value);
@@ -201,7 +201,7 @@ export function AxisSelect({ field, label, value, onChange, before, sketch }: { 
   const prior = st.doc.features.slice(0, before);
   const opts: [string, string, AxisRef][] = [
     ...(["X", "Y", "Z"] as const).map((n) => [`std:${n}`, `Eixo ${n}`, { kind: "std", name: n }] as [string, string, AxisRef]),
-    ...prior.filter((f) => f.type === "axis").map((f) => [`datum:${f.id}`, f.name, { kind: "datum", feature: f.id }] as [string, string, AxisRef]),
+    ...prior.filter((f) => f.type === "axis" || (f.type === "external" && st.result?.axes[f.id])).map((f) => [`datum:${f.id}`, f.name, { kind: "datum", feature: f.id }] as [string, string, AxisRef]),
     ...prior.filter((f) => f.type === "csys").flatMap((f) => (["X", "Y", "Z"] as const).map((n) => [`csys:${f.id}:${n}`, `${f.name} · ${n}`, { kind: "csys", feature: f.id, name: n }] as [string, string, AxisRef])),
   ];
   // linhas do esboço (de construção primeiro), úteis para eixos de revolução
@@ -408,7 +408,7 @@ export function CurveList({ field, label, value, onChange, before, single }: { f
   const active = st.pickTarget?.field === field;
   const push = (c: CurveRef) => onChange(single ? [c] : [...value, c]);
   usePickTarget(field, (p) => { if (p.kind === "edge") push({ kind: "edge", ref: { kind: "edge", name: p.name, hint: p.hint } }); });
-  const cands = st.doc.features.slice(0, before).filter((f) => (f.type === "curve" || f.type === "sketch") && !f.suppressed);
+  const cands = st.doc.features.slice(0, before).filter((f) => (f.type === "curve" || f.type === "sketch" || f.type === "external") && !f.suppressed);
   return (
     <div class={`reflist ${active ? "active" : ""}`}>
       <div class="reflist-head">
@@ -418,7 +418,7 @@ export function CurveList({ field, label, value, onChange, before, single }: { f
       <select aria-label={`${label}: acrescentar`} value="" onChange={(e) => {
         const id = (e.target as HTMLSelectElement).value;
         const f = cands.find((x) => x.id === id);
-        if (f) push(f.type === "curve" ? { kind: "curve", feature: id } : { kind: "sketch", sketch: id });
+        if (f) push(f.type === "sketch" ? { kind: "sketch", sketch: id } : { kind: "curve", feature: id });
       }}>
         <option value="">{single ? "escolher curva ou esboço…" : "+ acrescentar curva ou esboço…"}</option>
         {cands.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
@@ -436,7 +436,7 @@ export function CurveList({ field, label, value, onChange, before, single }: { f
 /** Caminho de varrimento: esboço ou curva 3D. */
 export function PathSelect({ label, value, onChange, before }: { label: string; value: string; onChange: (v: string) => void; before: number }) {
   const st = useStore();
-  const cands = st.doc.features.slice(0, before).filter((f) => f.type === "sketch" || f.type === "curve");
+  const cands = st.doc.features.slice(0, before).filter((f) => f.type === "sketch" || f.type === "curve" || f.type === "external");
   return (
     <Field label={label}>
       <select value={value} onChange={(e) => onChange((e.target as HTMLSelectElement).value)}>

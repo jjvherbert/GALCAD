@@ -122,6 +122,25 @@ function MateRefField({ field, label, value, onChange }: { field: string; label:
           {[{ id: "", name: "Origem" }, ...(a?.components ?? [])].map((c) => STD.map((s) => <option key={`${c.id}:${s}`} value={`${c.id}:${s}`}>{c.name} · {s.length === 2 ? "plano" : "eixo"} {s}</option>))}
         </select>
       </div>
+      {(() => {
+        // publicações das peças dos componentes (nomes estáveis "@Nome")
+        const opts = (a?.components ?? []).flatMap((c) => {
+          const p = c.ref.kind === "part" ? st.project.parts.find((x) => x.id === c.ref.id) : undefined;
+          return (p?.publications ?? []).filter((x) => x.ref.kind !== "body").map((x) => ({ c, x }));
+        });
+        if (!opts.length) return null;
+        return (
+          <div class="row">
+            <select aria-label={`${label}: publicação`} value={"ref" in value && value.ref.name.startsWith("@") ? `${value.component}|${value.ref.name}` : ""} onChange={(e) => {
+              const [component, name] = (e.target as HTMLSelectElement).value.split("|");
+              if (name) onChange({ component, ref: { kind: "face", name } });
+            }}>
+              <option value="">— ou publicação —</option>
+              {opts.map(({ c, x }) => <option key={`${c.id}|${x.name}`} value={`${c.id}|@${x.name}`}>{c.name} · {x.name}</option>)}
+            </select>
+          </div>
+        );
+      })()}
     </div>
   );
 }

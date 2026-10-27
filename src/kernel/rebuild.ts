@@ -3,7 +3,7 @@
 import type { CadDocument, Feature } from "../doc/types.ts";
 import { type RuleStatus, resolveWithRules } from "../doc/knowledge.ts";
 import { PLUGIN_BUILDERS } from "../plugins/geometry.ts";
-import type { Ctx, StepReport } from "./context.ts";
+import type { BuildEnv, Ctx, StepReport } from "./context.ts";
 import { Arena, T, explore, setArena } from "./occ.ts";
 import { nameFresh } from "./naming.ts";
 import { applyOp } from "./boolean.ts";
@@ -16,6 +16,7 @@ import { boundary, deleteFace, fill, knit, offsetSurface, replaceFace, ruled, su
 import { curve } from "./features/curve.ts";
 import { blend, circleSweep, extrapolate, heal, multiSection } from "./features/gsd.ts";
 import { freeform } from "./features/freeform.ts";
+import { external } from "./features/external.ts";
 import { evalParam } from "../doc/variables.ts";
 
 export interface FeatureStatus {
@@ -77,6 +78,7 @@ async function runStep(ctx: Ctx, f: Feature, report: StepReport): Promise<Ctx> {
     case "extrapolate": return extrapolate(ctx, f, report);
     case "heal": return heal(ctx, f, report);
     case "freeform": return freeform(ctx, f, report);
+    case "external": return external(ctx, f, report);
     case "plugin": {
       const b = PLUGIN_BUILDERS[f.plugin]?.[f.kind];
       if (!b) throw new Error(`Plugin desconhecido: ${f.plugin}/${f.kind}`);
@@ -116,12 +118,12 @@ export class Engine {
   /** Objetos auxiliares fora das features (malhas, exportação), libertados na reconstrução seguinte. */
   private scratch = new Arena();
 
-  async rebuild(doc: CadDocument): Promise<RebuildResult> {
+  async rebuild(doc: CadDocument, env?: BuildEnv): Promise<RebuildResult> {
     const t0 = performance.now();
     this.scratch.free();
     const vars = resolveWithRules(doc.variables, doc.rules);
     let key = JSON.stringify([...vars.values]);
-    let ctx: Ctx = { doc, scope: vars.scope, body: null, sketches: new Map(), planes: new Map(), axes: new Map(), csys: new Map(), tools: new Map(), sheets: new Map(), curves: new Map() };
+    let ctx: Ctx = { doc, scope: vars.scope, body: null, sketches: new Map(), planes: new Map(), axes: new Map(), csys: new Map(), tools: new Map(), sheets: new Map(), curves: new Map(), env };
     const status: Record<string, FeatureStatus> = {};
     const limit = doc.rollback ?? doc.features.length;
     let reused = 0;
@@ -130,10 +132,11 @@ export class Engine {
     for (; i < doc.features.length; i++) {
       const f = doc.features[i];
       if (i >= limit) { status[f.id] = { state: "rolledBack", warnings: [] }; continue; }
-      key = `${key}|${JSON.stringify(f)}`;
+      // referência externa ligada: a chave inclui a revisão da peça de origem
+      key = `${key}|${JSON.stringify(f)}${f.type === "external" && env ? `@${env.revision(f.part)}` : ""}`;
       const hit = this.cache[i];
       if (hit && hit.key === key) {
-        ctx = { ...hit.ctx, doc, scope: vars.scope };
+        ctx = { ...hit.ctx, doc, scope: vars.scope, env };
         status[f.id] = hit.status;
         reused++;
         continue;

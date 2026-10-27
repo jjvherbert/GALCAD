@@ -1,15 +1,15 @@
 // Painel de knowledgeware da peça ativa (estilo CATIA KWA): regras, verificações, tabela de
 // configurações e templates de features (PowerCopy/UDF), com os resultados da última reconstrução.
 import { useState } from "preact/hooks";
-import type { Check as CheckDef, ConfigTable, Rule } from "../doc/types.ts";
+import type { Check as CheckDef, ConfigTable, Publication, PublishedRef, Rule } from "../doc/types.ts";
 import type { FeatureTemplate } from "../doc/project.ts";
 import { MEASURE_NAMES, PROP_COL, SUPPRESS_COL, columnLabel, tableFromCSV, tableToCSV } from "../doc/knowledge.ts";
 import { FEATURE_LABELS } from "../doc/features.ts";
 import { store, useStore } from "./store.ts";
 import { download } from "./fileio.ts";
-import { Field, RefList } from "./forms.tsx";
+import { Field, RefList, describeName } from "./forms.tsx";
 
-type Tab = "rules" | "checks" | "configs" | "templates";
+type Tab = "rules" | "checks" | "configs" | "templates" | "pubs";
 
 export function KnowledgePanel() {
   const st = useStore();
@@ -21,7 +21,7 @@ export function KnowledgePanel() {
         <button class="small" onClick={() => store.set({ sidePanel: null })}>← Árvore</button>
       </div>
       <div class="row tabs-mini" role="tablist">
-        {([["rules", "Regras"], ["checks", "Verificações"], ["configs", "Configurações"], ["templates", "Templates"]] as [Tab, string][]).map(([k, l]) => (
+        {([["rules", "Regras"], ["checks", "Verificações"], ["configs", "Configurações"], ["templates", "Templates"], ["pubs", "Publicações"]] as [Tab, string][]).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} class={`small ${tab === k ? "primary" : ""}`} onClick={() => setTab(k)}>{l}</button>
         ))}
       </div>
@@ -29,6 +29,7 @@ export function KnowledgePanel() {
       {tab === "checks" && <ChecksTab />}
       {tab === "configs" && <ConfigsTab />}
       {tab === "templates" && <TemplatesTab />}
+      {tab === "pubs" && <PublicationsTab />}
     </div>
   );
 }
@@ -263,6 +264,51 @@ function InstantiateForm({ tpl, onClose }: { tpl: FeatureTemplate; onClose: () =
         <button class="small primary" disabled={tpl.inputs.some((i) => !bind[i.key])} onClick={() => { if (store.instantiateTemplate(tpl, bind, vals)) onClose(); }}>Instanciar</button>
         <button class="small" onClick={onClose}>Cancelar</button>
       </div>
+    </>
+  );
+}
+
+const PUB_FEATURES = new Set(["plane", "axis", "csys", "sketch", "curve", "surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "knit", "multiSection", "blend", "circleSweep", "freeform"]);
+
+function PublicationsTab() {
+  const st = useStore();
+  const pubs = st.doc.publications ?? [];
+  const [name, setName] = useState("");
+  const [feat, setFeat] = useState("");
+  const add = (ref: PublishedRef, fallback: string) => {
+    const base = (name.trim() || fallback).replace(/\s+/g, "_");
+    let nm = base, k = 2;
+    while (pubs.some((p) => p.name === nm)) nm = `${base}_${k++}`;
+    store.setPublications([...pubs, { name: nm, ref }], `Publicar ${nm}`);
+    setName("");
+  };
+  const label = (p: Publication) => p.ref.kind === "body" ? "Corpo sólido" : p.ref.kind === "feature" ? st.doc.features.find((f) => f.id === (p.ref as { feature: string }).feature)?.name ?? "?" : describeName(st.doc, p.ref.name);
+  const users = (n: string) => st.project.parts.filter((p) => p.features.some((f) => f.type === "external" && f.part === st.doc.id && f.publication === n)).map((p) => p.name);
+  return (
+    <>
+      <p class="field-hint">A geometria publicada tem um nome estável: outras peças copiam-na (Referência externa) e os mates referem-na por esse nome, mesmo que a topologia interna mude.</p>
+      <Field label="Nome da publicação"><input value={name} placeholder="ex.: Furo_fixação" onInput={(e) => setName((e.target as HTMLInputElement).value)} /></Field>
+      <RefList field="pub.pick" single label="Publicar face ou aresta" accept={["face", "edge"]} refs={[]} onChange={(r) => { if (r[0]) add(r[0], r[0].kind === "face" ? "Face" : "Aresta"); }} />
+      <div class="row">
+        <select aria-label="Feature a publicar" value={feat} onChange={(e) => setFeat((e.target as HTMLSelectElement).value)}>
+          <option value="">Publicar feature…</option>
+          {st.doc.features.filter((f) => PUB_FEATURES.has(f.type)).map((f) => <option key={f.id} value={f.id}>{f.name} ({FEATURE_LABELS[f.type]})</option>)}
+        </select>
+        <button class="small" disabled={!feat} onClick={() => { add({ kind: "feature", feature: feat }, st.doc.features.find((f) => f.id === feat)?.name ?? feat); setFeat(""); }}>Publicar</button>
+        <button class="small" onClick={() => add({ kind: "body" }, "Corpo")}>Publicar corpo</button>
+      </div>
+      <ul class="kw-list">
+        {pubs.map((p, i) => (
+          <li key={p.name}>
+            <div class="row">
+              <input aria-label="Nome" value={p.name} onChange={(e) => store.setPublications(pubs.map((x, k) => (k === i ? { ...x, name: (e.target as HTMLInputElement).value.replace(/\s+/g, "_") } : x)))} />
+              <button class="icon" aria-label={`Retirar ${p.name}`} onClick={() => store.setPublications(pubs.filter((_, k) => k !== i), "Retirar publicação")}>✕</button>
+            </div>
+            <span class="muted">{label(p)}{users(p.name).length ? ` · usada por ${users(p.name).join(", ")}` : ""}</span>
+          </li>
+        ))}
+        {!pubs.length && <li class="muted">Nenhuma</li>}
+      </ul>
     </>
   );
 }

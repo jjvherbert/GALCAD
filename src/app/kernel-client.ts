@@ -1,8 +1,8 @@
 // Cliente do worker do núcleo: pedidos com id e reconstruções coalescidas (só a mais recente conta).
 import type { CadDocument } from "../doc/types.ts";
-import type { CadProject } from "../doc/project.ts";
+import type { CadProject, PartDoc } from "../doc/project.ts";
 import type {
-  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, DrawingResponse, ExportFormat, ExportResponse,
+  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, SnapshotResponse, DrawingResponse, ExportFormat, ExportResponse,
   InterferenceResponse, RebuildResponse, Request, Response, SignatureResponse,
 } from "../kernel/protocol.ts";
 
@@ -64,8 +64,12 @@ export class KernelClient {
     }
   }
 
-  rebuild(doc: CadDocument, force = false): Promise<RebuildResponse | null> {
-    return this.coalesce<RebuildResponse>({ type: "rebuild", doc }, force);
+  rebuild(doc: CadDocument, force = false, parts: PartDoc[] = []): Promise<RebuildResponse | null> {
+    return this.coalesce<RebuildResponse>({ type: "rebuild", doc, parts }, force);
+  }
+
+  snapshot(doc: PartDoc, parts: PartDoc[], feature: string): Promise<SnapshotResponse> {
+    return this.call<SnapshotResponse>({ type: "snapshot", doc, parts, feature });
   }
 
   assembly(project: CadProject, id: string, force = false): Promise<AssemblyResponse | null> {

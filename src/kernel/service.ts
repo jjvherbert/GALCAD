@@ -1,6 +1,6 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { AssemblyResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { AssemblyResponse, SnapshotResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
 import { combs, continuity, curvature, deviation } from "./analysis.ts";
@@ -9,6 +9,16 @@ import type { CadDocument } from "../doc/types.ts";
 import { Engine } from "./rebuild.ts";
 import { type CadProject, type PartProperties, DEFAULT_DENSITY } from "../doc/project.ts";
 import { configuredDoc, runChecks, splitPartKey } from "../doc/knowledge.ts";
+import type { PartDoc } from "../doc/project.ts";
+import type { BuildEnv } from "./context.ts";
+import { freezeGeom, publish } from "./features/external.ts";
+
+/** Hash curto (FNV-1a de 32 bits) de um texto, para revisões. */
+function hashText(s: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, "0") + s.length.toString(16);
+}
 import type { Vec3 } from "../doc/types.ts";
 import { type PartBuild, assemblyMass, solveAssembly, toInstances } from "./assembly.ts";
 import { buildDrawing } from "./drawing.ts";
@@ -54,12 +64,63 @@ export class KernelService {
   }
 
   /** Reconstrói; `force` descarta a cache (reconstrução completa, Ctrl+Q). */
-  async rebuild(input: CadDocument & { id?: string; properties?: PartProperties }, force = false): Promise<RebuildResponse> {
+  /**
+   * Ambiente de reconstrução de uma peça dentro de um projeto: as referências externas pedem as
+   * publicações das outras peças (reconstruídas com a sua cache), com deteção de ciclos.
+   */
+  envFor(project: { parts: PartDoc[] }, stack: string[]): BuildEnv {
+    const name = (id: string) => project.parts.find((p) => p.id === id)?.name ?? id;
+    const linkedRefs = (id: string) => [...new Set((project.parts.find((x) => x.id === id)?.features ?? [])
+      .filter((f) => f.type === "external" && f.mode === "linked" && !f.suppressed).map((f) => (f as { part: string }).part))];
+    /** Caminho de `from` até uma peça da pilha, pelas referências ligadas (ou null). */
+    const cycleFrom = (from: string, stk: string[], seen = new Set<string>()): string[] | null => {
+      if (seen.has(from)) return null;
+      seen.add(from);
+      for (const next of linkedRefs(from)) {
+        if (stk.includes(next)) return [from, next];
+        const rest = cycleFrom(next, stk, seen);
+        if (rest) return [from, ...rest];
+      }
+      return null;
+    };
+    const revs = new Map<string, string>();
+    const revision = (id: string, seen = new Set<string>()): string => {
+      const hit = revs.get(id);
+      if (hit) return hit;
+      const p = project.parts.find((x) => x.id === id);
+      if (!p) return "inexistente";
+      if (seen.has(id)) return "ciclo";
+      seen.add(id);
+      const refs = [...new Set(p.features.filter((f) => f.type === "external" && f.mode === "linked").map((f) => (f as { part: string }).part))];
+      const r = hashText(JSON.stringify(p) + refs.map((x) => revision(x, seen)).join("|"));
+      revs.set(id, r);
+      return r;
+    };
+    return {
+      partName: name,
+      revision,
+      external: async (part, pubName) => {
+        if (stack.includes(part)) throw new Error(`Referência externa circular: ${[...stack, part].map(name).join(" → ")}`);
+        // ciclo indireto (a origem, ou uma peça de que ela depende, volta a uma peça da pilha)
+        const loop = cycleFrom(part, stack);
+        if (loop) throw new Error(`Referência externa circular: ${[...stack, ...loop].map(name).join(" → ")}`);
+        const p = project.parts.find((x) => x.id === part);
+        if (!p) throw new Error("A peça de origem não existe no projeto");
+        const pub = configuredDoc(p).publications?.find((x) => x.name === pubName);
+        if (!pub) throw new Error(`A peça "${p.name}" não publica "${pubName}"`);
+        const b = await this.partBuild(project as CadProject, part, stack);
+        return publish(b.ctx, pub);
+      },
+    };
+  }
+
+  async rebuild(input: CadDocument & { id?: string; properties?: PartProperties }, force = false, parts: PartDoc[] = []): Promise<RebuildResponse> {
     // configuração ativa da tabela de configurações (variáveis, supressões, propriedades)
     const doc = configuredDoc(input);
     const engine = this.engineFor(doc.id ?? "_");
     if (force) engine.clear();
-    const r = await engine.rebuild(doc);
+    const project = { parts: [...parts.filter((p) => p.id !== doc.id), doc as PartDoc] };
+    const r = await engine.rebuild(doc, this.envFor(project, [doc.id ?? "_"]));
     const body = r.ctx.body;
     const { scene, owner } = sceneOf(r.ctx);
     const mesh = scene ? meshBody(scene, undefined, owner, [...r.ctx.curves.values()].flatMap((c) => c.edges)) : null;
@@ -123,14 +184,14 @@ export class KernelService {
   readonly drawingArena = new Arena();
 
   /** Peça reconstruída (cache do motor da peça) e a sua malha (cache por conteúdo). */
-  async partBuild(project: CadProject, key: string): Promise<PartBuild> {
+  async partBuild(project: CadProject, key: string, stack: string[] = []): Promise<PartBuild> {
     // "p1#Longa": a peça p1 na configuração "Longa" (motor e malha próprios por configuração)
     const { id, config } = splitPartKey(key);
     const base = project.parts.find((p) => p.id === id);
     if (!base) throw new Error(`Peça ${id} inexistente`);
     if (config && !base.configurations?.rows.some((r) => r.name === config)) throw new Error(`A peça "${base.name}" não tem a configuração "${config}"`);
     const doc = configuredDoc(base, config ?? base.configurations?.active);
-    const r = await this.engineFor(key).rebuild(doc);
+    const r = await this.engineFor(key).rebuild(doc, this.envFor(project, [...stack, id]));
     const id_ = key;
     const ckey = JSON.stringify(doc);
     let cached = this.meshCache.get(id_);
@@ -250,6 +311,22 @@ export class KernelService {
   deviation(): DeviationResponse {
     if (!this.lastScene) throw new Error("Não há modelo para analisar");
     return deviation(this.lastScene);
+  }
+
+  /** Cópia congelada de uma referência externa (geometria atual da publicação e revisão da origem). */
+  async snapshot(doc: PartDoc, parts: PartDoc[], fid: string): Promise<SnapshotResponse> {
+    const f = doc.features.find((x) => x.id === fid);
+    if (!f || f.type !== "external") throw new Error("Referência externa inexistente");
+    const env = this.envFor({ parts: [...parts.filter((p) => p.id !== doc.id), doc] }, [doc.id]);
+    const arena = new Arena();
+    setArena(arena);
+    try {
+      const g = await env.external(f.part, f.publication);
+      return { revision: env.revision(f.part), ...freezeGeom(g) };
+    } finally {
+      setArena(this.asmArena);
+      arena.free();
+    }
   }
 
   /** Continuidade G0–G3 nas arestas entre faces (classe A). */
