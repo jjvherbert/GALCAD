@@ -80,10 +80,12 @@ Pendente (passa para fases seguintes): peças em contexto (editar uma peça com 
 
 Pendente (passa para fases seguintes): concordância G3; *delete and heal* com prolongamento das faces vizinhas; cura que deforma para repor tangência; forma livre sobre faces recortadas (manter os limites); peças em contexto completas e posição externa que acompanha a montagem; estrutura AP242 com subconjuntos aninhados.
 
-## Fase 5: PMI, tags e produção (inspirado no Siemens NX)
-- PMI 3D semântico: cotas, tolerâncias geométricas (GD&T, ISO 1101), referências (datums), acabamentos e notas ligadas às faces pelo nome topológico
-- Tags e atributos em features, faces e corpos (material, processo, fornecedor, requisitos), pesquisáveis e exportáveis
-- Exportação STEP AP242 com PMI semântico; vistas de modelo (Model Views) para MBD
+## Fase 5: PMI, tags e produção (inspirado no Siemens NX) ✅ (com as limitações listadas)
+- ✅ PMI 3D semântico: referências (ISO 5459), cotas com o valor medido no modelo e afastamentos ou classe ISO 286 (tabelas IT5–IT11 até 500 mm, ajustamentos), tolerâncias geométricas ISO 1101 (14 características, ⌀, Ⓜ/Ⓛ, até três referências), estados de superfície e notas ligados às faces pelo nome topológico; validação contra a norma e a geometria; rótulos no 3D
+- ✅ Tags e atributos no corpo, em features e em faces, pesquisáveis em todo o projeto e exportáveis em CSV
+- ✅ Exportação STEP AP242 com PMI semântico (verificada com o leitor GD&T do OpenCASCADE); ✅ vistas de modelo (orientação + PMI mostrados) para MBD
+
+Pendente: apresentação gráfica do PMI no STEP (texto e linhas de chamada, polilinhas ou *tessellated annotation*), PMI importado para os desenhos 2D (cotas e quadros nas vistas), PMI em montagens, ISO 286 completa (todas as letras, IT01–IT18, até 3150 mm), leitura de PMI de STEP importados, comparação com medições (relatório de inspeção a partir do PMI).
 
 ## Módulos (plugins), desenvolvidos em paralelo quando o núcleo o permitir
 - **nautica** (já existe um casco paramétrico simples com hidrostática de conceção):
@@ -120,11 +122,11 @@ Pendente (passa para fases seguintes): concordância G3; *delete and heal* com p
 
 | Domínio | Escolha | Porquê | Estado na app |
 |---|---|---|---|
-| Estruturas e térmica (linear, modal, encurvadura, não linear, contacto) | **CalculiX** (ccx 2.23, GPL-2) | Formato tipo Abaqus muito usado e estável, binário leve em Linux/Windows, ótimo para PME (é o do PrePoMax e do FreeCAD) | ✅ F1: estática, modal, encurvadura, térmica; verificado com valores analíticos |
-| Estruturas avançadas (plasticidade, fadiga, cascas compósitas, dinâmica, civil) | **code_aster** (18.x, GPL-3) | O mais completo dos abertos (EDF), com validação industrial | Proposto: F3 (malha `.med` + `.comm`) |
+| Estruturas e térmica (linear, modal, encurvadura, não linear, contacto) | **CalculiX** (ccx 2.23, GPL-2) | Formato tipo Abaqus muito usado e estável, binário leve em Linux/Windows, ótimo para PME (é o do PrePoMax e do FreeCAD) | ✅ F1: estática, modal, encurvadura, térmica; ✅ não linear (NLGEOM, plasticidade bilinear); ✅ montagens com contacto colado (*TIE); verificado com valores analíticos |
+| Estruturas avançadas (plasticidade, fadiga, cascas compósitas, dinâmica, civil) | **code_aster** (18.x, GPL-3) | O mais completo dos abertos (EDF), com validação industrial | Adaptador escrito (malha ASTER nativa + `.comm` + `.export`; estática linear/não linear e modal) — **por verificar**: o code_aster não pôde ser instalado neste ambiente |
 | Dinâmica explícita (impacto, queda, *slamming*) | **OpenCourant** (ex-OpenRadioss, AGPL-3) | Único explícito aberto de nível industrial | Proposto: adaptador `_0000.rad`/`_0001.rad` (VALIDAR o estado do fork) |
 | Multifísica (térmico-fluido, eletromagnetismo, acústica) | **Elmer** (GPL / ElmerSolver LGPL) | Amplo e com boa documentação | Proposto (mais tarde) |
-| CFD geral (interno/externo, turbulência RANS, térmico, superfície livre VOF para cascos) | **OpenFOAM**, linha openfoam.com (v2606, GPL-3) | Referência aberta da indústria; dicionários estáveis entre versões anuais; pacotes Windows; *snappyHexMesh* para malhas hexa-dominantes com camadas | ✅ F1: simpleFoam interno/externo (laminar, k-ω SST, k-ε) com snappyHexMesh; verificado |
+| CFD geral (interno/externo, turbulência RANS, térmico, superfície livre VOF para cascos) | **OpenFOAM**, linha openfoam.com (v2606, GPL-3) | Referência aberta da indústria; dicionários estáveis entre versões anuais; pacotes Windows; *snappyHexMesh* para malhas hexa-dominantes com camadas | ✅ F1: simpleFoam interno/externo (laminar, k-ω SST, k-ε) com snappyHexMesh; verificado; ✅ F2: campos no 3D (patches e cortes) |
 | CFD compressível/aerodinâmica e otimização de forma (adjunto) | **SU2** (8.x, LGPL-2.1) | Solver adjunto para otimizar a forma — liga ao `rom-fea`/otimizador do esboço adaptativo | ✅ F1: configuração incompressível + malha Gmsh com marcadores (sem SU2 instalado neste ambiente: configuração não corrida) |
 | Malhador FEM e SU2 | **Gmsh** (4.15, GPL-2+) | O melhor malhador aberto de uso geral (tetra, quadráticos, grupos físicos, exporta `.inp`, `.su2`, `.msh`, `.med`) | ✅ F1 |
 | Malhador CFD | **snappyHexMesh** (OpenFOAM) | Hexa-dominante com camadas, a partir de STL | ✅ F1 |
@@ -145,7 +147,13 @@ Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, con
 
 Implementado: estudos FEM (CalculiX) e CFD (OpenFOAM/SU2) na peça, com as condições ligadas às faces pelo nome topológico; caso neutro (`case.json`) com as faces numeradas como no OpenCASCADE/Gmsh (verificado) e conferência dos grupos pelo centroide depois da malha; script Gmsh com grupos físicos e tamanhos; deck CalculiX escrito a partir da malha (C3D10/C3D4, nós dos C3D10 reordenados, faces dos elementos para pressão/convecção/fluxo, forças nodais consistentes, unidades mm–N–MPa–t); caso OpenFOAM completo (blockMesh, surfaceFeatureExtract, snappyHexMesh, simpleFoam, condições de turbulência, STL por patch em metros); configuração SU2; exportação em `.zip` com LEIA-ME e hipóteses. Verificado com os solvers reais: consola (flecha de Timoshenko a < 3 %, tensão de flexão M·c/I, reações), frequência própria (Euler–Bernoulli a < 3 %), condução 1D exata, conduta laminar (balanço de massa 0 %, queda de pressão coerente com Shah & London), caso externo com k-ω SST e camadas.
 
-Limitações: um só sólido por estudo; só material isotrópico; sem contacto, sem não linear, sem transitório; forças só uniformes por área; SU2 não corrido neste ambiente; nos casos externos o resumo dá só a força de pressão (a parcela viscosa precisa do function object `forces`).
+Limitações: só material isotrópico; contacto só colado e só em faces planas coincidentes; sem transitório; forças só uniformes por área; SU2 não corrido neste ambiente; nos casos externos o resumo dá só a força de pressão (a parcela viscosa precisa do function object `forces`).
+
+Feito depois da F1 (out. 2026):
+- **Não linear no CalculiX**: grandes deslocamentos (NLGEOM) e plasticidade de von Mises com encruamento bilinear, em incrementos, com curva carga–deslocamento e deformação plástica equivalente. Verificado: tração uniaxial elastoplástica (ε = σ/E + (σ − σy)/Hp, erro < 0,5 %, εp médio < 1 %) e consola de Bisshopp–Drucker com PL²/EI = 1 (v/L = 0,3017 a < 3 %, u/L = 0,0566 a < 8 %).
+- **Reações exatas**: um conjunto de nós por grau de liberdade restringido e a parcela das cargas aplicada nos nós dos apoios descontada (o RF do CalculiX é a força interna): reações iguais às cargas a < 0,01 % (antes, 0,3–0,6 % de erro).
+- **Estudos de montagem**: um volume e um material por corpo, condições nas faces dos componentes ("caminho/face"), contacto colado (*TIE) detetado nas faces planas coincidentes (normais opostas, mesmo plano, área comum > 0), aviso de corpos soltos. Verificado: duas lâminas 100 × 10 × 5 coladas ≈ a consola inteira (0,1905 vs 0,1920 mm), barras de aço + alumínio em série (0,09494 vs 0,09524 mm).
+- **code_aster**: adaptador para os mesmos casos (malha no formato ASTER, `.comm` com MECA_STATIQUE/STAT_NON_LINE/CALC_MODES, `.export`, leitura das tabelas IMPR_TABLE) — testado só sem o solver.
 
 Plano original da F1:
 - Tipos de estudo: estático linear, modal (frequências próprias), encurvadura linear, térmico em regime permanente; mais tarde não linear geométrico, contacto e transitório.
@@ -163,10 +171,13 @@ Plano original da F1:
   - neutros: Gmsh `.msh` v4 com grupos físicos, `.vtu` para visualização.
 - Testes de referência automáticos, comparados com soluções analíticas e benchmarks publicados: consola em flexão (Euler–Bernoulli), placa com furo (fator de concentração de tensões), cilindro sob pressão (Lamé), modos de uma consola, NAFEMS LE1/LE10 quando disponíveis.
 
-**Etapa F2: resultados no visualizador** (FEM ✅: deslocamento, von Mises, temperatura, deformada ampliada, modos; CFD: só o resumo por agora)
+**Etapa F2: resultados no visualizador** ✅ (FEM: deslocamento, von Mises, temperatura, deformação plástica, deformada ampliada, modos, curva carga–deslocamento; CFD: pressão nos patches e cortes planos com pressão e |U| em camadas; convergência da malha com GCI)
+
+Verificado: perfil desenvolvido na conduta quadrada laminar (u_máx/U entre 1,8 e 2,25, referência 2,096 de Shah & London; |U| ≈ 0 nas paredes; pressão a descer ao longo da conduta); GCI igual ao exemplo publicado de Celik et al. (p = 1,53, φext = 6,1685, GCI 2,2 %); convergência da consola com tetraedros lineares (malha fina 0,1685 mm, extrapolado 0,1922 mm vs 0,1920 mm analítico), máximos de von Mises junto ao encastramento corretamente assinalados como divergentes (singularidade).
 - Leitura de `.frd` (CalculiX), `.vtu`/`.med` e resultados de MYSTRAN.
 - Mapas de cores (tensão de von Mises, principais, deslocamento, fator de segurança face ao limite elástico), deformada amplificada, modos animados, sondas, reações nos apoios, verificação do equilíbrio (soma das reações vs. cargas).
-- Estudo de convergência de malha assistido (refinamento sucessivo e variação da grandeza de interesse).
+- ✅ Estudo de convergência de malha assistido (três malhas, Richardson e GCI por grandeza).
+- Por fazer: sondas, modos animados, fator de segurança como campo, `.vtu`/`.med`.
 
 **Etapa F3: integração dos solvers dentro da aplicação (sem exportar à mão)** — **agente local ✅** (`tools/cad-runner.ts` → `cad-runner.mjs`: linha de comandos e servidor em 127.0.0.1 com token; regenera as entradas dos solvers a partir do caso, recusa diretivas que executam código; botão "Calcular" no painel Simulação). Por fazer: fila remota, WASM, gestor de corridas com histórico.
 

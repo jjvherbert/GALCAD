@@ -2,16 +2,16 @@
 
 CAD paramétrico no browser, para modelação de sólidos e de superfícies, com fluxos de trabalho ao estilo do SolidWorks: esboços com restrições, árvore de features editável, variáveis e equações. Os domínios específicos, como o boat design, são **plugins** opcionais por cima de um núcleo genérico.
 
-**Estado:** Fases 1 (peças), 2 (superfícies), 3 (montagens, desenhos 2D e BOM) e 4 (funcionalidades inspiradas no CATIA: GSD, classe A, forma livre, knowledgeware, publicações, STEP AP242) implementadas. A seguir: pré-processador FEM (F1) ou Fase 5 (PMI e tags, estilo NX). Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
+**Estado:** Fases 1 (peças), 2 (superfícies), 3 (montagens, desenhos 2D e BOM), 4 (inspirada no CATIA: GSD, classe A, forma livre, knowledgeware, publicações, STEP AP242) e 5 (PMI 3D semântico, vistas de modelo e atributos, inspirada no NX) implementadas. Pré-processador de simulação: F1 e F2 feitas (FEM linear e não linear, montagens com contacto colado, CFD com campos no 3D, convergência da malha). Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
 
 ## Correr
 
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 107 testes (Node; os de solvers correm se o Gmsh/CalculiX/OpenFOAM estiverem instalados): documento, solver, motor, superfícies, montagens, desenhos, BOM, GSD, knowledgeware, referências externas, AP242
+npm test             # 127 testes (Node; os de solvers correm se o Gmsh/CalculiX/OpenFOAM estiverem instalados, e a leitura do PMI se houver o OCP em Python): documento, solver, motor, superfícies, montagens, desenhos, BOM, GSD, knowledgeware, referências externas, AP242, simulação, PMI
 npm run typecheck    # TypeScript estrito
-npm run build && npm run test:e2e   # 7 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4, simulação
+npm run build && npm run test:e2e   # 8 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4, simulação, PMI
 node public/cad-runner.mjs --status # solvers encontrados pelo agente local
 ```
 
@@ -89,11 +89,24 @@ node public/cad-runner.mjs --status # solvers encontrados pelo agente local
 - **Estudos** na peça: FEM com o **CalculiX** (estática linear, modal, encurvadura, térmica em regime permanente) e CFD com o **OpenFOAM** (simpleFoam + snappyHexMesh, interno ou externo, laminar/k-ω SST/k-ε) ou o **SU2**. Condições nas faces pelo nome topológico (encastramento, deslocamento, força, pressão, gravidade, temperatura, convecção, fluxo; entrada/saída ou escoamento livre); materiais e fluidos de referência; malha **Gmsh** (tetraedros quadráticos) ou snappyHexMesh.
 - **Exportar caso (.zip)**: BREP exato, script Gmsh, dicionários/deck, `case.json`, LEIA-ME com hipóteses e passos.
 - **Calcular no agente local**: `node cad-runner.mjs --serve` (descarrega-se no painel) corre os solvers instalados na máquina como processos separados e devolve os resultados: resumo (flecha, von Mises, fator de segurança, frequências, reações, caudal, balanço de massa, queda de pressão, arrasto de pressão) e, no FEM, os campos a cores no 3D com a deformada.
+- **Não linear** (estática): grandes deslocamentos e rotações (NLGEOM) e plasticidade de von Mises com encruamento bilinear (cedência e módulo tangente do material), em incrementos, com a curva carga–deslocamento e a deformação plástica equivalente.
+- **Montagens**: estudos FEM na própria montagem, um volume e um material por corpo, condições nas faces dos componentes e **contacto colado** (*TIE) detetado nas faces planas coincidentes entre corpos.
+- **CFD no 3D**: pressão nas paredes/entrada/saída e cortes planos pela malha do OpenFOAM com pressão e |U|, camadas que se ligam e desligam, escala comum.
+- **Convergência da malha**: corre também com malhas r·h e r²·h e dá, por grandeza, a ordem aparente, o valor extrapolado (Richardson) e o GCI (Celik et al. 2008 / ASME V&V 20).
+- **code_aster** como alternativa ao CalculiX (estática linear/não linear e modal): adaptador escrito, **ainda não verificado** com o code_aster real.
 - Os resultados são apoio à decisão de engenharia, com as hipóteses à vista; não são certificação.
+
+**PMI 3D e atributos (separador PMI, Fase 5):**
+- **Anotações semânticas** ligadas às faces pelo nome topológico: referências (ISO 5459), cotas de distância, diâmetro, raio e ângulo com **o valor medido no modelo** e afastamentos ou **classe ISO 286** (tabelas IT5–IT11 e afastamentos fundamentais até 500 mm, com o ajustamento furo/veio e as folgas), quadros de **tolerância geométrica ISO 1101** (14 características, ⌀, Ⓜ/Ⓛ, até três referências), estados de superfície (Ra) e notas.
+- **Validação** contra a norma e a geometria: tolerâncias de forma sem referências, orientação/localização com referência, planeza só em planos, cilindricidade só em faces de revolução, ⌀ e Ⓜ só onde se aplicam, referências definidas, faces paralelas nas distâncias, valor fixado igual ao do modelo.
+- **Rótulos no 3D** com linha de chamada, que acompanham a câmara; clicar num rótulo abre o item.
+- **Vistas de modelo** (MBD): orientação da câmara + PMI a mostrar.
+- **Atributos (tags)** no corpo, em features e em faces; pesquisa no projeto inteiro (sem acentos) e exportação CSV.
+- **STEP AP242 com PMI semântico**: datums, cotas com tolerância ou ajustamento, tolerâncias com sistema de referências, modificadores e zona cilíndrica, ligados às `ADVANCED_FACE`; rugosidade, notas e atributos como atributos definidos pelo utilizador. Verificado com o leitor GD&T do OpenCASCADE (`tools/read-step-pmi.py`).
 
 **Ficheiros:**
 - Projeto em JSON aberto e legível (`.cadp.json`), com regras, verificações, configurações, publicações e templates.
-- Exportação para **STEP AP214** (sólido exato), **STEP AP242** (produtos, cores, estrutura), **STL**, **3MF**, **OBJ** e **glTF (.glb)**, sempre em milímetros.
+- Exportação para **STEP AP214** (sólido exato), **STEP AP242** (produtos, cores, estrutura, PMI semântico e atributos), **STL**, **3MF**, **OBJ** e **glTF (.glb)**, sempre em milímetros.
 
 ## Navegação e comandos (como no SolidWorks)
 
@@ -156,7 +169,7 @@ tests/      testes Node (node:test) e e2e (Playwright)
 
 Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resultado técnico deve indicar as hipóteses e os limites no `note`.
 
-## Limitações conhecidas (Fases 1 a 4)
+## Limitações conhecidas (Fases 1 a 5)
 
 - Aparar não trata splines (apaga-as) e as entidades convertidas não se aparam. O deslocamento assume que a cadeia tem uma orientação coerente.
 - Sem regiões escolhidas, contornos que se intersetam ou ramificam dão erro e pedem a escolha das regiões. Por agora, a escolha de regiões só existe na extrusão e na revolução.
@@ -181,8 +194,17 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
   - a cura não deforma superfícies para repor tangência (só assinala); o *delete and heal* com prolongamento das faces vizinhas continua por fazer;
   - templates: as coordenadas dentro dos esboços copiados são relativas ao plano/face de entrada (o referencial da face escolhida pode ter os eixos invertidos);
   - referências externas: a posição lida de uma montagem é guardada (não acompanha a montagem automaticamente: "Ler posição" de novo); peças em contexto completas (editar a peça dentro da montagem) continuam por fazer;
-  - AP242: estrutura de montagem achatada (uma ocorrência por instância, sem subconjuntos aninhados); **sem PMI semântico** (Fase 5).
-- Simulação: um só sólido por estudo, material isotrópico, sem contacto/não linear/transitório; CFD sem campos no 3D (só resumo); SU2 não corrido neste ambiente; arrasto externo só de pressão. Os solvers não são distribuídos com a aplicação: instalam-se à parte.
+  - AP242: estrutura de montagem achatada (uma ocorrência por instância, sem subconjuntos aninhados).
+- Simulação:
+  - material isotrópico; sem contacto com atrito/separação (só colado, e só em faces planas coincidentes), sem transitório;
+  - estudos de montagem só no CalculiX; o adaptador do code_aster não foi verificado (o code_aster não pôde ser instalado neste ambiente);
+  - SU2 não corrido neste ambiente; arrasto externo só de pressão; os cortes CFD interpolam valores de célula para os pontos (média das células vizinhas);
+  - os solvers não são distribuídos com a aplicação: instalam-se à parte.
+- PMI (Fase 5):
+  - só representação semântica no STEP (sem a apresentação gráfica: texto e linhas de chamada não vão no ficheiro); os visualizadores que só leem a apresentação não o mostram;
+  - o afastamento inferior vai com sinal (−0,2), como pede a regra WR1 de `tolerance_value` (superior ≥ inferior); o leitor do OpenCASCADE 8.0 lê-o sem sinal (0,2), o que é uma divergência desse leitor;
+  - ISO 286 só para furos E, F, G, H, JS e veios e, f, g, h, js, k, m, n, p, graus IT5–IT11, até 500 mm;
+  - não se mede a conformidade da peça (é a especificação de projeto, não a inspeção); o PMI ainda não passa para os desenhos 2D; só em peças (não em montagens).
 - O nome de uma face dividida pode mudar de sufixo (`~0`, `~1`) se a ordem geométrica das partes mudar. As referências por nome-base e por posição cobrem a maioria dos casos e deixam um aviso.
 
 ## Propriedade intelectual

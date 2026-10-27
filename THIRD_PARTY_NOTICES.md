@@ -26,3 +26,7 @@ Resumo técnico, que não substitui aconselhamento jurídico:
 4. **Termos de utilização.** A licença do produto não pode proibir a modificação das bibliotecas LGPL nem a engenharia reversa necessária para depurar essas modificações (LGPL-2.1, §6).
 5. As bibliotecas MIT só exigem que se mantenha o aviso de copyright e a licença.
 6. A Apache-2.0 (SDK da Anthropic) exige distribuir o texto da licença e indicar alterações aos ficheiros dela (não há alterações). É compatível com um produto fechado.
+
+**Simulação — code_aster:** o adaptador escreve ficheiros para o code_aster (GPL-3.0), que o agente local corre como programa separado, se estiver instalado; não é incluído nem ligado.
+
+**Verificação do PMI (só desenvolvimento):** `tools/read-step-pmi.py` usa o OCP (`cadquery-ocp`, ligações Python do OpenCASCADE, LGPL-2.1 com exceção) para ler o STEP exportado. Não é dependência da aplicação nem distribuído com ela.

@@ -1,4 +1,58 @@
-# Handoff — Fases 1 a 4 e pré-processador F1
+# Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
+
+## Atualização: F2, não linear, estudos de montagem e Fase 5 (PMI 3D e tags)
+
+Pedido de Juan: "vamos correr todos" (F2 completa, montagens, code_aster/não linear, Fase 5). Feito pela ordem F2 → não linear → montagens → Fase 5. Commits locais (sem push, por indicação de Juan): `0f4dfb1`, `ad51738`, `4ba7d87`, `3c7af04`, `5992c13` e o desta documentação.
+
+**Alterações**
+- **F2**
+  - `src/sim/result.ts`: vista de resultados neutra em camadas, usada pelo visualizador e pela legenda.
+  - `src/sim/foamfields.ts`: leitura dos campos e dos patches do OpenFOAM (incluindo `noSlip`), interpolação célula → ponto, camadas dos patches e cortes planos da malha poliédrica.
+  - `src/sim/convergence.ts`: Richardson + GCI (Celik et al. 2008) e relatório por grandeza.
+  - O agente passa a devolver `view`, `metrics`, `cells` e `hypotheses`, e aceita `--convergence r` / `convergence: {ratio}` (malhas h, r·h, r²·h).
+  - Interface: camadas, escala comum e tabela de convergência.
+- **Não linear**
+  - `FemStudy.nonlinear` (geometria, plasticidade, incrementos) e `SimMaterial.tangent`.
+  - Deck: `*STEP, NLGEOM`, `*STATIC` incremental, `*PLASTIC` bilinear e `PEEQ`; leitura do último incremento e da curva carga–deslocamento.
+  - Reações: conjuntos `N_RX/N_RY/N_RZ` por grau de liberdade, descontando a carga aplicada nos nós dos apoios.
+- **code_aster**: `src/sim/aster.ts` gera a malha ASTER, o `.comm` e o `.export` e lê as tabelas; o agente usa `run_aster`/`as_run`. **Não verificado** com o solver.
+- **Montagens**
+  - `AssemblyDoc.studies` (FEM), `FemStudy.bodyMaterials` e `FemStudy.contact`.
+  - `assemblyStudyCase` em `src/kernel/sim.ts`: composto de sólidos posicionados, faces "caminho/face" e deteção do contacto.
+  - Gmsh com um volume por corpo (`B1`, `B2`, …); deck com `*ELSET`/material por corpo e `*SURFACE` + `*TIE`; o agente confere cada volume com a caixa do corpo.
+  - Interface: separador Simulação na montagem, materiais por instância e modo de contacto. A `RefList` passa a prefixar o componente.
+- **Fase 5**
+  - `src/doc/pmi.ts` (puro): modelo PMI, tabelas ISO 286, regras ISO 1101/5459, textos, atributos, pesquisa e CSV.
+  - `src/kernel/pmi.ts`: valor medido, âncora e validação contra a geometria. Vai na resposta da reconstrução (`pmi`).
+  - `src/kernel/step-pmi.ts`: entidades AP242 semânticas acrescentadas ao STEP. As faces com PMI saem nomeadas `PMI#k` (`AddSubShape` + `write.stepcaf.subshapes.name`).
+  - `asciiStep`: o STEP passa a ser ASCII puro, com `\X2\`. Corrige também a Fase 4.6, em que os nomes iam em UTF-8.
+  - Interface: `src/app/PmiPanel.tsx` (anotações, vistas de modelo, atributos); rótulos e linhas de chamada no visualizador (`setPmi`, `cameraView`/`setCameraView`); separador PMI.
+  - `tools/read-step-pmi.py`: verificação com o leitor GD&T do OpenCASCADE (OCP).
+
+**Testes:** todos a passar.
+- 127 testes em Node. Os novos estão em `convergence`, `aster`, `sim-assembly`, `pmi` e `sim` (não linear, convergência, campos CFD).
+- 8 suites e2e. A nova `pmi.e2e.cjs` e a `simulacao` (que ganhou a convergência, o CFD com camadas e a montagem colada) correm com os solvers reais: Gmsh 4.15.2, CalculiX 2.21 e OpenFOAM v1912.
+
+Valores verificados:
+
+| Caso | Resultado | Referência |
+|---|---|---|
+| Flecha extrapolada (tetraedros lineares) | 0,1922 mm | 0,1920 mm |
+| Tração elastoplástica | erro < 0,5 % | analítico |
+| Elástica, flecha vertical v/L | 0,3017 ± 3 % | 0,3017 (Bisshopp–Drucker) |
+| Lâminas coladas | 0,1905 mm | 0,1920 mm |
+| Aço + alumínio em série | 0,09494 mm | 0,09524 mm |
+| u_máx/U na conduta | entre 1,8 e 2,25 | 2,096 |
+| GCI do exemplo de Celik | p 1,53; φext 6,1685; GCI 2,2 % | iguais aos publicados |
+
+**Bloqueios**
+- **code_aster:** a instalação (micromamba/conda-forge) foi recusada pelo classificador de permissões. Opções: autorizar essa instalação, ou a imagem Docker oficial (também por autorizar), e depois correr os casos analíticos com `solver: "code_aster"`.
+- **PMI:** as Recommended Practices das CAx-IF não estavam acessíveis (proxy 403). A codificação segue a referência gerada pelo escritor do OCCT e o esquema AP242 (afastamento inferior com sinal, pela regra WR1 de `tolerance_value`). **VALIDAR** com o documento das CAx-IF v4.1 e com um segundo leitor (ex.: NIST STEP File Analyzer).
+- OCP (`pip install cadquery-ocp`) e o OpenFOAM do apt só estão instalados neste contentor, para verificação.
+
+**Próxima ação:** apresentação gráfica do PMI no STEP e PMI nos desenhos 2D; verificação do code_aster; contacto com atrito; sondas e modos animados. Juan escolhe a ordem.
+
+---
 
 ## Atualização: pré-processador FEM/CFD (F1) e agente local (F3, parcial)
 
