@@ -41,7 +41,8 @@ const themes: Record<"light" | "dark", Theme> = {
 type Hit =
   | { kind: "face"; index: number; point: THREE.Vector3 }
   | { kind: "edge"; index: number; point: THREE.Vector3 }
-  | { kind: "plane"; ref: PlaneRef; label: string; point: THREE.Vector3 };
+  | { kind: "plane"; ref: PlaneRef; label: string; point: THREE.Vector3 }
+  | { kind: "region"; index: number; point: THREE.Vector3 };
 
 interface CamState { pos: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; zoom: number; size: number }
 
@@ -73,6 +74,8 @@ export class Viewport {
   private faceOfTri: Int32Array = new Int32Array(0);
   private faceVerts: [number, number][] = [];
   private planeMeshes: { mesh: THREE.Mesh; ref: PlaneRef; label: string }[] = [];
+  private regionGroup = new THREE.Group();
+  private regionMeshes: { mesh: THREE.Mesh; sketch: string; sig: string[]; seed: [number, number] }[] = [];
   private hover: Hit | null = null;
   private selected = new Set<string>();
   private featureHighlight: string | null = null;
@@ -116,7 +119,7 @@ export class Viewport {
     this.pivotMarker = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xf97316, depthTest: false }));
     this.pivotMarker.visible = false;
     this.pivotMarker.renderOrder = 10;
-    this.scene.add(this.camera, this.bodyGroup, this.refGroup, this.sketchGroup, this.pivotMarker);
+    this.scene.add(this.camera, this.bodyGroup, this.refGroup, this.sketchGroup, this.regionGroup, this.pivotMarker);
     this.boxEl = Object.assign(document.createElement("div"), { className: "box-select" });
     this.gestureEl = Object.assign(document.createElement("div"), { className: "gesture-trail" });
     el.append(this.boxEl, this.gestureEl);
@@ -208,6 +211,30 @@ export class Viewport {
     eg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(mesh.lines.length), 3));
     this.edgeLines = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ vertexColors: true }));
     this.bodyGroup.add(this.faceMesh, this.edgeLines);
+    this.recolor();
+  }
+
+  /** Mostra as regiões escolhíveis de um esboço (contornos selecionados), por cima do modelo. */
+  setRegions(sketch: string | null, view: RebuildResponse["sketches"][string] | null) {
+    this.disposeGroup(this.regionGroup);
+    this.regionMeshes = [];
+    if (!sketch || !view) return;
+    const f = view.frame;
+    for (const r of view.regionList) {
+      const pos = new Float32Array((r.tris.length / 2) * 3);
+      for (let i = 0, j = 0; i < r.tris.length; i += 2, j += 3) {
+        const x = r.tris[i], y = r.tris[i + 1];
+        pos[j] = f.o[0] + f.x[0] * x + f.y[0] * y;
+        pos[j + 1] = f.o[1] + f.x[1] * x + f.y[1] * y;
+        pos[j + 2] = f.o[2] + f.x[2] * x + f.y[2] * y;
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x9333ea, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+      mesh.renderOrder = 5;
+      this.regionGroup.add(mesh);
+      this.regionMeshes.push({ mesh, sketch, sig: r.sig, seed: r.seed });
+    }
     this.recolor();
   }
 
@@ -315,10 +342,18 @@ export class Viewport {
   private keyOf(h: Hit): string {
     if (h.kind === "face") return `face:${this.mesh!.faces[h.index].name}`;
     if (h.kind === "edge") return `edge:${this.mesh!.edges[h.index].name}`;
+    if (h.kind === "region") return `region:${this.regionMeshes[h.index].sig.join("+")}`;
     return `plane:${JSON.stringify(h.ref)}`;
   }
 
   private recolor() {
+    const hk = this.hover ? this.keyOf(this.hover) : "";
+    for (const r of this.regionMeshes) {
+      const k = `region:${r.sig.join("+")}`;
+      const m = r.mesh.material as THREE.MeshBasicMaterial;
+      m.color.set(this.selected.has(k) ? this.theme.sel : k === hk ? this.theme.hover : 0x9333ea);
+      m.opacity = this.selected.has(k) || k === hk ? 0.55 : 0.22;
+    }
     for (const p of this.planeMeshes) {
       const k = `plane:${JSON.stringify(p.ref)}`;
       const hoverKey = this.hover ? this.keyOf(this.hover) : "";
@@ -353,6 +388,7 @@ export class Viewport {
     if (!h) this.onHover(null);
     else if (h.kind === "face") { const f = this.mesh!.faces[h.index]; this.onHover({ kind: "face", type: f.type, name: f.name }); }
     else if (h.kind === "edge") { const e = this.mesh!.edges[h.index]; this.onHover({ kind: "edge", type: e.type, name: e.name }); }
+    else if (h.kind === "region") this.onHover({ kind: "plane", type: "region", name: `Região: ${this.regionMeshes[h.index].sig.join(" + ")}` });
     else this.onHover({ kind: "plane", type: "plane", name: h.label });
   }
 
@@ -372,6 +408,11 @@ export class Viewport {
     const ok = (k: PickKind) => !accept || accept.includes(k);
     const wpp = this.worldPerPx();
     this.ray.params.Line = { threshold: wpp * 6 };
+    if (ok("region") && this.regionMeshes.length) {
+      const rh = this.ray.intersectObjects(this.regionMeshes.map((r) => r.mesh), false)[0];
+      if (rh) return { kind: "region", index: this.regionMeshes.findIndex((r) => r.mesh === rh.object), point: rh.point };
+      if (accept?.length === 1) return null;
+    }
     let faceHit: THREE.Intersection | undefined;
     if (this.faceMesh) faceHit = this.ray.intersectObject(this.faceMesh)[0];
     if (this.edgeLines && this.edgeLines.visible !== false && ok("edge")) {
@@ -394,6 +435,7 @@ export class Viewport {
   private toPick(h: Hit): Pick {
     if (h.kind === "face") { const f = this.mesh!.faces[h.index]; return { kind: "face", name: f.name, type: f.type, hint: { c: f.center, n: f.normal } }; }
     if (h.kind === "edge") { const e = this.mesh!.edges[h.index]; return { kind: "edge", name: e.name, type: e.type, hint: { c: e.mid, n: e.dir } }; }
+    if (h.kind === "region") { const r = this.regionMeshes[h.index]; return { kind: "region", sketch: r.sketch, sig: r.sig, seed: r.seed }; }
     return { kind: "plane", ref: h.ref, label: h.label };
   }
 

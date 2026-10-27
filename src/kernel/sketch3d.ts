@@ -7,7 +7,7 @@ import type { P2 } from "../sketch/geometry.ts";
 import { type Frame, to2D, to3D } from "./frame.ts";
 import { T, edgeProps, explore, type TopoDS_Edge, type TopoDS_Shape } from "./occ.ts";
 
-function segEdges(s: Seg, f: Frame): Edge[] {
+export function segEdges(s: Seg, f: Frame): Edge[] {
   const P = (p: P2) => to3D(f, p);
   switch (s.kind) {
     case "line": return [makeLine(P(s.a), P(s.b))];

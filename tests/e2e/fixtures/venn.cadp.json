@@ -1,0 +1,84 @@
+{
+  "format": "cadp",
+  "version": 1,
+  "name": "Venn",
+  "units": "mm",
+  "variables": [],
+  "features": [
+    {
+      "type": "sketch",
+      "plane": {
+        "kind": "std",
+        "name": "XY"
+      },
+      "entities": {
+        "p1": {
+          "type": "point",
+          "x": 0,
+          "y": 0
+        },
+        "c2": {
+          "type": "circle",
+          "c": "p1",
+          "r": 20
+        },
+        "p3": {
+          "type": "point",
+          "x": 20,
+          "y": 0
+        },
+        "c4": {
+          "type": "circle",
+          "c": "p3",
+          "r": 20
+        }
+      },
+      "constraints": [
+        {
+          "id": "k5",
+          "type": "radius",
+          "refs": [
+            "c2"
+          ],
+          "value": 20
+        },
+        {
+          "id": "k6",
+          "type": "radius",
+          "refs": [
+            "c4"
+          ],
+          "value": 20
+        },
+        {
+          "id": "k7",
+          "type": "coincident",
+          "refs": [
+            "p1",
+            "O"
+          ]
+        },
+        {
+          "id": "k8",
+          "type": "distanceX",
+          "refs": [
+            "O",
+            "p3"
+          ],
+          "value": 20
+        },
+        {
+          "id": "k9",
+          "type": "distanceY",
+          "refs": [
+            "O",
+            "p3"
+          ],
+          "value": 0
+        }
+      ],
+      "id": "f1",
+      "name": "Esboço1"
+    }
+  ]
+}

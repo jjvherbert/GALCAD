@@ -87,6 +87,23 @@ async function main() {
     await p.keyboard.press("Escape");
     // estilo fio de arame
     await p.click(".heads-up button[title='Estilo de visualização']"); await p.click(".heads-up .menu button:has-text('fio de arame')");
+    // regiões: dois círculos sobrepostos → extrudir só a lente
+    await p.evaluate((t) => { localStorage.setItem("cad-prototipo:autosave", t); }, fs.readFileSync(path.join(__dirname, "fixtures/venn.cadp.json"), "utf8"));
+    await p.reload(); await settle();
+    await p.click(".tabs button:has-text('Features')");
+    await p.click("button.cmd:has-text('Extrusão')");
+    await p.waitForSelector(".reflist.active");
+    check("contornos sobrepostos pedem regiões", (await p.textContent(".reflist")).includes("3 região"), (await p.textContent(".reflist")).slice(0, 90));
+    await p.keyboard.press("Control+5");
+    const vb2 = await p.locator(".viewport").boundingBox();
+    const wpp = 240 / vb2.height;
+    await p.mouse.click(vb2.x + vb2.width / 2 + 10 / wpp, vb2.y + vb2.height / 2);
+    await settle();
+    check("clique escolhe a lente", (await p.$$eval(".reflist li", (e) => e.length)) === 1);
+    await p.click(".property-panel button:has-text('OK')"); await settle();
+    const vol = Number((await p.textContent(".side-info")).match(/Volume\s*([\d\s,.]+)\s*cm³/)[1].replace(/\s/g, "").replace(",", "."));
+    const lens = (2 * 400 * Math.acos(0.5) - 10 * Math.sqrt(1200)) * 10 / 1000;
+    check("volume da lente", Math.abs(vol - lens) < 0.01, `${vol} vs ${lens.toFixed(3)}`);
     await b.close();
     for (const r of R) console.log(r);
     const failed = R.filter((r) => r.startsWith("✗"));

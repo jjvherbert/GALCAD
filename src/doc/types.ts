@@ -114,6 +114,15 @@ export interface SketchFeature {
 // Features
 // ---------------------------------------------------------------------------
 
+/**
+ * Região escolhida de um esboço (como "contornos selecionados" no SolidWorks): identificada pelas
+ * entidades que a delimitam (estável quando as cotas mudam) e por um ponto interior (recurso).
+ */
+export interface RegionRef {
+  sig: string[];
+  seed: [number, number];
+}
+
 /** Operação booleana com o corpo existente. "new" junta sem fundir (corpo separado). */
 export type BodyOp = "add" | "cut" | "intersect" | "new";
 
@@ -126,6 +135,8 @@ export type EndCondition =
 export interface ExtrudeFeature {
   type: "extrude";
   sketch: string;
+  /** Regiões a usar; omitido = todos os contornos fechados. */
+  regions?: RegionRef[];
   op: BodyOp;
   end: EndCondition;
   /** Segunda direção (sentido oposto), opcional. */
@@ -138,6 +149,7 @@ export interface ExtrudeFeature {
 export interface RevolveFeature {
   type: "revolve";
   sketch: string;
+  regions?: RegionRef[];
   axis: AxisRef;
   op: BodyOp;
   angle: Expr;

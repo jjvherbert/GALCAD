@@ -48,7 +48,7 @@ export function ContextMenu() {
   const planarFace = p?.kind === "face" && p.type === "plane";
   return (
     <Popup at={m.at} label="Menu de contexto">
-      {p && <div class="popup-title" title={p.kind === "plane" || p.kind === "axis" ? p.label : p.name}>{p.kind === "plane" || p.kind === "axis" ? p.label : describeName(st.doc, p.name)}</div>}
+      {p && p.kind !== "region" && <div class="popup-title" title={p.kind === "plane" || p.kind === "axis" ? p.label : p.name}>{p.kind === "plane" || p.kind === "axis" ? p.label : describeName(st.doc, p.name)}</div>}
       {(planarFace || p?.kind === "plane") && <Item label="Esboço aqui" onClick={() => withPick(p, "sketch.new")} />}
       {(planarFace || p?.kind === "plane") && <Item label="Normal a" keys="Ctrl+8" onClick={() => withPick(p, "view.normal")} />}
       {feature && <Item label={`Editar ${feature.name}`} onClick={() => store.editFeature(feature.id)} />}

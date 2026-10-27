@@ -22,7 +22,11 @@ export class KernelService {
     this.lastMesh = mesh;
     const sketches: Record<string, SketchView> = {};
     for (const [id, s] of r.ctx.sketches) {
-      sketches[id] = { frame: s.frame, entities: s.entities, ok: s.solve.ok, dof: s.solve.dof, profiles: { errors: s.profiles.errors, regions: s.profiles.regions.length } };
+      sketches[id] = {
+        frame: s.frame, entities: s.entities, ok: s.solve.ok, dof: s.solve.dof,
+        profiles: { errors: s.profiles.errors, regions: s.profiles.regions.length },
+        regionList: s.regions.map((r) => ({ sig: r.sig, seed: r.seed, area: r.area, tris: r.tris })),
+      };
     }
     let mass: MassProps | null = null;
     if (body) {

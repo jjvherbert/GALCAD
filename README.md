@@ -9,7 +9,7 @@ CAD paramétrico open source, no browser, para modelação de sólidos (e, a seg
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 39 testes (Node): documento, solver, perfis, modificação, motor, nomes, serviço
+npm test             # 41 testes (Node): documento, solver, perfis, modificação, motor, nomes, serviço
 npm run typecheck    # TypeScript estrito
 npm run build && npm run test:e2e   # 9 fluxos de aplicação + 23 verificações de navegação no Chromium
 ```
@@ -23,6 +23,10 @@ npm run build && npm run test:e2e   # 9 fluxos de aplicação + 23 verificaçõe
 - Estado de definição: azul quando sub-definido e preto quando totalmente definido, com os graus de liberdade e os conflitos identificados. Os pontos podem ser arrastados com o solver ativo.
 - As arestas do modelo aparecem como referência quando se esboça numa face.
 - Modificar: **aparar** até às interseções mais próximas, **estender** até à primeira entidade, **filete de canto** (arco tangente) e **deslocar** (offset de cadeias com os cantos ligados, preso à original por paralelismo e distância).
+- **Regiões (contornos selecionados)**:
+  - curvas que se cruzam ou sobrepõem dividem o plano em regiões, calculadas com exatidão pelo OpenCASCADE;
+  - na extrusão e na revolução escolhem-se as regiões a usar, com um clique no 3D;
+  - cada região é identificada pelas entidades que a delimitam e pelo lado de cada uma (por exemplo, "dentro de c2 e fora de c4"), o que se mantém quando as cotas mudam.
 - **Converter arestas** do modelo, uma a uma ou o contorno inteiro no plano. As entidades ficam ligadas à aresta pelo nome topológico e são reprojetadas a cada reconstrução, por isso o esboço acompanha o modelo. Aparecem a roxo no editor.
 
 **Features:**
@@ -105,7 +109,7 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
 ## Limitações conhecidas (Fase 1)
 
 - Aparar não trata splines (apaga-as) e as entidades convertidas não se aparam. O deslocamento assume que a cadeia tem uma orientação coerente.
-- Regiões de esboço: contornos que se intersetam ou se ramificam dão erro; não há seleção de regiões individuais.
+- Sem regiões escolhidas, contornos que se intersetam ou ramificam dão erro e pedem a escolha das regiões. Por agora, a escolha de regiões só existe na extrusão e na revolução.
 - Feature fina (*thin*) e "até ao próximo" ainda não existem. "Até à face" só aceita faces planas.
 - O furo usa os pontos isolados do esboço, sem o assistente de posicionamento do SolidWorks. A rosca é cosmética, não modelada.
 - Multi-corpo simples: "corpo separado" junta sem fundir; não há gestão de corpos.

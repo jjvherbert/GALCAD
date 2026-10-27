@@ -14,7 +14,8 @@ export type Pick =
   | { kind: "face"; name: string; hint: GeoHint; type: string }
   | { kind: "edge"; name: string; hint: GeoHint; type: string }
   | { kind: "plane"; ref: PlaneRef; label: string }
-  | { kind: "axis"; ref: AxisRef; label: string };
+  | { kind: "axis"; ref: AxisRef; label: string }
+  | { kind: "region"; sketch: string; sig: string[]; seed: [number, number] };
 
 export type PickKind = Pick["kind"];
 
@@ -344,10 +345,11 @@ class Store {
     const t = this.state.pickTarget;
     if (t) {
       if (t.accept.includes(p.kind)) pickHandlers.get(t.field)?.(p);
-      else this.set({ message: `Este campo aceita: ${t.accept.map((k) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos" })[k]).join(", ")}` });
+      else this.set({ message: `Este campo aceita: ${t.accept.map((k) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[k]).join(", ")}` });
       return;
     }
-    const key = (x: Pick) => (x.kind === "face" || x.kind === "edge" ? `${x.kind}:${x.name}` : `${x.kind}:${JSON.stringify(x.ref)}`);
+    if (p.kind === "region") return; // regiões só se escolhem em campos de feature
+    const key = (x: Pick) => (x.kind === "face" || x.kind === "edge" ? `${x.kind}:${x.name}` : x.kind === "region" ? `region:${x.sig.join("+")}` : `${x.kind}:${JSON.stringify(x.ref)}`);
     const sel = this.state.selection;
     const has = sel.some((s) => key(s) === key(p));
     this.set({ selection: additive ? (has ? sel.filter((s) => key(s) !== key(p)) : [...sel, p]) : has && sel.length === 1 ? [] : [p] });
@@ -359,7 +361,7 @@ class Store {
   setSelection(picks: Pick[], additive: boolean) {
     const t = this.state.pickTarget;
     if (t) { for (const p of picks) if (t.accept.includes(p.kind)) pickHandlers.get(t.field)?.(p); return; }
-    const key = (x: Pick) => (x.kind === "face" || x.kind === "edge" ? `${x.kind}:${x.name}` : `${x.kind}:${JSON.stringify(x.ref)}`);
+    const key = (x: Pick) => (x.kind === "face" || x.kind === "edge" ? `${x.kind}:${x.name}` : x.kind === "region" ? `region:${x.sig.join("+")}` : `${x.kind}:${JSON.stringify(x.ref)}`);
     const base = additive ? this.state.selection : [];
     const seen = new Set(base.map(key));
     this.set({ selection: [...base, ...picks.filter((p) => !seen.has(key(p)))], contextToolbar: null });

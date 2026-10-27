@@ -17,6 +17,8 @@ export interface SketchView {
   ok: boolean;
   dof: number;
   profiles: Pick<Profiles, "errors"> & { regions: number };
+  /** Regiões escolhíveis (contornos selecionados): assinatura, ponto interior e triângulos 2D. */
+  regionList: { sig: string[]; seed: [number, number]; area: number; tris: number[] }[];
 }
 
 export interface MassProps {

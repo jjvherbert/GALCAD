@@ -309,3 +309,58 @@ test("converter entidades: o esboço segue as arestas do modelo quando este muda
   near(vol(r2), 140 * 60 * 25);
   assert.equal(r2.ctx.sketches.get("f3")!.solve.dof, 0);
 });
+
+test("regiões: dois círculos sobrepostos, escolher a lente e as luas; a escolha sobrevive a mudar a cota", async () => {
+  const s = new SketchBuilder();
+  const c1 = s.circle(0, 0, 20), c2 = s.circle(20, 0, 20);
+  s.constrain("radius", [c1], "R");
+  s.constrain("radius", [c2], "R");
+  s.constrain("coincident", [(s.entities[c1] as { c: string }).c, "O"]);
+  s.constrain("distanceX", ["O", (s.entities[c2] as { c: string }).c], 20);
+  s.constrain("distanceY", ["O", (s.entities[c2] as { c: string }).c], 0);
+  const sk = s.build();
+  // sem escolha: erro a pedir regiões
+  const base = doc(sk, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } });
+  const d0 = { ...base.doc, variables: [{ name: "R", expr: "20" }] };
+  const e = new Engine();
+  const r0 = await e.rebuild(d0);
+  assert.equal(r0.status.f2.state, "error");
+  assert.match(r0.status.f2.error!, /regiões/);
+  const regs = r0.ctx.sketches.get("f1")!.regions;
+  assert.equal(regs.length, 3);
+  const lens = regs.find((g) => g.sig.length === 2 && g.seed[0] > 5 && g.seed[0] < 15)!;
+  const moons = regs.filter((g) => g !== lens);
+  // lente: área 2R²(π/3 − √3/4)·… para d = R: A = 2R²·acos(1/2) − (R/2)·√(4R² − R²)
+  const lensArea = (R: number) => 2 * R * R * Math.acos(0.5) - (R / 2) * Math.sqrt(3 * R * R);
+  const dl = updateFeature(d0, "f2", { regions: [{ sig: lens.sig, seed: lens.seed }] } as Partial<Feature>);
+  const r1 = await e.rebuild(dl);
+  assert.deepEqual(errors(r1), []);
+  near(vol(r1), lensArea(20) * 10, 1e-4);
+  const dm = updateFeature(d0, "f2", { regions: moons.map((g) => ({ sig: g.sig, seed: g.seed })) } as Partial<Feature>);
+  const r2 = await e.rebuild(dm);
+  assert.deepEqual(errors(r2), []);
+  near(vol(r2), (2 * Math.PI * 400 - 2 * lensArea(20)) * 10, 1e-4);
+  // a lente continua escolhida com R = 25 (assinatura igual, ponto continua dentro)
+  const r3 = await e.rebuild({ ...dl, variables: [{ name: "R", expr: "25" }] });
+  assert.deepEqual(errors(r3), []);
+  assert.deepEqual(r3.status.f2.warnings, []);
+  const d = 20, R = 25;
+  const lens25 = 2 * R * R * Math.acos(d / (2 * R)) - (d / 2) * Math.sqrt(4 * R * R - d * d);
+  near(vol(r3), lens25 * 10, 1e-4);
+});
+
+test("regiões: retângulo cortado por uma linha, revolução de metade", async () => {
+  const s = new SketchBuilder({ kind: "std", name: "XZ" });
+  s.rect(10, 0, 20, 30, 20, 30);
+  s.line(s.point(10, 10), s.point(30, 10)); // divide em baixo (10×20) e cima (20×20)
+  const axis = s.line(s.point(0, -10, { fixed: true }), s.point(0, 50, { fixed: true }), true);
+  const { doc: d0 } = doc(s.build(), { type: "revolve", sketch: "f1", axis: { kind: "sketchLine", sketch: "f1", entity: axis }, op: "add", angle: 360 });
+  const e = new Engine();
+  const r0 = await e.rebuild(d0);
+  const regs = r0.ctx.sketches.get("f1")!.regions;
+  assert.equal(regs.length, 2);
+  const low = regs.find((g) => g.seed[1] < 10)!;
+  const r1 = await e.rebuild(updateFeature(d0, "f2", { regions: [{ sig: low.sig, seed: low.seed }] } as Partial<Feature>));
+  assert.deepEqual(errors(r1), []);
+  near(vol(r1), 2 * Math.PI * 20 * 20 * 10, 1e-4);
+});

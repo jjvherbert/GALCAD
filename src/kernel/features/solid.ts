@@ -1,5 +1,6 @@
 // Features que criam sólidos a partir de esboços: extrusão, revolução, varrimento, loft e nervura.
-import type { EndCondition, ExtrudeFeature, Feature, LoftFeature, RevolveFeature, RibFeature, SweepFeature, Vec3 } from "../../doc/types.ts";
+import type { EndCondition, ExtrudeFeature, Feature, LoftFeature, RegionRef, RevolveFeature, RibFeature, SweepFeature, Vec3 } from "../../doc/types.ts";
+import { regionKey, resolveRegions } from "../regions.ts";
 import { evalParam } from "../../doc/variables.ts";
 import type { Region } from "../../sketch/profiles.ts";
 import { type Ctx, type SketchResult, type StepReport, axisOf, faces as resolveFaces, featureName, modelSize } from "../context.ts";
@@ -69,19 +70,68 @@ function capsByPlane(start: Frame, end: Frame | undefined, key: string, fid: str
   };
 }
 
-/** Prisma nomeado de uma região, a partir do referencial `frame` (já deslocado), ao longo de `vec`. */
-function regionPrism(region: Region, frame: Frame, vec: Vec3, fid: string): NamedBody {
-  const face = regionFace(region, frame);
-  const segs = [...region.outer.segs, ...region.holes.flatMap((h) => h.segs)];
-  const edgeMap = mapEdgesToEntities(face.wrapped, segs, frame) as Map<TopoDS_Shape, string>;
-  const mk = T(new (oc().BRepPrimAPI_MakePrism)(face.wrapped, gpVec(vec), false, true));
+/** Face de perfil pronta a extrudir/revolver: a face, as arestas → entidade e a chave da região. */
+interface ProfileFace { face: TopoDS_Shape; edgeMap: Map<TopoDS_Shape, string>; key: string }
+
+/** Movimento rígido do plano do esboço para o início da operação (desvio ou rotação). */
+type Move = { translate: Vec3 } | { rotate: { o: Vec3; d: Vec3; rad: number } } | null;
+
+function moved(p: ProfileFace, mv: Move): ProfileFace {
+  if (!mv) return p;
+  const o = oc();
+  const t = T(new o.gp_Trsf());
+  if ("translate" in mv) t.SetTranslation(gpVec(mv.translate));
+  else t.SetRotation(gpAx1(mv.rotate.o, mv.rotate.d), mv.rotate.rad);
+  const mk = T(new o.BRepBuilderAPI_Transform(p.face, t, true, false));
+  const edgeMap = new Map<TopoDS_Shape, string>();
+  for (const [e, ent] of p.edgeMap) edgeMap.set(T(mk.ModifiedShape(e)), ent);
+  return { face: T(mk.Shape()), edgeMap, key: p.key };
+}
+
+/**
+ * Faces de perfil de um esboço: as regiões escolhidas (contornos selecionados) ou, sem escolha,
+ * todos os contornos fechados. `mv` desloca/roda as faces a partir do plano do esboço.
+ */
+function profileFaces(ctx: Ctx, sketchId: string, refs: RegionRef[] | undefined, mv: Move, report: StepReport): { s: SketchResult; faces: ProfileFace[] } {
+  const s = sketchOf(ctx, sketchId);
+  if (refs?.length) {
+    const { regions, warnings } = resolveRegions(s.regions, refs);
+    report.warnings.push(...warnings);
+    if (!regions.length) throw new Error("Nenhuma das regiões escolhidas existe no esboço");
+    return { s, faces: regions.map((r) => moved({ face: r.face, edgeMap: r.edgeMap, key: regionKey(r) }, mv)) };
+  }
+  if (s.profiles.errors.length && s.regions.length) {
+    throw new Error(`Esboço "${featureName(ctx, sketchId)}": ${s.profiles.errors[0]}. Escolha as regiões a usar (${s.regions.length} disponíveis)`);
+  }
+  const { regions } = closedRegions(ctx, sketchId);
+  return {
+    s,
+    faces: regions.map((r) => {
+      const face = regionFace(r, s.frame);
+      const segs = [...r.outer.segs, ...r.holes.flatMap((h) => h.segs)];
+      return moved({ face: face.wrapped, edgeMap: mapEdgesToEntities(face.wrapped, segs, s.frame) as Map<TopoDS_Shape, string>, key: r.key }, mv);
+    }),
+  };
+}
+
+/** Prisma nomeado de uma face de perfil ao longo de `vec`. */
+function facePrism(p: ProfileFace, vec: Vec3, fid: string): NamedBody {
+  const mk = T(new (oc().BRepPrimAPI_MakePrism)(p.face, gpVec(vec), false, true));
   const shape = T(mk.Shape());
   const known = [
-    ...generatedNames(mk, edgeMap, `${fid}:side`),
-    { face: T(mk.FirstShape()), name: `${fid}:start:${region.key}` },
-    { face: T(mk.LastShape()), name: `${fid}:end:${region.key}` },
+    ...generatedNames(mk, p.edgeMap, `${fid}:side`),
+    { face: T(mk.FirstShape()), name: `${fid}:start:${p.key}` },
+    { face: T(mk.LastShape()), name: `${fid}:end:${p.key}` },
   ];
   return nameFrom(shape, fid, known);
+}
+
+/** Junta corpos-ferramenta: regiões adjacentes são fundidas (sem faces interiores). */
+function fuseTools(bodies: NamedBody[], fid: string): NamedBody {
+  if (bodies.length === 1) return bodies[0];
+  let acc = bodies[0];
+  for (const b of bodies.slice(1)) acc = applyOp({ body: acc } as Ctx, b, "add", fid);
+  return acc;
 }
 
 function compoundBodies(bodies: NamedBody[]): NamedBody {
@@ -110,7 +160,7 @@ function endDistance(ctx: Ctx, e: EndCondition, frame: Frame, n: Vec3, report: S
 }
 
 export const extrude: Step<ExtrudeFeature & Feature> = (ctx, f, report) => {
-  const { s, regions } = closedRegions(ctx, f.sketch);
+  const s = sketchOf(ctx, f.sketch);
   // ressalto: ao longo da normal do esboço; corte: para dentro do material (sentido oposto), como no SolidWorks
   const into = f.op === "cut" ? !f.flip : !!f.flip;
   const n = into ? v3.mul(s.frame.z, -1) : s.frame.z;
@@ -119,8 +169,9 @@ export const extrude: Step<ExtrudeFeature & Feature> = (ctx, f, report) => {
   if (f.end2) d2 = endDistance(ctx, f.end2, s.frame, v3.mul(n, -1), report, "Direção 2");
   if (f.end.type === "throughAll" && f.op === "cut" && !f.end2) d1 = modelSize(ctx, [s.frame.o]);
   if (d1 + d2 <= 1e-9) throw new Error("Profundidade total nula");
-  const start = { ...s.frame, o: v3.sub(s.frame.o, v3.mul(n, d2)) };
-  let tool = compoundBodies(regions.map((r) => regionPrism(r, start, v3.mul(n, d1 + d2), f.id)));
+  const { faces } = profileFaces(ctx, f.sketch, f.regions, d2 > 0 ? { translate: v3.mul(n, -d2) } : null, report);
+  const prisms = faces.map((p) => facePrism(p, v3.mul(n, d1 + d2), f.id));
+  let tool = f.regions?.length ? fuseTools(prisms, f.id) : compoundBodies(prisms);
 
   const draft = evalParam(f.draft, ctx.scope, "Inclinação", 0);
   if (Math.abs(draft) > 1e-9) tool = draftSides(tool, f.id, s.frame, n, draft);
@@ -142,7 +193,7 @@ function draftSides(tool: NamedBody, fid: string, frame: Frame, n: Vec3, angleDe
 }
 
 export const revolve: Step<RevolveFeature & Feature> = (ctx, f, report) => {
-  const { s, regions } = closedRegions(ctx, f.sketch);
+  const s = sketchOf(ctx, f.sketch);
   const axis = axisOf(ctx, f.axis, report);
   let angle = evalParam(f.angle, ctx.scope, "Ângulo");
   if (angle <= 0 || angle > 360) throw new Error("Ângulo: tem de estar entre 0 e 360°");
@@ -150,18 +201,18 @@ export const revolve: Step<RevolveFeature & Feature> = (ctx, f, report) => {
   const full = Math.abs(Math.abs(angle) - 360) < 1e-9;
   const frame = f.midplane && !full ? rotateFrame(s.frame, axis, (-angle / 2) * (Math.PI / 180)) : s.frame;
   const endFrame = rotateFrame(frame, axis, (angle * Math.PI) / 180);
-  const parts = regions.map((r) => {
-    const face = regionFace(r, frame);
-    const segs = [...r.outer.segs, ...r.holes.flatMap((h) => h.segs)];
-    const edgeMap = mapEdgesToEntities(face.wrapped, segs, frame) as Map<TopoDS_Shape, string>;
-    const mk = T(new (oc().BRepPrimAPI_MakeRevol)(face.wrapped, gpAx1(axis.o, axis.d), (angle * Math.PI) / 180, false));
+  const mv: Move = frame === s.frame ? null : { rotate: { o: axis.o, d: axis.d, rad: (-angle / 2) * (Math.PI / 180) } };
+  const { faces } = profileFaces(ctx, f.sketch, f.regions, mv, report);
+  const parts = faces.map((pf) => {
+    const { face, edgeMap } = pf;
+    const mk = T(new (oc().BRepPrimAPI_MakeRevol)(face, gpAx1(axis.o, axis.d), (angle * Math.PI) / 180, false));
     const shape = T(mk.Shape());
     if (!isValid(shape)) throw new Error("A revolução gerou um sólido inválido (o eixo interseta o perfil?)");
     const known = generatedNames(mk, edgeMap, `${f.id}:side`);
     const containing = [...edgeMap].map(([edge, ent]) => ({ edge, name: `${f.id}:side:${ent}` }));
-    return nameFrom(shape, f.id, known, full ? undefined : capsByPlane(frame, endFrame, r.key, f.id), containing);
+    return nameFrom(shape, f.id, known, full ? undefined : capsByPlane(frame, endFrame, pf.key, f.id), containing);
   });
-  const tool = compoundBodies(parts);
+  const tool = f.regions?.length ? fuseTools(parts, f.id) : compoundBodies(parts);
   ctx.tools.set(f.id, { body: tool, op: f.op });
   return { ...ctx, body: applyOp(ctx, tool, f.op, f.id) };
 };

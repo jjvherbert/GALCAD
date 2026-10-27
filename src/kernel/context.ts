@@ -2,6 +2,7 @@
 import type { AxisRef, CadDocument, BodyOp, PlaneRef, TopoRef, SketchEntity, Vec3 } from "../doc/types.ts";
 import type { Scope } from "../doc/expr.ts";
 import type { Profiles } from "../sketch/profiles.ts";
+import type { SketchRegion } from "./regions.ts";
 import type { SolveResult } from "../sketch/solver.ts";
 import { type Axis, type Frame, STD_AXES, STD_FRAMES, csysAxis, csysPlane, frameFromPlane, to3D } from "./frame.ts";
 import { type NamedBody, type NamedEdge, type NamedFace, namedEdges, resolveEdge, resolveFace } from "./naming.ts";
@@ -11,6 +12,8 @@ export interface SketchResult {
   frame: Frame;
   entities: Record<string, SketchEntity>;
   profiles: Profiles;
+  /** Regiões do esboço (curvas que se cruzam incluídas), calculadas no passo do esboço. */
+  regions: SketchRegion[];
   solve: Pick<SolveResult, "ok" | "dof" | "conflicting" | "redundant" | "valueErrors" | "message">;
 }
 

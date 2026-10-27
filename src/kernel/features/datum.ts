@@ -4,6 +4,7 @@ import type { AxisFeature, CsysFeature, Feature, ImportFeature, PlaneFeature, Sk
 import { evalParam } from "../../doc/variables.ts";
 import { solveSketch } from "../../sketch/solver.ts";
 import { findProfiles } from "../../sketch/profiles.ts";
+import { type SketchRegion, computeRegions } from "../regions.ts";
 import { type Ctx, type StepReport, axisOf, edges, planeFrame } from "../context.ts";
 import { type Frame, flipFrame, frameFromEuler, offsetFrame, planesIntersection, rotateFrame, to2D } from "../frame.ts";
 import { nameFresh } from "../naming.ts";
@@ -58,10 +59,13 @@ export function sketch(ctx: Ctx, f0: SketchFeature & Feature, report: StepReport
   const f = ctx.body ? projectExternal(ctx, f0, frame, report) : f0;
   const r = solveSketch(f, ctx.scope);
   const profiles = findProfiles(r.entities);
+  let regions: SketchRegion[] = [];
+  try { if (r.ok) regions = computeRegions(r.entities, frame); } catch (e) { report.warnings.push((e as Error).message); }
   ctx.sketches.set(f.id, {
     frame,
     entities: r.entities,
     profiles,
+    regions,
     solve: { ok: r.ok, dof: r.dof, conflicting: r.conflicting, redundant: r.redundant, valueErrors: r.valueErrors, message: r.message },
   });
   const valueErrors = Object.values(r.valueErrors);

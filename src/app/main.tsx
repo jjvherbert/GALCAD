@@ -21,12 +21,14 @@ import "./style.css";
 
 function selectedKeys(): string[] {
   const { selection, edit } = store.state;
-  const keys = selection.map((p) => (p.kind === "face" || p.kind === "edge" ? `${p.kind}:${p.name}` : `plane:${JSON.stringify(p.ref)}`));
+  const keys = selection.map((p) => (p.kind === "face" || p.kind === "edge" ? `${p.kind}:${p.name}` : p.kind === "region" ? `region:${p.sig.join("+")}` : `plane:${JSON.stringify(p.ref)}`));
   const d = edit?.draft as Record<string, unknown> | undefined;
   for (const field of ["refs", "faces"]) {
     const refs = d?.[field];
     if (Array.isArray(refs)) for (const r of refs as { kind: string; name: string }[]) keys.push(`${r.kind}:${r.name}`);
   }
+  const regions = d?.regions;
+  if (Array.isArray(regions)) for (const r of regions as { sig: string[] }[]) keys.push(`region:${r.sig.join("+")}`);
   return keys;
 }
 
@@ -71,6 +73,14 @@ function App() {
 
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
+  // regiões do esboço da extrusão/revolução em edição, enquanto se escolhem ou se já há escolha
+  useEffect(() => {
+    const d = st.edit?.draft;
+    const sk = d && (d.type === "extrude" || d.type === "revolve") ? d.sketch : null;
+    const show = sk && (st.pickTarget?.field === "regions" || (d && "regions" in d && d.regions?.length));
+    vp.current?.setRegions(show ? sk : null, show && sk ? st.result?.sketches[sk] ?? null : null);
+    vp.current?.setSelected(selectedKeys());
+  }, [st.edit, st.pickTarget, st.result]);
   useEffect(() => { try { localStorage.setItem("cad-prototipo:density", String(density)); } catch { /* ignorar */ } }, [density]);
 
   useEffect(() => {
@@ -120,7 +130,7 @@ function App() {
           <div ref={host} class="viewport" />
           {!st.sketch && <HeadsUpToolbar />}
           {st.sketch && <SketchEditor key={st.sketch.id} result={r} />}
-          {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos" })[a]).join(" / ")} · Esc para terminar</div>}
+          {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[a]).join(" / ")} · Esc para terminar</div>}
         </section>
       </div>
       <footer class="statusbar">

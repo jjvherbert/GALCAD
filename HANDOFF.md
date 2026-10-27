@@ -1,5 +1,15 @@
 # Handoff — Fase 1
 
+## Atualização: seleção de regiões
+
+- `src/kernel/regions.ts`: o plano do esboço é dividido por todas as curvas com o `BRepAlgoAPI_Splitter`. As regiões ficam com uma assinatura do tipo entidade + lado (`c2+` = dentro / à esquerda), um ponto interior e os triângulos para a UI. São calculadas no passo do esboço, para pertencerem à arena desse passo.
+- `RegionRef` em `ExtrudeFeature` e `RevolveFeature`. A resolução tenta, por esta ordem: assinatura → ponto interior → semelhança. Sem escolha, mantém-se o caminho anterior (contornos fechados), com os mesmos nomes topológicos.
+- UI: campo "Regiões" no painel. As regiões aparecem a roxo no 3D e escolhem-se com um clique; o campo ativa-se sozinho quando os contornos se sobrepõem.
+- Testes: 41 em Node e e2e (lente com volume analítico), todos a passar.
+- Próximo passo: Fase 2 (superfícies).
+
+---
+
 ## Atualização: navegação e comandos ao estilo do SolidWorks; licença
 
 - `src/app/viewport.ts`: controlador de câmara próprio, sem OrbitControls.

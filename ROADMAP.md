@@ -36,7 +36,7 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
 - ✅ Aparar, estender, filete de canto e deslocar no esboço
 - ✅ Converter arestas do modelo para o esboço, ligadas pelo nome topológico (acompanham o modelo)
 - Chanfro de esboço; aparar splines; espelhar e repetir entidades no esboço
-- Seleção de regiões em esboços com contornos sobrepostos
+- ✅ Seleção de regiões (contornos selecionados) em esboços com curvas que se cruzam ou sobrepõem
 - Feature fina (*thin*), "até ao próximo", "até ao vértice", "até à face" com faces curvas
 - Tabela de configurações (famílias de peças) a partir das variáveis
 - Gestão de multi-corpo (listar, ocultar, combinar)
@@ -48,10 +48,27 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
 - Curvas 3D: spline por pontos, projeção, interseção, curva composta, hélice
 - Análises: zebra, mapa de curvatura, desvio, draft
 
-## Fase 3: montagens e desenhos
+## Fase 3: montagens, desenhos 2D e BOM
 - Montagens com mates (coincidente, concêntrico, distância, ângulo) e solver de restrições 3D
 - Peças em contexto e deteção de interferências
-- Desenhos técnicos: vistas projetadas com HLR, cortes, cotas e tolerâncias, exportação DXF e PDF
+- **Desenhos técnicos 2D**, associativos (atualizam com o modelo):
+  - folhas e formatos ISO/ASME com legenda e carimbo;
+  - vistas padrão, projetadas (1.º/3.º diedro), isométricas, de corte, de detalhe e auxiliares, com linhas ocultas por HLR;
+  - cotas importadas do modelo e cotas de desenho;
+  - tolerâncias e GD&T (ISO 1101), símbolos de rugosidade e de soldadura;
+  - notas e balões;
+  - exportação DXF/DWG e PDF.
+- **Lista de materiais (BOM)**:
+  - por peça e por montagem (níveis, quantidades, propriedades personalizadas);
+  - tabela no desenho com balões ligados;
+  - exportação CSV/Excel.
+- **BOM com IA** (sempre sugestões para o utilizador validar, nunca alterações automáticas):
+  - classificação das peças e descrições normalizadas;
+  - reconhecimento de peças normalizadas (parafusos, porcas, rolamentos, com designação ISO/DIN) a partir da geometria;
+  - sugestão de material e processo;
+  - deteção de duplicados e de quase-duplicados no catálogo;
+  - estimativa de custo e de prazo, e sugestão de fornecedores;
+  - verificação de coerência entre a BOM, o desenho e o modelo.
 
 ## Fase 4: funcionalidades inspiradas no CATIA
 - Wireframe e superfícies ao estilo do GSD: multi-section com guias e spine, blend, sweeps avançados, extrapolação, junção e cura de geometria

@@ -5,7 +5,7 @@ import { FEATURE_LABELS, TOOL_FEATURES, featureLabel } from "../doc/features.ts"
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
-import { AxisSelect, Check, EndEditor, ExprInput, FeatureChecklist, Field, PlaneSelect, RefList, Select, SketchSelect } from "./forms.tsx";
+import { AxisSelect, Check, EndEditor, ExprInput, FeatureChecklist, Field, PlaneSelect, RefList, RegionList, Select, SketchSelect } from "./forms.tsx";
 import { StatusBlock } from "./InfoPanel.tsx";
 
 const OPS: [BodyOp, string][] = [["add", "Adicionar material"], ["cut", "Remover material (corte)"], ["intersect", "Intersetar"], ["new", "Corpo separado"]];
@@ -24,6 +24,8 @@ export function PropertyPanel() {
     if (!e.isNew) return;
     if ((f.type === "fillet" || f.type === "chamfer") && !f.refs.length) store.set({ pickTarget: { field: "refs", accept: ["edge", "face"] } });
     if ((f.type === "shell" || f.type === "draft") && !f.faces.length) store.set({ pickTarget: { field: "faces", accept: ["face"] } });
+    // esboço com contornos sobrepostos: pedir logo as regiões (como no SolidWorks)
+    if ((f.type === "extrude" || f.type === "revolve") && f.sketch && st.result?.sketches[f.sketch]?.profiles.errors.length) store.set({ pickTarget: { field: "regions", accept: ["region"] } });
   }, [e.id]);
 
   let body;
@@ -31,7 +33,8 @@ export function PropertyPanel() {
     case "extrude":
       body = (
         <>
-          <SketchSelect label="Esboço" value={f.sketch} before={before} onChange={(sketch) => up({ sketch })} />
+          <SketchSelect label="Esboço" value={f.sketch} before={before} onChange={(sketch) => up({ sketch, regions: undefined })} />
+          {f.sketch && <RegionList sketch={f.sketch} value={f.regions} onChange={(regions) => up({ regions })} />}
           <Select label="Operação" value={f.op} options={OPS} onChange={(op) => up({ op })} />
           <EndEditor field="end1" label="Direção 1" value={f.end} onChange={(end) => end && up({ end })} />
           <Check label="Inverter direção" value={f.flip} onChange={(flip) => up({ flip })} />
@@ -43,7 +46,8 @@ export function PropertyPanel() {
     case "revolve":
       body = (
         <>
-          <SketchSelect label="Esboço" value={f.sketch} before={before} onChange={(sketch) => up({ sketch })} />
+          <SketchSelect label="Esboço" value={f.sketch} before={before} onChange={(sketch) => up({ sketch, regions: undefined })} />
+          {f.sketch && <RegionList sketch={f.sketch} value={f.regions} onChange={(regions) => up({ regions })} />}
           <AxisSelect field="axis" label="Eixo de revolução" value={f.axis} before={before} sketch={f.sketch} onChange={(axis) => up({ axis })} />
           <Select label="Operação" value={f.op} options={OPS} onChange={(op) => up({ op })} />
           <ExprInput label="Ângulo" unit="°" value={f.angle} onChange={(angle) => up({ angle: angle ?? "" })} />

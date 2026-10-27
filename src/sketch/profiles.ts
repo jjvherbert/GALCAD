@@ -224,3 +224,20 @@ export function isolatedPoints(entities: Record<string, SketchEntity>): { id: st
 }
 
 export { sampleEntity };
+
+/** Segmento (sem orientação particular) de uma entidade curva do esboço resolvido. */
+export function entitySeg(entities: Record<string, SketchEntity>, id: string): Seg | null {
+  const ents = allEntities({ entities });
+  const e = ents[id];
+  if (!e) return null;
+  if (e.type === "line") return { kind: "line", entity: id, a: pt(ents, e.p1), b: pt(ents, e.p2) };
+  if (e.type === "circle") return { kind: "circle", entity: id, c: pt(ents, e.c), r: e.r };
+  if (e.type === "arc") {
+    const c = pt(ents, e.c);
+    const am = e.a0 + arcSweep(e.a0, e.a1) / 2;
+    return { kind: "arc", entity: id, c, r: e.r, from: pt(ents, e.s), to: pt(ents, e.e), mid: [c[0] + e.r * Math.cos(am), c[1] + e.r * Math.sin(am)] };
+  }
+  if (e.type === "spline" && e.pts.length >= 2) return { kind: "spline", entity: id, beziers: splineBeziers(e.pts.map((p) => pt(ents, p))) };
+  return null;
+}
+

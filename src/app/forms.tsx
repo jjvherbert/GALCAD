@@ -1,7 +1,7 @@
 // Campos reutilizáveis do painel de propriedades.
 import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { AxisRef, CadDocument, EndCondition, Expr, FeatureType, PlaneRef, TopoRef } from "../doc/types.ts";
+import type { AxisRef, CadDocument, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, TopoRef } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
 import { FEATURE_LABELS } from "../doc/features.ts";
 import { type Pick, pickHandlers, store, useStore } from "./store.ts";
@@ -268,6 +268,44 @@ export function EndEditor({ label, value, onChange, field, allowMid = true, opti
           <ExprInput label="Desvio" value={value.offset} allowEmpty onChange={(o) => onChange({ ...value, offset: o })} />
         </>
       )}
+    </div>
+  );
+}
+
+/** Regiões escolhidas de um esboço ("contornos selecionados"); vazio = todos os contornos fechados. */
+export function RegionList({ sketch, value, onChange }: { sketch: string; value: RegionRef[] | undefined; onChange: (v: RegionRef[] | undefined) => void }) {
+  const st = useStore();
+  const field = "regions";
+  const active = st.pickTarget?.field === field;
+  const sel = value ?? [];
+  const view = st.result?.sketches[sketch];
+  usePickTarget(field, (p) => {
+    if (p.kind !== "region" || p.sketch !== sketch) return;
+    const key = p.sig.join("+");
+    const has = sel.some((r) => r.sig.join("+") === key);
+    const next = has ? sel.filter((r) => r.sig.join("+") !== key) : [...sel, { sig: p.sig, seed: p.seed }];
+    onChange(next.length ? next : undefined);
+  });
+  const fmtA = (a: number) => a.toLocaleString("pt-PT", { maximumFractionDigits: 1 });
+  return (
+    <div class={`reflist ${active ? "active" : ""}`}>
+      <div class="reflist-head">
+        <span class="field-label">Regiões (contornos selecionados)</span>
+        <button class="small" disabled={!view?.regionList.length} onClick={() => store.set({ pickTarget: active ? null : { field, accept: ["region"] } })}>{active ? "Concluir" : "Escolher regiões"}</button>
+      </div>
+      {active && <p class="field-hint">Clique nas regiões (a roxo) no modelo; clique de novo para retirar.</p>}
+      <ul>
+        {sel.map((r) => {
+          const area = view?.regionList.find((x) => x.sig.join("+") === r.sig.join("+"))?.area;
+          return (
+            <li key={r.sig.join("+")} title={r.sig.join(" + ")}>
+              <span>Região {r.sig.join(" + ")}{area !== undefined ? ` · ${fmtA(area)} mm²` : " · (por reencontrar)"}</span>
+              <button class="icon" aria-label="Retirar" onClick={() => { const n = sel.filter((x) => x !== r); onChange(n.length ? n : undefined); }}>✕</button>
+            </li>
+          );
+        })}
+        {!sel.length && <li class="muted">Todos os contornos fechados{view ? ` · ${view.regionList.length} região(ões) no esboço` : ""}</li>}
+      </ul>
     </div>
   );
 }
