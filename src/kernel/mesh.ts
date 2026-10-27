@@ -46,8 +46,8 @@ export function meshBody(body: NamedBody, tolerance?: number, owner: (name: stri
   })();
   const size = Math.max(1, v3.dist(min, max));
   const tol = tolerance ?? size * 2e-4;
-  const m = shape.mesh({ tolerance: tol, angularTolerance: 0.25 });
-  const e = shape.meshEdges({ tolerance: tol, angularTolerance: 0.25 });
+  const m = shape.mesh({ tolerance: tol, angularTolerance: 0.12 });
+  const e = shape.meshEdges({ tolerance: tol, angularTolerance: 0.12 });
 
   const faceByHash = new Map<number, (typeof body.faces)[number][]>();
   for (const f of body.faces) faceByHash.set(hash(f.face), [...(faceByHash.get(hash(f.face)) ?? []), f]);

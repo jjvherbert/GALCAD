@@ -609,8 +609,8 @@ export function PropertyPanel() {
           {src.kind === "face" && <RefList field="face" single label="Face a converter" accept={["face"]} refs={src.face.name ? [src.face] : []} onChange={(r) => up({ source: { ...src, face: r[0] ?? { kind: "face", name: "" } }, moves: [] })} />}
           <Select label="Arrastar polos" value={st.poleAxis} options={[["free", "Livre (plano do ecrã)"], ["X", "Só em X"], ["Y", "Só em Y"], ["Z", "Só em Z"]]} onChange={(poleAxis) => store.set({ poleAxis })} />
           {sel ? (
-            <fieldset class="checklist">
-              <legend class="field-label">Polo ({sel[0] + 1}, {sel[1] + 1}) — deslocamento</legend>
+            <div class="kw-item">
+              <span class="field-label">Polo ({sel[0] + 1}, {sel[1] + 1}) — deslocamento</span>
               <div class="row3">
                 {[0, 1, 2].map((k) => (
                   <Field key={k} label={"dXdYdZ".slice(k * 2, k * 2 + 2)}>
@@ -619,7 +619,7 @@ export function PropertyPanel() {
                 ))}
               </div>
               <button class="small" onClick={() => store.movePole(sel[0], sel[1], [0, 0, 0], true)}>Repor este polo</button>
-            </fieldset>
+            </div>
           ) : <p class="field-hint">Arraste os polos (roxo) no 3D; um clique seleciona o polo para editar o deslocamento.</p>}
           <p class="muted">{f.moves.length} polo(s) deslocado(s){net ? ` · rede ${net.nu} × ${net.nv}` : ""}</p>
           {f.moves.length > 0 && <button class="small" onClick={() => up({ moves: [] })}>Repor todos os polos</button>}

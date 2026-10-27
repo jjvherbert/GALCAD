@@ -1,0 +1,535 @@
+{
+  "format": "cadp-project",
+  "version": 1,
+  "name": "Fase 4",
+  "parts": [
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p1",
+      "name": "Superfícies GSD",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "curve",
+          "def": {
+            "kind": "points",
+            "points": [
+              [
+                0,
+                0,
+                0
+              ],
+              [
+                100,
+                0,
+                0
+              ]
+            ]
+          },
+          "id": "f1",
+          "name": "Curva1"
+        },
+        {
+          "type": "curve",
+          "def": {
+            "kind": "points",
+            "points": [
+              [
+                0,
+                50,
+                0
+              ],
+              [
+                100,
+                50,
+                0
+              ]
+            ]
+          },
+          "id": "f2",
+          "name": "Curva2"
+        },
+        {
+          "type": "boundary",
+          "dir1": [
+            {
+              "kind": "curve",
+              "feature": "f1"
+            },
+            {
+              "kind": "curve",
+              "feature": "f2"
+            }
+          ],
+          "dir2": [],
+          "id": "f3",
+          "name": "Superfície-limite1"
+        },
+        {
+          "type": "curve",
+          "def": {
+            "kind": "points",
+            "points": [
+              [
+                0,
+                100,
+                40
+              ],
+              [
+                100,
+                100,
+                40
+              ]
+            ]
+          },
+          "id": "f4",
+          "name": "Curva3"
+        },
+        {
+          "type": "curve",
+          "def": {
+            "kind": "points",
+            "points": [
+              [
+                0,
+                150,
+                40
+              ],
+              [
+                100,
+                150,
+                40
+              ]
+            ]
+          },
+          "id": "f5",
+          "name": "Curva4"
+        },
+        {
+          "type": "boundary",
+          "dir1": [
+            {
+              "kind": "curve",
+              "feature": "f4"
+            },
+            {
+              "kind": "curve",
+              "feature": "f5"
+            }
+          ],
+          "dir2": [],
+          "id": "f6",
+          "name": "Superfície-limite2"
+        },
+        {
+          "type": "blend",
+          "side1": {
+            "curve": {
+              "kind": "curve",
+              "feature": "f2"
+            },
+            "support": {
+              "kind": "face",
+              "name": "f3:bnd"
+            },
+            "continuity": "curvature"
+          },
+          "side2": {
+            "curve": {
+              "kind": "curve",
+              "feature": "f4"
+            },
+            "support": {
+              "kind": "face",
+              "name": "f6:bnd"
+            },
+            "continuity": "curvature"
+          },
+          "id": "f7",
+          "name": "Concordância1"
+        },
+        {
+          "type": "knit",
+          "sheets": [
+            "f3",
+            "f6",
+            "f7"
+          ],
+          "tolerance": 0.01,
+          "id": "f8",
+          "name": "Costura1"
+        },
+        {
+          "type": "freeform",
+          "source": {
+            "kind": "patch",
+            "plane": {
+              "kind": "std",
+              "name": "XY"
+            },
+            "width": 80,
+            "height": 80,
+            "nu": 5,
+            "nv": 5
+          },
+          "moves": [],
+          "name": "Patch livre",
+          "id": "f9"
+        }
+      ]
+    },
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p2",
+      "name": "Esqueleto",
+      "units": "mm",
+      "variables": [
+        {
+          "name": "L",
+          "expr": "100"
+        },
+        {
+          "name": "H",
+          "expr": "20"
+        }
+      ],
+      "features": [
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 100,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 100,
+              "y": 60
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 60
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": "L"
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 60
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f1",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f1",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": "H"
+          },
+          "id": "f2",
+          "name": "Extrusão1"
+        },
+        {
+          "type": "plane",
+          "base": {
+            "kind": "std",
+            "name": "XY"
+          },
+          "offset": 50,
+          "id": "f3",
+          "name": "Plano1"
+        }
+      ],
+      "properties": {
+        "number": "GK-010",
+        "density": 7.85
+      },
+      "rules": [
+        {
+          "name": "Grosso se comprido",
+          "condition": "L > 150",
+          "assign": [
+            {
+              "variable": "H",
+              "expr": "30"
+            }
+          ]
+        }
+      ],
+      "checks": [
+        {
+          "name": "Massa máx. 1,5 kg",
+          "expr": "massa < 1500",
+          "severity": "warning"
+        }
+      ],
+      "configurations": {
+        "active": "Curto",
+        "columns": [
+          "L",
+          "$p:number"
+        ],
+        "rows": [
+          {
+            "name": "Curto",
+            "values": {
+              "L": "100",
+              "$p:number": "GK-010-100"
+            }
+          },
+          {
+            "name": "Comprido",
+            "values": {
+              "L": "200",
+              "$p:number": "GK-010-200"
+            }
+          }
+        ]
+      },
+      "publications": [
+        {
+          "name": "Meio",
+          "ref": {
+            "kind": "feature",
+            "feature": "f3"
+          }
+        },
+        {
+          "name": "Topo",
+          "ref": {
+            "kind": "face",
+            "name": "f2:end:l5"
+          }
+        }
+      ]
+    },
+    {
+      "format": "cadp",
+      "version": 1,
+      "id": "p3",
+      "name": "Tampa",
+      "units": "mm",
+      "variables": [],
+      "features": [
+        {
+          "type": "external",
+          "part": "p2",
+          "publication": "Meio",
+          "mode": "linked",
+          "id": "f1",
+          "name": "Referência-externa1"
+        },
+        {
+          "type": "sketch",
+          "plane": {
+            "kind": "datum",
+            "feature": "f1"
+          },
+          "entities": {
+            "p1": {
+              "type": "point",
+              "x": 0,
+              "y": 0
+            },
+            "p2": {
+              "type": "point",
+              "x": 30,
+              "y": 0
+            },
+            "p3": {
+              "type": "point",
+              "x": 30,
+              "y": 30
+            },
+            "p4": {
+              "type": "point",
+              "x": 0,
+              "y": 30
+            },
+            "l5": {
+              "type": "line",
+              "p1": "p1",
+              "p2": "p2",
+              "construction": false
+            },
+            "l6": {
+              "type": "line",
+              "p1": "p2",
+              "p2": "p3",
+              "construction": false
+            },
+            "l7": {
+              "type": "line",
+              "p1": "p3",
+              "p2": "p4",
+              "construction": false
+            },
+            "l8": {
+              "type": "line",
+              "p1": "p4",
+              "p2": "p1",
+              "construction": false
+            }
+          },
+          "constraints": [
+            {
+              "id": "k9",
+              "type": "horizontal",
+              "refs": [
+                "l5"
+              ]
+            },
+            {
+              "id": "k10",
+              "type": "horizontal",
+              "refs": [
+                "l7"
+              ]
+            },
+            {
+              "id": "k11",
+              "type": "vertical",
+              "refs": [
+                "l6"
+              ]
+            },
+            {
+              "id": "k12",
+              "type": "vertical",
+              "refs": [
+                "l8"
+              ]
+            },
+            {
+              "id": "k13",
+              "type": "distance",
+              "refs": [
+                "l5"
+              ],
+              "value": 30
+            },
+            {
+              "id": "k14",
+              "type": "distance",
+              "refs": [
+                "l6"
+              ],
+              "value": 30
+            },
+            {
+              "id": "k15",
+              "type": "coincident",
+              "refs": [
+                "p1",
+                "O"
+              ]
+            }
+          ],
+          "id": "f2",
+          "name": "Esboço1"
+        },
+        {
+          "type": "extrude",
+          "sketch": "f2",
+          "op": "add",
+          "end": {
+            "type": "blind",
+            "depth": 4
+          },
+          "id": "f3",
+          "name": "Extrusão1"
+        }
+      ]
+    }
+  ],
+  "assemblies": [],
+  "drawings": []
+}

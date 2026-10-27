@@ -62,13 +62,20 @@ function highlightMaterial(): THREE.ShaderMaterial {
         vec3 n = normalize(vN);
         vec3 k = normalize(cross(e, sdir));
         float nk = dot(n, k);
-        if (abs(nk) < 1e-3) { gl_FragColor = vec4(0.55, 0.55, 0.6, 1.0); return; }
+        // normal quase paralela ao plano das luzes: a reta não chega às luzes (zona sem riscas)
+        if (abs(nk) < 0.35) { gl_FragColor = vec4(0.82, 0.82, 0.86, 1.0); return; }
         float lam = (h - dot(vPos, k)) / nk;
         float sig = dot(vPos + lam * n, sdir) / w;
-        float f = abs(fract(sig) - 0.5);
-        float line = 1.0 - smoothstep(0.03, 0.08, f);
+        // distância à risca mais próxima (em riscas) e largura de um píxel no mesmo parâmetro:
+        // riscas finas com anti-aliasing; onde ficam mais densas do que o píxel, cinzento uniforme
+        float f = abs(fract(sig + 0.5) - 0.5);
+        float px = fwidth(sig);
         float shade = 0.75 + 0.25 * abs(nk);
-        gl_FragColor = vec4(mix(vec3(shade), vec3(0.05, 0.1, 0.35), line), 1.0);
+        float line = 1.0 - smoothstep(px * 0.6, px * 1.6, f);
+        // transição suave para cinzento onde as riscas ficam mais densas do que o píxel
+        float dense = smoothstep(0.2, 0.45, px);
+        vec3 col = mix(vec3(shade), vec3(0.05, 0.1, 0.35), line);
+        gl_FragColor = vec4(mix(col, vec3(0.62, 0.64, 0.72), dense), 1.0);
       }`,
   });
 }
@@ -368,6 +375,11 @@ export class Viewport {
     const lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x8b5cf6, transparent: true, opacity: 0.7, depthTest: false }));
     lines.renderOrder = 8;
     this.poleGroup.add(lines, pts);
+    // posição no ecrã do polo central (ajuda os testes de interface a arrastá-lo)
+    const kc = (net.nu >> 1) * net.nv + (net.nv >> 1);
+    const v = new THREE.Vector3(pos[kc * 3], pos[kc * 3 + 1], pos[kc * 3 + 2]).project(this.camera);
+    const r = this.renderer.domElement.getBoundingClientRect();
+    this.el.dataset.poleCenter = `${Math.round(r.left + ((v.x + 1) / 2) * r.width)},${Math.round(r.top + ((1 - v.y) / 2) * r.height)}`;
   }
 
   /** Índice do polo sob o cursor (a menos de 9 px), ou −1. */
@@ -400,7 +412,7 @@ export class Viewport {
       u.e.value.set(...e);
       u.sdir.value.copy(sdir);
       const k = new THREE.Vector3(...e).cross(sdir);
-      u.h.value = this.size * 1.5 * k.dot(new THREE.Vector3(...up));
+      u.h.value = this.size * 0.8 * k.dot(new THREE.Vector3(...up));
       u.w.value = a.spacing;
       return this.highlightMat;
     }
@@ -410,6 +422,12 @@ export class Viewport {
   /** Análise de superfície: zebra/realce (materiais), inclinação e curvatura (cores), pentes (linhas). */
   setAnalysis(a: Analysis | null) {
     this.analysis = a;
+    // linhas de realce: normais exatas do núcleo (as da malha são médias dos triângulos)
+    if (this.faceMesh && this.mesh) {
+      const exact = a?.kind === "highlight" && a.normals && a.normals.length === this.mesh.normals.length ? a.normals : null;
+      this.faceMesh.geometry.setAttribute("normal", new THREE.BufferAttribute(exact ?? this.mesh.normals, 3));
+      this.el.dataset.exactNormals = exact ? "1" : "";
+    }
     if (this.faceMesh && this.shadedMat) this.faceMesh.material = this.faceMaterial();
     this.el.dataset.analysis = a?.kind ?? "";
     this.disposeGroup(this.analysisGroup);

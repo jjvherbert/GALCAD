@@ -1,4 +1,28 @@
-# Handoff — Fases 1 a 3
+# Handoff — Fases 1 a 4
+
+## Atualização: Fase 4 (funcionalidades inspiradas no CATIA)
+
+**Alterações**
+- `src/geom/spline.ts` (puro): reamostragem por comprimento de arco, reparametrização por troços, `Spline` cúbica vetorial (natural, com derivadas impostas, periódica), `skinGrid`, `gordonGrid` (secções + guias − tensor), Hermite cúbica/quíntica, círculos por 3 pontos e por raio.
+- `src/kernel/occ.ts`: `sampleWire`, `wireEnd`, `gridFace` (interpolação bicúbica de uma grelha), `poleRowsFace` (B-spline exata a partir de linhas de polos com nós comuns — garante as tangências/curvaturas transversais), `surfaceAt` (normal e curvatura normal numa direção), `outwardDir`, `wireOf`, `getArena`.
+- `src/kernel/features/gsd.ts`: `multiSection` (loft OCC / pipe pela spine / skin com tangências / Gordon com guias), `blend`, `circleSweep`, `setupPipe` (opções de varrimento, usado também pelo varrimento sólido e de superfície), `extrapolate` (mantém a chave do corpo, como o aparar — entra em `effectiveDependencies`), `heal`, `sewFaces`, `simplifyBody` (UnifySameDomain com nomes por contenção), `seamDeviations`, `connectedParts`. `knit` ganhou `checkConnected`/`checkTangency`/`simplify`; `ruled` o modo `angle`; curvas `extend`.
+- `src/kernel/analysis.ts`: `continuity` (G0–G3), `combs` (porcupine), `exactNormals`. Pedidos novos ao worker: `continuity`, `combs`, `normals`, `snapshot`. Viewport: shader de linhas de realce, cores de continuidade, pentes, rede de polos com arrasto (`setPoleNet`, `onPoleMoved`); `data-pole-center` ajuda o e2e.
+- `src/kernel/features/freeform.ts` (+ `report.net` → `FeatureStatus.net`): patch clamped nu × nv ou face convertida; movimentos por índice.
+- `src/doc/expr.ts`: comparações e lógica (`and/or/not`, `&& || !`), `clamp`, `sign`. `src/doc/knowledge.ts`: `configuredDoc`, `partKey`/`splitPartKey` ("p1#Config"), CSV da tabela, `resolveWithRules` (ponto fixo, deteção de oscilação), `runChecks`, `makeTemplate`/`instantiateTemplate`. O núcleo aplica a configuração ativa (`service.rebuild`) e a do componente (`partBuild` com a chave); a BOM separa configurações.
+- `src/kernel/features/external.ts`: `publish` e a feature `external` (ligada/congelada via `BRepToolsWrapper`, matriz de posição); `service.envFor` dá o `BuildEnv` (revisão por hash das peças e dependências, ciclos diretos e indiretos). **Atenção:** a origem é reconstruída por outro motor a meio de um passo, que muda a arena atual — a feature repõe-na (`getArena`/`setArena`). Mates aceitam `@Publicação`.
+- `src/kernel/step242.ts`: XCAF + `STEPCAFControl_Writer` (esquema 5 = AP242), produtos com nome/cor, montagem com ocorrências (achatada). Formato de exportação `step242`.
+- UI: grupos GSD, Forma livre e Classe A no separador Superfícies; separador Conhecimento (`KnowledgePanel`: regras, verificações, configurações, templates, publicações); painéis das features novas; configuração por componente; verificações no painel lateral.
+- **Bug corrigido** (apanhado no e2e): `parseDocument`/`parseProject` descartavam regras, verificações, configurações, publicações e templates ao abrir um ficheiro.
+- Malha de visualização com tolerância angular 0,12 rad (antes 0,25) para as análises de classe A.
+- ROADMAP: Fase 4 fechada; secção FEM com a integração dos solvers **dentro da aplicação** (agente local / fila / WASM), adaptador OpenRadioss/OpenCourant e tabela de licenças.
+
+**Testes:** 99 em Node (novos: `tests/gsd.test.ts` — 15, `tests/knowledge.test.ts` — 6, `tests/external.test.ts` — 3, `tests/step242.test.ts` — 1; valores analíticos: meio cilindro por loft e por Gordon, tira plana por concordância G1, áreas de varrimento circular/tubo/tronco de cone, extrapolação de cilindro em curvatura, polo central de B-spline cúbica = 20·½·½, volumes de configurações e templates, posição por matriz) e 6 suites e2e (nova `tests/e2e/fase4.e2e.cjs` com o fixture gerado por `tests/e2e/fixtures/make-fase4.ts`). Todos a passar.
+
+**Bloqueios:** nenhum técnico. VALIDAR: estado do OpenCourant e enquadramento das licenças GPL/AGPL antes de distribuir solvers.
+
+**Próxima ação:** etapa F1 do pré-processador FEM (definição do estudo + malha Netgen + exportação CalculiX), ou Fase 5 (PMI 3D semântico e tags, AP242 com PMI), conforme a prioridade de Juan. Sem push: o repositório remoto ainda não existe; titular da licença por confirmar.
+
+---
 
 ## Atualização: Fase 3 (projeto, montagens, desenhos 2D, BOM e BOM com IA)
 

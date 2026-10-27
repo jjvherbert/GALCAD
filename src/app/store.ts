@@ -48,7 +48,7 @@ export type Analysis =
   | { kind: "deviation"; data?: DeviationResponse }
   | { kind: "continuity"; data?: ContinuityResponse }
   /** Linhas de realce (highlight lines): luzes lineares paralelas a um eixo, fixas no espaço. */
-  | { kind: "highlight"; axis: StdAxis; spacing: number }
+  | { kind: "highlight"; axis: StdAxis; spacing: number; normals?: Float32Array }
   /** Pentes de curvatura das arestas selecionadas (ou de todas as curvas). */
   | { kind: "combs"; edges?: string[]; gain: number; data?: CombsResponse };
 import { KernelClient } from "./kernel-client.ts";
@@ -432,8 +432,20 @@ class Store {
     await this.refreshAnalysis();
   }
 
+  /** Resultado a que pertencem as normais exatas das linhas de realce. */
+  private normalsFor: RebuildResponse | null = null;
+
   private async refreshAnalysis() {
     const a = this.state.analysis;
+    if (a?.kind === "highlight" && this.state.result?.mesh && (!a.normals || this.normalsFor !== this.state.result)) {
+      try {
+        const res = this.state.result;
+        const { normals } = await this.kernel.normals();
+        this.normalsFor = res;
+        if (this.state.analysis === a) this.set({ analysis: { ...a, normals } });
+      } catch (e) { this.set({ error: (e as Error).message }); }
+      return;
+    }
     if ((a?.kind !== "curvature" && a?.kind !== "deviation" && a?.kind !== "continuity" && a?.kind !== "combs") || !this.state.result?.mesh) return;
     try {
       const data = a.kind === "curvature" ? await this.kernel.curvature(a.mode)

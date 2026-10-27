@@ -49,6 +49,41 @@ export function curvature(scene: NamedBody, mesh: MeshData, kind: CurvatureKind)
   return { kind, values, min: Number.isFinite(min) ? min : 0, max: Number.isFinite(max) ? max : 0 };
 }
 
+/**
+ * Normais exatas da superfície em cada vértice da malha (para as linhas de realce, que amplificam
+ * os erros das normais médias dos triângulos), no sentido das normais da malha.
+ */
+export function exactNormals(scene: NamedBody, mesh: MeshData): Float32Array {
+  const o = oc();
+  const out = mesh.normals.slice();
+  const byName = new Map(scene.faces.map((f) => [f.name, f.face]));
+  const P = T(new o.gp_Pnt(0, 0, 0)), su = T(new o.gp_Vec(0, 0, 0)), sv = T(new o.gp_Vec(0, 0, 0));
+  for (const g of mesh.faces) {
+    const face = byName.get(g.name);
+    if (!face || faceProps(face).type === "plane") continue;
+    let lo = Infinity, hi = -1;
+    for (let k = g.start; k < g.start + g.count; k++) { const v = mesh.triangles[k]; lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    if (hi < 0) continue;
+    const surf = T(o.BRep_Tool.Surface(face));
+    const ad = T(new o.BRepAdaptor_Surface(face, true));
+    const Q = T(new o.gp_Pnt(0, 0, 0));
+    const at = (i: number) => { Q.SetCoord(mesh.vertices[i * 3], mesh.vertices[i * 3 + 1], mesh.vertices[i * 3 + 2]); return Q; };
+    const proj = T(new o.GeomAPI_ProjectPointOnSurf(at(lo), surf));
+    for (let i = lo; i <= hi; i++) {
+      if (i > lo) proj.Perform(at(i));
+      if (!proj.IsDone() || proj.NbPoints() < 1) continue;
+      const { U, V } = proj.LowerDistanceParameters();
+      ad.D1(U, V, P, su, sv);
+      const n = [su.Y() * sv.Z() - su.Z() * sv.Y(), su.Z() * sv.X() - su.X() * sv.Z(), su.X() * sv.Y() - su.Y() * sv.X()];
+      const l = Math.hypot(n[0], n[1], n[2]);
+      if (l < 1e-12) continue;
+      const s = (n[0] * mesh.normals[i * 3] + n[1] * mesh.normals[i * 3 + 1] + n[2] * mesh.normals[i * 3 + 2]) < 0 ? -1 / l : 1 / l;
+      out[i * 3] = n[0] * s; out[i * 3 + 1] = n[1] * s; out[i * 3 + 2] = n[2] * s;
+    }
+  }
+  return out;
+}
+
 /** Ângulo máximo (graus) entre as normais de duas faces ao longo de uma aresta (9 amostras interiores). */
 export function maxNormalDeviation(edge: TopoDS_Shape, a: TopoDS_Shape, b: TopoDS_Shape): number {
   let max = 0;

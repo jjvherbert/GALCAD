@@ -1,9 +1,9 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { AssemblyResponse, SnapshotResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { AssemblyInstance, AssemblyResponse, NormalsResponse, SnapshotResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
-import { combs, continuity, curvature, deviation } from "./analysis.ts";
+import { combs, continuity, curvature, deviation, exactNormals } from "./analysis.ts";
 import type { NamedEdge } from "./naming.ts";
 import type { CadDocument } from "../doc/types.ts";
 import { Engine } from "./rebuild.ts";
@@ -12,6 +12,7 @@ import { configuredDoc, runChecks, splitPartKey } from "../doc/knowledge.ts";
 import type { PartDoc } from "../doc/project.ts";
 import type { BuildEnv } from "./context.ts";
 import { freezeGeom, publish } from "./features/external.ts";
+import { SHEET_COLOR, SOLID_COLOR, type StepBody, type StepPart, stepAssembly, stepPart } from "./step242.ts";
 
 /** Hash curto (FNV-1a de 32 bits) de um texto, para revisões. */
 function hashText(s: string): string {
@@ -56,6 +57,9 @@ export class KernelService {
   private lastMesh: MeshData | null = null;
   private lastScene: NamedBody | null = null;
   private lastCurves: NamedEdge[] = [];
+  private lastKind: "part" | "assembly" = "part";
+  private lastPart: { doc: CadDocument & { properties?: PartProperties }; ctx: Ctx } | null = null;
+  private lastAsmInstances: AssemblyInstance[] = [];
 
   engineFor(id: string): Engine {
     let e = this.engines.get(id);
@@ -127,6 +131,8 @@ export class KernelService {
     // cópia própria: o worker transfere os buffers da malha devolvida para a interface (ficam vazios aqui)
     this.lastMesh = mesh && { ...mesh, vertices: mesh.vertices.slice(), normals: mesh.normals.slice(), triangles: mesh.triangles.slice(), lines: mesh.lines.slice() };
     this.lastScene = scene;
+    this.lastPart = { doc, ctx: r.ctx };
+    this.lastKind = "part";
     this.lastCurves = [...r.ctx.curves.values()].flatMap((c) => c.edges);
     const sheets: SheetInfo[] = [...r.ctx.sheets].map(([id, b]) => {
       const s = new (oc().BRepBuilderAPI_Sewing)(1e-6, false, true, true, false);
@@ -241,6 +247,8 @@ export class KernelService {
       return [T(T(new o.BRepBuilderAPI_Transform(body.shape, t, true, false)).Shape())];
     });
     const instances = toInstances(asm);
+    this.lastAsmInstances = instances;
+    this.lastKind = "assembly";
     this.lastScene = placed.length ? { shape: makeCompound(placed), faces: [] } : null;
     this.lastMesh = assemblyMesh({ parts: Object.fromEntries([...builds].filter(([, b]) => b.mesh).map(([k, b]) => [k, b.mesh!])), instances } as never);
     return {
@@ -329,6 +337,41 @@ export class KernelService {
     }
   }
 
+  /** STEP AP242 da peça ou da montagem ativa (produtos com nome, cores e estrutura de produto). */
+  private async step242(): Promise<Uint8Array> {
+    const title = (d: { name: string; properties?: PartProperties }, config?: string) =>
+      `${d.properties?.number ? `${d.properties.number} ` : ""}${d.name}${config ? ` [${config}]` : ""}`;
+    const bodiesOf = (ctx: Ctx): StepBody[] => [
+      ...(ctx.body ? [{ name: "Corpo", shape: ctx.body.shape, color: SOLID_COLOR }] : []),
+      ...[...ctx.sheets].map(([id, b]) => ({ name: ctx.doc.features.find((f) => f.id === id)?.name ?? id, shape: b.shape, color: SHEET_COLOR })),
+    ];
+    if (this.lastKind === "part") {
+      if (!this.lastPart) throw new Error("Não há peça para exportar");
+      const bodies = bodiesOf(this.lastPart.ctx);
+      if (!bodies.length) throw new Error("A peça não tem corpos para exportar");
+      return stepPart({ key: "", name: title(this.lastPart.doc, this.lastPart.doc.configurations?.active), bodies });
+    }
+    if (!this.lastAsm) throw new Error("Não há montagem para exportar");
+    const { project, id } = this.lastAsm;
+    const asm = project.assemblies.find((a) => a.id === id)!;
+    const keys = [...new Set(this.lastAsmInstances.map((i) => i.part))];
+    const parts: StepPart[] = [];
+    for (const key of keys) {
+      const b = await this.partBuild(project, key);
+      const { id: pid, config } = splitPartKey(key);
+      const doc = configuredDoc(project.parts.find((p) => p.id === pid)!, config);
+      parts.push({ key, name: title(doc, config), bodies: bodiesOf(b.ctx) });
+    }
+    setArena(this.asmArena);
+    return stepAssembly(title(asm), parts.filter((p) => p.bodies.length), this.lastAsmInstances.map((i) => ({ name: i.name, part: i.part, matrix: i.matrix })));
+  }
+
+  /** Normais exatas por vértice da última malha. */
+  normals(): NormalsResponse {
+    if (!this.lastScene || !this.lastMesh) throw new Error("Não há modelo para analisar");
+    return { normals: exactNormals(this.lastScene, this.lastMesh) };
+  }
+
   /** Continuidade G0–G3 nas arestas entre faces (classe A). */
   continuity(): ContinuityResponse {
     if (!this.lastScene) throw new Error("Não há modelo para analisar");
@@ -352,6 +395,7 @@ export class KernelService {
     if (!body || !this.lastMesh) throw new Error("Não há corpo para exportar");
     const bytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer());
     switch (format) {
+      case "step242": return { data: await this.step242(), mime: "application/step", ext: "step" };
       case "step": {
         const s = cast(body.shape);
         const data = await bytes(s.blobSTEP());

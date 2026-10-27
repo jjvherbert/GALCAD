@@ -2,7 +2,7 @@
 import type { CadDocument } from "../doc/types.ts";
 import type { CadProject, PartDoc } from "../doc/project.ts";
 import type {
-  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, SnapshotResponse, DrawingResponse, ExportFormat, ExportResponse,
+  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, NormalsResponse, SnapshotResponse, DrawingResponse, ExportFormat, ExportResponse,
   InterferenceResponse, RebuildResponse, Request, Response, SignatureResponse,
 } from "../kernel/protocol.ts";
 
@@ -90,6 +90,10 @@ export class KernelClient {
 
   export(format: ExportFormat, name: string): Promise<ExportResponse> {
     return this.call<ExportResponse>({ type: "export", format, name });
+  }
+
+  normals(): Promise<NormalsResponse> {
+    return this.call<NormalsResponse>({ type: "normals" });
   }
 
   continuity(): Promise<ContinuityResponse> {

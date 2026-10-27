@@ -6,7 +6,7 @@ import { SketchBuilder, initKernel } from "./helpers.ts";
 import { evalExpr } from "../src/doc/expr.ts";
 import { configuredDoc, instantiateTemplate, makeTemplate, resolveWithRules, runChecks, tableFromCSV, tableToCSV } from "../src/doc/knowledge.ts";
 import { addFeature, newDocument, type NewFeature } from "../src/doc/io.ts";
-import { type CadProject, newAssembly, newPart, newProject } from "../src/doc/project.ts";
+import { type CadProject, newAssembly, newPart, newProject, parseProject, serializeProject } from "../src/doc/project.ts";
 import type { CadDocument, Variable } from "../src/doc/types.ts";
 import { KernelService } from "../src/kernel/service.ts";
 import { computeBom } from "../src/assembly/bom.ts";
@@ -149,4 +149,24 @@ test("templates: furo num bloco reutilizado noutra face, com parâmetros", async
   assert.deepEqual(Object.values(after.status).filter((s) => s.state === "error"), []);
   near(after.mass!.volume, 100 * 60 * 20 - Math.PI * 16 * 16 - Math.PI * 25 * 20, 1e-4);
   assert.throws(() => instantiateTemplate(doc, tpl, {}), /Falta escolher/);
+});
+
+test("ficheiro: regras, verificações, configurações, publicações e templates sobrevivem a guardar/abrir", () => {
+  const pr: CadProject = { ...newProject("F"), parts: [] };
+  const p = { ...newPart(pr, "A"), variables: [v("L", "1")] };
+  p.rules = [{ name: "r", assign: [{ variable: "L", expr: "2" }] }];
+  p.checks = [{ name: "c", expr: "L > 0", severity: "info" }];
+  p.configurations = { active: "x", columns: ["L"], rows: [{ name: "x", values: { L: "3" } }] };
+  p.publications = [{ name: "Corpo", ref: { kind: "body" } }];
+  pr.parts.push(p);
+  pr.templates = [{ id: "t1", name: "T", features: [], inputs: [], parameters: [] }];
+  const back = parseProject(serializeProject(pr));
+  assert.deepEqual(back.parts[0].rules, p.rules);
+  assert.deepEqual(back.parts[0].checks, p.checks);
+  assert.deepEqual(back.parts[0].configurations, p.configurations);
+  assert.deepEqual(back.parts[0].publications, p.publications);
+  assert.deepEqual(back.templates, pr.templates);
+  // ficheiro antigo sem estes campos: continua igual (sem chaves novas)
+  const old = parseProject(serializeProject({ ...newProject("O"), parts: [newPart({ ...newProject("O"), parts: [] }, "B")] }));
+  assert.equal("rules" in old.parts[0], false);
 });

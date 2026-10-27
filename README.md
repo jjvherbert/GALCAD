@@ -2,16 +2,16 @@
 
 CAD paramétrico no browser, para modelação de sólidos e de superfícies, com fluxos de trabalho ao estilo do SolidWorks: esboços com restrições, árvore de features editável, variáveis e equações. Os domínios específicos, como o boat design, são **plugins** opcionais por cima de um núcleo genérico.
 
-**Estado:** Fases 1 (peças), 2 (superfícies) e 3 (montagens, desenhos 2D e BOM) implementadas. A seguir: pré-processador FEM e Fase 4 (CATIA). Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
+**Estado:** Fases 1 (peças), 2 (superfícies), 3 (montagens, desenhos 2D e BOM) e 4 (funcionalidades inspiradas no CATIA: GSD, classe A, forma livre, knowledgeware, publicações, STEP AP242) implementadas. A seguir: pré-processador FEM (F1) ou Fase 5 (PMI e tags, estilo NX). Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
 
 ## Correr
 
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 41 testes (Node): documento, solver, perfis, modificação, motor, nomes, serviço
+npm test             # 99 testes (Node): documento, solver, motor, superfícies, montagens, desenhos, BOM, GSD, knowledgeware, referências externas, AP242
 npm run typecheck    # TypeScript estrito
-npm run build && npm run test:e2e   # 9 fluxos de aplicação + 23 verificações de navegação no Chromium
+npm run build && npm run test:e2e   # 6 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4
 ```
 
 ## O que faz
@@ -65,9 +65,28 @@ npm run build && npm run test:e2e   # 9 fluxos de aplicação + 23 verificaçõe
 - **BOM** (separador Montagem → BOM): nível de topo, só peças ou indentada, CSV/XLSX. O **assistente** propõe descrições, normalizados reconhecidos pela geometria, processo, material de partida, duplicados, incoerências e custo indicativo — cada sugestão aceita-se ou ignora-se. Opcionalmente, com uma chave API da Anthropic (fica só em memória), pede sugestões ao Claude (`claude-opus-5-5`, resposta estruturada; envia a BOM e um resumo da geometria, não os ficheiros).
 - Os valores de normalizados, densidades e custos são de referência: confirmar na norma, na ficha do material e com cotações. Nada disto é certificação.
 
+**Fase 4 — o melhor do CATIA:**
+- **Superfícies GSD** (separador Superfícies → GSD):
+  - **multi-secção** com guias (superfície de Gordon: passa exatamente pelas secções e pelas guias), spine e tangência às faces de suporte na primeira/última secção;
+  - **concordância** (*blend*) entre duas curvas com contacto, tangência (Hermite cúbica) ou curvatura (quíntica com a curvatura normal das faces de suporte) e tensão em cada lado;
+  - **varrimento circular** por 3 guias, por 2 guias e raio, ou tubo em torno de uma curva;
+  - **varrimentos avançados** (sólidos e superfícies): binormal fixa, normal das faces de suporte, curva guia (só orienta, contacto ou bordo) e lei de escala linear ou em S;
+  - **extrapolar** superfícies (tangente ou curvatura, comprimento ao longo da extensão) e curvas; regrada a um ângulo da superfície;
+  - **juntar** (costura com verificação de ligação e de tangência, e simplificação) e **curar** (fecha folgas, corrige faces, assinala arestas quase tangentes).
+- **Classe A** (Superfícies → Classe A): **continuidade G0–G3** em cada aresta (folga, ângulo, salto de curvatura e da sua derivada), **linhas de realce** fixas no espaço (com as normais exatas do núcleo) e **pentes de curvatura** (*porcupine*) das arestas escolhidas ou de todas as curvas.
+- **Forma livre**: superfície B-spline com controlo direto dos polos (patch num plano ou face convertida); os polos arrastam-se no 3D (livre ou num eixo) ou editam-se numericamente, e as edições ficam guardadas por índice, por cima do patch paramétrico.
+- **Knowledgeware** (separador Conhecimento):
+  - expressões com comparações e lógica (`if(L > 100 and t < 3, 5, 3)`);
+  - **regras** (se/então/senão sobre variáveis, aplicadas por ordem até estabilizar);
+  - **verificações** com as variáveis e as medidas do modelo (volume, área, massa, dimensões), mostradas no painel lateral;
+  - **tabela de configurações** (famílias de peças): variáveis, supressão de features e propriedades por configuração; importação/exportação CSV; cada componente de uma montagem pode usar outra configuração e a BOM separa-as;
+  - **templates de features** (PowerCopy/UDF): um grupo de features com as entradas (referências exteriores) e parâmetros (variáveis); instanciar noutra face/peça; exportar/importar `.cadt.json`.
+- **Publicações e referências externas**: cada peça publica geometria com nomes estáveis (faces, arestas, planos, eixos, esboços, superfícies, o corpo); outra peça copia uma publicação **ligada** (acompanha a origem) ou **congelada** (fica a cópia, com aviso se a origem mudar), na origem comum ou com a posição lida de uma montagem; ciclos são detetados. Os mates podem referir publicações (`@Nome`).
+- **STEP AP242**: produtos com nome (número + nome), cores, corpos sólidos e de superfície separados e, nas montagens, a estrutura de produto com uma ocorrência por instância.
+
 **Ficheiros:**
-- Projeto em JSON aberto e legível (`.cadp.json`).
-- Exportação para **STEP** (sólido exato), **STL**, **3MF**, **OBJ** e **glTF (.glb)**, sempre em milímetros.
+- Projeto em JSON aberto e legível (`.cadp.json`), com regras, verificações, configurações, publicações e templates.
+- Exportação para **STEP AP214** (sólido exato), **STEP AP242** (produtos, cores, estrutura), **STL**, **3MF**, **OBJ** e **glTF (.glb)**, sempre em milímetros.
 
 ## Navegação e comandos (como no SolidWorks)
 
@@ -113,6 +132,7 @@ src/
   assembly/ solver de mates, BOM, malha de montagem (puros)
   drawing/  folha de desenho: geometria 2D, primitivas, render, edição, exportação SVG/PDF/DXF (puros)
   ai/       assistente de BOM local e sugestões do Claude (opcional)
+  geom/     matemática pura das superfícies GSD: splines, Gordon, Hermite, círculos
   app/      interface Preact + Three.js: árvore, painel de propriedades, editor de esboço, visualizador
 tests/      testes Node (node:test) e e2e (Playwright)
 ```
@@ -127,7 +147,7 @@ tests/      testes Node (node:test) e e2e (Playwright)
 
 Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resultado técnico deve indicar as hipóteses e os limites no `note`.
 
-## Limitações conhecidas (Fases 1 a 3)
+## Limitações conhecidas (Fases 1 a 4)
 
 - Aparar não trata splines (apaga-as) e as entidades convertidas não se aparam. O deslocamento assume que a cadeia tem uma orientação coerente.
 - Sem regiões escolhidas, contornos que se intersetam ou ramificam dão erro e pedem a escolha das regiões. Por agora, a escolha de regiões só existe na extrusão e na revolução.
@@ -143,6 +163,16 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
 - Montagens: os componentes movem-se pelos mates e pela posição inicial (painel do componente), ainda não arrastando com o rato; sem peças em contexto nem vistas explodidas. Os subconjuntos são rígidos.
 - Desenhos: a linha de corte é reta (sem cortes por patamares); o pormenor não desenha a fronteira irregular; não há DWG nativo (usar o DXF); as cotas de desenho medem a projeção (verdadeira grandeza só em faces paralelas à vista).
 - Assistente de BOM: o reconhecimento de normalizados usa tabelas nominais pequenas (M3–M24, anilhas ISO 7089, 12 rolamentos) e geometria sem rosca modelada.
+- Fase 4:
+  - as superfícies construídas por amostragem (multi-secção com guias ou tangências, concordância, varrimento circular por guias, extrapolação em curvatura) são B-splines que interpolam uma grelha: a continuidade pedida é aproximada e **sempre medida e reportada**. A concordância e a extrapolação usam polos exatos no sentido transversal;
+  - com guias, a tangência nos extremos só é exata se as guias também forem tangentes às faces de suporte; a spine só é usada sem guias nem tangências;
+  - G3 é indicativo (derivada da curvatura por diferenças finitas); criar concordâncias G3 ainda não existe;
+  - as linhas de realce são calculadas na malha de visualização: onde a amplificação é extrema (normal quase rasante às luzes) pode aparecer serrilhado ou uma zona cinzenta;
+  - a forma livre converte a superfície completa da face (sem recortes) e a conversão de faces não B-spline gera n+2 polos por direção;
+  - a cura não deforma superfícies para repor tangência (só assinala); o *delete and heal* com prolongamento das faces vizinhas continua por fazer;
+  - templates: as coordenadas dentro dos esboços copiados são relativas ao plano/face de entrada (o referencial da face escolhida pode ter os eixos invertidos);
+  - referências externas: a posição lida de uma montagem é guardada (não acompanha a montagem automaticamente: "Ler posição" de novo); peças em contexto completas (editar a peça dentro da montagem) continuam por fazer;
+  - AP242: estrutura de montagem achatada (uma ocorrência por instância, sem subconjuntos aninhados); **sem PMI semântico** (Fase 5).
 - O nome de uma face dividida pode mudar de sufixo (`~0`, `~1`) se a ordem geométrica das partes mudar. As referências por nome-base e por posição cobrem a maioria dos casos e deixam um aviso.
 
 ## Propriedade intelectual

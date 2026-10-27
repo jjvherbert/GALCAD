@@ -266,7 +266,7 @@ export function AnalysisPanel() {
           <label class="row">Espaçamento (mm)
             <input type="number" min="0.5" step="1" value={a.spacing} onInput={(e) => void store.setAnalysis({ ...a, spacing: Number((e.target as HTMLInputElement).value) || 10 })} />
           </label>
-          <p class="muted">Luzes lineares fixas no espaço (não acompanham a vista). Linhas contínuas e sem cotovelos = G2; um cotovelo indica G1; uma quebra, aresta viva.</p>
+          <p class="muted">Luzes lineares fixas no espaço (não acompanham a vista). Linhas contínuas e sem cotovelos = G2; um cotovelo indica G1; uma quebra, aresta viva. As zonas cinzentas claras ficam quase de perfil para as luzes (mude o eixo das luzes para as ver).</p>
         </>
       )}
       {a.kind === "combs" && (a.data ? (

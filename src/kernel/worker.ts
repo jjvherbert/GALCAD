@@ -26,6 +26,7 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
         : data.type === "curvature" ? service.curvature(data.kind)
         : data.type === "deviation" ? service.deviation()
         : data.type === "continuity" ? service.continuity()
+        : data.type === "normals" ? service.normals()
         : data.type === "combs" ? service.combs(data.edges)
         : data.type === "assembly" ? await service.assembly(data.project, data.asmId, data.force)
         : data.type === "interference" ? await service.interference()
@@ -48,6 +49,8 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
       transfer.push(msg.result.data.buffer);
     } else if (msg.ok && "values" in msg.result) {
       transfer.push(msg.result.values.buffer);
+    } else if (msg.ok && "normals" in msg.result && !("mesh" in msg.result)) {
+      transfer.push(msg.result.normals.buffer);
     }
     (self as unknown as Worker).postMessage(msg, transfer);
   });

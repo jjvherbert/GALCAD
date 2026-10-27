@@ -70,13 +70,15 @@ Limitações que passam para a Fase 4 (geometria de classe A e cura): o remendo 
 
 Pendente (passa para fases seguintes): peças em contexto (editar uma peça com referências à montagem); arrastar componentes com o rato respeitando os mates; vistas explodidas; DWG nativo (formato fechado: usar o DXF ou um conversor externo); cotas por coordenadas/cadeia e quebras de vista; numeração de balões própria em BOM "só peças"; ligação a ERP/PLM; catálogo de normalizados mais completo (DIN, ISO 4762, 4014…).
 
-## Fase 4: funcionalidades inspiradas no CATIA
-- Wireframe e superfícies ao estilo do GSD: multi-section com guias e spine, blend, sweeps avançados, extrapolação, junção e cura de geometria
-- Continuidade G2/G3 controlada e análise de superfícies de classe A (reflexão, highlight lines, porcupine)
-- Superfícies de forma livre: controlo direto de polos NURBS
-- Knowledgeware: regras, fórmulas, tabelas de configurações e templates reutilizáveis (estilo PowerCopy/UDF)
-- Publicação de geometria entre peças e montagens (referências externas controladas)
-- Exportação STEP AP242 com PMI
+## Fase 4: funcionalidades inspiradas no CATIA ✅ (com as limitações listadas)
+- ✅ **GSD**: multi-secção com guias (Gordon), spine e tangência nos extremos; concordância (blend) G0/G1/G2 com tensão; varrimento circular (3 guias, 2 guias + raio, tubo); varrimentos com binormal, suporte, guia (orientar/contacto/bordo) e lei de escala; extrapolação de superfícies e curvas (tangente/curvatura); regrada a um ângulo; juntar (ligação, tangência, simplificar) e curar (folgas, ShapeFix, quase-tangências)
+- ✅ **Classe A**: continuidade G0–G3 por aresta (folga, ângulo, curvatura, derivada da curvatura), linhas de realce (normais exatas), pentes de curvatura (porcupine); a tangência pedida em cada superfície amostrada é medida e reportada
+- ✅ **Forma livre**: controlo direto dos polos NURBS (patch ou face convertida), arrasto no 3D e edição numérica, edições guardadas por índice
+- ✅ **Knowledgeware**: expressões lógicas, regras, verificações com medidas do modelo, tabela de configurações (peças, componentes de montagem, BOM, CSV), templates de features (PowerCopy/UDF) com entradas e parâmetros
+- ✅ **Publicação** de geometria com nomes estáveis e **referências externas controladas** (ligadas/congeladas, posição de montagem, deteção de ciclos); mates a publicações
+- ✅ **STEP AP242** com produtos com nome, cores e estrutura de montagem; **o PMI semântico passa para a Fase 5** (o modelo de PMI 3D é definido lá)
+
+Pendente (passa para fases seguintes): concordância G3; *delete and heal* com prolongamento das faces vizinhas; cura que deforma para repor tangência; forma livre sobre faces recortadas (manter os limites); peças em contexto completas e posição externa que acompanha a montagem; estrutura AP242 com subconjuntos aninhados.
 
 ## Fase 5: PMI, tags e produção (inspirado no Siemens NX)
 - PMI 3D semântico: cotas, tolerâncias geométricas (GD&T, ISO 1101), referências (datums), acabamentos e notas ligadas às faces pelo nome topológico
@@ -114,7 +116,7 @@ Pendente (passa para fases seguintes): peças em contexto (editar uma peça com 
 
 ## Pré-processador FEM compatível com solvers abertos (módulo `fem`)
 
-Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, condições, malha) e escrever os ficheiros de entrada dos solvers abertos, sem depender de nenhum em particular. A integração direta dos solvers (correr e ler resultados sem sair da aplicação) fica preparada pela mesma interface e entra por etapas.
+Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, condições, malha) e escrever os ficheiros de entrada dos solvers abertos, sem depender de nenhum em particular. A integração dos solvers **dentro da aplicação** (o utilizador nunca exporta à mão: corre e lê resultados sem sair) usa a mesma interface e entra na etapa F3, com os solvers GPL/AGPL como processos separados e os permissivos podendo correr embebidos.
 
 **Princípios**
 - **Associativo:** cada estudo é parte do documento. Cargas, apoios, contactos e controlos de malha ligam-se às faces/arestas pelo nome topológico (o mesmo mecanismo dos filetes), por isso sobrevivem às alterações do modelo; mudar uma cota regenera a malha e o ficheiro do solver.
@@ -134,6 +136,7 @@ Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, con
   - **Code_Aster** malha `.med` (ou `.unv`) + ficheiro de comandos `.comm`;
   - **Elmer** malha ElmerGrid + `.sif`;
   - **Nastran BDF** (lido pelo **MYSTRAN**, solver aberto compatível, e por muitas ferramentas);
+  - **OpenRadioss/OpenCourant** Starter `_0000.rad` + Engine `_0001.rad` (dinâmica explícita);
   - neutros: Gmsh `.msh` v4 com grupos físicos, `.vtu` para visualização.
 - Testes de referência automáticos, comparados com soluções analíticas e benchmarks publicados: consola em flexão (Euler–Bernoulli), placa com furo (fator de concentração de tensões), cilindro sob pressão (Lamé), modos de uma consola, NAFEMS LE1/LE10 quando disponíveis.
 
@@ -142,10 +145,32 @@ Objetivo: preparar o modelo de análise dentro do CAD (geometria, materiais, con
 - Mapas de cores (tensão de von Mises, principais, deslocamento, fator de segurança face ao limite elástico), deformada amplificada, modos animados, sondas, reações nos apoios, verificação do equilíbrio (soma das reações vs. cargas).
 - Estudo de convergência de malha assistido (refinamento sucessivo e variação da grandeza de interesse).
 
-**Etapa F3: integração dos solvers**
-- Interface de adaptador (`SolverAdapter`): capacidades (tipos de estudo e elementos), `exportDeck(estudo, malha) → ficheiros`, `parseResults(ficheiros) → resultados` e, opcionalmente, `run(ficheiros)`.
-- Execução por um agente local opcional na máquina do utilizador (corre os binários instalados, devolve o estado e os resultados); depois, fila de trabalhos remota. Solvers pequenos em WASM (por exemplo, CalculiX) como experiência para casos leves.
-- Os solvers são programas separados, contactados por ficheiros ou processo: as licenças GPL dos solvers não se estendem à aplicação proprietária. **VALIDAR** este enquadramento com aconselhamento jurídico antes de distribuir qualquer solver em conjunto.
+**Etapa F3: integração dos solvers dentro da aplicação (sem exportar à mão)**
+
+Objetivo: o utilizador define o estudo e carrega em "Calcular"; a malha e o ficheiro do solver são gerados em memória, o solver corre em segundo plano e os resultados voltam ao visualizador. O ficheiro de entrada continua a existir, mas como detalhe interno (e fica disponível para quem o queira auditar ou correr à parte). É assim que o FreeCAD FEM e o Salome-Meca trabalham com CalculiX e Code_Aster.
+
+- **Arquitetura**: `SolverAdapter` (capacidades, `exportDeck`, `parseResults`) mais um **executor** (`SolverRunner`) com três implementações, escolhidas por estudo:
+  1. **Agente local** (processo do utilizador ou aplicação de ambiente de trabalho, por exemplo Tauri): recebe o pedido por `localhost`, corre o binário instalado (ccx, Code_Aster, ElmerSolver, OpenRadioss/OpenCourant starter + engine), devolve o progresso (resíduos, passos) e os ficheiros de resultados. Necessário para solvers nativos pesados (Fortran/MPI).
+  2. **Fila remota** (servidor próprio ou do cliente) para estudos longos ou paralelos, com o mesmo protocolo.
+  3. **Dentro do browser** (Web Worker com WASM) para casos leves: CalculiX compilado para WASM, como experiência; ou um solver com licença permissiva ligado diretamente (ver abaixo).
+- **Gestor de trabalhos** na aplicação: estado, cancelar, repetir com outra malha, histórico de corridas por estudo (com a revisão do modelo, a versão do solver e as hipóteses), comparação de resultados entre corridas e com o estudo de convergência.
+- **OpenRadioss / OpenCourant** (dinâmica explícita: impacto, queda, crash, cargas de impacto em cascos — ex. *slamming*): adaptador próprio. O deck tem duas partes, o *Starter* (`_0000.rad`: malha, materiais, contactos, condições) e o *Engine* (`_0001.rad`: tempo final, saídas). Os resultados (ficheiros de animação) convertem-se para VTK com as ferramentas do próprio projeto e mostram-se no visualizador (deformada, tensões, energia). **Estado atual (VALIDAR antes de investir):** a Siemens descontinuou o OpenRadioss a 1 de outubro de 2026 e retirou o repositório; a continuação comunitária é o **OpenCourant** (Rocky Enterprise Software Foundation), com a mesma licença AGPL-3.0, por agora com pacotes Linux e Windows x86_64 e algumas dependências binárias recentes em falta. O adaptador deve visar o formato de entrada (estável) e não um binário específico.
+- **Licenças e o que "dentro da aplicação" pode significar** (a app é proprietária):
+
+  | Solver / biblioteca | Licença | Integração possível |
+  |---|---|---|
+  | CalculiX | GPL-2.0 | Processo separado (agente local, servidor) ou WASM num worker isolado, por ficheiros — VALIDAR o caso WASM distribuído com a app |
+  | Code_Aster | GPL-3.0 | Processo separado |
+  | Elmer | GPL-2.0 (ElmerSolver: biblioteca LGPL-2.1) | Processo separado; a biblioteca LGPL poderia ligar-se como módulo substituível |
+  | OpenRadioss / OpenCourant | AGPL-3.0 | Processo separado; num servidor que o disponibilize a terceiros, publicar o código do solver (alterado ou não) como a AGPL exige |
+  | MYSTRAN | MIT | Pode ser integrado diretamente |
+  | MFEM | BSD-3 | Pode ser integrado diretamente (ex. WASM no worker): candidato para um solver linear embebido |
+  | deal.II | LGPL-2.1 (em transição para Apache-2.0 com exceção LLVM) | Módulo LGPL substituível, como o OpenCASCADE |
+  | Netgen | LGPL-2.1 | Malhador embebido (módulo substituível) |
+  | Gmsh | GPL-2.0+ | Só processo separado |
+
+  Regra de arquitetura: tudo o que é GPL/AGPL fica **fora do processo da aplicação** (programa separado, contactado por ficheiros ou por um protocolo), o que em geral é tratado como agregação e não como obra derivada. Os solvers permissivos (MIT/BSD) ou LGPL (como módulo substituível) podem correr dentro da aplicação. **VALIDAR com aconselhamento jurídico** antes de distribuir qualquer solver em conjunto com a aplicação, e em particular o caso AGPL em serviço de rede.
+- **Transparência**: cada corrida guarda e mostra o solver e a versão, o tipo de análise e de elementos, as hipóteses (linearidade, contacto, amortecimento, passo de tempo crítico na explícita) e as limitações. Nenhum resultado é apresentado como certificação nem como decisão de autoridade ou de organismo notificado.
 
 **Etapa F4: ligação aos outros módulos**
 - `rom-fea`: os estudos parametrizados (variáveis → geometria → malha → ficheiro) são a base da amostragem do modelo de ordem reduzida.

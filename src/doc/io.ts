@@ -29,7 +29,13 @@ export function parseDocument(text: string): CadDocument {
     if (ids.has(f.id)) throw new Error(`Id de feature repetido: ${f.id}`);
     ids.add(f.id);
   }
-  return { format: "cadp", version: 1, name: d.name ?? "Peça", units: "mm", variables: d.variables, features: d.features, rollback: d.rollback };
+  const out: CadDocument = { format: "cadp", version: 1, name: d.name ?? "Peça", units: "mm", variables: d.variables, features: d.features, rollback: d.rollback };
+  // knowledgeware e publicações (Fase 4): só se existirem, para manter os ficheiros antigos iguais
+  if (Array.isArray(d.rules)) out.rules = d.rules;
+  if (Array.isArray(d.checks)) out.checks = d.checks;
+  if (d.configurations && Array.isArray(d.configurations.rows) && Array.isArray(d.configurations.columns)) out.configurations = d.configurations;
+  if (Array.isArray(d.publications)) out.publications = d.publications;
+  return out;
 }
 
 /** Próximo id de feature ("f1", "f2", …), nunca reutilizado dentro do documento. */

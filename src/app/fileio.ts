@@ -63,7 +63,7 @@ export async function exportAs(format: ExportFormat) {
 }
 
 export const EXPORTS: [ExportFormat, string][] = [
-  ["step", "STEP (AP214) — sólido exato"], ["stl", "STL binário — impressão 3D"], ["3mf", "3MF — impressão 3D"],
+  ["step", "STEP (AP214) — sólido exato"], ["step242", "STEP AP242 — produtos com nome, cores e estrutura"], ["stl", "STL binário — impressão 3D"], ["3mf", "3MF — impressão 3D"],
   ["obj", "OBJ — malha"], ["glb", "glTF binário (.glb) — visualização"],
 ];
 

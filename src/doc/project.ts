@@ -275,7 +275,9 @@ export function parseProject(text: string): CadProject {
     if (ids.has(id)) throw new Error(`Id repetido no projeto: ${id}`);
     ids.add(id);
   }
-  return { format: "cadp-project", version: 1, name: r.name ?? "Projeto", parts, assemblies: r.assemblies, drawings: r.drawings };
+  const out: CadProject = { format: "cadp-project", version: 1, name: r.name ?? "Projeto", parts, assemblies: r.assemblies, drawings: r.drawings };
+  if (Array.isArray(r.templates)) out.templates = r.templates;
+  return out;
 }
 
 export function docName(project: CadProject, ref: DocRef): string {

@@ -7,7 +7,7 @@ import type { Axis, Frame } from "./frame.ts";
 import type { MeshData } from "./mesh.ts";
 import type { FeatureStatus } from "./rebuild.ts";
 
-export type ExportFormat = "step" | "stl" | "3mf" | "obj" | "glb";
+export type ExportFormat = "step" | "step242" | "stl" | "3mf" | "obj" | "glb";
 
 export type Request =
   /** `parts`: as outras peças de que esta depende (referências externas), para as reconstruir. */
@@ -17,6 +17,7 @@ export type Request =
   | { type: "curvature"; kind: CurvatureKind }
   | { type: "deviation" }
   | { type: "continuity" }
+  | { type: "normals" }
   | { type: "combs"; edges?: string[] }
   | { type: "assembly"; project: CadProject; asmId: string; force?: boolean }
   | { type: "interference" }
@@ -114,6 +115,9 @@ export interface DeviationResponse {
   edges: { name: string; deg: number }[];
 }
 
+/** Normais exatas por vértice da última malha (linhas de realce). */
+export interface NormalsResponse { normals: Float32Array }
+
 /** Cópia congelada de uma referência externa. */
 export interface SnapshotResponse {
   revision: string;
@@ -206,5 +210,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | NormalsResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
   | { id: number; ok: false; error: string };
