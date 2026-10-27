@@ -6,12 +6,14 @@ import type { CadProject, DrawingDoc, DrawingView, StdView } from "../doc/projec
 import type { SketchEntity, Vec3 } from "../doc/types.ts";
 import { IMPLICIT } from "../sketch/geometry.ts";
 import { applyPose } from "../assembly/solver.ts";
-import type { Curve2D, DrawingResponse, ViewFrame, ViewResult } from "./protocol.ts";
+import type { Curve2D, DrawingResponse, PmiInView, ViewFrame, ViewResult } from "./protocol.ts";
 import type { KernelService } from "./service.ts";
 import { solveAssembly, type PartBuild } from "./assembly.ts";
 import { namedEdges } from "./naming.ts";
 import { T, type TopoDS_Shape, edgeProps, explore, faceProps, gpPnt, makeCompound, oc, sampleEdge, setArena, v3, volume } from "./occ.ts";
 import type { SketchResult } from "./context.ts";
+import type { PmiItem } from "../doc/pmi.ts";
+import { type PmiState, pmiStates } from "./pmi.ts";
 import { arcThrough, clipCurvesCircle, curvePoints, curvesBBox, dist, dropCoincident } from "../drawing/geom2d.ts";
 
 type P = [number, number];
@@ -23,6 +25,8 @@ interface Source {
   sketches: { id: string; s: SketchResult; constraints: { id: string; type: string; refs: string[] }[] }[];
   volume: number;
   material?: string;
+  /** PMI 3D da peça (vistas de peças; as montagens não têm PMI próprio). */
+  pmi?: { item: PmiItem; state: PmiState }[];
 }
 
 const STD_VIEWS: Record<Exclude<StdView, "iso">, ViewFrame> = {
@@ -195,6 +199,41 @@ function modelDims(src: Source, f: ViewFrame): ViewResult["modelDims"] {
   return out;
 }
 
+/**
+ * PMI da peça nesta vista: cotas onde a grandeza está no plano da vista (as outras ficam para vistas
+ * onde se veem em verdadeira grandeza) e rótulos com o ponto de ancoragem e a direção da normal.
+ */
+function pmiInView(src: Source, f: ViewFrame): PmiInView[] {
+  const out: PmiInView[] = [];
+  const dir2 = (n: Vec3): [number, number] => { const q: [number, number] = [v3.dot(n, f.x), v3.dot(n, f.y)]; const l = Math.hypot(q[0], q[1]); return l > 1e-9 ? [q[0] / l, q[1] / l] : [Math.SQRT1_2, Math.SQRT1_2]; };
+  for (const { item, state } of src.pmi ?? []) {
+    const g = state.geom;
+    if (item.kind === "dimension" && g && state.nominal !== undefined) {
+      const tol = item.tol;
+      if (g.kind === "distance") {
+        if (Math.abs(v3.dot(g.n, f.z)) > 1e-6) continue; // distância ao longo da vista: noutra vista
+        const A = proj(f, g.p), B = proj(f, v3.add(g.p, v3.mul(g.n, g.d)));
+        const type = Math.abs(B[1] - A[1]) < 1e-9 ? "horizontal" : Math.abs(B[0] - A[0]) < 1e-9 ? "vertical" : "aligned";
+        out.push({ item: item.id, kind: "dim", type, a: A, b: B, value: state.nominal, tol });
+      } else {
+        const along = Math.abs(v3.dot(g.d, f.z));
+        if (along > 1 - 1e-6) {
+          // eixo ao longo da vista: o cilindro vê-se como círculo
+          const C = proj(f, g.o);
+          out.push({ item: item.id, kind: "dim", type: item.type === "radius" ? "radius" : "diameter", a: C, b: [C[0] + g.r * Math.SQRT1_2, C[1] + g.r * Math.SQRT1_2], value: state.nominal, tol });
+        } else if (along < 1e-6 && item.type === "diameter") {
+          // eixo no plano da vista: cota linear entre as duas geratrizes da silhueta, com ⌀
+          const w = v3.norm(v3.cross(f.z, g.d)) as Vec3;
+          out.push({ item: item.id, kind: "dim", type: "aligned", a: proj(f, v3.add(g.o, v3.mul(w, g.r))), b: proj(f, v3.add(g.o, v3.mul(w, -g.r))), value: state.nominal, prefix: "⌀", tol });
+        }
+      }
+      continue;
+    }
+    out.push({ item: item.id, kind: "label", at: proj(f, state.anchor), dir: dir2(state.normal), score: Math.abs(v3.dot(state.normal, f.z)), data: item, text: state.text });
+  }
+  return out;
+}
+
 async function sourceOf(svc: KernelService, project: CadProject, src: { kind: "part" | "assembly"; id: string }): Promise<Source> {
   const builds = new Map<string, PartBuild>();
   const get = async (pid: string) => { let b = builds.get(pid); if (!b) { b = await svc.partBuild(project, pid); builds.set(pid, b); } return b; };
@@ -212,7 +251,10 @@ async function sourceOf(svc: KernelService, project: CadProject, src: { kind: "p
       const f = doc.features.find((x) => x.id === id);
       return { id, s, constraints: f?.type === "sketch" && !f.suppressed ? f.constraints.filter((c) => !c.driven) : [] };
     });
-    return { shape: body.shape, edges: namedEdges(body).map((e) => ({ name: e.name, ...sample(e.edge) })), sketches, volume: b.volume, material: doc.properties?.material };
+    const items = doc.pmi ?? [];
+    const states = items.length ? pmiStates(b.ctx, items) : [];
+    const pmi = items.map((item, i) => ({ item, state: states[i] })).filter((x) => !x.state.errors.length);
+    return { shape: body.shape, edges: namedEdges(body).map((e) => ({ name: e.name, ...sample(e.edge) })), sketches, volume: b.volume, material: doc.properties?.material, pmi };
   }
   const asm = await solveAssembly(project, src.id, get);
   for (const i of asm.instances) await get(i.part);
@@ -252,7 +294,7 @@ function viewFromShape(shape: TopoDS_Shape, src: Source, f: ViewFrame, scale: nu
   return {
     ok: true, frame: f, scale, bbox: curvesBBox([...visible, ...tangent]), visible, hidden, tangent,
     hatch: opts.hatchPlane ? sectionTriangles(shape, f, opts.hatchPlane) : [],
-    centerMarks: marks, centerLines: lines, edges, modelDims: modelDims(src, f),
+    centerMarks: marks, centerLines: lines, edges, modelDims: modelDims(src, f), pmi: pmiInView(src, f),
     edgeComponent: Object.keys(edgeComponent).length ? edgeComponent : undefined,
   };
 }
@@ -375,6 +417,7 @@ function detailView(P: ViewResult, v: Extract<DrawingView, { kind: "detail" }>, 
     centerMarks: P.centerMarks.filter((m) => dist(m.c, v.center) <= r),
     centerLines: P.centerLines.flatMap(([a, b]) => clipCurvesCircle([{ k: "l", a, b }], v.center, r).map((c) => curvePoints(c)).map((q) => [q[0], q[q.length - 1]] as [P, P])),
     edges, modelDims: P.modelDims.filter((m) => dist(m.a, v.center) <= r && dist(m.b, v.center) <= r),
+    pmi: P.pmi?.filter((m) => (m.kind === "dim" ? dist(m.a, v.center) <= r && dist(m.b, v.center) <= r : dist(m.at, v.center) <= r)),
   };
 }
 

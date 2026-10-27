@@ -96,7 +96,11 @@ export interface FemStudy {
   /** Sondas (grandezas em pontos ou médias em faces) para resultados e convergência. */
   probes?: Probe[];
   /** Montagens: faces planas coincidentes entre corpos coladas (bonded) ou independentes. */
-  contact?: { mode: "bonded" | "none"; tolerance?: number };
+  /**
+   * Contacto entre corpos nas faces planas coincidentes: colado (TIE), com atrito de Coulomb e
+   * separação (penalidade face a face, CalculiX), ou nenhum.
+   */
+  contact?: { mode: "bonded" | "friction" | "none"; tolerance?: number; mu?: number };
 }
 
 export interface CfdMesh {

@@ -103,7 +103,19 @@ export interface ViewResult {
   modelDims: { feature: string; constraint: string; type: "aligned" | "horizontal" | "vertical" | "radius" | "diameter"; a: [number, number]; b: [number, number]; value: number }[];
   /** Componente de cada aresta (vistas de montagem): nome da aresta → componente de topo. */
   edgeComponent?: Record<string, string>;
+  /** PMI da peça projetado nesta vista (importar PMI do modelo para o desenho). */
+  pmi?: PmiInView[];
 }
+
+/**
+ * PMI 3D projetado numa vista. Cotas: só onde a grandeza medida está no plano da vista (distância
+ * entre planos perpendiculares à vista; diâmetro com o eixo ao longo da vista — círculo — ou no plano
+ * da vista — silhueta). Rótulos (GD&T, referência, rugosidade, nota, ângulo): ponto de ancoragem,
+ * direção para afastar o rótulo e `score` = |n·z| (0 = face vista de perfil, a melhor vista).
+ */
+export type PmiInView =
+  | { item: string; kind: "dim"; type: "aligned" | "horizontal" | "vertical" | "diameter" | "radius"; a: [number, number]; b: [number, number]; value: number; prefix?: string; tol?: Extract<import("../doc/pmi.ts").PmiItem, { kind: "dimension" }>["tol"] }
+  | { item: string; kind: "label"; at: [number, number]; dir: [number, number]; score: number; data: import("../doc/pmi.ts").PmiItem; text: string };
 
 export interface DrawingResponse {
   views: Record<string, ViewResult>;

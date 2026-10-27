@@ -114,3 +114,38 @@ test("CalculiX: barras de aço e alumínio em série, coladas topo a topo (Δ = 
   near(-f.reactions[0][0], Fx, 1e-4);
   assert.ok(res.hypotheses.some((h) => /Alumínio/.test(h) && /Aço/.test(h)));
 });
+
+test("CalculiX: contacto com atrito — bloco premido e arrastado transmite μ·N (Coulomb) e separa-se sem colar", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 600000 }, async () => {
+  // base 40 × 40 × 10 fixa; bloco 20 × 20 × 10 em cima, premido com p e arrastado em x na face de topo
+  const pr = project([10, 10, 10], [[40, 40, 10], [20, 20, 10]]);
+  const p = 10, A = 400, mu = 0.3;
+  const face = (c: string, n: string) => ({ kind: "face" as const, name: `${c}/${n}` });
+  const study = (dx: number, m = mu) => fem({ mesh: { size: 4, order: 1, curvature: 0 }, contact: { mode: "friction", mu: m }, loads: [
+    { kind: "fixed", faces: [face("c1", F.z0)] },
+    { kind: "pressure", faces: [face("c2", F.z1)], p },
+    { kind: "displacement", faces: [face("c2", F.z1)], ux: dx, uy: 0 },
+  ] });
+  const { r, run } = await solve(pr, study(0.05));
+  const c = r.case as import("../src/sim/case.ts").FemCase;
+  assert.deepEqual(c.ties!.map((t) => [t.kind, t.mu]), [["contact", 0.3]]);
+  assert.ok(c.hypotheses.some((h) => /Coulomb \(μ = 0.3\)/.test(h)));
+  const res = await run();
+  const g = res.fem!.groupReactions!;
+  const top = g.find((x) => x.group === "L3_DISPLACEMENT")!, base = g.find((x) => x.group === "L1_FIXED")!;
+  // a deslizar: força tangencial = μ·N = 0,3 × 10 × 400 = 1200 N; normal transmitida à base = p·A = 4000 N
+  near(Math.abs(top.f[0]!), mu * p * A, 0.02);
+  near(base.f[2]!, p * A, 0.01);
+  near(-base.f[0]!, top.f[0]!, 0.01);
+  // arrasto pequeno (aderência): força tangencial abaixo de μ·N
+  const stick = await (await solve(pr, study(0.0002))).run();
+  const t2 = stick.fem!.groupReactions!.find((x) => x.group === "L3_DISPLACEMENT")!;
+  assert.ok(Math.abs(t2.f[0]!) < 0.9 * mu * p * A && Math.abs(t2.f[0]!) > 1, `aderência: ${t2.f[0]}`);
+  // separação: puxar o bloco 0,05 mm para cima não transmite tração (colado transmitiria ~ E·A·δ/h)
+  const pull = (mode: "friction" | "bonded") => fem({ mesh: { size: 4, order: 1, curvature: 0 }, contact: { mode, mu }, loads: [
+    { kind: "fixed", faces: [face("c1", F.z0)] },
+    { kind: "displacement", faces: [face("c2", F.z1)], ux: 0, uy: 0, uz: 0.05 },
+  ] });
+  const free = (await (await solve(pr, pull("friction"))).run()).fem!.groupReactions!.find((x) => x.group === "L2_DISPLACEMENT")!;
+  const glued = (await (await solve(pr, pull("bonded"))).run()).fem!.groupReactions!.find((x) => x.group === "L2_DISPLACEMENT")!;
+  assert.ok(Math.abs(free.f[2]!) < 1e-3 * Math.abs(glued.f[2]!) && Math.abs(glued.f[2]!) > 1e4, `separação ${free.f[2]} vs colado ${glued.f[2]}`);
+});

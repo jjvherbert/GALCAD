@@ -17,6 +17,11 @@ export interface PmiState {
   /** Faces resolvidas (nomes) e erros de validação. */
   faces: string[];
   errors: string[];
+  /**
+   * Geometria das cotas para as projetar nos desenhos: distância entre planos (ponto da 1.ª face,
+   * normal e distância com sinal até à 2.ª) ou eixo e raio de uma face de revolução.
+   */
+  geom?: { kind: "distance"; p: Vec3; n: Vec3; d: number } | { kind: "axis"; o: Vec3; d: Vec3; r: number; p: Vec3 };
 }
 
 interface Resolved { name: string; face: TopoDS_Shape; type: string; center: Vec3; normal: Vec3; axis?: { o: Vec3; d: Vec3 }; radius?: number; point: Vec3 }
@@ -65,17 +70,29 @@ export function pmiStates(ctx: Ctx, items: PmiItem[]): PmiState[] {
     const errors = checkPmi(item, datums, (r) => get({ kind: "face", name: r.name })?.type ?? null);
     const ok = res.filter((x): x is Resolved => !!x);
     let nominal: number | undefined;
+    let geom: PmiState["geom"];
     if (item.kind === "dimension" && ok.length === res.length) {
       if (item.type === "distance" && ok.length === 2 && ok.every((x) => x.type === "plane")) {
         const [a, b] = ok;
         if (Math.abs(v3.dot(a.normal, b.normal)) < 1 - 1e-6) errors.push("Distância: as faces não são paralelas");
-        else nominal = Math.abs(v3.dot(v3.sub(b.center, a.center), a.normal));
-      } else if ((item.type === "diameter" || item.type === "radius") && ok[0]?.radius) nominal = item.type === "diameter" ? 2 * ok[0].radius : ok[0].radius;
+        else {
+          const dd = v3.dot(v3.sub(b.center, a.center), a.normal);
+          nominal = Math.abs(dd);
+          geom = { kind: "distance", p: a.center, n: a.normal, d: dd };
+        }
+      } else if ((item.type === "diameter" || item.type === "radius") && ok[0]?.radius) {
+        nominal = item.type === "diameter" ? 2 * ok[0].radius : ok[0].radius;
+        if (ok[0].axis) {
+          // ponto do eixo à altura do centro da face
+          const ax = ok[0].axis, t = v3.dot(v3.sub(ok[0].center, ax.o), ax.d);
+          geom = { kind: "axis", o: v3.add(ax.o, v3.mul(ax.d, t)) as Vec3, d: ax.d, r: ok[0].radius, p: ok[0].point };
+        }
+      }
       else if (item.type === "angle" && ok.length === 2) nominal = 180 - (Math.acos(Math.max(-1, Math.min(1, v3.dot(ok[0].normal, ok[1].normal)))) * 180) / Math.PI;
       if (item.nominal !== undefined && nominal !== undefined && Math.abs(item.nominal - nominal) > 1e-6 * Math.max(1, nominal)) errors.push(`O valor fixado (${item.nominal}) difere do modelo (${+nominal.toFixed(4)})`);
     }
     // âncora: média dos pontos das faces; normal da primeira face
     const anchor: Vec3 = ok.length ? [0, 1, 2].map((q) => ok.reduce((s, x) => s + x.point[q], 0) / ok.length) as Vec3 : [0, 0, 0];
-    return { id: item.id, text: pmiText(item, nominal), nominal, anchor, normal: ok[0]?.normal ?? [0, 0, 1], faces: ok.map((x) => x.name), errors };
+    return { id: item.id, text: pmiText(item, nominal), nominal, anchor, normal: ok[0]?.normal ?? [0, 0, 1], faces: ok.map((x) => x.name), errors, geom };
   });
 }

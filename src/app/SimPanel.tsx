@@ -108,7 +108,12 @@ function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => 
   return (
     <>
       <h3>Corpos e contacto</h3>
-      <Select label="Contacto entre corpos" value={s.contact?.mode ?? "bonded"} options={[["bonded", "Colado nas faces planas coincidentes"], ["none", "Sem ligação (corpos independentes)"]]} onChange={(mode) => up({ contact: { ...s.contact, mode } })} />
+      <Select label="Contacto entre corpos" value={s.contact?.mode ?? "bonded"} options={[["bonded", "Colado nas faces planas coincidentes"], ["friction", "Com atrito e separação (Coulomb)"], ["none", "Sem ligação (corpos independentes)"]]} onChange={(mode) => up({ contact: { ...s.contact, mode } })} />
+      {s.contact?.mode === "friction" && (
+        <Field label="Coeficiente de atrito μ" hint="Penalidade face a face no CalculiX, carga em incrementos; aço/aço seco ≈ 0,15–0,3">
+          <input type="number" min="0" max="2" step="0.05" value={s.contact.mu ?? 0.3} onChange={(e) => up({ contact: { ...s.contact!, mu: Number((e.target as HTMLInputElement).value) } })} />
+        </Field>
+      )}
       <table class="info-table">
         {inst.map((i) => (
           <tr key={i.path}>
@@ -128,7 +133,7 @@ function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => 
         ))}
       </table>
       {!inst.length && <p class="muted">Sem instâncias resolvidas.</p>}
-      <p class="field-hint">Faces curvas em contacto (pinos, veios) não são coladas automaticamente; o contacto com atrito/separação fica para uma etapa seguinte.</p>
+      <p class="field-hint">O contacto aplica-se às faces planas coincidentes entre corpos; faces curvas em contacto (pinos, veios) ainda não são tratadas. Com atrito, as reações por apoio mostram a força transmitida.</p>
     </>
   );
 }

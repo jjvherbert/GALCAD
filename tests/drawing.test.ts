@@ -213,3 +213,52 @@ test("BOM: nível de topo, só peças e indentada; CSV e XLSX", () => {
   const x = toXLSX("BOM", ["Item"], [["1"]]);
   assert.equal(String.fromCharCode(x[0], x[1]), "PK");
 });
+
+test("PMI no desenho: cotas com tolerância, ⌀ na vista do círculo, GD&T/referência/rugosidade na vista de perfil, associativos", async () => {
+  const base = drawing(project(), [
+    { id: "v1", name: "Frente", kind: "model", source: { kind: "part", id: "p1" }, orientation: "front", at: [120, 200] },
+    { id: "v2", name: "Cima", kind: "projected", parent: "v1", side: "below", at: [120, 100] },
+  ]);
+  const face = (name: string) => ({ kind: "face" as const, name });
+  base.parts[0].pmi = [
+    { kind: "dimension", id: "m1", type: "distance", faces: [face("f2:side:l8"), face("f2:side:l6")], tol: { kind: "deviation", upper: 0.1, lower: -0.1 } },
+    { kind: "dimension", id: "m2", type: "diameter", faces: [face("f4:side:c2")], tol: { kind: "fit", code: "H7" } },
+    { kind: "dimension", id: "m3", type: "distance", faces: [face("f2:start:l5"), face("f2:end:l5")] },
+    { kind: "datum", id: "d1", label: "A", face: face("f2:start:l5") },
+    { kind: "gdt", id: "g1", characteristic: "flatness", faces: [face("f2:end:l5")], value: 0.02, datums: [] },
+    { kind: "roughness", id: "r1", faces: [face("f2:end:l5")], ra: 1.6, process: "remove" },
+    { kind: "note", id: "n1", faces: [face("f4:side:c2")], text: "Rebarbar" },
+  ];
+  const svc = new KernelService();
+  const res = await svc.drawing(base, base.drawings[0].id);
+  const pv = (v: string) => res.views[v].pmi!;
+  // frente (olha segundo +y): 100 (x) e 20 (z) em verdadeira grandeza; o furo (eixo z) aparece de lado
+  const f100 = pv("v1").find((e) => e.item === "m1");
+  assert.ok(f100?.kind === "dim" && f100.type === "horizontal" && Math.abs(f100.value - 100) < 1e-9, JSON.stringify(f100));
+  const sil = pv("v1").find((e) => e.item === "m2");
+  assert.ok(sil?.kind === "dim" && sil.prefix === "⌀" && Math.abs(Math.hypot(sil.a[0] - sil.b[0], sil.a[1] - sil.b[1]) - 20) < 1e-6);
+  const circ = pv("v2").find((e) => e.item === "m2");
+  assert.ok(circ?.kind === "dim" && circ.type === "diameter" && Math.abs(circ.value - 20) < 1e-9);
+  assert.ok(!pv("v2").some((e) => e.item === "m3"), "a altura 20 (ao longo da vista de cima) não aparece na vista de cima");
+  const { importPmi } = await import("../src/drawing/edit.ts");
+  const r = importPmi(base.drawings[0], res);
+  assert.equal(r.count, 7);
+  const where = Object.fromEntries(r.doc.annotations.map((a) => ["pmi" in a && a.pmi ? a.pmi.item : a.id, "pmi" in a && a.pmi ? `${a.kind}@${a.pmi.view}` : ""]));
+  assert.deepEqual(where, { m1: "dim@v1", m2: "dim@v2", m3: "dim@v1", d1: "datum@v1", g1: "gdt@v1", r1: "surface@v1", n1: "note@v1" });
+  assert.equal(importPmi(r.doc, res).count, 0, "não duplica itens já importados");
+  const L = renderDrawing(r.doc, base, res);
+  assert.deepEqual(L.warnings, []);
+  const texts = L.prims.filter((p) => p.t === "text").map((p) => (p.t === "text" ? p.text : ""));
+  for (const t of ["100", "+0,1", "−0,1", "⌀20 H7", "20", "A", "0,02", "Ra 1,6", "Rebarbar"]) assert.ok(texts.includes(t), `falta "${t}" em ${texts.join(" | ")}`);
+  // associativo: mudar a tolerância e a característica no PMI da peça muda o desenho sem reimportar
+  const pr2 = structuredClone(base);
+  pr2.drawings[0] = r.doc;
+  pr2.parts[0].pmi = base.parts[0].pmi!.map((i) => (i.id === "m1" && i.kind === "dimension" ? { ...i, tol: { kind: "fit" as const, code: "js9" } } : i.id === "g1" && i.kind === "gdt" ? { ...i, value: 0.05 } : i));
+  const res2 = await new KernelService().drawing(pr2, pr2.drawings[0].id);
+  const t2 = renderDrawing(pr2.drawings[0], pr2, res2).prims.flatMap((p) => (p.t === "text" ? [p.text] : []));
+  assert.ok(t2.includes("100 js9") && t2.includes("0,05") && !t2.includes("+0,1"), t2.join(" | "));
+  // item apagado: aviso, sem desenhar
+  pr2.parts[0].pmi = pr2.parts[0].pmi!.filter((i) => i.id !== "n1");
+  const res3 = await new KernelService().drawing(pr2, pr2.drawings[0].id);
+  assert.ok(renderDrawing(pr2.drawings[0], pr2, res3).warnings.some((w) => /PMI n1/.test(w)));
+});

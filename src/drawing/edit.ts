@@ -3,7 +3,7 @@
 import type { Anchor, Annotation, CadProject, DrawingDoc, DrawingView, NewAnnotation, NewView } from "../doc/project.ts";
 import type { Curve2D, DrawingResponse } from "../kernel/protocol.ts";
 import { itemOfComponent } from "../assembly/bom.ts";
-import { type ViewPlacement, placements, rootAssembly, toSheet, toView } from "./render.ts";
+import { type ViewPlacement, applyPmi, placements, rootAssembly, toSheet, toView } from "./render.ts";
 import { curveAnchor, curvePoints, dist } from "./geom2d.ts";
 
 type P = [number, number];
@@ -150,6 +150,81 @@ export function importModelDims(d: DrawingDoc, res: DrawingResponse | null, view
     const type = m.type === "radius" || m.type === "diameter" ? m.type : m.type;
     doc = addAnnotation(doc, { kind: "dim", type, a: { view: viewId, point: m.a }, b: { view: viewId, point: m.b }, offset: type === "radius" || type === "diameter" ? 6 : 8 + 7 * (count % 3), model: { feature: m.feature, constraint: m.constraint, view: viewId } }).doc;
     count++;
+  }
+  return { doc, count };
+}
+
+/**
+ * Importar o PMI 3D da peça para vistas do desenho (como «inserir itens do modelo»): cada item vai
+ * para uma só vista — as cotas para a primeira onde a grandeza está no plano da vista, os rótulos para
+ * a vista onde a face se vê de perfil (|n·z| mínimo). `viewId` omitido: todas as vistas pela ordem.
+ * As anotações ficam ligadas ao item (conteúdo e ancoragem seguem o modelo).
+ */
+export function importPmi(d: DrawingDoc, res: DrawingResponse | null, viewId?: string): { doc: DrawingDoc; count: number } {
+  const pl = placements(d, res);
+  const views = d.views.filter((v) => (!viewId || v.id === viewId) && res?.views[v.id]?.ok && pl[v.id]);
+  const done = new Set(d.annotations.flatMap((a) => ("pmi" in a && a.pmi ? [a.pmi.item] : [])));
+  // rótulos: melhor vista para cada item (só vistas onde a face não está de frente, |n·z| < 0,35)
+  // cotas: a primeira vista onde a grandeza está em verdadeira grandeza; os diâmetros preferem a
+  // vista em que o furo/veio aparece como círculo à da silhueta
+  const best = new Map<string, { view: string; score: number }>();
+  for (const v of views) for (const e of res!.views[v.id].pmi ?? []) {
+    const score = e.kind === "dim" ? (e.prefix === "⌀" ? 1 : 0) : e.score;
+    if (e.kind === "label" && score >= 0.35) continue;
+    const b = best.get(e.item);
+    if (!b || score < b.score - 1e-9) best.set(e.item, { view: v.id, score });
+  }
+  let doc = d, count = 0;
+  const perAnchor = new Map<string, number>();
+  // zonas ocupadas na folha (rótulos colocados e faixas das cotas fora da vista), para não sobrepor
+  const taken: [number, number, number, number][] = [];
+  const outside = new Map<string, number>();
+  for (const v of views) {
+    const p = pl[v.id];
+    for (const e of res!.views[v.id].pmi ?? []) {
+      if (done.has(e.item) || best.get(e.item)?.view !== v.id) continue;
+      const link = { item: e.item, view: v.id };
+      if (e.kind === "dim") {
+        // cotas lineares fora da vista: acima (horizontais) ou à esquerda (verticais), escalonadas
+        let offset = e.type === "radius" || e.type === "diameter" ? 6 : 10;
+        if (e.type === "horizontal" || e.type === "vertical") {
+          const key = `${v.id}:${e.type}`, n = outside.get(key) ?? 0;
+          outside.set(key, n + 1);
+          const A = toSheet(p, e.a), B = toSheet(p, e.b);
+          offset = (e.type === "horizontal" ? p.box[3] - Math.max(A[1], B[1]) : Math.min(A[0], B[0]) - p.box[0]) + 16 + 8 * n;
+          if (e.type === "horizontal") { const y = Math.max(A[1], B[1]) + offset; taken.push([Math.min(A[0], B[0]), Math.max(A[0], B[0]), y - 1, y + 6]); }
+          else { const x = Math.min(A[0], B[0]) - offset; taken.push([x - 6, x + 1, Math.min(A[1], B[1]), Math.max(A[1], B[1])]); }
+        }
+        doc = addAnnotation(doc, { kind: "dim", type: e.type, a: { view: v.id, point: e.a }, b: { view: v.id, point: e.b }, offset, pmi: link }).doc;
+      } else {
+        // rótulos da mesma face afastam-se em escada ao longo da normal
+        const akey = `${v.id}:${e.at.map((x) => x.toFixed(3)).join(",")}`, n = perAnchor.get(akey) ?? 0;
+        perAnchor.set(akey, n + 1);
+        // chamada inclinada para fora da vista (para o lado mais próximo), longe das cotas alinhadas com a normal
+        const tip = toSheet(p, e.at), k = 20 + 11 * n;
+        const side = tip[0] >= (p.box[0] + p.box[2]) / 2 ? 1 : -1;
+        const perp: [number, number] = Math.abs(e.dir[0]) > 0.9 ? [0, side] : [side, 0];
+        const u = [e.dir[0] + 0.9 * perp[0], e.dir[1] + 0.9 * perp[1]], ul = Math.hypot(u[0], u[1]) || 1;
+        const at: [number, number] = [tip[0] + (u[0] / ul) * k, tip[1] + (u[1] / ul) * k];
+        // rótulo fora do contorno da vista (âncoras interiores, ex.: furos)
+        // extensão aproximada do rótulo a partir de `at` (quadro GD&T ~30 × 7 mm, referência 7 × 7)
+        const ext = e.data.kind === "gdt" ? [0, 30, 0, 7] : e.data.kind === "datum" ? [-3.5, 3.5, 0, 7] : [0, 20, -2, 4];
+        const inBox = (q: [number, number]) => q[0] + ext[1] > p.box[0] - 3 && q[0] + ext[0] < p.box[2] + 3 && q[1] + ext[3] > p.box[1] - 3 && q[1] + ext[2] < p.box[3] + 3;
+        const hits = (q: [number, number]) => taken.some((r) => q[0] + ext[1] > r[0] && q[0] + ext[0] < r[1] && q[1] + ext[3] > r[2] && q[1] + ext[2] < r[3]);
+        for (let i = 0; i < 80 && (inBox(at) || hits(at)); i++) { at[0] += (u[0] / ul) * 3; at[1] += (u[1] / ul) * 3; }
+        taken.push([at[0] + ext[0] - 1, at[0] + ext[1] + 1, at[1] + ext[2] - 1, at[1] + ext[3] + 1]);
+        const anchor: Anchor = { view: v.id, point: e.at };
+        const d0 = e.data;
+        const ann: NewAnnotation =
+          d0.kind === "gdt" ? { kind: "gdt", at: [e.dir[0] < 0 ? at[0] - 24 : at[0], at[1]], leader: anchor, char: "flatness", tol: "", datums: [], pmi: link }
+          : d0.kind === "datum" ? { kind: "datum", at, anchor, letter: d0.label, pmi: link }
+          : d0.kind === "roughness" ? { kind: "surface", at, anchor, process: "any", value: "", pmi: link }
+          : { kind: "note", at: [e.dir[0] < 0 ? at[0] - 20 : at[0], at[1]], text: e.text, leader: anchor, pmi: link };
+        doc = addAnnotation(doc, (applyPmi({ ...ann, id: "" } as Annotation, e, anchor) ?? ann) as NewAnnotation).doc;
+      }
+      done.add(e.item);
+      count++;
+    }
   }
   return { doc, count };
 }

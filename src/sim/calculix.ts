@@ -126,10 +126,23 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     material("MAT", c.material);
     L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
   }
-  // contacto colado: nós da face escrava presos (por MPC) às faces dos elementos da face mestra
+  // contacto colado: nós da face escrava presos (por MPC) às faces dos elementos da face mestra.
+  // Contacto com atrito: penalidade face a face (pressão linear com a interpenetração, rigidez
+  // K = 20·E por mm, como recomenda o manual do CalculiX) e Coulomb com declive de aderência K/100.
+  const Emax = Math.max(c.material.E, ...(c.bodies ?? []).map((b) => b.material.E));
   for (const t of c.ties ?? []) {
     const master = tris[t.master].filter((x) => x.face);
     if (!tris[t.slave]?.length || !master.length) { warnings.push(`Contacto ${t.name}: faces sem malha`); continue; }
+    if (t.kind === "contact") {
+      const slave = tris[t.slave].filter((x) => x.face);
+      const K = 20 * Emax;
+      L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=ELEMENT`, ...slave.map((x) => `${x.face![0]}, S${x.face![1]}`));
+      L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face![0]}, S${x.face![1]}`));
+      L.push(`*SURFACE INTERACTION, NAME=SI_${t.name}`, "*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=LINEAR", `${fmt(K)}`);
+      if ((t.mu ?? 0) > 0) L.push("*FRICTION", `${fmt(t.mu!)}, ${fmt(K / 100)}`);
+      L.push(`*CONTACT PAIR, INTERACTION=SI_${t.name}, TYPE=SURFACE TO SURFACE`, `S_${t.slave}, S_${t.master}`);
+      continue;
+    }
     L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=NODE`, `N_${t.slave}`);
     L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face![0]}, S${x.face![1]}`));
     L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
@@ -203,9 +216,11 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   }
 
   const nl = c.analysis === "static" ? c.nonlinear : undefined;
-  if (nl) {
-    const inc = 1 / nl.increments;
-    L.push(`*STEP${nl.geometry ? ", NLGEOM" : ""}, INC=${Math.max(100, 20 * nl.increments)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
+  const contact = (c.ties ?? []).some((t) => t.kind === "contact");
+  if (contact && c.analysis !== "static") throw new Error("Contacto com atrito: só em análises estáticas (use contacto colado nas modais/encurvadura/térmicas)");
+  if (nl || contact) {
+    const n = nl?.increments ?? 10, inc = 1 / n;
+    L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
   } else if (c.analysis === "static") L.push("*STEP", "*STATIC");
   else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
   else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
@@ -218,6 +233,8 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
     // reações nos apoios (verificação do equilíbrio)
     if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF"); });
+    // reações por apoio (ex.: força de atrito transmitida a uma face com deslocamento imposto)
+    if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
   }
   L.push("*END STEP");
   if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
@@ -273,7 +290,7 @@ export function parseFrd(text: string): { nodes: Map<number, [number, number, nu
  * Valores próprios do `.dat`: frequências (Hz) ou fatores de encurvadura; reações totais de cada
  * conjunto no último tempo e, nas análises incrementais, a soma das reações em cada tempo.
  */
-export function parseDat(text: string): { frequencies: number[]; buckling: number[]; reactions: [number, number, number][]; reactionHistory: { time: number; f: [number, number, number] }[] } {
+export function parseDat(text: string): { frequencies: number[]; buckling: number[]; reactions: [number, number, number][]; reactionHistory: { time: number; f: [number, number, number] }[]; setTotals?: Record<string, [number, number, number]> } {
   const lines = text.split(/\r?\n/);
   const frequencies: number[] = [], buckling: number[] = [];
   const sets = new Map<string, Map<number, [number, number, number]>>();
@@ -309,7 +326,9 @@ export function parseDat(text: string): { frequencies: number[]; buckling: numbe
     else for (const st of sets.values()) { const v = st.get(time); if (v) for (let k = 0; k < 3; k++) f[k] += v[k]; }
     return { time, f };
   });
-  return { frequencies, buckling, reactions: reactionHistory.length ? [reactionHistory.at(-1)!.f] : [], reactionHistory };
+  const setTotals: Record<string, [number, number, number]> = {};
+  for (const [name, st] of sets) { const last = [...st.keys()].sort((a, b) => a - b).at(-1); if (last !== undefined) setTotals[name] = st.get(last)!; }
+  return { frequencies, buckling, reactions: reactionHistory.length ? [reactionHistory.at(-1)!.f] : [], reactionHistory, setTotals };
 }
 
 export interface FemResult {
@@ -324,6 +343,8 @@ export interface FemResult {
   frequencies: number[];
   buckling: number[];
   reactions: [number, number, number][];
+  /** Reação de cada apoio (fixo ou deslocamento imposto) nos graus que restringe (N). */
+  groupReactions?: { group: string; f: (number | null)[] }[];
   summary: [string, string][];
   /** Grandezas escalares (para a convergência da malha e comparações). */
   metrics: Metric[];
@@ -483,5 +504,16 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
     const R = d.reactions.reduce((a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]] as [number, number, number], [0, 0, 0] as [number, number, number]);
     summary.push(["Reações totais (N)", R.map((x) => x.toFixed(2)).join(" · ")]);
   }
-  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, summary, metrics, history, hypotheses: c.hypotheses };
+  // reação por apoio (só nos graus restringidos por esse apoio)
+  const groupReactions: NonNullable<FemResult["groupReactions"]> = [];
+  for (const ld of c.loads) {
+    if (ld.kind !== "fixed" && ld.kind !== "displacement") continue;
+    const v = d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+    if (!v) continue;
+    const f = [0, 1, 2].map((k) => (ld.kind === "fixed" || ld.u[k] !== null ? v[k] : null));
+    groupReactions.push({ group: ld.group, f });
+    f.forEach((x, k) => { if (x !== null) metrics.push({ key: `R_${ld.group}_${"xyz"[k]}`, label: `Reação ${ld.group} ${"XYZ"[k]}`, unit: "N", value: x }); });
+  }
+  if (groupReactions.length > 1) for (const g of groupReactions) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
+  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, groupReactions, summary, metrics, history, hypotheses: c.hypotheses };
 }

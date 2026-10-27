@@ -186,14 +186,16 @@ export function assemblyStudyCase(bodies: AsmBody[], s: FemStudy, scope: Ctx["sc
   c.title = title;
   c.bodies = bodies.map((b, k) => ({ group: `B${k + 1}`, path: b.path, name: b.name, material: s.bodyMaterials?.[b.path] ?? s.material, bbox: { min: boxes[k].min as V3, max: boxes[k].max as V3 } }));
   c.ties = [];
-  if ((s.contact?.mode ?? "bonded") === "bonded") {
+  const mode = s.contact?.mode ?? "bonded";
+  const mu = Math.max(0, s.contact?.mu ?? 0.3);
+  if (mode === "bonded" || mode === "friction") {
     const tol = s.contact?.tolerance ?? Math.max(0.01, 0.05 * c.mesh.size);
     contactPairs(bodies, Math.min(tol, 0.01)).forEach((pr, k) => {
       // escravo = a face menor (os nós dele têm de cair na face mestre)
       const [sl, ms] = faces[pr.a].area <= faces[pr.b].area ? [pr.a, pr.b] : [pr.b, pr.a];
       c.groups[`T${k + 1}_S`] = [faces[sl].tag];
       c.groups[`T${k + 1}_M`] = [faces[ms].tag];
-      c.ties!.push({ name: `T${k + 1}`, slave: `T${k + 1}_S`, master: `T${k + 1}_M`, tolerance: tol, slaveBody: `B${bodyOfTag(faces[sl].tag) + 1}`, masterBody: `B${bodyOfTag(faces[ms].tag) + 1}` });
+      c.ties!.push({ name: `T${k + 1}`, slave: `T${k + 1}_S`, master: `T${k + 1}_M`, tolerance: tol, slaveBody: `B${bodyOfTag(faces[sl].tag) + 1}`, masterBody: `B${bodyOfTag(faces[ms].tag) + 1}`, ...(mode === "friction" ? { kind: "contact" as const, mu } : {}) });
     });
   }
   // corpos soltos: sem apoio e sem contacto colado
@@ -205,8 +207,15 @@ export function assemblyStudyCase(bodies: AsmBody[], s: FemStudy, scope: Ctx["sc
   const mats = [...new Set(c.bodies.map((b) => b.material.name))];
   c.hypotheses.splice(1, 1, `Materiais: ${c.bodies.map((b) => `${b.name} — ${b.material.name} (E = ${b.material.E} MPa, ν = ${b.material.nu})`).join("; ")}`);
   c.hypotheses.push(
-    `Montagem: ${bodies.length} corpos; ${c.ties.length ? `contacto colado (TIE) em ${c.ties.length} par(es) de faces planas coincidentes` : "sem ligação entre corpos"}; sem atrito, separação nem pré-esforço; faces curvas em contacto não são coladas`,
+    mode === "friction"
+      ? `Montagem: ${bodies.length} corpos; contacto com atrito de Coulomb (μ = ${mu}) e separação em ${c.ties.length} par(es) de faces planas coincidentes: penalidade face a face (CalculiX), carga em incrementos; sem pré-esforço; faces curvas em contacto não são tratadas`
+      : `Montagem: ${bodies.length} corpos; ${c.ties.length ? `contacto colado (TIE) em ${c.ties.length} par(es) de faces planas coincidentes` : "sem ligação entre corpos"}; sem atrito, separação nem pré-esforço; faces curvas em contacto não são coladas`,
   );
+  if (mode === "friction") {
+    c.hypotheses = c.hypotheses.map((h) => h.replace(/, sem contacto$/, ", com contacto unilateral e atrito (o único efeito não linear)"));
+    if (s.solver === "code_aster") report.warnings.push("Contacto com atrito: o adaptador code_aster só faz contacto colado — corra com o CalculiX");
+    if (mu === 0) report.warnings.push("Contacto sem atrito (μ = 0): os corpos apoiados só por contacto podem deslizar sem resistência (sistema singular)");
+  }
   if (mats.length > 1) c.hypotheses.push("Interfaces entre materiais diferentes: as tensões junto às arestas da interface são singulares (não convergem)");
   const compound = makeCompound(bodies.map((b) => b.placed));
   const files: Record<string, string | Uint8Array> = { "model.brep": oc().BRepToolsWrapper.Write(compound) as string, "mesh.geo": femGeo(c) };

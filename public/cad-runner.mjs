@@ -293,10 +293,21 @@ function calculixDeck(c, m) {
 		material("MAT", c.material);
 		L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
 	}
+	const Emax = Math.max(c.material.E, ...(c.bodies ?? []).map((b) => b.material.E));
 	for (const t of c.ties ?? []) {
 		const master = tris[t.master].filter((x) => x.face);
 		if (!tris[t.slave]?.length || !master.length) {
 			warnings.push(`Contacto ${t.name}: faces sem malha`);
+			continue;
+		}
+		if (t.kind === "contact") {
+			const slave = tris[t.slave].filter((x) => x.face);
+			const K = 20 * Emax;
+			L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=ELEMENT`, ...slave.map((x) => `${x.face[0]}, S${x.face[1]}`));
+			L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
+			L.push(`*SURFACE INTERACTION, NAME=SI_${t.name}`, "*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=LINEAR", `${fmt(K)}`);
+			if ((t.mu ?? 0) > 0) L.push("*FRICTION", `${fmt(t.mu)}, ${fmt(K / 100)}`);
+			L.push(`*CONTACT PAIR, INTERACTION=SI_${t.name}, TYPE=SURFACE TO SURFACE`, `S_${t.slave}, S_${t.master}`);
 			continue;
 		}
 		L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=NODE`, `N_${t.slave}`);
@@ -400,9 +411,11 @@ function calculixDeck(c, m) {
 		});
 	}
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;
-	if (nl) {
-		const inc = 1 / nl.increments;
-		L.push(`*STEP${nl.geometry ? ", NLGEOM" : ""}, INC=${Math.max(100, 20 * nl.increments)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
+	const contact = (c.ties ?? []).some((t) => t.kind === "contact");
+	if (contact && c.analysis !== "static") throw new Error("Contacto com atrito: só em análises estáticas (use contacto colado nas modais/encurvadura/térmicas)");
+	if (nl || contact) {
+		const n = nl?.increments ?? 10, inc = 1 / n;
+		L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
 	} else if (c.analysis === "static") L.push("*STEP", "*STATIC");
 	else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
 	else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
@@ -416,6 +429,9 @@ function calculixDeck(c, m) {
 		if (c.analysis === "static") dofSets.forEach((sets, k) => {
 			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF");
 		});
+		if (c.analysis === "static") {
+			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
+		}
 	}
 	L.push("*END STEP");
 	if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
@@ -530,11 +546,17 @@ function parseDat(text) {
 			f
 		};
 	});
+	const setTotals = {};
+	for (const [name, st] of sets) {
+		const last = [...st.keys()].sort((a, b) => a - b).at(-1);
+		if (last !== void 0) setTotals[name] = st.get(last);
+	}
 	return {
 		frequencies,
 		buckling,
 		reactions: reactionHistory.length ? [reactionHistory.at(-1).f] : [],
-		reactionHistory
+		reactionHistory,
+		setTotals
 	};
 }
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
@@ -800,6 +822,30 @@ function femResultFrom(c, m, blocks, d) {
 		]);
 		summary.push(["Reações totais (N)", R.map((x) => x.toFixed(2)).join(" · ")]);
 	}
+	const groupReactions = [];
+	for (const ld of c.loads) {
+		if (ld.kind !== "fixed" && ld.kind !== "displacement") continue;
+		const v = d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+		if (!v) continue;
+		const f = [
+			0,
+			1,
+			2
+		].map((k) => ld.kind === "fixed" || ld.u[k] !== null ? v[k] : null);
+		groupReactions.push({
+			group: ld.group,
+			f
+		});
+		f.forEach((x, k) => {
+			if (x !== null) metrics.push({
+				key: `R_${ld.group}_${"xyz"[k]}`,
+				label: `Reação ${ld.group} ${"XYZ"[k]}`,
+				unit: "N",
+				value: x
+			});
+		});
+	}
+	if (groupReactions.length > 1) for (const g of groupReactions) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => x === null ? "—" : x.toFixed(2)).join(" · ")]);
 	return {
 		analysis: c.analysis,
 		positions,
@@ -809,6 +855,7 @@ function femResultFrom(c, m, blocks, d) {
 		frequencies: d.frequencies,
 		buckling: d.buckling,
 		reactions: d.reactions,
+		groupReactions,
 		summary,
 		metrics,
 		history,
@@ -1557,6 +1604,7 @@ function asterMesh(c, m) {
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 function asterCase(c, m) {
 	if (c.analysis !== "static" && c.analysis !== "modal") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
+	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
 	const { mail, nodeOrder, areas } = asterMesh(c, m);
 	const warnings = [];
 	const mat = c.material;

@@ -147,17 +147,23 @@ export type GdtChar =
   | "straightness" | "flatness" | "circularity" | "cylindricity" | "profileLine" | "profileSurface"
   | "parallelism" | "perpendicularity" | "angularity" | "position" | "concentricity" | "symmetry" | "runout" | "totalRunout";
 
+/**
+ * Anotação importada do PMI 3D da peça (inserir itens do modelo): o conteúdo e o ponto de ancoragem
+ * vêm do item PMI em cada reconstrução (segue o modelo); a posição do rótulo na folha é do desenho.
+ */
+export interface PmiLink { item: string; view: string }
+
 export type Annotation =
   /**
    * Cota. `offset`: distância (mm na folha) da linha de cota aos pontos medidos (lineares), ou
    * comprimento do prolongamento para fora do círculo (raio/diâmetro). `angle`: direção (graus) da linha
    * de chamada do raio/diâmetro. `model`: cota importada de um esboço (segue o modelo).
    */
-  | { kind: "dim"; id: string; type: DimType; a: Anchor; b?: Anchor; offset: number; angle?: number; tol?: { plus?: string; minus?: string; fit?: string }; prefix?: string; precision?: number; model?: { feature: string; constraint: string; view: string } }
-  | { kind: "note"; id: string; at: [number, number]; text: string; leader?: Anchor; height?: number }
-  | { kind: "gdt"; id: string; at: [number, number]; leader?: Anchor; char: GdtChar; tol: string; dia?: boolean; modifier?: "M" | "L"; datums: string[] }
-  | { kind: "datum"; id: string; at: [number, number]; anchor: Anchor; letter: string }
-  | { kind: "surface"; id: string; at: [number, number]; anchor?: Anchor; process: "any" | "removal" | "noRemoval"; value: string }
+  | { kind: "dim"; id: string; type: DimType; a: Anchor; b?: Anchor; offset: number; angle?: number; tol?: { plus?: string; minus?: string; fit?: string }; prefix?: string; precision?: number; model?: { feature: string; constraint: string; view: string }; pmi?: PmiLink }
+  | { kind: "note"; id: string; at: [number, number]; text: string; leader?: Anchor; height?: number; pmi?: PmiLink }
+  | { kind: "gdt"; id: string; at: [number, number]; leader?: Anchor; char: GdtChar; tol: string; dia?: boolean; modifier?: "M" | "L"; datums: string[]; pmi?: PmiLink }
+  | { kind: "datum"; id: string; at: [number, number]; anchor: Anchor; letter: string; pmi?: PmiLink }
+  | { kind: "surface"; id: string; at: [number, number]; anchor?: Anchor; process: "any" | "removal" | "noRemoval"; value: string; pmi?: PmiLink }
   | { kind: "weld"; id: string; at: [number, number]; anchor: Anchor; symbol: "fillet" | "butt" | "v" | "spot"; size: string; length?: string; otherSide?: boolean; allAround?: boolean }
   | { kind: "balloon"; id: string; at: [number, number]; view: string; component: string; edge?: string }
   | { kind: "bom"; id: string; at: [number, number]; source: string; mode: "top" | "parts" | "indented"; columns?: string[] };

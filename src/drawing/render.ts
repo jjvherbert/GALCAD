@@ -1,8 +1,8 @@
 // Folha de desenho → primitivas: formato e esquadria (ISO 5457), legenda (ISO 7200), vistas,
 // cortes, pormenores, cotas (ISO 129-1), tolerâncias geométricas (ISO 1101), referências,
 // estados de superfície, soldaduras, notas, balões e tabela de BOM. Pura: serve a UI e as exportações.
-import type { Anchor, Annotation, CadProject, DrawingDoc, DrawingView, SheetSize } from "../doc/project.ts";
-import type { Curve2D, DrawingResponse, ViewResult } from "../kernel/protocol.ts";
+import type { Anchor, Annotation, CadProject, DrawingDoc, DrawingView, GdtChar, SheetSize } from "../doc/project.ts";
+import type { Curve2D, DrawingResponse, PmiInView, ViewResult } from "../kernel/protocol.ts";
 import { BOM_COLUMNS, bomCell, computeBom, customColumns, itemOfComponent } from "../assembly/bom.ts";
 import { curveAnchor, curvePoints, dist, hatchTriangles, normAngle } from "./geom2d.ts";
 import {
@@ -269,8 +269,53 @@ function angleDim(ctx: Ctx, ann: Extract<Annotation, { kind: "dim" }>, ref: stri
   return out;
 }
 
+/** Tolerância de um item PMI no formato das cotas do desenho (afastamentos empilhados ou classe ISO 286). */
+export function pmiTol(t: Extract<PmiInView, { kind: "dim" }>["tol"]): Extract<Annotation, { kind: "dim" }>["tol"] {
+  if (!t) return undefined;
+  if (t.kind === "fit") return { fit: t.code };
+  const s = (x: number) => (x > 0 ? `+${fmtNum(x, 3)}` : x < 0 ? `−${fmtNum(-x, 3)}` : "0");
+  return { plus: s(t.upper), minus: s(t.lower) };
+}
+
+const PMI_GDT: Record<string, GdtChar> = { circularRunout: "runout" };
+
+/**
+ * Anotação ligada ao PMI: conteúdo e ponto de ancoragem lidos do item PMI projetado na vista.
+ * Devolve a anotação a desenhar (com âncora {vista, ponto}) ou null se o item já não estiver na vista.
+ */
+function fromPmi(ctx: Ctx, a: Annotation): Annotation | null {
+  if (!("pmi" in a) || !a.pmi) return a;
+  const link = a.pmi;
+  const e = ctx.res?.views[link.view]?.pmi?.find((x) => x.item === link.item);
+  if (!e) { ctx.warnings.push(`PMI ${link.item} já não existe nesta vista (o item foi apagado ou mudou de orientação)`); return null; }
+  const tip: Anchor = { view: link.view, point: e.kind === "dim" ? e.a : e.at };
+  if (e.kind === "dim") return null; // as cotas ligadas ao PMI desenham-se em dimension()
+  return applyPmi(a, e, tip);
+}
+
+/** Conteúdo de um rótulo PMI (GD&T, referência, rugosidade, nota) aplicado à anotação do desenho. */
+export function applyPmi(a: Annotation, e: Extract<PmiInView, { kind: "label" }>, tip: Anchor): Annotation | null {
+  const d = e.data;
+  switch (a.kind) {
+    case "gdt": return d.kind === "gdt" ? { ...a, leader: tip, char: PMI_GDT[d.characteristic] ?? (d.characteristic as GdtChar), tol: fmtNum(d.value, 3), dia: d.diameter, modifier: d.modifier, datums: d.datums } : null;
+    case "datum": return d.kind === "datum" ? { ...a, anchor: tip, letter: d.label } : null;
+    case "surface": return d.kind === "roughness" ? { ...a, anchor: tip, process: d.process === "remove" ? "removal" : d.process === "noremove" ? "noRemoval" : "any", value: `Ra ${fmtNum(d.ra, 3)}` } : null;
+    case "note": return { ...a, leader: tip, text: e.text };
+    default: return a;
+  }
+}
+
 function dimension(ctx: Ctx, ann: Extract<Annotation, { kind: "dim" }>): Prim[] {
   const ref = `ann:${ann.id}`;
+  if (ann.pmi) {
+    const pl = ctx.pl[ann.pmi.view];
+    const e = ctx.res?.views[ann.pmi.view]?.pmi?.find((x) => x.item === ann.pmi!.item);
+    if (!pl || !e || e.kind !== "dim") { ctx.warnings.push(`Cota PMI ${ann.pmi.item} já não existe nesta vista`); return []; }
+    const A = toSheet(pl, e.a), B = toSheet(pl, e.b);
+    const eff = { ...ann, prefix: e.prefix ?? ann.prefix, tol: pmiTol(e.tol) };
+    if (e.type === "radius" || e.type === "diameter") return circleDim(A, dist(A, B), e.type === "diameter", e.value, eff, ref);
+    return linearDim(A, B, e.type, e.value, eff, ref);
+  }
   if (ann.model) {
     const md = ctx.res?.views[ann.model.view]?.modelDims.find((m) => m.feature === ann.model!.feature && m.constraint === ann.model!.constraint);
     const pl = ctx.pl[ann.model.view];
@@ -306,7 +351,9 @@ function leader(from: P, to: P, ref: string, end: "arrow" | "dot" = "arrow"): Pr
   return out;
 }
 
-function annotation(ctx: Ctx, project: CadProject, a: Annotation): Prim[] {
+function annotation(ctx: Ctx, project: CadProject, a0: Annotation): Prim[] {
+  const a = a0.kind === "dim" ? a0 : fromPmi(ctx, a0);
+  if (!a) return [];
   const ref = `ann:${a.id}`;
   switch (a.kind) {
     case "dim": return dimension(ctx, a);

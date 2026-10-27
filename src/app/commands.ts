@@ -7,12 +7,19 @@ import { store } from "./store.ts";
 import type { Viewport, ViewName } from "./viewport.ts";
 import { VIEWS } from "./viewport.ts";
 import { EXPORTS, exportAs, exportDrawing, importStep, openProject, saveProject } from "./fileio.ts";
-import { autoBalloons, importModelDims } from "../drawing/edit.ts";
+import { autoBalloons, importModelDims, importPmi } from "../drawing/edit.ts";
 
 /** Ações do desenho sobre a vista selecionada (ou todas). */
-function drawingAction(what: "modelDims" | "balloons") {
+function drawingAction(what: "modelDims" | "balloons" | "pmi") {
   const d = store.activeDrawing();
   if (!d) return;
+  if (what === "pmi") {
+    const sel = store.state.drawingSel;
+    const r = importPmi(d, store.state.drawingResult, sel?.kind === "view" ? sel.id : undefined);
+    store.commitDrawing(r.doc, "Importar PMI");
+    store.set({ message: `${r.count} item(ns) PMI importado(s) do modelo` });
+    return;
+  }
   const sel = store.state.drawingSel;
   const ids = sel?.kind === "view" ? [sel.id] : d.views.map((v) => v.id);
   let doc = d, n = 0;
@@ -162,6 +169,7 @@ export const COMMANDS: Command[] = [
     },
   })),
   { id: "dr.modelDims", label: "Importar cotas do modelo", group: "Desenho", icon: "⇲", run: () => drawingAction("modelDims") },
+  { id: "dr.pmi", label: "Importar PMI do modelo (cotas com tolerância, GD&T, referências, rugosidade, notas)", group: "Desenho", icon: "⌖", run: () => drawingAction("pmi") },
   { id: "dr.autoBalloon", label: "Balões automáticos", group: "Desenho", icon: "⑳", run: () => drawingAction("balloons") },
   ...(["pdf", "dxf", "svg"] as const).map((f): Command => ({ id: `dr.export.${f}`, label: `Exportar ${f.toUpperCase()}`, group: "Desenho", icon: "⇪", run: () => { if (store.state.active.kind === "drawing") exportDrawing(f); } })),
   { id: "analysis.off", label: "Desligar análise", group: "Avaliar", run: () => store.setAnalysis(null) },

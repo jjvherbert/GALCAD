@@ -5,7 +5,7 @@ import type { Annotation, DrawingDoc, DrawingView, GdtChar, NewAnnotation, Sheet
 import { renderDrawing, pickEdge, toView, type Layout } from "../drawing/render.ts";
 import { primToSvg } from "../drawing/svg.ts";
 import { GDT_LABELS, gdtSymbol } from "../drawing/prims.ts";
-import { addAnnotation, addView, autoBalloons, deleteView, importModelDims, moveAnnotation, moveView, nextLetter, sideOf, smartDimension } from "../drawing/edit.ts";
+import { addAnnotation, addView, autoBalloons, deleteView, importModelDims, importPmi, moveAnnotation, moveView, nextLetter, sideOf, smartDimension } from "../drawing/edit.ts";
 import { curvePoints } from "../drawing/geom2d.ts";
 import { type DrawingTool, store, useStore } from "./store.ts";
 import { Check, Field, Select } from "./forms.tsx";
@@ -386,6 +386,7 @@ function ViewProps({ d, v }: { d: DrawingDoc; v: DrawingView }) {
       {(v.kind === "section" || v.kind === "auxiliary") && <Check label="Inverter sentido de observação" value={v.flip} onChange={(flip) => set({ flip } as Partial<DrawingView>)} />}
       <div class="row">
         <button class="small" onClick={() => { const r2 = importModelDims(d, st.drawingResult, v.id); store.commitDrawing(r2.doc, "Importar cotas"); store.set({ message: `${r2.count} cota(s) importada(s) do modelo` }); }}>Importar cotas do modelo</button>
+        <button class="small" onClick={() => { const r2 = importPmi(d, st.drawingResult, v.id); store.commitDrawing(r2.doc, "Importar PMI"); store.set({ message: `${r2.count} item(ns) PMI importado(s)` }); }}>Importar PMI</button>
         {rootAsmOf(d, v) && <button class="small" onClick={() => { const r2 = autoBalloons(d, st.project, st.drawingResult, v.id); store.commitDrawing(r2.doc, "Balões"); store.set({ message: `${r2.count} balão(ões)` }); }}>Balões automáticos</button>}
       </div>
       <button class="small" onClick={() => { store.commitDrawing(deleteView(d, v.id), "Apagar vista"); store.set({ drawingSel: null }); }}>Apagar vista</button>

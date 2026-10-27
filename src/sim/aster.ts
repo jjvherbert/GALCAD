@@ -102,6 +102,7 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 export function asterCase(c: FemCase, m: Msh): AsterFiles {
   if (c.analysis !== "static" && c.analysis !== "modal") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
+  if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
   const { mail, nodeOrder, areas } = asterMesh(c, m);
   const warnings: string[] = [];
   const mat = c.material;
