@@ -1,10 +1,20 @@
 // Valores por defeito de cada feature nova.
 import type { CadDocument, FeatureData, FeatureType, PlaneRef } from "../doc/types.ts";
 import { PLUGINS } from "../plugins/meta.ts";
+import { SHEET_SOURCES } from "../doc/features.ts";
 
 /** Último esboço do documento (antes do índice dado), o candidato natural para a feature seguinte. */
 export function lastSketch(doc: CadDocument, before = doc.rollback ?? doc.features.length): string {
   for (let i = Math.min(before, doc.features.length) - 1; i >= 0; i--) if (doc.features[i].type === "sketch") return doc.features[i].id;
+  return "";
+}
+
+/** Último corpo de superfície criado antes do índice dado. */
+export function lastSheet(doc: CadDocument, before = doc.rollback ?? doc.features.length): string {
+  for (let i = Math.min(before, doc.features.length) - 1; i >= 0; i--) {
+    const f = doc.features[i];
+    if (SHEET_SOURCES.includes(f.type) && !(f.type === "knit" && f.makeSolid)) return f.id;
+  }
   return "";
 }
 
@@ -29,6 +39,16 @@ export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plan
     case "axis": return { type, mode: "twoPlanes", planes: [{ kind: "std", name: "XZ" }, { kind: "std", name: "YZ" }] };
     case "csys": return { type, origin: [0, 0, 0], rotation: [0, 0, 0] };
     case "import": return { type, format: "step", fileName: "", data: "", op: "add" };
+    case "surfaceExtrude": return { type, sketch: sk, end: { type: "blind", depth: 10 } };
+    case "surfaceRevolve": return { type, sketch: sk, axis: { kind: "std", name: "Z" }, angle: 360 };
+    case "surfaceSweep": return { type, profile: sk, path: "", orientation: "frenet" };
+    case "surfaceLoft": return { type, sections: [] };
+    case "fill": return { type, edges: [], continuity: "contact" };
+    case "offsetSurface": return { type, faces: [], distance: 2 };
+    case "knit": return { type, sheets: [], makeSolid: false, op: "add" };
+    case "thicken": return { type, sheet: lastSheet(doc), thickness: 2, side: "front", op: "add" };
+    case "trimSurface": return { type, sheet: lastSheet(doc), tool: { kind: "plane", plane: { kind: "std", name: "XY" } }, keep: [] };
+    case "deleteFace": return { type, faces: [] };
     case "plugin": {
       const p = PLUGINS.find((x) => x.id === opts.plugin) ?? PLUGINS[0];
       const kind = opts.kind ?? Object.keys(p.kinds)[0];

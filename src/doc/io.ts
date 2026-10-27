@@ -40,7 +40,9 @@ export function nextFeatureId(doc: CadDocument): string {
 
 /** Nome por defeito: "Extrusão3", contando as do mesmo tipo. */
 export function defaultFeatureName(doc: CadDocument, type: FeatureType): string {
-  const base = FEATURE_LABELS[type].replace(/\s+/g, "");
+  // "Superfície de revolução" → "Superfície-revolução" (as palavras curtas caem, como no SolidWorks)
+  const words = FEATURE_LABELS[type].split(/\s+/);
+  const base = words.length > 1 ? words.filter((w, i) => i === 0 || w.length > 2).join("-") : words[0];
   const names = new Set(doc.features.map((f) => f.name));
   for (let i = 1; ; i++) if (!names.has(`${base}${i}`)) return `${base}${i}`;
 }

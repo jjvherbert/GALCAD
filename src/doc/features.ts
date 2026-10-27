@@ -21,6 +21,16 @@ export const FEATURE_LABELS: Record<FeatureType, string> = {
   csys: "Sistema de coordenadas",
   import: "Importação",
   plugin: "Plugin",
+  surfaceExtrude: "Superfície extrudida",
+  surfaceRevolve: "Superfície de revolução",
+  surfaceSweep: "Superfície varrida",
+  surfaceLoft: "Superfície loft",
+  fill: "Preenchimento",
+  offsetSurface: "Superfície deslocada",
+  knit: "Costura",
+  thicken: "Espessar",
+  trimSurface: "Aparar superfície",
+  deleteFace: "Apagar face",
 };
 
 export function featureLabel(f: Feature): string {
@@ -32,6 +42,19 @@ export function featureLabel(f: Feature): string {
 
 /** Features cujo sólido-ferramenta pode ser repetido por padrões e espelho. */
 export const TOOL_FEATURES: ReadonlySet<FeatureType> = new Set(["extrude", "revolve", "sweep", "loft", "hole", "rib"]);
+
+/** Features do separador Superfícies (pela ordem da barra). */
+export const SURFACE_TYPES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "fill", "offsetSurface", "knit", "trimSurface", "thicken", "deleteFace"];
+
+/** Features que criam um corpo de superfície novo (com a chave do seu id). */
+export const SHEET_SOURCES: FeatureType[] = ["surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "fill", "offsetSurface", "knit", "deleteFace"];
+
+export const FEATURE_ICONS: Record<FeatureType, string> = {
+  sketch: "✎", extrude: "▮", revolve: "◐", sweep: "〰", loft: "⟁", hole: "⊚", fillet: "◜", chamfer: "◸", shell: "▢",
+  draft: "⏢", rib: "⊿", linearPattern: "⁞", circularPattern: "✲", mirror: "⇋", plane: "▱", axis: "┆", csys: "⌖", import: "⇩", plugin: "⧉",
+  surfaceExtrude: "⬒", surfaceRevolve: "◑", surfaceSweep: "≈", surfaceLoft: "⧖", fill: "⬠", offsetSurface: "⇶", knit: "⨝",
+  thicken: "▤", trimSurface: "✂", deleteFace: "⌫",
+};
 
 /** Ids de features referidos num nome topológico (ex.: "f3:side:l2" → f3). */
 export const idsInName = (name: string) => new Set(name.match(/\bf\d+(?=:)/g) ?? []);
@@ -72,6 +95,20 @@ export function dependencies(f: Feature): Set<string> {
     case "mirror": f.features.forEach((x) => d.add(x)); planeDeps(f.plane, d); break;
     case "plane": planeDeps(f.base, d); axisDeps(f.axis, d); break;
     case "axis": f.planes?.forEach((p) => planeDeps(p, d)); topoDeps(f.edge, d); break;
+    case "surfaceExtrude": d.add(f.sketch); break;
+    case "surfaceRevolve": d.add(f.sketch); axisDeps(f.axis, d); break;
+    case "surfaceSweep": d.add(f.profile); d.add(f.path); break;
+    case "surfaceLoft": f.sections.forEach((s) => d.add(s)); break;
+    case "fill": f.edges.forEach((r) => topoDeps(r, d)); break;
+    case "offsetSurface": case "deleteFace": f.faces.forEach((r) => topoDeps(r, d)); break;
+    case "knit": f.sheets.forEach((s) => d.add(s)); break;
+    case "thicken": d.add(f.sheet); break;
+    case "trimSurface":
+      d.add(f.sheet);
+      if (f.tool.kind === "plane") planeDeps(f.tool.plane, d);
+      else if (f.tool.kind === "sheet") d.add(f.tool.sheet);
+      else d.add(f.tool.sketch);
+      break;
   }
   d.delete(f.id);
   return d;

@@ -1,6 +1,7 @@
 // Estado de uma feature (erros, avisos, informação) e propriedades de massa do corpo.
 import type { FeatureStatus } from "../kernel/rebuild.ts";
-import type { MassProps } from "../kernel/protocol.ts";
+import type { MassProps, SheetInfo } from "../kernel/protocol.ts";
+import { useStore } from "./store.ts";
 
 const fmt = (v: number, d = 2) => v.toLocaleString("pt-PT", { maximumFractionDigits: d, minimumFractionDigits: 0 });
 
@@ -42,6 +43,25 @@ export function MassBlock({ mass, density, onDensity }: { mass: MassProps | null
           <tr><td>Centro de massa</td><td>{mass.center.map((v) => fmt(v, 2)).join(" · ")} mm</td></tr>
           <tr><td>Caixa envolvente</td><td>{size.map((v) => fmt(v, 2)).join(" × ")} mm</td></tr>
           <tr><td>Sólidos</td><td>{mass.solids}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Corpos de superfície do resultado (área e arestas livres: 0 = fechado, pronto a costurar em sólido). */
+export function SheetsBlock({ sheets }: { sheets: SheetInfo[] }) {
+  const st = useStore();
+  if (!sheets.length) return null;
+  const name = (id: string) => st.doc.features.find((f) => f.id === id)?.name ?? id;
+  return (
+    <div class="sheets">
+      <h3>Corpos de superfície ({sheets.length})</h3>
+      <table class="mass">
+        <tbody>
+          {sheets.map((s) => (
+            <tr key={s.id}><td>{name(s.id)}</td><td>{fmt(s.area / 100, 2)} cm² · {s.faces} face(s) · {s.freeEdges ? `${s.freeEdges} aresta(s) livre(s)` : "fechado"}</td></tr>
+          ))}
         </tbody>
       </table>
     </div>

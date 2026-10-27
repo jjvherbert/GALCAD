@@ -1,9 +1,9 @@
 // Campos reutilizáveis do painel de propriedades.
 import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { AxisRef, CadDocument, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, TopoRef } from "../doc/types.ts";
+import type { AxisRef, CadDocument, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, TopoRef, Vec3 } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
-import { FEATURE_LABELS } from "../doc/features.ts";
+import { FEATURE_LABELS, SHEET_SOURCES } from "../doc/features.ts";
 import { type Pick, pickHandlers, store, useStore } from "./store.ts";
 
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 4 });
@@ -305,6 +305,74 @@ export function RegionList({ sketch, value, onChange }: { sketch: string; value:
           );
         })}
         {!sel.length && <li class="muted">Todos os contornos fechados{view ? ` · ${view.regionList.length} região(ões) no esboço` : ""}</li>}
+      </ul>
+    </div>
+  );
+}
+
+/** Corpos de superfície criados antes de `before` (as features que os criam). */
+function sheetCandidates(doc: CadDocument, before: number) {
+  return doc.features.slice(0, before).filter((f) => SHEET_SOURCES.includes(f.type) && !f.suppressed && !(f.type === "knit" && f.makeSolid));
+}
+
+/**
+ * Escolha de corpos de superfície: lista das features que os criam, ou clique numa face do corpo no 3D.
+ * `single`: um só corpo (lista pendente).
+ */
+export function SheetList({ field, label, value, onChange, before, single, exclude }: { field: string; label: string; value: string[]; onChange: (v: string[]) => void; before: number; single?: boolean; exclude?: string[] }) {
+  const st = useStore();
+  const active = st.pickTarget?.field === field;
+  const cands = sheetCandidates(st.doc, before).filter((f) => !exclude?.includes(f.id));
+  usePickTarget(field, (p) => {
+    if (p.kind !== "face" || !p.body || !cands.some((c) => c.id === p.body)) return;
+    onChange(single ? [p.body] : value.includes(p.body) ? value.filter((x) => x !== p.body) : [...value, p.body]);
+  });
+  const pickBtn = <button class="small" onClick={() => store.set({ pickTarget: active ? null : { field, accept: ["face"] } })}>{active ? "Concluir" : "Selecionar no modelo"}</button>;
+  if (single) {
+    return (
+      <Field label={label}>
+        <div class="row">
+          <select value={value[0] ?? ""} onChange={(e) => onChange([(e.target as HTMLSelectElement).value])}>
+            <option value="">— escolher —</option>
+            {cands.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          {pickBtn}
+        </div>
+      </Field>
+    );
+  }
+  return (
+    <fieldset class={`checklist ${active ? "active" : ""}`}>
+      <legend class="field-label">{label} {pickBtn}</legend>
+      {cands.map((f) => (
+        <label key={f.id} class="check">
+          <input type="checkbox" checked={value.includes(f.id)} onChange={(e) => onChange((e.target as HTMLInputElement).checked ? [...value, f.id] : value.filter((x) => x !== f.id))} />
+          {f.name} <span class="muted">({FEATURE_LABELS[f.type]})</span>
+        </label>
+      ))}
+      {!cands.length && <p class="muted">Nenhum corpo de superfície antes desta feature</p>}
+    </fieldset>
+  );
+}
+
+/** Pontos escolhidos no 3D (partes a manter ao aparar). Enquanto se escolhe, mostra-se a superfície inteira. */
+export function PointList({ field, label, value, onChange }: { field: string; label: string; value: Vec3[]; onChange: (v: Vec3[]) => void }) {
+  const st = useStore();
+  const active = st.pickTarget?.field === field;
+  usePickTarget(field, (p) => { if (p.kind === "face" && p.point) onChange([...value, p.point.map((x) => Math.round(x * 1e3) / 1e3) as Vec3]); });
+  const toggle = () => { store.set({ pickTarget: active ? null : { field, accept: ["face"] } }); store.rebuild(0); };
+  return (
+    <div class={`reflist ${active ? "active" : ""}`}>
+      <div class="reflist-head">
+        <span class="field-label">{label}</span>
+        <button class="small" onClick={toggle}>{active ? "Concluir seleção" : "Selecionar partes"}</button>
+      </div>
+      {active && <p class="field-hint">Clique nas partes da superfície a manter (a superfície aparece inteira enquanto escolhe).</p>}
+      <ul>
+        {value.map((p, i) => (
+          <li key={i}><span>Parte {i + 1} · ({p.map(fmt).join("; ")})</span><button class="icon" aria-label="Retirar" onClick={() => onChange(value.filter((_, k) => k !== i))}>✕</button></li>
+        ))}
+        {!value.length && <li class="muted">Nenhuma</li>}
       </ul>
     </div>
   );

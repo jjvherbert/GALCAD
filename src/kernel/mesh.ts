@@ -11,6 +11,8 @@ export interface FaceGroup {
   type: string;
   center: Vec3;
   normal?: Vec3;
+  /** Corpo a que pertence: "" = corpo sólido; senão o id do corpo de superfície. */
+  body: string;
 }
 
 export interface EdgeGroup {
@@ -33,7 +35,8 @@ export interface MeshData {
 
 const r4 = (v: Vec3): Vec3 => v.map((x) => Math.round(x * 1e4) / 1e4) as Vec3;
 
-export function meshBody(body: NamedBody, tolerance?: number): MeshData {
+/** `owner`: corpo de cada face pelo nome ("" = sólido). */
+export function meshBody(body: NamedBody, tolerance?: number, owner: (name: string) => string = () => ""): MeshData {
   const shape = cast(body.shape);
   const { min, max } = (() => {
     const b = shape.boundingBox;
@@ -49,7 +52,8 @@ export function meshBody(body: NamedBody, tolerance?: number): MeshData {
   const faces: FaceGroup[] = m.faceGroups.map((g) => {
     const nf = faceByHash.get(g.faceId)?.[0];
     const p = nf ? faceProps(nf.face) : undefined;
-    return { start: g.start, count: g.count, name: nf?.name ?? "?", type: p?.type ?? "?", center: r4(p?.center ?? [0, 0, 0]), normal: p?.normal && r4(p.normal) };
+    const name = nf?.name ?? "?";
+    return { start: g.start, count: g.count, name, type: p?.type ?? "?", center: r4(p?.center ?? [0, 0, 0]), normal: p?.normal && r4(p.normal), body: owner(name) };
   });
 
   const edgeByHash = new Map<number, ReturnType<typeof namedEdges>[number]>();

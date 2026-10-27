@@ -1,17 +1,24 @@
 // Estado da aplicação: documento, histórico, edição de features/esboços e resultado da reconstrução.
 import { useEffect, useReducer } from "preact/hooks";
-import type { AxisRef, CadDocument, Feature, FeatureData, FeatureType, GeoHint, PlaneRef, SketchFeature, Variable } from "../doc/types.ts";
+import type { AxisRef, CadDocument, Feature, FeatureData, FeatureType, GeoHint, PlaneRef, SketchFeature, StdAxis, Variable, Vec3 } from "../doc/types.ts";
 import { History } from "../doc/history.ts";
 import { addFeature, defaultFeatureName, newDocument, nextFeatureId, parseDocument, serialize, updateFeature } from "../doc/io.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
-import type { RebuildResponse } from "../kernel/protocol.ts";
+import type { CurvatureKind, CurvatureResponse, RebuildResponse } from "../kernel/protocol.ts";
+
+/** Análise de superfície ativa no 3D (separador Avaliar). */
+export type Analysis =
+  | { kind: "zebra" }
+  | { kind: "curvature"; mode: CurvatureKind; data?: CurvatureResponse }
+  | { kind: "draft"; dir: StdAxis; angle: number };
 import { KernelClient } from "./kernel-client.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
 
 export type Pick =
-  | { kind: "face"; name: string; hint: GeoHint; type: string }
+  /** `body`: "" = corpo sólido, senão o id do corpo de superfície; `point`: ponto clicado. */
+  | { kind: "face"; name: string; hint: GeoHint; type: string; body?: string; point?: Vec3 }
   | { kind: "edge"; name: string; hint: GeoHint; type: string }
   | { kind: "plane"; ref: PlaneRef; label: string }
   | { kind: "axis"; ref: AxisRef; label: string }
@@ -71,6 +78,7 @@ export interface State {
   settings: Settings;
   /** Último comando executado (Enter repete). */
   lastCommand: string | null;
+  analysis: Analysis | null;
 }
 
 const AUTOSAVE = "cad-prototipo:autosave";
@@ -93,7 +101,7 @@ class Store {
       doc, edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: doc.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings: loadSettings(), lastCommand: null,
+      settings: loadSettings(), lastCommand: null, analysis: null,
     };
     this.rebuild(0);
   }
@@ -115,11 +123,13 @@ class Store {
     }
     if (edit) {
       const features = doc.features.slice();
+      // ao escolher as partes a manter de um aparar, mostra-se a superfície inteira
+      const draft = edit.draft.type === "trimSurface" && this.state.pickTarget?.field === "keep" ? { ...edit.draft, suppressed: true } : edit.draft;
       if (edit.isNew) {
-        features.splice(edit.index, 0, edit.draft);
+        features.splice(edit.index, 0, draft);
         return { ...doc, features, rollback: doc.rollback !== undefined ? edit.index + 1 : undefined };
       }
-      features[edit.index] = edit.draft;
+      features[edit.index] = draft;
       return { ...doc, features };
     }
     return doc;
@@ -131,11 +141,28 @@ class Store {
       this.set({ busy: true });
       try {
         const r = await this.kernel.rebuild(this.displayDoc(), force);
-        if (r) this.set({ result: r, busy: false, error: null });
+        if (r) { this.set({ result: r, busy: false, error: null }); void this.refreshAnalysis(); }
       } catch (e) {
         this.set({ busy: false, error: (e as Error).message });
       }
     }, delay);
+  }
+
+  /** Liga/desliga uma análise; a curvatura é calculada no núcleo (exata, por vértice). */
+  async setAnalysis(a: Analysis | null) {
+    this.set({ analysis: a });
+    await this.refreshAnalysis();
+  }
+
+  private async refreshAnalysis() {
+    const a = this.state.analysis;
+    if (a?.kind !== "curvature" || !this.state.result?.mesh) return;
+    try {
+      const data = await this.kernel.curvature(a.mode);
+      if (this.state.analysis === a) this.set({ analysis: { ...a, data } });
+    } catch (e) {
+      this.set({ error: (e as Error).message });
+    }
   }
 
   private autosave(doc: CadDocument) {
@@ -204,7 +231,11 @@ class Store {
     const refs = sel.filter((p): p is Extract<Pick, { kind: "face" | "edge" }> => p.kind === "face" || p.kind === "edge").map((p) => ({ kind: p.kind, name: p.name, hint: p.hint }));
     const faces = refs.filter((r) => r.kind === "face");
     if ((f.type === "fillet" || f.type === "chamfer") && refs.length) return { ...f, refs };
-    if ((f.type === "shell" || f.type === "draft") && faces.length) return { ...f, faces };
+    if ((f.type === "shell" || f.type === "draft" || f.type === "offsetSurface" || f.type === "deleteFace") && faces.length) return { ...f, faces };
+    if (f.type === "fill") { const es = refs.filter((r) => r.kind === "edge"); if (es.length) return { ...f, edges: es }; }
+    const sheetIds = [...new Set(sel.flatMap((p) => (p.kind === "face" && p.body ? [p.body] : [])))];
+    if (f.type === "knit" && sheetIds.length) return { ...f, sheets: sheetIds };
+    if ((f.type === "thicken" || f.type === "trimSurface") && sheetIds.length) return { ...f, sheet: sheetIds[0] };
     if (f.type === "plane") {
       const p = sel.find((x) => x.kind === "plane");
       if (p) return { ...f, base: p.ref };

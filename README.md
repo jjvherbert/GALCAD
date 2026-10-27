@@ -1,8 +1,8 @@
 # CAD protótipo
 
-CAD paramétrico open source, no browser, para modelação de sólidos (e, a seguir, superfícies), com fluxos de trabalho ao estilo do SolidWorks: esboços com restrições, árvore de features editável, variáveis e equações. Os domínios específicos, como o boat design, são **plugins** opcionais por cima de um núcleo genérico.
+CAD paramétrico no browser, para modelação de sólidos e de superfícies, com fluxos de trabalho ao estilo do SolidWorks: esboços com restrições, árvore de features editável, variáveis e equações. Os domínios específicos, como o boat design, são **plugins** opcionais por cima de um núcleo genérico.
 
-**Estado:** Fase 1 (modelação de peças) implementada. Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
+**Estado:** Fase 1 (modelação de peças) implementada; Fase 2 (superfícies) com o núcleo, a interface e as análises principais. Ver [ROADMAP.md](ROADMAP.md) e [HANDOFF.md](HANDOFF.md).
 
 ## Correr
 
@@ -38,7 +38,16 @@ npm run build && npm run test:e2e   # 9 fluxos de aplicação + 23 verificaçõe
 | Acabamento | Filete, chanfro (simétrico ou assimétrico), casca, inclinação |
 | Padrões | Linear (1 ou 2 direções), circular, espelho: de features ou do corpo inteiro |
 | Referências | Planos (desvio e ângulo), eixos, sistemas de coordenadas |
+| Superfícies | Extrudida, de revolução, varrida e loft (contornos abertos ou fechados); preenchimento N-lados com contacto, tangência ou curvatura; superfície deslocada; aparar (por plano, superfície ou esboço, escolhendo as partes a manter); costura (opcionalmente em sólido); espessar (frente, trás, simétrico); apagar face (sólido → superfície) |
 | Outros | Importação STEP; plugins (módulo náutico: casco paramétrico e hidrostática de conceção) |
+
+**Corpos de superfície:** cada corpo fica identificado pela feature que o criou. Aparar mantém o corpo; costurar e espessar consomem os corpos de entrada. As faces de superfície aparecem a âmbar, escolhem-se no 3D como as do sólido e entram na exportação (STEP, STL e malhas). O painel lateral mostra a área e as arestas livres de cada corpo; com 0 arestas livres o corpo está fechado e pode ser costurado em sólido.
+
+**Análises (separadores Superfícies e Avaliar):**
+- **Riscas de zebra**: riscas contínuas indicam tangência (G1); riscas sem quebra de direção indicam curvatura contínua (G2).
+- **Curvatura**: gaussiana ou média, exata em cada vértice (projeção na superfície e derivadas de 2.ª ordem do OpenCASCADE), com escala no percentil 95.
+- **Inclinação** (*draft*) em relação a X, Y ou Z, com ângulo mínimo: verde = positiva, vermelho = negativa, amarelo = precisa de inclinação.
+- São ferramentas de verificação visual da geometria. Não substituem a verificação de um processo de fabrico (moldação, extração) nem são certificação de qualidade de superfície.
 
 **Modelo paramétrico:**
 - **Variáveis globais e equações**, com dependências e deteção de ciclos. O avaliador de expressões é seguro: unidades, trigonometria em graus e `if`.
@@ -89,7 +98,7 @@ A barra de comandos está organizada em separadores como o CommandManager (Featu
 src/
   doc/      modelo de documento (JSON), expressões, variáveis, histórico, tabelas de furos — sem núcleo geométrico
   sketch/   geometria 2D, solver PlaneGCS, deteção de perfis, operações de edição (puras)
-  kernel/   OpenCASCADE: nomeação topológica, motor de reconstrução, features, malha, worker
+  kernel/   OpenCASCADE: nomeação topológica, motor de reconstrução, features (sólidos e superfícies), malha, análises, worker
   io/       exportação de malhas (3MF, OBJ, glTF)
   plugins/  módulos de domínio (metadados para a UI + geometria para o worker)
   app/      interface Preact + Three.js: árvore, painel de propriedades, editor de esboço, visualizador
@@ -106,7 +115,7 @@ tests/      testes Node (node:test) e e2e (Playwright)
 
 Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resultado técnico deve indicar as hipóteses e os limites no `note`.
 
-## Limitações conhecidas (Fase 1)
+## Limitações conhecidas (Fases 1 e 2)
 
 - Aparar não trata splines (apaga-as) e as entidades convertidas não se aparam. O deslocamento assume que a cadeia tem uma orientação coerente.
 - Sem regiões escolhidas, contornos que se intersetam ou ramificam dão erro e pedem a escolha das regiões. Por agora, a escolha de regiões só existe na extrusão e na revolução.
@@ -114,6 +123,7 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
 - O furo usa os pontos isolados do esboço, sem o assistente de posicionamento do SolidWorks. A rosca é cosmética, não modelada.
 - Multi-corpo simples: "corpo separado" junta sem fundir; não há gestão de corpos.
 - Importação só em STEP: o IGES não está disponível nesta compilação WASM do OpenCASCADE.
+- Superfícies: o preenchimento com tangência/curvatura pode não cumprir a continuidade quando a face vizinha é quase perpendicular ao remendo (limitação do algoritmo de placa do OpenCASCADE); confirme com as riscas de zebra. Faltam ainda boundary surface, curvas 3D, substituir face, apagar e reparar (*delete and heal*), aparar mútuo e padrões/espelho de corpos de superfície. A dependência de uma feature a jusante de um aparar não é registada no grafo (o aparar mantém a chave do corpo).
 - O nome de uma face dividida pode mudar de sufixo (`~0`, `~1`) se a ordem geométrica das partes mudar. As referências por nome-base e por posição cobrem a maioria dos casos e deixam um aviso.
 
 ## Propriedade intelectual

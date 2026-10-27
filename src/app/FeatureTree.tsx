@@ -2,13 +2,9 @@
 import { Fragment } from "preact";
 import { useState } from "preact/hooks";
 import type { Feature } from "../doc/types.ts";
-import { dependents, featureLabel } from "../doc/features.ts";
+import { FEATURE_ICONS as ICONS, dependents, featureLabel } from "../doc/features.ts";
 import { store, useStore } from "./store.ts";
 
-const ICONS: Record<Feature["type"], string> = {
-  sketch: "✎", extrude: "▮", revolve: "◐", sweep: "〰", loft: "⟁", hole: "⊚", fillet: "◜", chamfer: "◸", shell: "▢",
-  draft: "⏢", rib: "⊿", linearPattern: "⁞", circularPattern: "✲", mirror: "⇋", plane: "▱", axis: "┆", csys: "⌖", import: "⇩", plugin: "⧉",
-};
 
 export function FeatureTree() {
   const st = useStore();

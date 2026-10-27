@@ -277,3 +277,14 @@ export function distance(a: TopoDS_Shape, b: TopoDS_Shape): number {
   d.delete();
   return v;
 }
+
+/** Casca (shell) a partir de faces que partilham arestas. */
+export function makeShell(faces: TopoDS_Shape[]): TopoDS_Shape {
+  const o = oc();
+  const builder = new o.TopoDS_Builder();
+  const sh = T(new o.TopoDS_Shell());
+  builder.MakeShell(sh);
+  for (const f of faces) builder.Add(sh, f);
+  builder.delete();
+  return sh;
+}

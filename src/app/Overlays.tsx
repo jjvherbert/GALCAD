@@ -5,7 +5,7 @@ import type { ComponentChildren } from "preact";
 import { COMMANDS, commandById, runCommand } from "./commands.ts";
 import { type Pick, store, useStore } from "./store.ts";
 import type { GestureDir } from "./settings.ts";
-import { VIEWS, type ViewName } from "./viewport.ts";
+import { VIEWS, type ViewName, robustScale } from "./viewport.ts";
 import { describeName } from "./forms.tsx";
 
 /** Feature que criou uma face/aresta (pelo primeiro id do nome topológico). */
@@ -56,7 +56,12 @@ export function ContextMenu() {
       {feature && <Item label="Selecionar na árvore" onClick={() => store.set({ selectedFeature: feature.id })} />}
       {(p?.kind === "edge" || p?.kind === "face") && <Item label="Filete" onClick={() => withPick(p, "feature.fillet")} />}
       {(p?.kind === "edge" || p?.kind === "face") && <Item label="Chanfro" onClick={() => withPick(p, "feature.chamfer")} />}
-      {p?.kind === "face" && <Item label="Casca (remover esta face)" onClick={() => withPick(p, "feature.shell")} />}
+      {p?.kind === "face" && !p.body && <Item label="Casca (remover esta face)" onClick={() => withPick(p, "feature.shell")} />}
+      {p?.kind === "face" && <Item label="Apagar face (passa a superfície)" onClick={() => withPick(p, "feature.deleteFace")} />}
+      {p?.kind === "face" && <Item label="Superfície deslocada" onClick={() => withPick(p, "feature.offsetSurface")} />}
+      {p?.kind === "face" && p.body && <Item label="Espessar este corpo de superfície" onClick={() => withPick(p, "feature.thicken")} />}
+      {p?.kind === "face" && p.body && <Item label="Aparar este corpo de superfície" onClick={() => withPick(p, "feature.trimSurface")} />}
+      {p?.kind === "edge" && <Item label="Preencher contorno" onClick={() => withPick(p, "feature.fill")} />}
       {(planarFace || p?.kind === "plane") && <Item label="Plano de referência paralelo" onClick={() => withPick(p, "feature.plane")} />}
       {!p && <Item label="Esboço" onClick={() => runCommand("sketch.new")} />}
       <Item label="Ajustar ao ecrã" keys="F" onClick={() => runCommand("view.fit")} />
@@ -178,6 +183,58 @@ export function HeadsUpToolbar() {
         )}
       </div>
       <button class={st.settings.showPlanes ? "on" : ""} title="Mostrar/ocultar planos" onClick={() => runCommand("view.planes")}>▱</button>
+    </div>
+  );
+}
+
+/** Controlos e legenda da análise de superfície ativa. */
+export function AnalysisPanel() {
+  const st = useStore();
+  const a = st.analysis!;
+  const fmtK = (v: number) => (v === 0 ? "0" : v.toExponential(2).replace("e", "·10^"));
+  return (
+    <div class="analysis-panel" role="region" aria-label="Análise">
+      <div class="analysis-head">
+        <b>{a.kind === "zebra" ? "Riscas de zebra" : a.kind === "curvature" ? "Curvatura" : "Análise de inclinação"}</b>
+        <button class="icon" aria-label="Desligar análise" onClick={() => store.setAnalysis(null)}>✕</button>
+      </div>
+      {a.kind === "zebra" && <p class="muted">Riscas contínuas = continuidade tangente (G1); riscas sem quebra de direção = curvatura contínua (G2). Rode a vista para as ver mover.</p>}
+      {a.kind === "curvature" && (
+        <>
+          <select aria-label="Tipo de curvatura" value={a.mode} onChange={(e) => void store.setAnalysis({ kind: "curvature", mode: (e.target as HTMLSelectElement).value as "gauss" | "mean" })}>
+            <option value="gauss">Gaussiana K = k₁·k₂ (1/mm²)</option>
+            <option value="mean">Média H = (k₁+k₂)/2 (1/mm)</option>
+          </select>
+          {a.data ? (() => {
+            const s = robustScale(a.data.values);
+            if (!s) return <p class="muted">Curvatura nula em todo o modelo (planos; cilindros e cones na gaussiana).</p>;
+            return (
+              <>
+                <div class="legend diverging" />
+                <div class="legend-labels"><span>−{fmtK(s)}</span><span>0</span><span>+{fmtK(s)}</span></div>
+                <p class="muted">Mín. {fmtK(a.data.min)} · máx. {fmtK(a.data.max)}. Faces planas = 0. Escala no percentil 95.</p>
+              </>
+            );
+          })() : <p class="muted">A calcular…</p>}
+        </>
+      )}
+      {a.kind === "draft" && (
+        <>
+          <label class="row">Direção de extração
+            <select value={a.dir} onChange={(e) => void store.setAnalysis({ ...a, dir: (e.target as HTMLSelectElement).value as "X" | "Y" | "Z" })}>
+              <option value="X">X</option><option value="Y">Y</option><option value="Z">Z</option>
+            </select>
+          </label>
+          <label class="row">Ângulo mínimo (°)
+            <input type="number" min="0" max="45" step="0.5" value={a.angle} onInput={(e) => void store.setAnalysis({ ...a, angle: Number((e.target as HTMLInputElement).value) || 0 })} />
+          </label>
+          <ul class="legend-list">
+            <li><i style="background:#22c55e" /> Inclinação positiva ≥ {a.angle}°</li>
+            <li><i style="background:#facc15" /> Precisa de inclinação (|α| &lt; {a.angle}°)</li>
+            <li><i style="background:#ef4444" /> Inclinação negativa ≤ −{a.angle}°</li>
+          </ul>
+        </>
+      )}
     </div>
   );
 }

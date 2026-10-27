@@ -6,7 +6,7 @@ import { EXPORTS } from "./fileio.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
 
-type Tab = "features" | "sketch" | "refs" | "evaluate" | "modules";
+type Tab = "features" | "surfaces" | "sketch" | "refs" | "evaluate" | "modules";
 
 const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[] }[] = [
   {
@@ -19,13 +19,23 @@ const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[]
       { title: "Padrões", ids: ["feature.linearPattern", "feature.circularPattern", "feature.mirror"] },
     ],
   },
+  {
+    id: "surfaces", label: "Superfícies",
+    groups: [
+      { title: "Esboço", ids: ["sketch.new"] },
+      { title: "Criar", ids: ["feature.surfaceExtrude", "feature.surfaceRevolve", "feature.surfaceSweep", "feature.surfaceLoft", "feature.fill", "feature.offsetSurface"] },
+      { title: "Editar", ids: ["feature.trimSurface", "feature.knit", "feature.deleteFace"] },
+      { title: "Para sólido", ids: ["feature.thicken"] },
+      { title: "Análise", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft"] },
+    ],
+  },
   { id: "sketch", label: "Esboço", groups: [{ title: "Esboço", ids: ["sketch.new"] }] },
   { id: "refs", label: "Referências", groups: [{ title: "Geometria de referência", ids: ["feature.plane", "feature.axis", "feature.csys"] }] },
-  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }] },
+  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }, { title: "Análise de superfícies", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft"] }] },
   { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
 ];
 
-const short = (label: string) => label.replace(/^Vista /, "").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
+const short = (label: string) => label.replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
   const st = useStore();
@@ -38,7 +48,7 @@ export function Toolbar() {
     if (!c) return null;
     const key = c.keys?.[0];
     return (
-      <button key={id} class="cmd" title={`${c.label}${key ? ` (${key})` : ""}`} disabled={busy && c.group !== "Editar"} onClick={() => runCommand(id)}>
+      <button key={id} class="cmd" title={`${c.label}${key ? ` (${key})` : ""}`} disabled={busy && c.group !== "Editar" && c.group !== "Avaliar"} onClick={() => runCommand(id)}>
         <span class="ic">{c.icon ?? "•"}</span><span class="lb">{short(c.label)}</span>
       </button>
     );

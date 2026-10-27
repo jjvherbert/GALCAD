@@ -6,7 +6,7 @@ import type { SketchRegion } from "./regions.ts";
 import type { SolveResult } from "../sketch/solver.ts";
 import { type Axis, type Frame, STD_AXES, STD_FRAMES, csysAxis, csysPlane, frameFromPlane, to3D } from "./frame.ts";
 import { type NamedBody, type NamedEdge, type NamedFace, namedEdges, resolveEdge, resolveFace } from "./naming.ts";
-import { bbox, edgeProps, explore, faceProps, isSmoothEdge, v3 } from "./occ.ts";
+import { type TopoDS_Face, bbox, edgeProps, explore, faceProps, isSmoothEdge, v3 } from "./occ.ts";
 
 export interface SketchResult {
   frame: Frame;
@@ -32,6 +32,8 @@ export interface Ctx {
   axes: Map<string, Axis>;
   csys: Map<string, Frame>;
   tools: Map<string, Tool>;
+  /** Corpos de superfície (folhas), pelo id da feature que os criou. */
+  sheets: Map<string, NamedBody>;
 }
 
 /** Avisos e informação produzidos por uma feature. */
@@ -99,9 +101,25 @@ export function axisOf(ctx: Ctx, ref: AxisRef, report: StepReport): Axis {
   }
 }
 
-function requireBody(ctx: Ctx): NamedBody {
-  if (!ctx.body) throw new Error("Ainda não existe corpo");
-  return ctx.body;
+/** Corpo e corpos de superfície juntos, para resolver referências em qualquer um deles. */
+export function pool(ctx: Ctx): NamedBody {
+  if (!ctx.body && !ctx.sheets.size) throw new Error("Ainda não existe corpo");
+  if (!ctx.sheets.size) return ctx.body!;
+  const all = [...(ctx.body ? [ctx.body] : []), ...ctx.sheets.values()];
+  return { shape: all[0].shape, faces: all.flatMap((b) => b.faces) };
+}
+
+/** Dono de uma face: "body" (corpo sólido) ou o id do corpo de superfície. */
+export function faceOwner(ctx: Ctx, face: TopoDS_Face): string | null {
+  if (ctx.body?.faces.some((f) => f.face.IsSame(face))) return "body";
+  for (const [id, b] of ctx.sheets) if (b.faces.some((f) => f.face.IsSame(face))) return id;
+  return null;
+}
+
+export function sheetOf(ctx: Ctx, id: string): NamedBody {
+  const b = ctx.sheets.get(id);
+  if (!b) throw new Error(`Corpo de superfície "${featureName(ctx, id)}" indisponível (foi consumido por outra feature?)`);
+  return b;
 }
 
 const howWarning = (r: TopoRef, how: string) =>
@@ -109,7 +127,7 @@ const howWarning = (r: TopoRef, how: string) =>
 
 /** Resolve referências a faces. */
 export function faces(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedFace[] {
-  const body = requireBody(ctx);
+  const body = pool(ctx);
   const out: NamedFace[] = [];
   for (const r of refs) {
     const res = resolveFace(body, r);
@@ -123,7 +141,7 @@ export function faces(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedFace[
 
 /** Resolve referências a arestas; uma referência a face expande para todas as suas arestas. */
 export function edges(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedEdge[] {
-  const body = requireBody(ctx);
+  const body = pool(ctx);
   const all = namedEdges(body);
   const out: NamedEdge[] = [];
   const push = (e: NamedEdge) => { if (!out.some((o) => o.edge.IsSame(e.edge))) out.push(e); };
@@ -157,8 +175,8 @@ export function edges(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedEdge[
 /** Comprimento característico do modelo (para "através de tudo"). */
 export function modelSize(ctx: Ctx, extra: Vec3[] = []): number {
   let size = 100;
-  if (ctx.body) {
-    const { min, max } = bboxOf(ctx.body);
+  for (const b of [...(ctx.body ? [ctx.body] : []), ...ctx.sheets.values()]) {
+    const { min, max } = bboxOf(b);
     size = Math.max(size, v3.dist(min, max));
     for (const p of extra) size = Math.max(size, v3.dist(p, min), v3.dist(p, max));
   }

@@ -21,7 +21,9 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
     let msg: Response;
     try {
       await ready;
-      const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force) : await service.export(data.format, data.name);
+      const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force)
+        : data.type === "curvature" ? service.curvature(data.kind)
+        : await service.export(data.format, data.name);
       msg = { id: data.id, ok: true, result };
     } catch (e) {
       msg = { id: data.id, ok: false, error: (e as Error)?.message ?? String(e) };
@@ -32,6 +34,8 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
       transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
     } else if (msg.ok && "data" in msg.result) {
       transfer.push(msg.result.data.buffer);
+    } else if (msg.ok && "values" in msg.result) {
+      transfer.push(msg.result.values.buffer);
     }
     (self as unknown as Worker).postMessage(msg, transfer);
   });

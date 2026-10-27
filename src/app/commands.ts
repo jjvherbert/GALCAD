@@ -1,7 +1,7 @@
 // Registo central de comandos e atalhos de teclado (por defeito, os do SolidWorks).
 // Usado pelo teclado, pela barra de atalhos (S), pelos gestos e pelos menus.
 import type { FeatureType } from "../doc/types.ts";
-import { FEATURE_LABELS } from "../doc/features.ts";
+import { FEATURE_ICONS, FEATURE_LABELS, SURFACE_TYPES } from "../doc/features.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store } from "./store.ts";
 import type { Viewport, ViewName } from "./viewport.ts";
@@ -11,7 +11,7 @@ import { EXPORTS, exportAs, importStep, openProject, saveProject } from "./filei
 export interface Command {
   id: string;
   label: string;
-  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Esboço" | "Referências" | "Módulos" | "Exportar";
+  group: "Vista" | "Ficheiro" | "Editar" | "Features" | "Superfícies" | "Esboço" | "Referências" | "Avaliar" | "Módulos" | "Exportar";
   /** Atalhos, no formato "Ctrl+Shift+Z", "F", "Space", "ArrowLeft". */
   keys?: string[];
   icon?: string;
@@ -39,17 +39,13 @@ function normalTo() {
   store.set({ message: "Normal a: selecione uma face plana ou um plano" });
 }
 
-const FEATURE_ICONS: Partial<Record<FeatureType, string>> = {
-  sketch: "✎", extrude: "▮", revolve: "◐", sweep: "〰", loft: "⟁", rib: "⊿", hole: "⊚", fillet: "◜", chamfer: "◸",
-  shell: "▢", draft: "⏢", linearPattern: "⁞", circularPattern: "✲", mirror: "⇋", plane: "▱", axis: "┆", csys: "⌖",
-};
 const FEATURE_GROUP: Partial<Record<FeatureType, Command["group"]>> = { sketch: "Esboço", plane: "Referências", axis: "Referências", csys: "Referências" };
 
 function featureCommand(type: FeatureType): Command {
   return {
     id: type === "sketch" ? "sketch.new" : `feature.${type}`,
     label: FEATURE_LABELS[type],
-    group: FEATURE_GROUP[type] ?? "Features",
+    group: FEATURE_GROUP[type] ?? (SURFACE_TYPES.includes(type) ? "Superfícies" : "Features"),
     icon: FEATURE_ICONS[type],
     repeatable: true,
     run: () => { if (!busy()) store.startFeature(type); },
@@ -100,6 +96,12 @@ export const COMMANDS: Command[] = [
   { id: "edit.escape", label: "Cancelar / limpar seleção", group: "Editar", keys: ["Escape"], run: escape },
   // features
   ...(["sketch", "extrude", "revolve", "sweep", "loft", "rib", "hole", "fillet", "chamfer", "shell", "draft", "linearPattern", "circularPattern", "mirror", "plane", "axis", "csys"] as FeatureType[]).map(featureCommand),
+  ...SURFACE_TYPES.map(featureCommand),
+  // análises (Avaliar)
+  { id: "analysis.zebra", label: "Riscas de zebra", group: "Avaliar", icon: "▥", run: () => store.setAnalysis(store.state.analysis?.kind === "zebra" ? null : { kind: "zebra" }) },
+  { id: "analysis.curvature", label: "Curvatura", group: "Avaliar", icon: "◍", run: () => void store.setAnalysis(store.state.analysis?.kind === "curvature" ? null : { kind: "curvature", mode: "gauss" }) },
+  { id: "analysis.draft", label: "Análise de inclinação", group: "Avaliar", icon: "⏣", run: () => store.setAnalysis(store.state.analysis?.kind === "draft" ? null : { kind: "draft", dir: "Z", angle: 1 }) },
+  { id: "analysis.off", label: "Desligar análise", group: "Avaliar", run: () => store.setAnalysis(null) },
   { id: "feature.cut", label: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy()) { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
   ...PLUGINS.flatMap((p) => Object.entries(p.kinds).map(([k, kind]): Command => ({
     id: `plugin.${p.id}.${k}`, label: `${p.name}: ${kind.label}`, group: "Módulos", icon: "⧉", repeatable: true,

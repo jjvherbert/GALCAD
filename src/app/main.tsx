@@ -10,10 +10,10 @@ import { FeatureTree } from "./FeatureTree.tsx";
 import { PropertyPanel } from "./PropertyPanel.tsx";
 import { SketchEditor } from "./SketchEditor.tsx";
 import { PlaneChooser, VariablesDialog } from "./Dialogs.tsx";
-import { MassBlock, StatusBlock } from "./InfoPanel.tsx";
+import { MassBlock, SheetsBlock, StatusBlock } from "./InfoPanel.tsx";
 import { describeName } from "./forms.tsx";
 import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
-import { ContextMenu, ContextToolbar, GestureHud, HeadsUpToolbar, OrientationMenu, ShortcutBar, featureOfPick } from "./Overlays.tsx";
+import { AnalysisPanel, ContextMenu, ContextToolbar, GestureHud, HeadsUpToolbar, OrientationMenu, ShortcutBar, featureOfPick } from "./Overlays.tsx";
 
 const SURF: Record<string, string> = { plane: "plana", cylinder: "cilíndrica", cone: "cónica", sphere: "esférica", torus: "tórica", bspline: "livre (B-spline)", bezier: "livre (Bézier)", revolution: "de revolução", extrusion: "de extrusão" };
 const CURVE: Record<string, string> = { line: "reta", circle: "circular", ellipse: "elíptica", bsplinecurve: "livre", beziercurve: "livre" };
@@ -73,6 +73,7 @@ function App() {
 
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
+  useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
   // regiões do esboço da extrusão/revolução em edição, enquanto se escolhem ou se já há escolha
   useEffect(() => {
     const d = st.edit?.draft;
@@ -118,6 +119,7 @@ function App() {
                 <div class="side-info">
                   {selFeature && <StatusBlock status={r?.status[selFeature.id]} title={selFeature.name} />}
                   <MassBlock mass={r?.mass ?? null} density={density} onDensity={setDensity} />
+                  <SheetsBlock sheets={r?.sheets ?? []} />
                   {st.selection.length > 0 && (
                     <p class="muted">{st.selection.length} selecionado(s) · os comandos usam a seleção (ex.: Filete com arestas, Esboço numa face).</p>
                   )}
@@ -129,6 +131,7 @@ function App() {
         <section class="view">
           <div ref={host} class="viewport" />
           {!st.sketch && <HeadsUpToolbar />}
+          {st.analysis && !st.sketch && <AnalysisPanel />}
           {st.sketch && <SketchEditor key={st.sketch.id} result={r} />}
           {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[a]).join(" / ")} · Esc para terminar</div>}
         </section>

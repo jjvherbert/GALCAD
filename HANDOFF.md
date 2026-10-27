@@ -1,4 +1,23 @@
-# Handoff — Fase 1
+# Handoff — Fases 1 e 2
+
+## Atualização: Fase 2, superfícies (núcleo, interface e análises)
+
+**Alterações**
+- `src/doc/types.ts`: 10 features novas (`surfaceExtrude`, `surfaceRevolve`, `surfaceSweep`, `surfaceLoft`, `fill`, `offsetSurface`, `knit`, `thicken`, `trimSurface`, `deleteFace`). `features.ts`: rótulos, ícones (agora centralizados em `FEATURE_ICONS`), dependências, `SURFACE_TYPES`, `SHEET_SOURCES`.
+- `src/kernel/context.ts`: `Ctx.sheets` (corpos de superfície por id da feature criadora); `faces()`/`edges()` resolvem no sólido e em todas as superfícies (`pool`); `faceOwner`, `sheetOf`.
+- `src/kernel/features/surface.ts`: as 10 features. Histórico OCC usado na nomeação: `Generated` nas arestas (extrusão/revolução/sweep/loft), `ModifiedSubShape` na costura, `Generated` no desvio simples (`f3:off{nome}`), paredes do espessar `fN:wallK`. Uma feature só altera `ctx.sheets` depois de ter sucesso (uma costura falhada não consome as entradas).
+- `src/kernel/analysis.ts`: curvatura por vértice (`GeomAPI_ProjectPointOnSurf` → `BRepAdaptor_Surface.D2` → formas fundamentais).
+- `service.ts`/`protocol.ts`/`worker.ts`: cena = sólido + superfícies (malha com `body` por face, exportação, `sheets` na resposta), pedido `curvature`. **Bug corrigido:** o worker transferia os buffers da malha e a cópia do núcleo ficava vazia (afetava também OBJ/3MF/GLB); o serviço guarda agora uma cópia.
+- UI: separador Superfícies, painéis de propriedades, `SheetList` (lista ou clique numa face do corpo), `PointList` (partes a manter; durante a escolha o aparar é suprimido para se ver a superfície inteira), cor âmbar das superfícies, `AnalysisPanel` com legenda, entradas no menu de contexto. Nomes por defeito legíveis (`Superfície-revolução1`).
+
+**Testes:** 49 em Node (9 novos em `tests/surface.test.ts`: áreas e volumes analíticos, caixa costurada em sólido, espessar nos 3 lados, aparar por plano/esboço, revolução + desvio, loft e sweep, cúpula tangente, apagar face + preencher + costurar) e 3 suites e2e (`tests/e2e/surfaces.e2e.cjs`: espessar com volume analítico, zebra, curvatura média = 1/(2r), inclinação). Todos a passar.
+
+**Bloqueios / limitações:** ver README (preenchimento tangente com faces quase perpendiculares; boundary surface, curvas 3D e substituir face por fazer).
+
+**Próxima ação:** curvas 3D e boundary surface (fecham a Fase 2), ou desenhos 2D + BOM (Fase 3), conforme a prioridade de Juan. Sem push: o repositório remoto ainda não existe.
+
+---
+
 
 ## Atualização: seleção de regiões
 

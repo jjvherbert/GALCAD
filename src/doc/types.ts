@@ -311,6 +311,88 @@ export interface PluginFeature {
   op: BodyOp;
 }
 
+// ---------------------------------------------------------------------------
+// Superfícies (corpos de superfície, identificados pelo id da feature que os criou)
+// ---------------------------------------------------------------------------
+
+export type Continuity = "contact" | "tangent" | "curvature";
+
+/** Superfície extrudida a partir das cadeias (abertas ou fechadas) de um esboço. */
+export interface SurfaceExtrudeFeature {
+  type: "surfaceExtrude";
+  sketch: string;
+  end: { type: "blind"; depth: Expr } | { type: "midplane"; depth: Expr };
+  flip?: boolean;
+}
+
+export interface SurfaceRevolveFeature {
+  type: "surfaceRevolve";
+  sketch: string;
+  axis: AxisRef;
+  angle: Expr;
+  midplane?: boolean;
+}
+
+export interface SurfaceSweepFeature {
+  type: "surfaceSweep";
+  profile: string;
+  path: string;
+  orientation?: "frenet" | "fixed";
+}
+
+export interface SurfaceLoftFeature {
+  type: "surfaceLoft";
+  sections: string[];
+  ruled?: boolean;
+}
+
+/** Preenchimento N-lados de um contorno de arestas, com continuidade às faces vizinhas. */
+export interface FillFeature {
+  type: "fill";
+  edges: TopoRef[];
+  continuity: Continuity;
+}
+
+export interface OffsetSurfaceFeature {
+  type: "offsetSurface";
+  faces: TopoRef[];
+  distance: Expr;
+}
+
+/** Costurar superfícies num só corpo de superfície (ou num sólido, se fechar). */
+export interface KnitFeature {
+  type: "knit";
+  sheets: string[];
+  makeSolid?: boolean;
+  op?: BodyOp;
+  tolerance?: Expr;
+}
+
+/** Dar espessura a um corpo de superfície (superfície → sólido). */
+export interface ThickenFeature {
+  type: "thicken";
+  sheet: string;
+  thickness: Expr;
+  side: "front" | "back" | "both";
+  op: BodyOp;
+}
+
+/** Aparar um corpo de superfície por um plano, outro corpo de superfície ou um esboço; ficam as partes indicadas. */
+export interface TrimSurfaceFeature {
+  type: "trimSurface";
+  sheet: string;
+  tool: { kind: "plane"; plane: PlaneRef } | { kind: "sheet"; sheet: string } | { kind: "sketch"; sketch: string };
+  /** Pontos (3D) nas partes a manter. */
+  keep: Vec3[];
+}
+
+/** Apagar faces de um sólido: o resultado passa a corpo de superfície (para reconstruir com superfícies). */
+export interface DeleteFaceFeature {
+  type: "deleteFace";
+  faces: TopoRef[];
+}
+
+
 export type FeatureData =
   | SketchFeature
   | ExtrudeFeature
@@ -330,7 +412,17 @@ export type FeatureData =
   | AxisFeature
   | CsysFeature
   | ImportFeature
-  | PluginFeature;
+  | PluginFeature
+  | SurfaceExtrudeFeature
+  | SurfaceRevolveFeature
+  | SurfaceSweepFeature
+  | SurfaceLoftFeature
+  | FillFeature
+  | OffsetSurfaceFeature
+  | KnitFeature
+  | ThickenFeature
+  | TrimSurfaceFeature
+  | DeleteFaceFeature;
 
 export type FeatureType = FeatureData["type"];
 

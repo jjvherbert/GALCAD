@@ -11,7 +11,7 @@ import type { RebuildResponse } from "../kernel/protocol.ts";
 import type { Frame } from "../kernel/frame.ts";
 import type { CadDocument, PlaneRef, StdPlane, Vec3 } from "../doc/types.ts";
 import { sampleEntity, allEntities } from "../sketch/geometry.ts";
-import type { Pick, PickKind } from "./store.ts";
+import type { Analysis, Pick, PickKind } from "./store.ts";
 import type { GestureDir, Settings } from "./settings.ts";
 
 const STD: Record<StdPlane, Frame> = {
@@ -32,11 +32,34 @@ export const VIEWS = {
 } satisfies Record<string, { dir: Vec3; up: Vec3; label: string; key: string }>;
 export type ViewName = keyof typeof VIEWS;
 
-interface Theme { bg: number; body: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number; feat: number }
+interface Theme { bg: number; body: number; sheet: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number; feat: number }
 const themes: Record<"light" | "dark", Theme> = {
-  light: { bg: 0xf3f4f6, body: 0xb9c7d6, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af, feat: 0x7dd3fc },
-  dark: { bg: 0x14181f, body: 0x7f93a8, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9 },
+  light: { bg: 0xf3f4f6, body: 0xb9c7d6, sheet: 0xe5c07b, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af, feat: 0x7dd3fc },
+  dark: { bg: 0x14181f, body: 0x7f93a8, sheet: 0xb08d3a, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9 },
 };
+
+/** Textura matcap às riscas: com a normal em coordenadas de vista dá as riscas de zebra (reflexo de luzes em tubo). */
+function zebraTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const g = c.getContext("2d")!;
+  for (let y = 0; y < 256; y += 10) { g.fillStyle = (y / 10) % 2 ? "#111" : "#f5f5f5"; g.fillRect(0, y, 256, 10); }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** Mapa de cores divergente (azul → branco → vermelho) para t ∈ [−1, 1]. */
+export function divergingColor(t: number, out: THREE.Color): THREE.Color {
+  const x = Math.max(-1, Math.min(1, t));
+  return x < 0 ? out.setRGB(1 + x * 0.85, 1 + x * 0.6, 1) : out.setRGB(1, 1 - x * 0.6, 1 - x * 0.85);
+}
+
+/** Escala robusta: percentil 95 de |v| (os picos nas arestas não esmagam o resto). */
+export function robustScale(values: ArrayLike<number>): number {
+  const a = Array.from(values, Math.abs).filter((x) => x > 0).sort((p, q) => p - q);
+  return a.length ? a[Math.min(a.length - 1, Math.floor(a.length * 0.95))] : 0;
+}
 
 type Hit =
   | { kind: "face"; index: number; point: THREE.Vector3 }
@@ -90,6 +113,9 @@ export class Viewport {
   private size = 200;
   private el: HTMLElement;
   private lastResult: RebuildResponse | null = null;
+  private analysis: Analysis | null = null;
+  private zebraMat: THREE.MeshMatcapMaterial | null = null;
+  private shadedMat: THREE.Material | null = null;
   settings: Settings;
 
   onPick: (p: Pick, additive: boolean, at: [number, number]) => void = () => {};
@@ -205,7 +231,8 @@ export class Viewport {
       for (let t = f.start / 3; t < (f.start + f.count) / 3; t++) this.faceOfTri[t] = i;
       return [lo, hi];
     });
-    this.faceMesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));
+    this.shadedMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    this.faceMesh = new THREE.Mesh(g, this.analysis?.kind === "zebra" ? this.zebra() : this.shadedMat);
     const eg = new THREE.BufferGeometry();
     eg.setAttribute("position", new THREE.BufferAttribute(mesh.lines, 3));
     eg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(mesh.lines.length), 3));
@@ -235,6 +262,19 @@ export class Viewport {
       this.regionGroup.add(mesh);
       this.regionMeshes.push({ mesh, sketch, sig: r.sig, seed: r.seed });
     }
+    this.recolor();
+  }
+
+  private zebra() {
+    this.zebraMat ??= new THREE.MeshMatcapMaterial({ matcap: zebraTexture(), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+    return this.zebraMat;
+  }
+
+  /** Análise de superfície: zebra (material matcap), inclinação e curvatura (cores por vértice). */
+  setAnalysis(a: Analysis | null) {
+    this.analysis = a;
+    if (this.faceMesh && this.shadedMat) this.faceMesh.material = a?.kind === "zebra" ? this.zebra() : this.shadedMat;
+    this.el.dataset.analysis = a?.kind ?? "";
     this.recolor();
   }
 
@@ -364,10 +404,27 @@ export class Viewport {
     const c = new THREE.Color();
     const hoverKey = this.hover ? this.keyOf(this.hover) : "";
     const fh = this.featureHighlight ? `${this.featureHighlight}:` : null;
+    const a = this.analysis;
+    const nrm = this.mesh.normals;
+    const dir = a?.kind === "draft" ? { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[a.dir] : null;
+    const sinT = a?.kind === "draft" ? Math.sin((a.angle * Math.PI) / 180) : 0;
+    const curv = a?.kind === "curvature" && a.data && a.data.values.length === this.mesh.vertices.length / 3 ? a.data.values : null;
+    const scale = (curv && robustScale(curv)) || 1;
     this.mesh.faces.forEach((f, i) => {
       const k = `face:${f.name}`;
-      c.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : fh && f.name.startsWith(fh) ? this.theme.feat : this.theme.body);
       const [lo, hi] = this.faceVerts[i];
+      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : fh && f.name.startsWith(fh) ? this.theme.feat : null;
+      if (flat === null && (dir || curv)) {
+        for (let v = lo; v <= hi; v++) {
+          if (dir) {
+            const d = nrm[v * 3] * dir[0] + nrm[v * 3 + 1] * dir[1] + nrm[v * 3 + 2] * dir[2];
+            c.set(d >= sinT ? 0x22c55e : d <= -sinT ? 0xef4444 : 0xfacc15);
+          } else divergingColor(curv![v] / scale, c);
+          col.setXYZ(v, c.r, c.g, c.b);
+        }
+        return;
+      }
+      c.set(flat ?? (f.body ? this.theme.sheet : this.theme.body));
       for (let v = lo; v <= hi; v++) col.setXYZ(v, c.r, c.g, c.b);
     });
     col.needsUpdate = true;
@@ -433,7 +490,7 @@ export class Viewport {
   }
 
   private toPick(h: Hit): Pick {
-    if (h.kind === "face") { const f = this.mesh!.faces[h.index]; return { kind: "face", name: f.name, type: f.type, hint: { c: f.center, n: f.normal } }; }
+    if (h.kind === "face") { const f = this.mesh!.faces[h.index]; return { kind: "face", name: f.name, type: f.type, hint: { c: f.center, n: f.normal }, body: f.body, point: [h.point.x, h.point.y, h.point.z] }; }
     if (h.kind === "edge") { const e = this.mesh!.edges[h.index]; return { kind: "edge", name: e.name, type: e.type, hint: { c: e.mid, n: e.dir } }; }
     if (h.kind === "region") { const r = this.regionMeshes[h.index]; return { kind: "region", sketch: r.sketch, sig: r.sig, seed: r.seed }; }
     return { kind: "plane", ref: h.ref, label: h.label };

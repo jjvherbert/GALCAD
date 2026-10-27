@@ -9,7 +9,27 @@ export type ExportFormat = "step" | "stl" | "3mf" | "obj" | "glb";
 
 export type Request =
   | { type: "rebuild"; doc: CadDocument; force?: boolean }
-  | { type: "export"; format: ExportFormat; name: string };
+  | { type: "export"; format: ExportFormat; name: string }
+  | { type: "curvature"; kind: CurvatureKind };
+
+/** Análise de curvatura: gaussiana (K = k1·k2) ou média (H = (k1+k2)/2), em 1/mm. */
+export type CurvatureKind = "gauss" | "mean";
+
+/** Curvatura em cada vértice da última malha (mesma ordem de `MeshData.vertices`). */
+export interface CurvatureResponse {
+  kind: CurvatureKind;
+  values: Float32Array;
+  min: number;
+  max: number;
+}
+
+/** Corpo de superfície (folha) do resultado. */
+export interface SheetInfo {
+  id: string;
+  faces: number;
+  area: number; // mm²
+  freeEdges: number;
+}
 
 export interface SketchView {
   frame: Frame;
@@ -40,6 +60,7 @@ export interface RebuildResponse {
   axes: Record<string, Axis>;
   csys: Record<string, Frame>;
   mass: MassProps | null;
+  sheets: SheetInfo[];
 }
 
 export interface ExportResponse {
@@ -49,5 +70,5 @@ export interface ExportResponse {
 }
 
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse }
+  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse }
   | { id: number; ok: false; error: string };

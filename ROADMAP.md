@@ -41,12 +41,21 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
 - Tabela de configurações (famílias de peças) a partir das variáveis
 - Gestão de multi-corpo (listar, ocultar, combinar)
 
-## Fase 2: superfícies (nível SolidWorks Surfacing)
-- Extrusão, revolução, sweep, loft e boundary surface, com controlo de tangência e curvatura nos limites
-- Fill surface (remendo N-lados), offset, ruled surface
-- Trim e untrim, knit (costura), thicken (superfície → sólido), substituir face
+## Fase 2: superfícies (nível SolidWorks Surfacing) — em curso
+Feito:
+- ✅ Corpos de superfície no motor (chave = feature criadora), resolução de referências em sólido + superfícies, malha/exportação conjunta
+- ✅ Extrusão, revolução, sweep e loft de superfície (contornos abertos ou fechados)
+- ✅ Fill surface (remendo N-lados) com contacto, tangência ou curvatura; offset
+- ✅ Trim (plano, superfície ou esboço, partes a manter por ponto), knit (com sólido opcional e operação), thicken (frente/trás/simétrico), apagar face
+- ✅ Análises: zebra, curvatura (gaussiana/média, exata por vértice), draft
+- ✅ UI: separador Superfícies, painéis, escolha de corpos no 3D, menu de contexto; testes Node e e2e
+
+Pendente:
+- Boundary surface e loft com controlo de tangência/curvatura nos limites; ruled surface
+- Untrim, substituir face, apagar e reparar (*delete and heal*), aparar mútuo
 - Curvas 3D: spline por pontos, projeção, interseção, curva composta, hélice
-- Análises: zebra, mapa de curvatura, desvio, draft
+- Análise de desvio (entre superfícies, ou entre arestas de faces adjacentes) e verificação automática de G1 no preenchimento
+- Padrões e espelho de corpos de superfície; registo da dependência a jusante de um aparar
 
 ## Fase 3: montagens, desenhos 2D e BOM
 - Montagens com mates (coincidente, concêntrico, distância, ângulo) e solver de restrições 3D
