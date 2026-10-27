@@ -146,8 +146,8 @@ async function main() {
     step("desfazer e refazer");
 
     // 7. exportar STEP e guardar/abrir o projeto
-    await p.click("button:has-text('Exportar')");
-    const [stepDl] = await Promise.all([p.waitForEvent("download"), p.click(".menu button:has-text('STEP')")]);
+    await p.click("button:has-text('Ficheiro')");
+    const [stepDl] = await Promise.all([p.waitForEvent("download"), p.click(".menu button:has-text('Exportar STEP')")]);
     const stepFile = path.join(tmp, stepDl.suggestedFilename());
     await stepDl.saveAs(stepFile);
     assert.match(fs.readFileSync(stepFile, "utf8").slice(0, 20), /ISO-10303-21/);
@@ -159,7 +159,9 @@ async function main() {
 
     await p.click(".menu button:has-text('Novo')");
     await settle();
-    await p.setInputFiles("input[type=file][accept*=json]", projFile);
+    await p.click("button:has-text('Ficheiro')");
+    const [fc1] = await Promise.all([p.waitForEvent("filechooser"), p.click(".menu button:has-text('Abrir projeto')")]);
+    await fc1.setFiles(projFile);
     await p.waitForFunction(() => /Volume/.test(document.querySelector(".side-info")?.textContent ?? ""), null, { timeout: 60000 });
     assert.ok(Math.abs((await volume()) - v160) < 1e-6);
     step(`exportar STEP (${path.basename(stepFile)}), guardar e reabrir o projeto`);
@@ -169,11 +171,13 @@ async function main() {
 
     await p.click(".menu button:has-text('Novo')");
     await settle();
-    await p.setInputFiles("input[type=file][accept*=step]", stepFile);
+    await p.click("button:has-text('Ficheiro')");
+    const [fc2] = await Promise.all([p.waitForEvent("filechooser"), p.click(".menu button:has-text('Importar STEP')")]);
+    await fc2.setFiles(stepFile);
     await settle();
     assert.ok(Math.abs((await volume()) - v160) < 0.01);
-    await p.click("button:has-text('Módulos')");
-    await p.click(".menu button:has-text('Casco')");
+    await p.click(".tabs button:has-text('Módulos')");
+    await p.click(".commands button:has-text('Casco')");
     await p.locator(".property-panel label.field:has(.field-label:text-is('Operação')) select").selectOption("new");
     await settle();
     await p.click(".property-panel button:has-text('OK')");
@@ -192,6 +196,7 @@ async function main() {
     assert.equal((await states()).length, 1);
     step("importar STEP, casco náutico, rollback e apagar");
 
+    await p.click(".tabs button:has-text('Features')");
     // 9. converter o contorno da face, deslocar 5 mm para dentro, moldura; mudar W: tudo acompanha
     await p.click("button:has-text('Ficheiro')");
 

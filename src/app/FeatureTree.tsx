@@ -31,6 +31,8 @@ export function FeatureTree() {
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => { e.preventDefault(); if (dragId && dragId !== f.id) store.move(dragId, i); setDragId(null); }}
         onClick={() => store.set({ selectedFeature: f.id })}
+        onMouseEnter={() => store.set({ hoverFeature: f.id })}
+        onMouseLeave={() => store.set({ hoverFeature: null })}
         onDblClick={() => store.editFeature(f.id)}
         title={s?.error ?? s?.warnings.join("\n") ?? ""}>
         <span class="ic" aria-hidden="true">{ICONS[f.type]}</span>

@@ -1,5 +1,22 @@
 # Handoff — Fase 1
 
+## Atualização: navegação e comandos ao estilo do SolidWorks; licença
+
+- `src/app/viewport.ts`: controlador de câmara próprio, sem OrbitControls.
+  - Rato: meio, Ctrl/Shift/Alt+meio, roda no cursor, duplo meio, centro de rotação.
+  - Seleção: caixa janela/cruzamento, gestos, menu de contexto, duplo clique.
+  - Vista: histórico de vistas, estilos de visualização.
+- `src/app/commands.ts`: registo único de comandos e atalhos (Ctrl+1…8, F, Z, setas, Ctrl+B/Q, Enter, S, Espaço…).
+- `src/app/Overlays.tsx`: menu de contexto, barra de contexto, barra de atalhos (S), orientação, guia de gestos e barra de vista.
+- `src/app/settings.ts`: preferências (roda invertida, passo das setas, gestos, estilo, planos).
+- `Toolbar.tsx`: separadores ao estilo do CommandManager. `fileio.ts`: ficheiros.
+- Ctrl+Q força a reconstrução completa (o worker limpa a cache).
+- Licença: proprietária (`LICENSE`), com `THIRD_PARTY_NOTICES.md` e `licenses/`. **Manter o OCC e o PlaneGCS como WASM separados**, por causa da LGPL.
+- Visão (moldes, compósitos, PMI/tags, ROM-FEM) registada no `ROADMAP.md`.
+- Testes: 39 em Node, 9 fluxos de aplicação e 23 verificações de navegação (`tests/e2e/navigation.e2e.cjs`), todos a passar.
+
+---
+
 ## Atualização: ferramentas de esboço
 
 - `src/sketch/modify.ts`: aparar, estender, filete de canto e deslocar, com interseções entre linhas, arcos, círculos e splines. Testes em `tests/modify.test.ts`.

@@ -185,3 +185,39 @@ table.vars tr.invalid input { border-color: var(--bad); }
   .toolbar .cmd .lb, .sk-toolbar .lb { display: none; }
   .toolbar .views { margin-left: 0; }
 }
+
+/* CommandManager */
+.toolbar { flex-direction: column; gap: 4px; }
+.tb-row { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
+.tb-row.commands { min-height: 46px; }
+.tabs { display: flex; gap: 2px; margin-left: 12px; align-self: flex-end; }
+.tabs button { border-radius: 6px 6px 0 0; border-bottom: 0; background: none; }
+.tabs button.on { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+kbd { font: 11px ui-monospace, monospace; padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.menu button { display: flex; gap: 12px; align-items: center; }
+
+/* sobreposições */
+.overlay-catcher { position: fixed; inset: 0; z-index: 39; }
+.popup { position: fixed; z-index: 40; min-width: 220px; max-width: 320px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.22); padding: 4px; display: flex; flex-direction: column; }
+.popup button { display: flex; gap: 8px; align-items: center; border: 0; background: none; text-align: left; padding: 5px 8px; }
+.popup button:hover:not(:disabled), .popup button.active { background: var(--accent-soft); }
+.popup-title { font-size: 11px; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--line); margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popup .search { margin: 4px; }
+.cmd-list { max-height: 360px; overflow: auto; display: flex; flex-direction: column; }
+.cmd-list .ic { width: 18px; text-align: center; color: var(--accent); }
+.cmd-list .muted { font-size: 11px; }
+.orient-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.context-toolbar { position: fixed; z-index: 30; display: flex; gap: 2px; padding: 3px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.18); }
+.context-toolbar button { width: 30px; height: 28px; padding: 0; font-size: 15px; }
+.heads-up { position: absolute; z-index: 4; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 2px; padding: 3px; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 8px; }
+.heads-up button { min-width: 30px; height: 28px; padding: 0 6px; }
+.heads-up .menu { left: auto; right: 0; }
+.box-select { position: absolute; display: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; z-index: 3; }
+.box-select.crossing { border-style: dashed; background: color-mix(in srgb, #16a34a 10%, transparent); border-color: #16a34a; }
+.gesture-trail { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.gesture-trail polyline { fill: none; stroke: var(--accent); stroke-width: 2; opacity: 0.7; }
+.gesture-hud { position: fixed; z-index: 41; pointer-events: none; width: 0; height: 0; }
+.gesture-hud span { position: absolute; white-space: nowrap; font-size: 11px; padding: 2px 6px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 2px 6px rgb(0 0 0 / 0.15); }
+.gesture-hud span.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pick-banner { top: 46px; }

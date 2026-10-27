@@ -1,0 +1,129 @@
+{
+  "format": "cadp",
+  "version": 1,
+  "name": "Bloco",
+  "units": "mm",
+  "variables": [],
+  "features": [
+    {
+      "type": "sketch",
+      "plane": {
+        "kind": "std",
+        "name": "XY"
+      },
+      "entities": {
+        "p1": {
+          "type": "point",
+          "x": 0,
+          "y": 0
+        },
+        "p2": {
+          "type": "point",
+          "x": 90,
+          "y": 0
+        },
+        "p3": {
+          "type": "point",
+          "x": 90,
+          "y": 50
+        },
+        "p4": {
+          "type": "point",
+          "x": 0,
+          "y": 50
+        },
+        "l5": {
+          "type": "line",
+          "p1": "p1",
+          "p2": "p2",
+          "construction": false
+        },
+        "l6": {
+          "type": "line",
+          "p1": "p2",
+          "p2": "p3",
+          "construction": false
+        },
+        "l7": {
+          "type": "line",
+          "p1": "p3",
+          "p2": "p4",
+          "construction": false
+        },
+        "l8": {
+          "type": "line",
+          "p1": "p4",
+          "p2": "p1",
+          "construction": false
+        }
+      },
+      "constraints": [
+        {
+          "id": "k9",
+          "type": "horizontal",
+          "refs": [
+            "l5"
+          ]
+        },
+        {
+          "id": "k10",
+          "type": "horizontal",
+          "refs": [
+            "l7"
+          ]
+        },
+        {
+          "id": "k11",
+          "type": "vertical",
+          "refs": [
+            "l6"
+          ]
+        },
+        {
+          "id": "k12",
+          "type": "vertical",
+          "refs": [
+            "l8"
+          ]
+        },
+        {
+          "id": "k13",
+          "type": "distance",
+          "refs": [
+            "l5"
+          ],
+          "value": 100
+        },
+        {
+          "id": "k14",
+          "type": "distance",
+          "refs": [
+            "l6"
+          ],
+          "value": 60
+        },
+        {
+          "id": "k15",
+          "type": "coincident",
+          "refs": [
+            "p1",
+            "O"
+          ]
+        }
+      ],
+      "id": "f1",
+      "name": "Esboço1"
+    },
+    {
+      "type": "extrude",
+      "sketch": "f1",
+      "op": "add",
+      "end": {
+        "type": "blind",
+        "depth": 20
+      },
+      "id": "f2",
+      "name": "Extrusão1"
+    }
+  ]
+}

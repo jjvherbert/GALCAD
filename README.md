@@ -11,7 +11,7 @@ npm install
 npm run dev          # http://localhost:5173
 npm test             # 39 testes (Node): documento, solver, perfis, modificação, motor, nomes, serviço
 npm run typecheck    # TypeScript estrito
-npm run build && npm run test:e2e   # 9 fluxos de ponta a ponta no Chromium (Playwright)
+npm run build && npm run test:e2e   # 9 fluxos de aplicação + 23 verificações de navegação no Chromium
 ```
 
 ## O que faz
@@ -46,6 +46,38 @@ npm run build && npm run test:e2e   # 9 fluxos de ponta a ponta no Chromium (Pla
 **Ficheiros:**
 - Projeto em JSON aberto e legível (`.cadp.json`).
 - Exportação para **STEP** (sólido exato), **STL**, **3MF**, **OBJ** e **glTF (.glb)**, sempre em milímetros.
+
+## Navegação e comandos (como no SolidWorks)
+
+| Rato | Ação |
+|---|---|
+| Botão do meio, arrastar | Rodar (com o centro de rotação no ponto clicado com o meio, se houver) |
+| Ctrl + meio | Deslocar |
+| Shift + meio (para cima/baixo) | Zoom |
+| Alt + meio | Rolar |
+| Roda | Zoom no cursor (para a frente afasta; inverte-se nas preferências) |
+| Duplo clique no meio | Ajustar ao ecrã |
+| Clique esquerdo | Selecionar (Ctrl/Shift soma) e mostrar a barra de contexto |
+| Arrastar no vazio | Caixa de seleção: → janela (o que está dentro), ← cruzamento (o que toca) |
+| Duplo clique numa face | Editar a feature que a criou |
+| Botão direito | Menu de contexto |
+| Arrastar com o direito | Gestos do rato (8 direções, configuráveis) |
+
+| Teclado | Ação |
+|---|---|
+| Ctrl+1…7 | Frente, trás, esquerda, direita, topo, baixo, isométrica |
+| Ctrl+8 | Normal a (face ou plano selecionado) |
+| Espaço | Orientação da vista |
+| F / Z / Shift+Z | Ajustar / afastar / aproximar |
+| Setas, Shift+setas | Rodar 15°, 90° |
+| Alt+←/→ · Ctrl+setas | Rolar · deslocar |
+| Ctrl+Shift+Z | Vista anterior |
+| S | Barra de atalhos com pesquisa de comandos |
+| Enter | Repetir o último comando (num painel aberto: OK) |
+| Ctrl+B / Ctrl+Q | Reconstruir / forçar reconstrução completa |
+| Ctrl+Z / Ctrl+Y · Ctrl+N/O/S · Delete · Esc | Desfazer / refazer · novo / abrir / guardar · apagar · cancelar |
+
+A barra de comandos está organizada em separadores como o CommandManager (Features, Esboço, Referências, Avaliar, Módulos). Sobre o 3D há uma barra de vista com ajustar, vista anterior, orientação, normal a, estilo de visualização e planos. Os comandos estão num registo único (`src/app/commands.ts`), que alimenta o teclado, os menus, os gestos e a pesquisa.
 
 ## Arquitetura
 
@@ -84,4 +116,4 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
 
 As funcionalidades inspiram-se no que o SolidWorks e o CATIA fazem bem, mas a implementação é independente (*clean-room*). Não usa código, binários nem formatos nativos proprietários. A interoperabilidade faz-se por formatos abertos.
 
-Licença: provisoriamente LGPL-2.1-or-later, compatível com OpenCASCADE e PlaneGCS; está por decidir.
+Licença: **proprietária, todos os direitos reservados** (ver `LICENSE`). As bibliotecas de terceiros mantêm as suas licenças e obrigações (ver `THIRD_PARTY_NOTICES.md`). Em particular, o OpenCASCADE e o PlaneGCS, que são LGPL, têm de continuar a ser módulos WASM substituíveis.

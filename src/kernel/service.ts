@@ -12,7 +12,9 @@ export class KernelService {
   private last: RebuildResult | null = null;
   private lastMesh: MeshData | null = null;
 
-  async rebuild(doc: CadDocument): Promise<RebuildResponse> {
+  /** Reconstrói; `force` descarta a cache (reconstrução completa, Ctrl+Q). */
+  async rebuild(doc: CadDocument, force = false): Promise<RebuildResponse> {
+    if (force) this.engine.clear();
     const r = await this.engine.rebuild(doc);
     this.last = r;
     const body = r.ctx.body;

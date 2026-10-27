@@ -8,7 +8,7 @@ import type { FeatureStatus } from "./rebuild.ts";
 export type ExportFormat = "step" | "stl" | "3mf" | "obj" | "glb";
 
 export type Request =
-  | { type: "rebuild"; doc: CadDocument }
+  | { type: "rebuild"; doc: CadDocument; force?: boolean }
   | { type: "export"; format: ExportFormat; name: string };
 
 export interface SketchView {

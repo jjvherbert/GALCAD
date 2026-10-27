@@ -12,6 +12,8 @@ import { SketchEditor } from "./SketchEditor.tsx";
 import { PlaneChooser, VariablesDialog } from "./Dialogs.tsx";
 import { MassBlock, StatusBlock } from "./InfoPanel.tsx";
 import { describeName } from "./forms.tsx";
+import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
+import { ContextMenu, ContextToolbar, GestureHud, HeadsUpToolbar, OrientationMenu, ShortcutBar, featureOfPick } from "./Overlays.tsx";
 
 const SURF: Record<string, string> = { plane: "plana", cylinder: "cilíndrica", cone: "cónica", sphere: "esférica", torus: "tórica", bspline: "livre (B-spline)", bezier: "livre (Bézier)", revolution: "de revolução", extrusion: "de extrusão" };
 const CURVE: Record<string, string> = { line: "reta", circle: "circular", ellipse: "elíptica", bsplinecurve: "livre", beziercurve: "livre" };
@@ -37,11 +39,26 @@ function App() {
   const [density, setDensity] = useState(() => { try { return Number(localStorage.getItem("cad-prototipo:density")) || 7.85; } catch { return 7.85; } });
 
   useEffect(() => {
-    const v = new Viewport(host.current!);
-    v.onPick = (p, add) => store.pick(p, add);
-    v.onEmptyClick = () => { if (!store.state.pickTarget) store.clearSelection(); };
+    const v = new Viewport(host.current!, store.state.settings);
+    v.onPick = (p, add, at) => {
+      store.closeOverlays();
+      store.pick(p, add);
+      // barra de contexto junto à seleção (fora dos campos de seleção)
+      if (!store.state.pickTarget && !add && store.state.selection.length === 1) store.set({ contextToolbar: { at, pick: p } });
+    };
+    v.onEmptyClick = () => { store.closeOverlays(); if (!store.state.pickTarget) store.clearSelection(); };
     v.onHover = setHover;
+    v.onContextMenu = (at, pick) => store.set({ contextMenu: { at, pick }, contextToolbar: null });
+    v.onGesture = (dir) => { store.set({ gesture: null }); runCommand(store.state.settings.gestures[dir]); };
+    v.onGestureTrack = (dir, at) => store.set({ gesture: at ? { at, dir } : null });
+    v.onBoxSelect = (picks, add) => store.setSelection(picks, add);
+    v.onDoubleClick = (p) => {
+      // duplo clique numa face/aresta: editar a feature que a criou
+      const fid = featureOfPick(p);
+      if (fid && !store.state.edit && !store.state.sketch) store.editFeature(fid);
+    };
     vp.current = v;
+    setCommandViewport(v);
   }, []);
 
   useEffect(() => {
@@ -53,19 +70,17 @@ function App() {
   }, [st.result, st.selection, st.edit, st.pickTarget, st.choosingPlane, st.sketch?.id]);
 
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
+  useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
   useEffect(() => { try { localStorage.setItem("cad-prototipo:density", String(density)); } catch { /* ignorar */ } }, [density]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (store.state.sketch || t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.tagName === "SELECT") return;
-      const k = e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && k === "z") { e.preventDefault(); store.undo(); }
-      else if ((e.ctrlKey || e.metaKey) && k === "y") { e.preventDefault(); store.redo(); }
-      else if (k === "escape") { if (store.state.pickTarget) store.set({ pickTarget: null }); else if (store.state.edit) store.cancelEdit(); else store.clearSelection(); }
-      else if (k === "enter" && store.state.edit) store.confirmEdit();
-      else if (k === "f") vp.current?.fit(store.state.result);
-      else if ((k === "delete") && store.state.selectedFeature && !store.state.edit) store.deleteFeature(store.state.selectedFeature);
+      if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.tagName === "SELECT") return;
+      // no esboço, o editor trata as suas teclas; aqui só as de ficheiro
+      if (store.state.sketch && !((e.ctrlKey || e.metaKey) && ["s", "o", "n"].includes(e.key.toLowerCase()))) return;
+      if (store.state.showVariables) return;
+      handleKey(e);
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -77,19 +92,13 @@ function App() {
     return () => clearTimeout(t);
   }, [st.message]);
 
-  const onView = (name: "iso" | "front" | "top" | "right" | "fit") => {
-    const v = vp.current;
-    if (!v) return;
-    if (name === "fit") v.fit(st.result); else v.view(name, st.result);
-  };
-
   const selFeature = st.selectedFeature ? st.doc.features.find((f) => f.id === st.selectedFeature) : undefined;
   const r = st.result;
   const errors = r ? Object.values(r.status).filter((s) => s.state === "error").length : 0;
 
   return (
     <div class="app">
-      <Toolbar onView={onView} />
+      <Toolbar />
       <div class="main">
         {!st.sketch && (
           <aside class="side">
@@ -109,6 +118,7 @@ function App() {
         )}
         <section class="view">
           <div ref={host} class="viewport" />
+          {!st.sketch && <HeadsUpToolbar />}
           {st.sketch && <SketchEditor key={st.sketch.id} result={r} />}
           {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos" })[a]).join(" / ")} · Esc para terminar</div>}
         </section>
@@ -129,6 +139,12 @@ function App() {
         <span class="muted">{st.doc.name}{st.dirty ? " •" : ""} · mm</span>
       </footer>
       {st.showVariables && <VariablesDialog />}
+      {(st.contextMenu || st.shortcutBar || st.orientationMenu) && <div class="overlay-catcher" onPointerDown={() => store.closeOverlays()} onContextMenu={(e) => { e.preventDefault(); store.closeOverlays(); }} />}
+      {st.contextMenu && <ContextMenu />}
+      {st.contextToolbar && !st.edit && !st.sketch && <ContextToolbar />}
+      {st.shortcutBar && <ShortcutBar />}
+      {st.orientationMenu && <OrientationMenu />}
+      {st.gesture && <GestureHud />}
     </div>
   );
 }

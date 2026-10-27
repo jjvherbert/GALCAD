@@ -21,7 +21,7 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
     let msg: Response;
     try {
       await ready;
-      const result = data.type === "rebuild" ? await service.rebuild(data.doc) : await service.export(data.format, data.name);
+      const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force) : await service.export(data.format, data.name);
       msg = { id: data.id, ok: true, result };
     } catch (e) {
       msg = { id: data.id, ok: false, error: (e as Error)?.message ?? String(e) };

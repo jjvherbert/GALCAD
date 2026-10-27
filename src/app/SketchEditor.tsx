@@ -69,6 +69,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const [msg, setMsg] = useState<string | null>(null);
   const hist = useRef(new History<SketchData>({ state: { entities: draft.entities, constraints: draft.constraints }, label: "início" }));
   const drag = useRef<{ mode: "points" | "radius" | "pan" | "label"; ids: string[]; start: P2; base: SketchData; screen: [number, number]; moved: boolean; t0: [number, number] } | null>(null);
+  const lastMiddle = useRef(0);
   const freeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const scope = (n: string) => result?.variables.values[n];
@@ -357,6 +358,12 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       if (d.mode !== "pan") commit(data(), "Arrastar");
       return;
     }
+    if (e.button === 1) {
+      // duplo clique no botão do meio: ajustar (como no SolidWorks)
+      const now = performance.now();
+      if (now - lastMiddle.current < 350) { setView(null); lastMiddle.current = 0; } else lastMiddle.current = now;
+      return;
+    }
     if (d?.mode === "pan" && e.button !== 0) return;
     click(sx, sy, e.shiftKey || e.ctrlKey || e.metaKey, e.detail >= 2);
   }
@@ -364,7 +371,9 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   function onWheel(e: WheelEvent) {
     e.preventDefault();
     const [sx, sy] = local(e);
-    const f = Math.exp(-e.deltaY * 0.0015);
+    // como no 3D (e no SolidWorks): roda para a frente afasta, salvo se invertido nas preferências
+    let f = Math.exp(e.deltaY * 0.0015);
+    if (store.state.settings.reverseWheel) f = 1 / f;
     setView({ k: v.k * f, tx: sx - (sx - v.tx) * f, ty: sy - (sy - v.ty) * f });
   }
 

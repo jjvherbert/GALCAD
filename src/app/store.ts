@@ -8,6 +8,7 @@ import type { RebuildResponse } from "../kernel/protocol.ts";
 import { KernelClient } from "./kernel-client.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
+import { type Settings, loadSettings, saveSettings } from "./settings.ts";
 
 export type Pick =
   | { kind: "face"; name: string; hint: GeoHint; type: string }
@@ -58,6 +59,17 @@ export interface State {
   showVariables: boolean;
   fileName: string;
   dirty: boolean;
+  /** Sobreposições da interface (posições em coordenadas do ecrã). */
+  contextMenu: { at: [number, number]; pick: Pick | null } | null;
+  contextToolbar: { at: [number, number]; pick: Pick } | null;
+  shortcutBar: { at: [number, number] } | null;
+  orientationMenu: { at: [number, number] } | null;
+  gesture: { at: [number, number]; dir: import("./settings.ts").GestureDir | null } | null;
+  /** Feature sob o rato na árvore (realçada no 3D). */
+  hoverFeature: string | null;
+  settings: Settings;
+  /** Último comando executado (Enter repete). */
+  lastCommand: string | null;
 }
 
 const AUTOSAVE = "cad-prototipo:autosave";
@@ -79,6 +91,8 @@ class Store {
     this.state = {
       doc, edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: doc.name, dirty: false,
+      contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
+      settings: loadSettings(), lastCommand: null,
     };
     this.rebuild(0);
   }
@@ -110,12 +124,12 @@ class Store {
     return doc;
   }
 
-  rebuild(delay = 60) {
+  rebuild(delay = 60, force = false) {
     clearTimeout(this.timer);
     this.timer = setTimeout(async () => {
       this.set({ busy: true });
       try {
-        const r = await this.kernel.rebuild(this.displayDoc());
+        const r = await this.kernel.rebuild(this.displayDoc(), force);
         if (r) this.set({ result: r, busy: false, error: null });
       } catch (e) {
         this.set({ busy: false, error: (e as Error).message });
@@ -339,7 +353,30 @@ class Store {
     this.set({ selection: additive ? (has ? sel.filter((s) => key(s) !== key(p)) : [...sel, p]) : has && sel.length === 1 ? [] : [p] });
   }
 
-  clearSelection() { this.set({ selection: [] }); }
+  clearSelection() { this.set({ selection: [], contextToolbar: null }); }
+
+  /** Substitui (ou soma) a seleção, por exemplo a partir de uma caixa de seleção. */
+  setSelection(picks: Pick[], additive: boolean) {
+    const t = this.state.pickTarget;
+    if (t) { for (const p of picks) if (t.accept.includes(p.kind)) pickHandlers.get(t.field)?.(p); return; }
+    const key = (x: Pick) => (x.kind === "face" || x.kind === "edge" ? `${x.kind}:${x.name}` : `${x.kind}:${JSON.stringify(x.ref)}`);
+    const base = additive ? this.state.selection : [];
+    const seen = new Set(base.map(key));
+    this.set({ selection: [...base, ...picks.filter((p) => !seen.has(key(p)))], contextToolbar: null });
+  }
+
+  updateSettings(patch: Partial<Settings>) {
+    const settings = { ...this.state.settings, ...patch };
+    saveSettings(settings);
+    this.set({ settings });
+  }
+
+  /** Fecha as sobreposições temporárias (menus, barra de atalhos, barra de contexto). */
+  closeOverlays() {
+    if (this.state.contextMenu || this.state.contextToolbar || this.state.shortcutBar || this.state.orientationMenu) {
+      this.set({ contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null });
+    }
+  }
 }
 
 export const store = new Store();

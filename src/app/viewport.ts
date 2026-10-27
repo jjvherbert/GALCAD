@@ -1,12 +1,18 @@
-// Visualizador 3D (Three.js): corpo, arestas, esboços, geometria de referência e seleção.
+// Visualizador 3D (Three.js): corpo, arestas, esboços, geometria de referência, seleção e
+// navegação ao estilo do SolidWorks.
+//
+// Rato:   meio = rodar · Ctrl+meio = deslocar · Shift+meio = zoom · Alt+meio = rolar
+//         roda = zoom no cursor · duplo clique no meio = ajustar · clique no meio sobre a peça = centro de rotação
+//         esquerdo = selecionar (Ctrl/Shift soma) · arrastar no vazio = caixa (→ janela, ← cruzamento)
+//         direito = menu de contexto · arrastar com o direito = gestos
 import * as THREE from "three";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { MeshData } from "../kernel/mesh.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import type { Frame } from "../kernel/frame.ts";
 import type { CadDocument, PlaneRef, StdPlane, Vec3 } from "../doc/types.ts";
 import { sampleEntity, allEntities } from "../sketch/geometry.ts";
 import type { Pick, PickKind } from "./store.ts";
+import type { GestureDir, Settings } from "./settings.ts";
 
 const STD: Record<StdPlane, Frame> = {
   XY: { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] },
@@ -14,22 +20,50 @@ const STD: Record<StdPlane, Frame> = {
   YZ: { o: [0, 0, 0], x: [0, 1, 0], y: [0, 0, 1], z: [1, 0, 0] },
 };
 
-interface Theme { bg: number; body: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number }
+/** Orientações padrão (Z para cima): direção da câmara para o alvo invertida, e vetor "para cima". */
+export const VIEWS = {
+  front: { dir: [0, -1, 0], up: [0, 0, 1], label: "Frente", key: "Ctrl+1" },
+  back: { dir: [0, 1, 0], up: [0, 0, 1], label: "Trás", key: "Ctrl+2" },
+  left: { dir: [-1, 0, 0], up: [0, 0, 1], label: "Esquerda", key: "Ctrl+3" },
+  right: { dir: [1, 0, 0], up: [0, 0, 1], label: "Direita", key: "Ctrl+4" },
+  top: { dir: [0, 0, 1], up: [0, 1, 0], label: "Topo", key: "Ctrl+5" },
+  bottom: { dir: [0, 0, -1], up: [0, -1, 0], label: "Baixo", key: "Ctrl+6" },
+  iso: { dir: [1, -1, 1], up: [0, 0, 1], label: "Isométrica", key: "Ctrl+7" },
+} satisfies Record<string, { dir: Vec3; up: Vec3; label: string; key: string }>;
+export type ViewName = keyof typeof VIEWS;
+
+interface Theme { bg: number; body: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number; feat: number }
 const themes: Record<"light" | "dark", Theme> = {
-  light: { bg: 0xf3f4f6, body: 0xb9c7d6, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af },
-  dark: { bg: 0x14181f, body: 0x7f93a8, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280 },
+  light: { bg: 0xf3f4f6, body: 0xb9c7d6, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af, feat: 0x7dd3fc },
+  dark: { bg: 0x14181f, body: 0x7f93a8, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9 },
 };
 
 type Hit =
-  | { kind: "face"; index: number }
-  | { kind: "edge"; index: number }
-  | { kind: "plane"; ref: PlaneRef; label: string };
+  | { kind: "face"; index: number; point: THREE.Vector3 }
+  | { kind: "edge"; index: number; point: THREE.Vector3 }
+  | { kind: "plane"; ref: PlaneRef; label: string; point: THREE.Vector3 };
+
+interface CamState { pos: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; zoom: number; size: number }
+
+type Drag = {
+  button: number;
+  mode: "rotate" | "pan" | "zoom" | "roll" | "box" | "gesture" | "pending";
+  start: [number, number];
+  last: [number, number];
+  path: [number, number][];
+  moved: boolean;
+  shift: boolean;
+  ctrl: boolean;
+};
 
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly camera: THREE.OrthographicCamera;
-  readonly controls: OrbitControls;
+  /** Ponto para onde a câmara olha (e, por defeito, centro de rotação). */
+  readonly target = new THREE.Vector3();
+  private pivot: THREE.Vector3 | null = null;
+  private pivotMarker: THREE.Mesh;
   private bodyGroup = new THREE.Group();
   private refGroup = new THREE.Group();
   private sketchGroup = new THREE.Group();
@@ -41,34 +75,51 @@ export class Viewport {
   private planeMeshes: { mesh: THREE.Mesh; ref: PlaneRef; label: string }[] = [];
   private hover: Hit | null = null;
   private selected = new Set<string>();
+  private featureHighlight: string | null = null;
   private theme: Theme = themes.light;
   private ray = new THREE.Raycaster();
   private accept: PickKind[] | null = null;
-  private downAt: [number, number] | null = null;
-  onPick: (p: Pick, additive: boolean) => void = () => {};
-  onEmptyClick: () => void = () => {};
-  /** Passagem do rato: tipo de elemento, tipo geométrico e nome topológico (ou rótulo, para planos). */
-  onHover: (h: { kind: "face" | "edge" | "plane"; type: string; name: string } | null) => void = () => {};
+  private drag: Drag | null = null;
+  private lastMiddleUp = 0;
+  private history: CamState[] = [];
+  private boxEl: HTMLDivElement;
+  private gestureEl: HTMLDivElement;
   private size = 200;
   private el: HTMLElement;
+  private lastResult: RebuildResponse | null = null;
+  settings: Settings;
 
-  constructor(el: HTMLElement) {
+  onPick: (p: Pick, additive: boolean, at: [number, number]) => void = () => {};
+  onEmptyClick: () => void = () => {};
+  onHover: (h: { kind: "face" | "edge" | "plane"; type: string; name: string } | null) => void = () => {};
+  onContextMenu: (at: [number, number], pick: Pick | null) => void = () => {};
+  onGesture: (dir: GestureDir) => void = () => {};
+  onBoxSelect: (picks: Pick[], additive: boolean) => void = () => {};
+  onDoubleClick: (pick: Pick) => void = () => {};
+  onGestureTrack: (dir: GestureDir | null, at: [number, number] | null) => void = () => {};
+
+  constructor(el: HTMLElement, settings: Settings) {
     this.el = el;
+    this.settings = settings;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(2, devicePixelRatio));
     el.appendChild(this.renderer.domElement);
     THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e5, 1e5);
+    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1e6, 1e6);
     this.camera.up.set(0, 0, 1);
-    this.camera.position.set(1, -1.2, 0.9).multiplyScalar(300);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = false;
-    this.controls.zoomToCursor = true;
+    this.camera.position.set(1, -1, 1).multiplyScalar(1000);
+    this.camera.lookAt(this.target);
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x556677, 1.8));
     const key = new THREE.DirectionalLight(0xffffff, 1.6);
     this.camera.add(key);
     key.position.set(0.5, 1, 1);
-    this.scene.add(this.camera, this.bodyGroup, this.refGroup, this.sketchGroup);
+    this.pivotMarker = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), new THREE.MeshBasicMaterial({ color: 0xf97316, depthTest: false }));
+    this.pivotMarker.visible = false;
+    this.pivotMarker.renderOrder = 10;
+    this.scene.add(this.camera, this.bodyGroup, this.refGroup, this.sketchGroup, this.pivotMarker);
+    this.boxEl = Object.assign(document.createElement("div"), { className: "box-select" });
+    this.gestureEl = Object.assign(document.createElement("div"), { className: "gesture-trail" });
+    el.append(this.boxEl, this.gestureEl);
     new ResizeObserver(() => this.resize()).observe(el);
     const dark = matchMedia("(prefers-color-scheme: dark)");
     const setTheme = () => { this.theme = themes[dark.matches ? "dark" : "light"]; this.scene.background = new THREE.Color(this.theme.bg); this.recolor(); };
@@ -76,10 +127,14 @@ export class Viewport {
     setTheme();
     this.resize();
     const cv = this.renderer.domElement;
+    cv.addEventListener("pointerdown", (e) => this.onDown(e));
     cv.addEventListener("pointermove", (e) => this.onMove(e));
-    cv.addEventListener("pointerdown", (e) => { this.downAt = [e.clientX, e.clientY]; });
     cv.addEventListener("pointerup", (e) => this.onUp(e));
-    cv.addEventListener("pointerleave", () => this.setHover(null));
+    cv.addEventListener("pointerleave", () => { if (!this.drag) this.setHover(null); });
+    cv.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+    cv.addEventListener("contextmenu", (e) => e.preventDefault());
+    cv.addEventListener("dblclick", (e) => this.onDblClick(e));
+    cv.addEventListener("auxclick", (e) => e.preventDefault());
     this.renderer.setAnimationLoop(() => this.renderer.render(this.scene, this.camera));
   }
 
@@ -90,6 +145,14 @@ export class Viewport {
     this.camera.left = -this.size * a; this.camera.right = this.size * a;
     this.camera.top = this.size; this.camera.bottom = -this.size;
     this.camera.updateProjectionMatrix();
+    this.publish();
+  }
+
+  /** Estado da vista em atributos do elemento (útil para testes e depuração). */
+  private publish() {
+    const d = this.viewDir();
+    this.el.dataset.viewDir = d.toArray().map((v) => v.toFixed(3)).join(",");
+    this.el.dataset.zoom = this.camera.zoom.toFixed(4);
   }
 
   /** Tipos de entidade selecionáveis (null = todos). */
@@ -97,12 +160,17 @@ export class Viewport {
 
   setSelected(keys: string[]) { this.selected = new Set(keys); this.recolor(); }
 
+  /** Realça as faces criadas por uma feature (ao passar o rato na árvore). */
+  setFeatureHighlight(fid: string | null) { if (fid !== this.featureHighlight) { this.featureHighlight = fid; this.recolor(); } }
+
   // --- conteúdo ----------------------------------------------------------------
 
   update(result: RebuildResponse | null, doc: CadDocument, opts: { hideSketch?: string; showPlanes: boolean }) {
+    this.lastResult = result;
     this.setMesh(result?.mesh ?? null);
-    this.setReferences(result, doc, opts.showPlanes);
+    this.setReferences(result, doc, opts.showPlanes || this.settings.showPlanes);
     this.setSketches(result, doc, opts.hideSketch);
+    this.applyDisplayStyle();
   }
 
   private disposeGroup(g: THREE.Group) {
@@ -141,6 +209,24 @@ export class Viewport {
     this.edgeLines = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ vertexColors: true }));
     this.bodyGroup.add(this.faceMesh, this.edgeLines);
     this.recolor();
+  }
+
+  /** Estilo de visualização: sombreado com arestas, sombreado, ou arestas (fio de arame). */
+  setDisplayStyle(style: Settings["displayStyle"]) { this.settings.displayStyle = style; this.applyDisplayStyle(); }
+
+  private applyDisplayStyle() {
+    const style = this.settings.displayStyle;
+    if (this.faceMesh) {
+      const m = this.faceMesh.material as THREE.MeshStandardMaterial;
+      m.transparent = style === "wireframe";
+      m.opacity = style === "wireframe" ? 0.06 : 1;
+      m.depthWrite = style !== "wireframe";
+      m.needsUpdate = true;
+    }
+    if (this.edgeLines) {
+      this.edgeLines.visible = style !== "shaded";
+      (this.edgeLines.material as THREE.LineBasicMaterial).depthTest = style !== "wireframe";
+    }
   }
 
   private planeQuad(f: Frame, size: number, color: number, opacity: number) {
@@ -187,7 +273,6 @@ export class Viewport {
       h.position.set(...f.o);
       this.refGroup.add(h);
     }
-    // origem
     this.refGroup.add(new THREE.AxesHelper(s / 6));
   }
 
@@ -198,7 +283,7 @@ export class Viewport {
       if (id === hide) continue;
       const f = doc.features.find((x) => x.id === id);
       if (!f || f.suppressed) continue;
-      // esconder esboços já consumidos por features (como no SolidWorks), exceto o selecionado
+      // esconder esboços já consumidos por features (como no SolidWorks)
       const used = doc.features.some((x) => JSON.stringify(x).includes(`"${id}"`) && x.id !== id);
       if (used) continue;
       const ents = allEntities({ entities: sv.entities });
@@ -234,16 +319,19 @@ export class Viewport {
   }
 
   private recolor() {
-    if (!this.mesh || !this.faceMesh || !this.edgeLines) {
-      for (const p of this.planeMeshes) (p.mesh.material as THREE.MeshBasicMaterial).color.set(this.selected.has(`plane:${JSON.stringify(p.ref)}`) ? this.theme.sel : p.ref.kind === "std" ? this.theme.plane : 0x22a06b);
-      return;
+    for (const p of this.planeMeshes) {
+      const k = `plane:${JSON.stringify(p.ref)}`;
+      const hoverKey = this.hover ? this.keyOf(this.hover) : "";
+      (p.mesh.material as THREE.MeshBasicMaterial).color.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : p.ref.kind === "std" ? this.theme.plane : 0x22a06b);
     }
+    if (!this.mesh || !this.faceMesh || !this.edgeLines) return;
     const col = this.faceMesh.geometry.getAttribute("color") as THREE.BufferAttribute;
     const c = new THREE.Color();
     const hoverKey = this.hover ? this.keyOf(this.hover) : "";
+    const fh = this.featureHighlight ? `${this.featureHighlight}:` : null;
     this.mesh.faces.forEach((f, i) => {
       const k = `face:${f.name}`;
-      c.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : this.theme.body);
+      c.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : fh && f.name.startsWith(fh) ? this.theme.feat : this.theme.body);
       const [lo, hi] = this.faceVerts[i];
       for (let v = lo; v <= hi; v++) col.setXYZ(v, c.r, c.g, c.b);
     });
@@ -255,12 +343,6 @@ export class Viewport {
       for (let v = e.start; v < e.start + e.count; v++) ecol.setXYZ(v, c.r, c.g, c.b);
     });
     ecol.needsUpdate = true;
-    const mat = this.edgeLines.material as THREE.LineBasicMaterial;
-    mat.needsUpdate = true;
-    for (const p of this.planeMeshes) {
-      const k = `plane:${JSON.stringify(p.ref)}`;
-      (p.mesh.material as THREE.MeshBasicMaterial).color.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : p.ref.kind === "std" ? this.theme.plane : 0x22a06b);
-    }
   }
 
   private setHover(h: Hit | null) {
@@ -274,83 +356,323 @@ export class Viewport {
     else this.onHover({ kind: "plane", type: "plane", name: h.label });
   }
 
-  private hitTest(ev: PointerEvent): Hit | null {
+  private local(ev: { clientX: number; clientY: number }): [number, number] {
+    const r = this.renderer.domElement.getBoundingClientRect();
+    return [ev.clientX - r.left, ev.clientY - r.top];
+  }
+
+  private worldPerPx() {
+    return (this.camera.top - this.camera.bottom) / this.camera.zoom / (this.el.clientHeight || 1);
+  }
+
+  private hitTest(ev: { clientX: number; clientY: number }, accept = this.accept): Hit | null {
     const r = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     this.ray.setFromCamera(ndc, this.camera);
-    const ok = (k: PickKind) => !this.accept || this.accept.includes(k);
-    // tolerância das arestas: ~6 px
-    const worldPerPx = (this.camera.top - this.camera.bottom) / this.camera.zoom / r.height;
-    this.ray.params.Line = { threshold: worldPerPx * 6 };
+    const ok = (k: PickKind) => !accept || accept.includes(k);
+    const wpp = this.worldPerPx();
+    this.ray.params.Line = { threshold: wpp * 6 };
     let faceHit: THREE.Intersection | undefined;
     if (this.faceMesh) faceHit = this.ray.intersectObject(this.faceMesh)[0];
-    if (this.edgeLines && ok("edge")) {
+    if (this.edgeLines && this.edgeLines.visible !== false && ok("edge")) {
       const eh = this.ray.intersectObject(this.edgeLines)[0];
-      if (eh && (!faceHit || eh.distance <= faceHit.distance + worldPerPx * 8) && eh.index !== undefined) {
+      if (eh && (!faceHit || eh.distance <= faceHit.distance + wpp * 8 || this.settings.displayStyle === "wireframe") && eh.index !== undefined) {
         const vi = eh.index;
         const idx = this.mesh!.edges.findIndex((e) => vi >= e.start && vi < e.start + e.count);
-        if (idx >= 0) return { kind: "edge", index: idx };
+        if (idx >= 0) return { kind: "edge", index: idx, point: eh.point };
       }
     }
-    if (faceHit && faceHit.faceIndex != null && ok("face")) return { kind: "face", index: this.faceOfTri[faceHit.faceIndex] };
+    if (faceHit && faceHit.faceIndex != null && ok("face")) return { kind: "face", index: this.faceOfTri[faceHit.faceIndex], point: faceHit.point };
     if (faceHit) return null;
     if (ok("plane")) {
       const ph = this.ray.intersectObjects(this.planeMeshes.map((p) => p.mesh), false)[0];
-      if (ph) { const p = this.planeMeshes.find((x) => x.mesh === ph.object)!; return { kind: "plane", ref: p.ref, label: p.label }; }
+      if (ph) { const p = this.planeMeshes.find((x) => x.mesh === ph.object)!; return { kind: "plane", ref: p.ref, label: p.label, point: ph.point }; }
     }
     return null;
   }
 
-  private onMove(e: PointerEvent) {
-    if (e.buttons) return;
-    this.setHover(this.hitTest(e));
+  private toPick(h: Hit): Pick {
+    if (h.kind === "face") { const f = this.mesh!.faces[h.index]; return { kind: "face", name: f.name, type: f.type, hint: { c: f.center, n: f.normal } }; }
+    if (h.kind === "edge") { const e = this.mesh!.edges[h.index]; return { kind: "edge", name: e.name, type: e.type, hint: { c: e.mid, n: e.dir } }; }
+    return { kind: "plane", ref: h.ref, label: h.label };
   }
 
-  private onUp(e: PointerEvent) {
-    if (!this.downAt || Math.hypot(e.clientX - this.downAt[0], e.clientY - this.downAt[1]) > 4 || e.button !== 0) return;
-    const h = this.hitTest(e);
-    if (!h) { this.onEmptyClick(); return; }
-    const additive = e.ctrlKey || e.shiftKey || e.metaKey;
-    if (h.kind === "face") {
-      const f = this.mesh!.faces[h.index];
-      this.onPick({ kind: "face", name: f.name, type: f.type, hint: { c: f.center, n: f.normal } }, additive);
-    } else if (h.kind === "edge") {
-      const ed = this.mesh!.edges[h.index];
-      this.onPick({ kind: "edge", name: ed.name, type: ed.type, hint: { c: ed.mid, n: ed.dir } }, additive);
-    } else {
-      this.onPick({ kind: "plane", ref: h.ref, label: h.label }, additive);
+  /** Elemento (face/aresta/plano) sob um ponto do ecrã, sem filtro. */
+  pickAt(clientX: number, clientY: number): Pick | null {
+    const h = this.hitTest({ clientX, clientY }, null);
+    return h ? this.toPick(h) : null;
+  }
+
+  // --- rato ------------------------------------------------------------------------
+
+  private onDown(e: PointerEvent) {
+    const p = this.local(e);
+    this.renderer.domElement.setPointerCapture(e.pointerId);
+    let mode: Drag["mode"] = "pending";
+    if (e.button === 1) mode = e.ctrlKey ? "pan" : e.shiftKey ? "zoom" : e.altKey ? "roll" : "rotate";
+    else if (e.button === 2) mode = "gesture";
+    else if (e.button === 0) mode = this.hitTest(e) ? "pending" : "box";
+    this.drag = { button: e.button, mode, start: p, last: p, path: [p], moved: false, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
+    if (e.button === 1) {
+      e.preventDefault();
+      if (mode === "rotate" && !this.pivot) this.pivot = this.target.clone();
     }
   }
 
-  // --- câmara ----------------------------------------------------------------
+  private onMove(e: PointerEvent) {
+    const p = this.local(e);
+    const d = this.drag;
+    if (!d) { this.setHover(this.hitTest(e)); return; }
+    const dx = p[0] - d.last[0], dy = p[1] - d.last[1];
+    if (!d.moved && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) > 4) {
+      d.moved = true;
+      if (d.mode === "rotate" || d.mode === "pan" || d.mode === "zoom" || d.mode === "roll") this.pushHistory();
+    }
+    d.last = p;
+    if (!d.moved) return;
+    switch (d.mode) {
+      case "rotate": this.rotateBy(dx * 0.5, dy * 0.5, this.pivot ?? this.target); break;
+      case "pan": this.panBy(dx, dy); break;
+      case "zoom": this.zoomAt(Math.exp(dy * 0.01), d.start); break;
+      case "roll": this.roll(dx * 0.5); break;
+      case "box": this.drawBox(d.start, p); break;
+      case "gesture": {
+        d.path.push(p);
+        this.drawGesture(d.path);
+        this.onGestureTrack(this.gestureDir(d.start, p), [e.clientX, e.clientY]);
+        break;
+      }
+    }
+  }
 
-  fit(result: RebuildResponse | null) {
+  private onUp(e: PointerEvent) {
+    const d = this.drag;
+    this.drag = null;
+    if (!d) return;
+    const p = this.local(e);
+    if (d.button === 1) {
+      const now = performance.now();
+      if (!d.moved) {
+        if (now - this.lastMiddleUp < 350) { this.fit(this.lastResult); this.lastMiddleUp = 0; return; }
+        this.lastMiddleUp = now;
+        // clique no meio sobre a geometria: centro de rotação nesse ponto
+        const h = this.hitTest(e, null);
+        this.setPivot(h ? h.point : null);
+      }
+      this.publish();
+      return;
+    }
+    if (d.button === 2) {
+      this.gestureEl.replaceChildren();
+      this.onGestureTrack(null, null);
+      const dir = this.gestureDir(d.start, p);
+      if (d.moved && dir) this.onGesture(dir);
+      else {
+        const h = this.hitTest(e, null);
+        this.onContextMenu([e.clientX, e.clientY], h ? this.toPick(h) : null);
+      }
+      return;
+    }
+    if (d.button !== 0) return;
+    if (d.mode === "box") {
+      this.boxEl.style.display = "none";
+      if (d.moved) { this.onBoxSelect(this.boxSelect(d.start, p), d.ctrl || d.shift); return; }
+      this.onEmptyClick();
+      return;
+    }
+    if (d.moved) return;
+    const h = this.hitTest(e);
+    if (!h) { this.onEmptyClick(); return; }
+    this.onPick(this.toPick(h), e.ctrlKey || e.shiftKey || e.metaKey, [e.clientX, e.clientY]);
+  }
+
+  private onDblClick(e: MouseEvent) {
+    if (e.button !== 0) return;
+    const h = this.hitTest(e, null);
+    if (h) this.onDoubleClick(this.toPick(h));
+  }
+
+  private wheelAt = 0;
+  private onWheel(e: WheelEvent) {
+    e.preventDefault();
+    // uma sequência de roda conta como uma só mudança de vista no histórico
+    if (performance.now() - this.wheelAt > 500) this.pushHistory();
+    this.wheelAt = performance.now();
+    // SolidWorks: roda para a frente (deltaY < 0) afasta; "reverseWheel" inverte
+    let f = Math.exp(-e.deltaY * 0.0015);
+    if (this.settings.reverseWheel) f = 1 / f;
+    this.zoomAt(f, this.local(e));
+  }
+
+  private gestureDir(a: [number, number], b: [number, number]): GestureDir | null {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    if (Math.hypot(dx, dy) < 40) return null;
+    const ang = (Math.atan2(-dy, dx) * 180) / Math.PI; // 0 = direita, 90 = cima
+    const dirs: GestureDir[] = ["right", "upRight", "up", "upLeft", "left", "downLeft", "down", "downRight"];
+    return dirs[((Math.round(ang / 45) % 8) + 8) % 8];
+  }
+
+  private drawBox(a: [number, number], b: [number, number]) {
+    const s = this.boxEl.style;
+    s.display = "block";
+    s.left = `${Math.min(a[0], b[0])}px`; s.top = `${Math.min(a[1], b[1])}px`;
+    s.width = `${Math.abs(b[0] - a[0])}px`; s.height = `${Math.abs(b[1] - a[1])}px`;
+    // → janela (contínua): só o que está totalmente dentro; ← cruzamento (tracejada): o que toca
+    this.boxEl.classList.toggle("crossing", b[0] < a[0]);
+  }
+
+  private drawGesture(path: [number, number][]) {
+    const svg = `<svg width="100%" height="100%"><polyline points="${path.map((p) => p.join(",")).join(" ")}" /></svg>`;
+    this.gestureEl.innerHTML = svg;
+  }
+
+  /** Seleção por caixa: arestas (e faces, se o filtro as aceitar) dentro da caixa ou que a cruzam. */
+  boxSelect(a: [number, number], b: [number, number]): Pick[] {
+    if (!this.mesh) return [];
+    const crossing = b[0] < a[0];
+    const [x0, x1, y0, y1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    const v = new THREE.Vector3();
+    const inside = (arr: Float32Array, i: number) => {
+      v.set(arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]).project(this.camera);
+      const sx = ((v.x + 1) / 2) * w, sy = ((1 - v.y) / 2) * h;
+      return sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
+    };
+    const test = (arr: Float32Array, idx: Iterable<number>) => {
+      let any = false, all = true;
+      for (const i of idx) { const ins = inside(arr, i); any ||= ins; all &&= ins; if (crossing && any) return true; }
+      return crossing ? any : all;
+    };
+    const out: Pick[] = [];
+    const wantFaces = this.accept?.includes("face") && !this.accept.includes("edge");
+    const wantEdges = !this.accept || this.accept.includes("edge");
+    if (wantEdges) this.mesh.edges.forEach((e, i) => {
+      const idx = Array.from({ length: e.count }, (_, k) => e.start + k);
+      if (test(this.mesh!.lines, idx)) out.push(this.toPick({ kind: "edge", index: i, point: new THREE.Vector3() }));
+    });
+    if (wantFaces) this.mesh.faces.forEach((f, i) => {
+      const [lo, hi] = this.faceVerts[i];
+      if (test(this.mesh!.vertices, Array.from({ length: hi - lo + 1 }, (_, k) => lo + k))) out.push(this.toPick({ kind: "face", index: i, point: new THREE.Vector3() }));
+    });
+    return out;
+  }
+
+  // --- câmara ------------------------------------------------------------------------
+
+  private viewDir(): THREE.Vector3 { return this.camera.position.clone().sub(this.target).normalize(); }
+
+  private save(): CamState {
+    return { pos: this.camera.position.clone(), target: this.target.clone(), up: this.camera.up.clone(), zoom: this.camera.zoom, size: this.size };
+  }
+  private restore(s: CamState) {
+    this.camera.position.copy(s.pos); this.target.copy(s.target); this.camera.up.copy(s.up); this.camera.zoom = s.zoom; this.size = s.size;
+    this.camera.lookAt(this.target);
+    this.resize();
+  }
+  private pushHistory() { this.history.push(this.save()); if (this.history.length > 30) this.history.shift(); }
+
+  /** Vista anterior (como Ctrl+Shift+Z no SolidWorks). */
+  previousView() { const s = this.history.pop(); if (s) this.restore(s); }
+
+  setPivot(p: THREE.Vector3 | null) {
+    this.pivot = p ? p.clone() : null;
+    this.pivotMarker.visible = !!p;
+    if (p) { this.pivotMarker.position.copy(p); this.pivotMarker.scale.setScalar(this.worldPerPx() * 4); }
+  }
+
+  /** Rodar (graus) em torno dos eixos do ecrã, centrado num ponto. */
+  rotateBy(degX: number, degY: number, aboutPoint: THREE.Vector3 = this.pivot ?? this.target) {
+    const cam = this.camera;
+    const about = aboutPoint.clone(); // pode ser o próprio target, que também é rodado
+    const up = cam.up.clone().normalize();
+    const back = this.viewDir();
+    const right = up.clone().cross(back).normalize();
+    const screenUp = back.clone().cross(right).normalize();
+    const q = new THREE.Quaternion().setFromAxisAngle(screenUp, (-degX * Math.PI) / 180)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(right, (-degY * Math.PI) / 180));
+    const rot = (v: THREE.Vector3) => v.sub(about).applyQuaternion(q).add(about);
+    rot(cam.position); rot(this.target);
+    cam.up.copy(screenUp.applyQuaternion(q));
+    cam.lookAt(this.target);
+    if (this.pivotMarker.visible) this.pivotMarker.scale.setScalar(this.worldPerPx() * 4);
+    this.publish();
+  }
+
+  /** Rolar a vista (graus) em torno da direção de visão. */
+  roll(deg: number) {
+    this.camera.up.applyAxisAngle(this.viewDir(), (deg * Math.PI) / 180);
+    this.camera.lookAt(this.target);
+    this.publish();
+  }
+
+  /** Deslocar a vista em pixels. */
+  panBy(dx: number, dy: number) {
+    const wpp = this.worldPerPx();
+    const back = this.viewDir();
+    const right = this.camera.up.clone().cross(back).normalize();
+    const up = back.clone().cross(right).normalize();
+    const delta = right.multiplyScalar(-dx * wpp).add(up.multiplyScalar(dy * wpp));
+    this.camera.position.add(delta);
+    this.target.add(delta);
+    this.publish();
+  }
+
+  /** Zoom por um fator (> 1 afasta, < 1 aproxima), mantendo fixo o ponto sob o cursor. */
+  zoomAt(factor: number, at?: [number, number]) {
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    const p = at ?? [w / 2, h / 2];
+    const before = this.screenToWorld(p);
+    this.camera.zoom = Math.min(1e4, Math.max(1e-3, this.camera.zoom / factor));
+    this.camera.updateProjectionMatrix();
+    const after = this.screenToWorld(p);
+    const delta = before.sub(after);
+    this.camera.position.add(delta);
+    this.target.add(delta);
+    this.publish();
+  }
+
+  private screenToWorld(p: [number, number]): THREE.Vector3 {
+    const w = this.el.clientWidth, h = this.el.clientHeight;
+    return new THREE.Vector3((p[0] / w) * 2 - 1, -(p[1] / h) * 2 + 1, 0).unproject(this.camera);
+  }
+
+  fit(result: RebuildResponse | null = this.lastResult, record = true) {
+    if (record) this.pushHistory();
     const m = result?.mass;
     const c = m ? new THREE.Vector3((m.bbox.min[0] + m.bbox.max[0]) / 2, (m.bbox.min[1] + m.bbox.max[1]) / 2, (m.bbox.min[2] + m.bbox.max[2]) / 2) : new THREE.Vector3();
     this.size = this.modelSize(result) * 0.6;
-    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-    this.controls.target.copy(c);
-    this.camera.position.copy(c).addScaledVector(dir, this.size * 10);
+    const dir = this.viewDir();
+    this.target.copy(c);
+    this.camera.position.copy(c).addScaledVector(dir, this.size * 20);
     this.camera.zoom = 1;
+    this.camera.lookAt(this.target);
+    this.setPivot(null);
     this.resize();
-    this.controls.update();
   }
 
-  view(name: "iso" | "front" | "top" | "right" | "back" | "bottom" | "left", result: RebuildResponse | null) {
-    const d: Record<string, Vec3> = { iso: [1, -1.2, 0.9], front: [0, -1, 0], back: [0, 1, 0], top: [0, 0, 1], bottom: [0, 0, -1], right: [1, 0, 0], left: [-1, 0, 0] };
-    const v = d[name];
-    this.camera.up.set(0, 0, 1);
-    if (name === "top" || name === "bottom") this.camera.up.set(0, 1, 0);
-    this.camera.position.copy(this.controls.target).add(new THREE.Vector3(...v).normalize().multiplyScalar(1000));
-    this.fit(result);
+  view(name: ViewName, result: RebuildResponse | null = this.lastResult) {
+    this.pushHistory();
+    const v = VIEWS[name];
+    this.camera.up.set(...v.up);
+    this.camera.position.copy(this.target).add(new THREE.Vector3(...v.dir).normalize().multiplyScalar(1000));
+    this.camera.lookAt(this.target);
+    this.fit(result, false);
   }
 
-  /** Olhar perpendicularmente a um plano (para esboçar). */
-  normalTo(f: Frame) {
-    this.camera.up.set(...f.y);
-    this.camera.position.copy(new THREE.Vector3(...f.o)).add(new THREE.Vector3(...f.z).multiplyScalar(1000));
-    this.controls.target.set(...f.o);
-    this.controls.update();
+  /** Olhar perpendicularmente a um plano (Ctrl+8, "Normal a"). */
+  normalTo(o: Vec3, n: Vec3, up?: Vec3) {
+    this.pushHistory();
+    const nn = new THREE.Vector3(...n).normalize();
+    // "para cima" do ecrã: o eixo dado, ou o Z global projetado (ou Y, se a normal for vertical)
+    let u = up ? new THREE.Vector3(...up) : new THREE.Vector3(0, 0, 1);
+    if (Math.abs(u.dot(nn)) > 0.99) u = new THREE.Vector3(0, 1, 0);
+    u.sub(nn.clone().multiplyScalar(u.dot(nn))).normalize();
+    const dist = this.camera.position.distanceTo(this.target) || 1000;
+    this.target.set(...o);
+    this.camera.up.copy(u);
+    this.camera.position.copy(this.target).addScaledVector(nn, dist);
+    this.camera.lookAt(this.target);
+    this.publish();
   }
 
   /** Converte um ponto 3D em pixels do canvas (para sobreposições). */

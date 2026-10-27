@@ -2,6 +2,20 @@
 
 Produto: CAD geral de sólidos e superfícies. Os módulos de domínio (náutica, FEA, …) são plugins por cima de um núcleo genérico, e o núcleo nunca depende de um plugin.
 
+## Visão do produto
+
+CAD paramétrico completo, com **paridade com o SolidWorks** na modelação, nos comandos, nos atalhos de rato e de teclado e na navegação. A isto juntam-se:
+- o melhor do **CATIA**: superfícies GSD, classe A, knowledgeware, publicação;
+- as **tags/atributos e o PMI** do **Siemens NX**;
+- outras boas ideias, para um produto completo.
+
+Os domínios de engenharia entram como módulos:
+- **moldes:** saída e análise de inclinação, linha de partição, superfícies de fecho, núcleo/cavidade, contração;
+- **compósitos:** plies, zonas, rosetas, sequência de laminação, planificação, exportação para corte;
+- **náutica.**
+
+**Ligação ao cálculo.** Um adaptador ajusta automaticamente o esboço (e as cotas que o comandam) a partir de um **modelo FEM de ordem reduzida (ROM)**. O ROM avalia rapidamente o desempenho, por exemplo tensão, rigidez ou deslocamento, em função dos parâmetros. Um otimizador move as variáveis e as cotas do esboço até cumprir os objetivos e restrições, e o resultado é verificado com o FEM completo.
+
 ## Fase 0: protótipo ✅
 OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, primeiro sistema de plugins.
 
@@ -47,6 +61,11 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
 - Publicação de geometria entre peças e montagens (referências externas controladas)
 - Exportação STEP AP242 com PMI
 
+## Fase 5: PMI, tags e produção (inspirado no Siemens NX)
+- PMI 3D semântico: cotas, tolerâncias geométricas (GD&T, ISO 1101), referências (datums), acabamentos e notas ligadas às faces pelo nome topológico
+- Tags e atributos em features, faces e corpos (material, processo, fornecedor, requisitos), pesquisáveis e exportáveis
+- Exportação STEP AP242 com PMI semântico; vistas de modelo (Model Views) para MBD
+
 ## Módulos (plugins), desenvolvidos em paralelo quando o núcleo o permitir
 - **nautica** (já existe um casco paramétrico simples com hidrostática de conceção):
   - linhas e fairing do casco, tabelas de offsets;
@@ -54,6 +73,26 @@ OpenCASCADE/WASM num worker, visualizador Three.js, exportação STEP/STL, prime
   - estrutura e laminados de PRFV, apêndices com perfis NACA;
   - planificação de chapas.
 - **fea:** Gmsh para a malha, CalculiX ou Code_Aster para o cálculo, resultados no visualizador. Casos náuticos, como as pressões da ISO 12215-5, vivem no plugin `nautica`.
+- **rom-fea (esboço adaptativo):**
+  - amostragem do espaço de parâmetros (variáveis e cotas) com o FEM completo;
+  - modelo de ordem reduzida (POD/RBF ou PGD, com estimativa de erro);
+  - otimização sobre o ROM com restrições geométricas, aplicada às cotas do esboço pelo próprio motor paramétrico;
+  - verificação final com o FEM completo, mostrando sempre as hipóteses e os limites de validade do ROM.
+- **moldes:**
+  - análise de inclinação por cores;
+  - linha e superfície de partição;
+  - fecho de furos;
+  - núcleo e cavidade;
+  - fator de contração;
+  - machos e postiços;
+  - canais e arrefecimento (mais tarde).
+- **compósitos:**
+  - definição de plies e zonas sobre superfícies;
+  - rosetas e orientação;
+  - drapeamento e planificação, com previsão de enrugamento;
+  - tabelas de laminação;
+  - exportação para corte e laser de posicionamento;
+  - ligação ao FEA de cascas laminadas.
 - **cam / fabrico** (opcional): exportação para impressão 3D (3MF, já existe) e corte (DXF).
 
 ## API de plugins (evolução)
