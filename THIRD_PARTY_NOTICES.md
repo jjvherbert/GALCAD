@@ -22,7 +22,10 @@ O instalador da app de ambiente de trabalho **inclui** estes programas (pasta `r
 | OpenBLAS, ARPACK-ng, runtime gfortran/gcc (libgfortran, libgomp, libquadmath, winpthreads), VC runtime | ver MANIFEST | BSD-3 / BSD-3 / GPL-3 com exceção de runtime / MIT·ZPL / licença de redistribuição da Microsoft | dependências do pacote CalculiX (conda-forge) |
 | Gmsh | 4.15.2 | GPL-2.0-or-later (com as exceções do Gmsh) | biblioteca do pacote oficial `gmsh` (PyPI, win_amd64); código: https://gitlab.onelab.info/gmsh/gmsh |
 | XFOIL | 6.99 | GPL-2.0 (plotlib: LGPL-2) | código do pacote Debian/Ubuntu `xfoil_6.99.dfsg+1` (com as correções do pacote), compilado sem gráficos |
-| Lançador `gmsh.exe`, backend gráfico nulo do XFOIL | — | código próprio | `desktop/gmsh-launcher.c`, `desktop/xfoil-nogfx.c` |
+| SU2 (SU2_CFD) | 8.3.0 | LGPL-2.1 | binário oficial `SU2-v8.3.0-win64.zip` (https://github.com/su2code/SU2) |
+| OpenFOAM | v2606 (MinGW) | GPL-3.0-or-later | instalador oficial `OpenFOAM-v2606-windows-mingw.exe` da openfoam.com (SourceForge); incluídos só `platforms/*/bin` e `etc` |
+| code_aster | 18.1.11 | GPL-3.0 | ambiente conda-forge win-64 (`code-aster`, Python 3.11), com as dependências: MEDCoupling/MED, HDF5, MUMPS, MFront/MGIS, SciPy/NumPy, Boost, Scotch/METIS (licenças livres, ver `licenses/` do ambiente) e **Intel oneMKL e Intel Fortran runtime** (licença Intel Simplified Software License, redistribuível) |
+| Lançadores `gmsh.exe` e `run_aster.cmd`, backend gráfico nulo do XFOIL, relocação do code_aster | — | código próprio | `desktop/gmsh-launcher.c`, `desktop/xfoil-nogfx.c`, `desktop/build-solvers.py`, `desktop/relocate.cjs` |
 
 **Obrigações da GPL ao distribuir binários** (resumo, não substitui aconselhamento jurídico): incluir os textos das licenças (feito) e acompanhar o instalador com o código-fonte correspondente ou com uma oferta escrita válida por 3 anos (GPL-2 §3). **PENDENTE/VALIDAR**: publicar os arquivos de código-fonte exatos junto de cada release (os links e somas estão no MANIFEST) e confirmar com um jurista que a agregação (app proprietária + solvers GPL como programas separados, no mesmo instalador) está bem enquadrada.
 

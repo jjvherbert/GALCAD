@@ -8,11 +8,10 @@ CAD paramétrico no browser, para modelação de sólidos e de superfícies, com
 
 A GALCAD também existe como aplicação de ambiente de trabalho (Electron) com os solvers incluídos: instala-se com `GALCAD-Setup-<versão>.exe` e as simulações funcionam logo, sem instalar nada à parte nem copiar tokens.
 
-- **Incluídos no instalador** (~180 MB): CalculiX 2.23 (conda-forge, OpenBLAS), Gmsh 4.15.2 (biblioteca oficial + lançador próprio `desktop/gmsh-launcher.c`) e XFOIL 6.99 (código do Debian, compilado sem gráficos). Ficam em `resources/solvers` e correm como programas separados.
+- **Tudo incluído no instalador** (~560 MB; 2,4 GB instalado): CalculiX 2.23 (conda-forge, OpenBLAS), Gmsh 4.15.2 (biblioteca oficial + lançador próprio `desktop/gmsh-launcher.c`), XFOIL 6.99 (código do Debian, compilado sem gráficos), **SU2 8.3** (binário oficial de série), **OpenFOAM v2606** (versão MinGW oficial da openfoam.com, só executáveis e `etc`, em série sem MS-MPI) e **code_aster 18.1** (ambiente conda-forge win-64 relocável; o instalador corre `GALCAD.exe --galcad-setup` para o apontar à pasta de instalação). Ficam em `resources/solvers` e correm como programas separados.
 - **Agente embutido**: arranca com a app em 127.0.0.1, com um token novo a cada arranque passado à página (`window.cadDesktop`); a página não tem acesso ao Node.
-- **Não incluídos** (pesados ou sem versão Windows): code_aster e OpenFOAM — continuam a funcionar se estiverem instalados (WSL/Docker) e indicados em `CAD_ASTER`/no PATH.
 - **Obter o instalador**: GitHub → Actions → «Instalador Windows» → artefacto `GALCAD-Setup` (ou a release, nas etiquetas `v*`). O workflow testa os solvers num Windows real contra os casos de referência antes de empacotar.
-- **Construir localmente**: `python3 desktop/build-solvers.py` (Linux: micromamba, mingw-w64 gcc/gfortran, pip) e `npm run dist:win`; `npm run desktop` abre a app de ambiente de trabalho a partir do código.
+- **Construir localmente**: `python3 desktop/build-solvers.py` (Linux: micromamba, mingw-w64 gcc/gfortran, pip, 7-Zip) e `npm run dist:win`; `npm run desktop` abre a app de ambiente de trabalho a partir do código.
 
 ## Correr
 

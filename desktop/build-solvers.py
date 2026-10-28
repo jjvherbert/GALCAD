@@ -30,6 +30,12 @@ XFOIL = {
     "base": "http://archive.ubuntu.com/ubuntu/pool/universe/x/xfoil/",
 }
 CALCULIX = ["calculix=2.23", "libblas=*=*openblas", "liblapack=*=*openblas"]
+SU2 = {"version": "8.3.0", "url": "https://github.com/su2code/SU2/releases/download/v8.3.0/SU2-v8.3.0-win64.zip",
+       "sha256": "1c4f953b130efa9eebcd825b8f881d630e68227ea9ef2986ebff0c41dcc2cb73",
+       "license": "https://raw.githubusercontent.com/su2code/SU2/v8.3.0/LICENSE.md"}
+OPENFOAM = {"version": "v2606", "url": "https://sourceforge.net/projects/openfoam/files/v2606/OpenFOAM-v2606-windows-mingw.exe/download",
+            "file": "OpenFOAM-v2606-windows-mingw.exe", "sha256": "020321d58b42e1d2ad0b616cdde17f92503608edd902388fb8c73e94e9cb1e25"}
+ASTER = ["code-aster=18.1.11=*nompi*", "python=3.11"]
 
 
 def run(cmd, **kw):
@@ -178,18 +184,115 @@ def xfoil(out, work):
     return {"xfoil": {"exe": "xfoil/xfoil.exe", "version": XFOIL["version"], "source": XFOIL["base"], "files": XFOIL["files"], "notes": "sem gráficos; sem -ffpe-trap"}}
 
 
+def su2(out, work):
+    z = work / "SU2-win64.zip"
+    fetch(SU2["url"], z, SU2["sha256"])
+    dst = out / "su2"
+    dst.mkdir(parents=True, exist_ok=True)
+    import io
+    with zipfile.ZipFile(z) as outer, zipfile.ZipFile(io.BytesIO(outer.read("win64.zip"))) as inner:
+        (dst / "SU2_CFD.exe").write_bytes(inner.read("bin/SU2_CFD.exe"))
+    (dst / "licenses").mkdir(exist_ok=True)
+    urllib.request.urlretrieve(SU2["license"], dst / "licenses" / "LICENSE.md")
+    return {"su2": {"exe": "su2/SU2_CFD.exe", "version": SU2["version"], "source": SU2["url"], "sha256": SU2["sha256"], "notes": "binário oficial de série (sem MPI)"}}
+
+
+def openfoam(out, work):
+    """Só os executáveis, as bibliotecas e o etc da versão MinGW oficial; Pstream de série (sem MS-MPI)."""
+    exe = work / OPENFOAM["file"]
+    fetch(OPENFOAM["url"], exe, OPENFOAM["sha256"])
+    x = work / "openfoam-x"
+    shutil.rmtree(x, ignore_errors=True)
+    run(["7z", "x", "-y", "-bso0", "-bsp0", str(exe), "msys64.7z", f"-o{x}"])
+    proj = f"OpenFOAM-{OPENFOAM['version']}"
+    base = f"msys64/home/ofuser/OpenFOAM/{proj}"
+    run(["7z", "x", "-y", "-bso0", "-bsp0", str(x / "msys64.7z"), f"-o{x}", f"{base}/etc", f"{base}/platforms", f"{base}/LICENSE.md", f"{base}/README.md", "-r-"])
+    src = x / base
+    dst = out / "openfoam" / proj
+    shutil.rmtree(out / "openfoam", ignore_errors=True)
+    (dst / "platforms").mkdir(parents=True)
+    shutil.copytree(src / "etc", dst / "etc")
+    for t in (src / "platforms").iterdir():
+        shutil.copytree(t / "bin", dst / "platforms" / t.name / "bin")
+        dummy = dst / "platforms" / t.name / "bin" / "libPstream.dll-dummy"
+        if dummy.exists():
+            shutil.copy2(dummy, dst / "platforms" / t.name / "bin" / "libPstream.dll")
+    for f in ("LICENSE.md", "README.md"):
+        if (src / f).exists():
+            shutil.copy2(src / f, dst / f)
+    return {"openfoam": {"dir": f"openfoam/{proj}", "version": OPENFOAM["version"], "source": OPENFOAM["url"], "sha256": OPENFOAM["sha256"], "notes": "versão MinGW oficial (openfoam.com); Pstream de série; sem MSYS2"}}
+
+
+def code_aster(out, work):
+    """Ambiente conda win-64 relocável: a app substitui o caminho de construção nos ficheiros de texto no 1.º arranque."""
+    mm = os.environ.get("MICROMAMBA") or shutil.which("micromamba") or "/opt/mamba/bin/micromamba"
+    root = work / "mamba-root"
+    dst = out / "code_aster"
+    shutil.rmtree(dst, ignore_errors=True)
+    run([mm, "create", "-y", "-q", "-r", str(root), "-p", str(dst), "--platform", "win-64", "-c", "conda-forge", *ASTER],
+        env={**os.environ, "CONDA_OVERRIDE_WIN": "10.0.19045", "MAMBA_ROOT_PREFIX": str(root)})
+    # o micromamba, a criar um ambiente Windows a partir do Linux, põe os pacotes noarch em
+    # lib/python3.X/site-packages e alguns em lib/site-packages: juntá-los em Lib/site-packages
+    site = dst / "Lib" / "site-packages"
+    for wrong in list((dst / "lib").glob("python3*/site-packages")) + [dst / "lib" / "site-packages"]:
+        if wrong.is_dir():
+            for item in wrong.iterdir():
+                target = site / item.name
+                if target.exists():
+                    shutil.rmtree(item) if item.is_dir() else item.unlink()
+                else:
+                    shutil.move(str(item), str(target))
+    for leftover in list((dst / "lib").glob("python3*")) + [dst / "lib" / "site-packages", dst / "bin"]:
+        shutil.rmtree(leftover, ignore_errors=True)
+    if (dst / "lib").is_dir() and not any((dst / "lib").iterdir()):
+        (dst / "lib").rmdir()
+    # o que não é preciso para correr: cabeçalhos, bibliotecas de importação, símbolos de depuração
+    for rel in ("Library/include", "include", "conda-meta/history"):
+        p = dst / rel
+        shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+    for f in list(dst.rglob("*.pdb")) + list((dst / "Library/lib").glob("*.lib")):
+        f.unlink()
+    prefix = str(dst).encode()
+    text, binary = [], []
+    for f in dst.rglob("*"):
+        if f.is_file() and not f.is_symlink():
+            b = f.read_bytes()
+            if prefix in b:
+                (binary if b"\0" in b[:8192] else text).append(str(f.relative_to(dst)).replace("\\", "/"))
+    (dst / ".galcad-relocate.json").write_text(json.dumps({"prefix": str(dst), "files": sorted(text), "binary_ignored": sorted(binary)}, indent=1))
+    (dst / "run_aster.cmd").write_text("\r\n".join([
+        "@echo off",
+        "rem Lancador do code_aster para a GALCAD: ambiente conda sem activate (python -m run_aster).",
+        'set "CONDA_PREFIX=%~dp0"',
+        'set "CONDA_PREFIX=%CONDA_PREFIX:~0,-1%"',
+        'set "PATH=%CONDA_PREFIX%;%CONDA_PREFIX%\\Library\\mingw-w64\\bin;%CONDA_PREFIX%\\Library\\usr\\bin;%CONDA_PREFIX%\\Library\\bin;%CONDA_PREFIX%\\Scripts;%PATH%"',
+        'set "PYTHONHOME="',
+        '"%CONDA_PREFIX%\\python.exe" -m run_aster %*',
+        "",
+    ]))
+    pkgs = []
+    for meta in sorted((dst / "conda-meta").glob("*.json")):
+        m = json.loads(meta.read_text())
+        pkgs.append({"name": m["name"], "version": m["version"], "build": m["build"], "url": m.get("url")})
+        src = Path(m.get("extracted_package_dir", "")) / "info" / "licenses"
+        if src.is_dir():
+            shutil.copytree(src, dst / "licenses" / m["name"], dirs_exist_ok=True)
+    print(f"code_aster: {len(text)} ficheiros de texto a relocar, {len(binary)} binários ignorados: {binary}")
+    return {"code_aster": {"exe": "code_aster/run_aster.cmd", "version": "18.1.11", "packages": pkgs, "relocate": len(text)}}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(HERE / "solvers" / "win"))
     ap.add_argument("--work", default="/tmp/galcad-solvers")
-    ap.add_argument("--only", nargs="*", choices=["calculix", "gmsh", "xfoil"])
+    ap.add_argument("--only", nargs="*", choices=["calculix", "gmsh", "xfoil", "su2", "openfoam", "code_aster"])
     a = ap.parse_args()
     out, work = Path(a.out), Path(a.work)
     out.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
     manifest_path = out / "MANIFEST.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-    for name, fn in (("calculix", calculix), ("gmsh", gmsh), ("xfoil", xfoil)):
+    for name, fn in (("calculix", calculix), ("gmsh", gmsh), ("xfoil", xfoil), ("su2", su2), ("openfoam", openfoam), ("code_aster", code_aster)):
         if not a.only or name in a.only:
             manifest.update(fn(out, work))
     manifest_path.write_text(json.dumps(manifest, indent=1))

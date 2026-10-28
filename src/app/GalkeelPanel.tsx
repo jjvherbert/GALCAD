@@ -7,7 +7,7 @@ import { useState } from "preact/hooks";
 import type { TopoRef } from "../doc/types.ts";
 import type { FemStudy } from "../doc/study.ts";
 import { type Laminate, type PanelInput, type PanelResult, type VesselRecord, EDITION, HYPOTHESES, analysePanel, femCheck, femStudyForPanels, galkeelPayloads, scantlingReport } from "../galkeel/scantling.ts";
-import { browserCalc } from "../galkeel/calc-browser.ts";
+import { browserCalc, calcAvailable } from "../galkeel/calc-browser.ts";
 import { externalParts, store, useStore } from "./store.ts";
 import { Field, RefList, Select } from "./forms.tsx";
 import { download } from "./fileio.ts";
@@ -22,6 +22,16 @@ function NumField({ label, value, onChange, step = "any" }: { label: string; val
 }
 
 export function GalkeelPanel() {
+  if (!calcAvailable) return (
+    <div class="knowledge-panel galkeel-panel">
+      <div class="tree-head"><b>Galkeel</b><button class="small" onClick={() => store.set({ sidePanel: null })}>← Árvore</button></div>
+      <p class="field-hint">Esta compilação não inclui a galkeel-calculadora (submódulo privado da Galkeel): a análise integrada de painéis está indisponível. O resto da aplicação não muda.</p>
+    </div>
+  );
+  return <GalkeelPanelInner />;
+}
+
+function GalkeelPanelInner() {
   const st = useStore();
   const g = st.doc.galkeel ?? { vessel: VESSEL, laminate: LAMINATE, panels: [] };
   const v = g.vessel, lam = g.laminate;

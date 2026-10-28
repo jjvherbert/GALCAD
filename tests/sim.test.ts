@@ -304,6 +304,19 @@ test("OpenFOAM: conduta quadrada laminar — balanço de massa e queda de press�
   assert.ok(inlet.values[1]!.every((x) => Math.abs(x - U) < 1e-9 || x < U), "velocidade imposta na entrada");
 });
 
+test("SU2: conduta quadrada laminar — corre, converge e dá a queda de pressão de Poiseuille", { skip: !(T.gmsh && T.su2) && "Gmsh/SU2 não instalados", timeout: 900000 }, async () => {
+  const { doc, face } = await bar();
+  const U = 0.01, nu = 1.004e-6;
+  const s: CfdStudy = { ...newCfdStudy("c1", 1), solver: "su2", turbulence: "laminar", inlet: { faces: [face(0, 0)], velocity: [U, 0, 0] }, outlet: { faces: [face(0, 100)] }, iterations: 1500, mesh: { size: 1.25, surfaceLevel: [0, 0], layers: 0 } };
+  const r = await (await solve(doc, s)).run();
+  assert.equal(r.solver, "SU2");
+  const m = Object.fromEntries(r.metrics.map((x) => [x.key, x.value]));
+  assert.ok(m.rmsP < -4, `resíduo RMS de pressão ${m.rmsP} (log10)`);
+  // mesma referência que o OpenFOAM: f·Re = 56,9, com o comprimento de entrada (Δp acima do desenvolvido)
+  const dp = 56.9 / ((U * 0.01) / nu) * (0.1 / 0.01) * 998.2 * U ** 2 / 2;
+  assert.ok(m.dp > 0.8 * dp && m.dp < 1.8 * dp, `Δp ${m.dp} vs ${dp.toFixed(4)} Pa — ${JSON.stringify(r.summary)}`);
+});
+
 test("SU2: malha de fluido do Gmsh com os marcadores (interno e externo)", { skip: !T.gmsh && "Gmsh não instalado", timeout: 300000 }, async () => {
   const { execFileSync } = await import("node:child_process");
   const { readFileSync } = await import("node:fs");

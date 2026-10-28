@@ -71,6 +71,9 @@ export function tools() {
   const condaAster = [process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`, `${home}/micromamba/envs/aster/bin/run_aster`, `${home}/miniforge3/envs/aster/bin/run_aster`, "/opt/mamba/root/envs/aster/bin/run_aster", "/opt/conda/envs/aster/bin/run_aster"].find((p) => p && existsSync(p));
   const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
   const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
+  // OpenFOAM nativo para Windows (versão MinGW da openfoam.com): pasta OpenFOAM-vXXXX com platforms/*/bin
+  const foamDir = process.env.CAD_FOAM_DIR && existsSync(process.env.CAD_FOAM_DIR) ? process.env.CAD_FOAM_DIR : null;
+  const foamBin = foamDir ? (() => { const pl = join(foamDir, "platforms"); const t = existsSync(pl) ? readdirSync(pl).find((d) => existsSync(join(pl, d, "bin"))) : undefined; return t ? join(pl, t, "bin") : null; })() : null;
   const foamDirect = which("simpleFoam");
   const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
   const version = (cmd: string | null, args: string[]) => {
@@ -81,18 +84,39 @@ export function tools() {
   return {
     gmsh: gmsh ? { path: gmsh, version: version(gmsh, ["--version"]) } : null,
     calculix: ccx ? { path: ccx, version: version(ccx, ["-v"]) } : null,
-    openfoam: foamDirect || foamRc ? { path: foamDirect ?? foamRc!, version: foamRc ? foamRc.replace(/\/etc\/bashrc$/, "") : "no PATH", rc: foamRc } : null,
+    openfoam: foamDir && foamBin
+      ? { path: foamBin, version: foamDir.replace(/.*[\\/]/, ""), rc: null, dir: foamDir, bin: foamBin }
+      : foamDirect || foamRc ? { path: foamDirect ?? foamRc!, version: foamRc ? foamRc.replace(/\/etc\/bashrc$/, "") : "no PATH", rc: foamRc } : null,
     su2: su2 ? { path: su2, version: "SU2_CFD" } : null,
     code_aster: aster ? { path: aster, version: aster.endsWith("as_run") ? "as_run" : "run_aster" } : null,
     xfoil: xfoil ? { path: xfoil, version: "XFOIL 6.9x", preload: process.env.CAD_XFOIL_PRELOAD ?? null } : null,
   };
 }
 
-function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log, env?: NodeJS.ProcessEnv): Promise<void> {
+/** Ambiente do processo com variáveis extra; `PATH` junta-se ao existente (no Windows a chave é "Path"). */
+function withEnv(extra?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (!extra) return env;
+  const { PATH_PREPEND, ...rest } = extra;
+  Object.assign(env, rest);
+  if (PATH_PREPEND) {
+    const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+    env[key] = `${PATH_PREPEND}${process.platform === "win32" ? ";" : ":"}${env[key] ?? ""}`;
+  }
+  return env;
+}
+
+function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log, env?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }): Promise<void> {
   return new Promise((ok, fail) => {
     log(`$ ${[cmd, ...args].join(" ")}`);
     const out: string[] = [];
-    const p = spawn(cmd, args, { cwd, env: { ...process.env, ...env } });
+    // lançadores .cmd/.bat (code_aster no Windows) só correm através do cmd.exe; os argumentos são
+    // nomes de ficheiros gerados aqui (sem aspas nem metacaracteres)
+    const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
+    if (script && args.some((a) => /["&|<>^%]/.test(a))) { fail(new Error(`Argumento inválido para ${cmd}`)); return; }
+    const p = script
+      ? spawn(`"${cmd}"`, args.map((a) => `"${a}"`), { cwd, env: withEnv(env), shell: true })
+      : spawn(cmd, args, { cwd, env: withEnv(env) });
     const take = (b: Buffer) => { out.push(b.toString()); };
     p.stdout.on("data", take);
     p.stderr.on("data", take);
@@ -112,6 +136,11 @@ function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log
 function foam(cmd: string, args: string[], cwd: string, log: Log) {
   const t = tools().openfoam;
   if (!t) throw new Error("OpenFOAM não encontrado (instale a versão openfoam.com ou defina CAD_FOAM_BASHRC)");
+  if ("dir" in t && t.dir) {
+    // Windows: o ambiente do setEnvVariables-vXXXX.bat oficial, sem MSYS2 nem MPI (Pstream de série)
+    const version = t.dir.replace(/.*[\\/]OpenFOAM-/, "");
+    return run(join(t.bin, `${cmd}.exe`), args, cwd, `log.${cmd}`, log, { WM_PROJECT: "OpenFOAM", WM_PROJECT_VERSION: version, WM_PROJECT_DIR: t.dir, FOAM_SIGFPE: "1", PATH_PREPEND: t.bin });
+  }
   if (process.env.WM_PROJECT_DIR || !t.rc) return run(cmd, args, cwd, `log.${cmd}`, log);
   const quoted = [cmd, ...args].map((a) => `'${a.replace(/'/g, "")}'`).join(" ");
   return run("bash", ["-c", `. '${t.rc}' >/dev/null 2>&1; exec ${quoted}`], cwd, `log.${cmd}`, log);
@@ -321,10 +350,15 @@ async function runSu2(c: CfdCase, dir: string, log: Log, regenerate: boolean): P
   if (hist.length > 1) {
     const h = hist[0].split(",").map((x) => x.replace(/"/g, "").trim()), v = hist.at(-1)!.split(",");
     h.forEach((k, i) => {
-      if (!/rms\[P\]|CD|CL/i.test(k)) return;
+      if (!/rms\[P\]|^C[DL]$|Press|Massflow|Drop/i.test(k)) return;
       summary.push([k, v[i].trim()]);
       if (/^C[DL]$/i.test(k)) metrics.push({ key: k.toLowerCase(), label: k, unit: "", value: Number(v[i]) });
+      // queda de pressão entre os marcadores analisados (entrada → saída), em Pa (SU2 dimensional)
+      if (/Pressure_Drop/i.test(k)) metrics.push({ key: "dp", label: "Queda de pressão", unit: "Pa", value: Math.abs(Number(v[i])) });
+      if (/Massflow/i.test(k) && !metrics.some((m) => m.key === "mdot")) metrics.push({ key: "mdot", label: "Caudal mássico", unit: "kg/s", value: Math.abs(Number(v[i])) });
     });
+    const rms = h.findIndex((k) => /rms\[P\]/i.test(k));
+    if (rms >= 0) metrics.push({ key: "rmsP", label: "Resíduo RMS de pressão (log10)", unit: "", value: Number(v[rms]) });
   }
   const nelem = Number(/NELEM=\s*(\d+)/.exec(readFileSync(join(dir, "mesh.su2"), "utf8").slice(0, 400))?.[1] ?? 0);
   return { ok: true, physics: "cfd", solver: "SU2", summary, warnings: [], metrics, cells: nelem, log: tail(join(dir, "log.su2")) };

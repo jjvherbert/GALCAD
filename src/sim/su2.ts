@@ -26,7 +26,9 @@ export function su2Config(c: CfdCase): string {
     ...(rans ? ["FREESTREAM_TURBULENCEINTENSITY= 0.05", "FREESTREAM_TURB2LAMVISCRATIO= 10.0"] : []),
     `MARKER_HEATFLUX= ( ${wall}, 0.0 )`,
     ...(internal
-      ? ["INC_INLET_TYPE= VELOCITY_INLET", `MARKER_INLET= ( inlet, 293.15, ${U}, ${dir.join(", ")} )`, "INC_OUTLET_TYPE= PRESSURE_OUTLET", "MARKER_OUTLET= ( outlet, 0.0 )"]
+      ? ["INC_INLET_TYPE= VELOCITY_INLET", `MARKER_INLET= ( inlet, 293.15, ${U}, ${dir.join(", ")} )`, "INC_OUTLET_TYPE= PRESSURE_OUTLET", "MARKER_OUTLET= ( outlet, 0.0 )",
+        // médias por área na entrada e na saída: caudal e queda de pressão (SURFACE_PRESSURE_DROP)
+        "MARKER_ANALYZE= ( inlet, outlet )", "MARKER_ANALYZE_AVERAGE= AREA"]
       : ["MARKER_FAR= ( farfield )", "MARKER_MONITORING= ( body )"]),
     `MARKER_PLOTTING= ( ${wall} )`,
     "NUM_METHOD_GRAD= WEIGHTED_LEAST_SQUARES",
@@ -47,7 +49,7 @@ export function su2Config(c: CfdCase): string {
     "MESH_FORMAT= SU2",
     "OUTPUT_FILES= ( RESTART, PARAVIEW, SURFACE_PARAVIEW )",
     "SCREEN_OUTPUT= ( INNER_ITER, RMS_PRESSURE, RMS_VELOCITY-X, RMS_VELOCITY-Y, RMS_VELOCITY-Z )",
-    "HISTORY_OUTPUT= ( ITER, RMS_RES, AERO_COEFF )",
+    `HISTORY_OUTPUT= ( ITER, RMS_RES, ${internal ? "FLOW_COEFF" : "AERO_COEFF"} )`,
     "",
   ].join("\n");
 }

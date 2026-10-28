@@ -6,8 +6,11 @@
 //   workers e os módulos ES precisam de http, não de file://.
 // - Agente (`dist/cad-runner.mjs`, o mesmo da versão web) em 127.0.0.1 noutra porta, com um token
 //   novo a cada arranque, passado à página pelo preload (window.cadDesktop).
-// - Solvers em `resources/solvers` (CalculiX, Gmsh, XFOIL; code_aster opcional): o agente
-//   recebe-os por CAD_CCX, CAD_GMSH, CAD_XFOIL, CAD_ASTER e corre-os como programas separados.
+// - Solvers em `resources/solvers` (CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster): o agente
+//   recebe-os por CAD_CCX, CAD_GMSH, CAD_XFOIL, CAD_SU2, CAD_FOAM_DIR, CAD_ASTER e corre-os como
+//   programas separados.
+// - `GALCAD.exe --galcad-setup` (chamado pelo instalador): reloca o ambiente do code_aster para a
+//   pasta de instalação e sai.
 const { app, BrowserWindow, Menu, shell, dialog } = require("electron");
 const http = require("node:http");
 const fs = require("node:fs");
@@ -32,10 +35,24 @@ function solverEnv() {
   set("CAD_CCX", `calculix/ccx${exe}`);
   set("CAD_GMSH", `gmsh/gmsh${exe}`);
   set("CAD_XFOIL", `xfoil/xfoil${exe}`);
-  // code_aster (opcional): ambiente conda instalado à parte pela app na pasta do utilizador
-  const aster = path.join(app.getPath("userData"), "code_aster", process.platform === "win32" ? "Scripts/run_aster.bat" : "bin/run_aster");
-  if (!process.env.CAD_ASTER && fs.existsSync(aster)) env.CAD_ASTER = aster;
+  set("CAD_SU2", `su2/SU2_CFD${exe}`);
+  set("CAD_ASTER", process.platform === "win32" ? "code_aster/run_aster.cmd" : "code_aster/bin/run_aster");
+  const foam = path.join(solvers, "openfoam");
+  if (!process.env.CAD_FOAM_DIR && fs.existsSync(foam)) {
+    const d = fs.readdirSync(foam).find((x) => x.startsWith("OpenFOAM-"));
+    if (d) env.CAD_FOAM_DIR = path.join(foam, d);
+  }
   return env;
+}
+
+const relocateAster = () => require("./relocate.cjs").relocateAster(path.join(solvers, "code_aster"));
+
+const setupMode = process.argv.includes("--galcad-setup");
+if (setupMode) {
+  // passo do instalador: sem janela
+  let code = 0;
+  try { const r = relocateAster(); console.log(`code_aster: ${r.changed} ficheiro(s) relocado(s)`); } catch (e) { console.error(e); code = 1; }
+  app.exit(code);
 }
 
 /** Servidor estático da aplicação (só 127.0.0.1, sem sair de dist/). */
@@ -54,6 +71,7 @@ function serveStatic() {
 }
 
 async function startAgent() {
+  try { relocateAster(); } catch (e) { console.error("code_aster: relocação falhou", e); }
   Object.assign(process.env, solverEnv());
   const mod = await import(pathToFileURL(path.join(root, "cad-runner.mjs")).href);
   const token = crypto.randomBytes(16).toString("hex");
@@ -62,9 +80,9 @@ async function startAgent() {
   return { url: `http://127.0.0.1:${server.address().port}`, token, tools: mod.tools() };
 }
 
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!setupMode && !app.requestSingleInstanceLock()) app.quit();
 
-app.whenReady().then(async () => {
+if (!setupMode) app.whenReady().then(async () => {
   let agent = null;
   try { agent = await startAgent(); } catch (e) { dialog.showErrorBox("GALCAD", `O agente de simulação não arrancou: ${e.message}\nA modelação funciona; as simulações não.`); }
   const site = await serveStatic();

@@ -1,7 +1,11 @@
-# Instalador Windows da GALCAD: solvers preparados em Linux (desktop/build-solvers.py, compilação
-# cruzada, versões fixas e SHA-256), testados num Windows real contra os casos de referência e
-# empacotados com a app Electron num instalador NSIS. O instalador fica como artefacto da execução
-# e, nas etiquetas v*, como release.
+# Instalador Windows da GALCAD com todos os solvers: CalculiX, Gmsh, XFOIL, SU2, OpenFOAM e
+# code_aster. Os solvers são preparados em Linux (desktop/build-solvers.py: compilação cruzada e
+# pacotes oficiais, versões fixas e SHA-256), testados num Windows real contra os casos de referência
+# e empacotados com a app Electron num instalador NSIS, que é instalado em silêncio e testado.
+# O instalador fica como artefacto da execução e, nas etiquetas v*, como release.
+#
+# A análise Galkeel precisa do submódulo privado galkeel-calculadora: defina o secret
+# GALKEEL_CALC_TOKEN (token só de leitura desse repositório). Sem ele, o instalador sai sem essa análise.
 name: Instalador Windows
 
 on:
@@ -18,19 +22,20 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Ferramentas de compilação cruzada
-        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-mingw-w64-x86-64 gfortran-mingw-w64 binutils-mingw-w64-x86-64
+      - name: Ferramentas de compilação cruzada e 7-Zip
+        run: sudo apt-get update -q && sudo apt-get install -y -q gcc-mingw-w64-x86-64 gfortran-mingw-w64 binutils-mingw-w64-x86-64 p7zip-full
       - name: micromamba
         run: |
           curl -fsSL -o micromamba https://github.com/mamba-org/micromamba-releases/releases/download/2.3.3-0/micromamba-linux-64
           chmod +x micromamba
           echo "MICROMAMBA=$PWD/micromamba" >> "$GITHUB_ENV"
-      - name: Solvers (CalculiX, Gmsh, XFOIL)
+      - name: Solvers (CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster)
         run: python3 desktop/build-solvers.py --out desktop/solvers/win --work /tmp/galcad-solvers
       - uses: actions/upload-artifact@v4
         with:
           name: solvers-win
           path: desktop/solvers/win
+          include-hidden-files: true
           retention-days: 7
 
   installer:
@@ -39,7 +44,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          persist-credentials: false
+      - name: galkeel-calculadora (submódulo privado)
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GALKEEL_CALC_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config submodule.vendor/galkeel-calculadora.url "https://x-access-token:${TOKEN}@github.com/jjvherbert/galkeel-calculadora"
+            git submodule update --init --depth 1 vendor/galkeel-calculadora
+          else
+            echo "::warning::Sem o secret GALKEEL_CALC_TOKEN: o instalador sai sem a análise Galkeel"
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -49,18 +65,24 @@ jobs:
           name: solvers-win
           path: desktop/solvers/win
       - run: npm ci
+      - name: code_aster relocado para esta pasta
+        run: node desktop/relocate.cjs desktop/solvers/win/code_aster
       - name: Solvers no Windows (versões)
         shell: bash
         run: |
           desktop/solvers/win/calculix/ccx.exe -v | head -3
           desktop/solvers/win/gmsh/gmsh.exe --version
-      - name: Casos de referência com os solvers incluídos (consola, modal/térmica, atrito, XFOIL)
-        shell: bash
-        env:
-          CAD_CCX: ${{ github.workspace }}\desktop\solvers\win\calculix\ccx.exe
-          CAD_GMSH: ${{ github.workspace }}\desktop\solvers\win\gmsh\gmsh.exe
-          CAD_XFOIL: ${{ github.workspace }}\desktop\solvers\win\xfoil\xfoil.exe
-        run: node --test --test-name-pattern="consola — flecha|frequência própria|atrito|XFOIL real" tests/sim.test.ts tests/sim-assembly.test.ts tests/calc.test.ts
+      - name: Casos de referência com os solvers incluídos
+        shell: pwsh
+        run: |
+          $s = Join-Path $PWD 'desktop\solvers\win'
+          $env:CAD_CCX = "$s\calculix\ccx.exe"
+          $env:CAD_GMSH = "$s\gmsh\gmsh.exe"
+          $env:CAD_XFOIL = "$s\xfoil\xfoil.exe"
+          $env:CAD_SU2 = "$s\su2\SU2_CFD.exe"
+          $env:CAD_ASTER = "$s\code_aster\run_aster.cmd"
+          $env:CAD_FOAM_DIR = (Get-ChildItem "$s\openfoam" -Directory | Select-Object -First 1).FullName
+          node --test --test-concurrency=1 --test-name-pattern="consola — flecha|frequência própria|atrito|XFOIL real|conduta quadrada laminar|code_aster: consola|code_aster: pressão" tests/sim.test.ts tests/sim-assembly.test.ts tests/calc.test.ts tests/aster-solver.test.ts
       - name: Instalador
         run: npm run dist:win
       - name: Instalar em silêncio e testar a app instalada (agente embutido + consola no CalculiX)
@@ -69,8 +91,8 @@ jobs:
           $setup = Get-ChildItem release\GALCAD-Setup-*.exe | Select-Object -First 1
           Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S'
           $app = Join-Path $env:LOCALAPPDATA 'Programs\GALCAD'
+          Get-Content (Join-Path $app 'resources\solvers\code_aster\.galcad-relocate.json') -TotalCount 2
           & (Join-Path $app 'resources\solvers\calculix\ccx.exe') -v
-          & (Join-Path $app 'resources\solvers\gmsh\gmsh.exe') --version
           npm install --no-save playwright@1.63.0
           $env:DESKTOP_EXE = Join-Path $app 'GALCAD.exe'
           node tests/e2e/desktop.e2e.cjs
@@ -78,6 +100,7 @@ jobs:
         with:
           name: GALCAD-Setup
           path: release/GALCAD-Setup-*.exe
+          compression-level: 0
           retention-days: 30
       - name: Release (etiquetas v*)
         if: startsWith(github.ref, 'refs/tags/v')

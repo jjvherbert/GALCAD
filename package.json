@@ -51,6 +51,7 @@
       "dist/**/*",
       "desktop/main.cjs",
       "desktop/preload.cjs",
+      "desktop/relocate.cjs",
       "package.json"
     ],
     "extraResources": [
@@ -90,7 +91,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "GALCAD",
       "artifactName": "GALCAD-Setup-${version}.exe",
-      "language": "2070"
+      "language": "2070",
+      "include": "desktop/installer.nsh"
     }
   }
 }

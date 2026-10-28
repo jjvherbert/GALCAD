@@ -1,5 +1,15 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: o setup instala todos os solvers
+
+Pedido de Juan: «Faz com que o setup do galcad instale logo tudo». O instalador (560 MB) inclui agora também **SU2 8.3** (binário oficial de série), **OpenFOAM v2606** (MinGW oficial: só `platforms/*/bin` e `etc`; `libPstream` de série, sem MS-MPI nem administrador) e **code_aster 18.1** (conda-forge win-64; `desktop/relocate.cjs` corrige os 33 ficheiros de texto que citam a pasta de construção, chamado pelo instalador com `GALCAD.exe --galcad-setup` e no arranque).
+
+**Alterações:** `desktop/build-solvers.py` (su2, openfoam, code_aster; corrige a disposição `lib/python3.X` que o micromamba usa ao criar ambientes Windows em Linux), `desktop/relocate.cjs`, `desktop/installer.nsh`, `desktop/main.cjs` (CAD_SU2, CAD_FOAM_DIR, CAD_ASTER), `tools/cad-runner.ts` (OpenFOAM nativo Windows por `CAD_FOAM_DIR`, lançadores `.cmd`, `PATH` do Windows; SU2 com `MARKER_ANALYZE` e queda de pressão), teste SU2 da conduta laminar, workflow com todos os casos no Windows e o submódulo privado por `GALKEEL_CALC_TOKEN` (sem ele compila sem a análise Galkeel: `vite.config.ts`, `GalkeelPanel`).
+
+**Verificado aqui:** relocação (33 ficheiros) pela app; compilação com e sem o submódulo; 156 testes; e2e desktop e Galkeel; instalador completo gerado. **Não verificado aqui:** os executáveis do OpenFOAM e do SU2 (o ambiente bloqueou correr binários descarregados do SourceForge/GitHub) e o code_aster no Windows — ficam provados só pelo workflow no Windows real; o SU2 nunca tinha corrido (a primeira execução é a do CI).
+
+**Bloqueio:** sem o secret `GALKEEL_CALC_TOKEN` no GALCAD o instalador sai sem a análise Galkeel (a primeira execução falhou exatamente aqui: o runner não clona o submódulo privado).
+
 ## Atualização: app Windows com instalador e solvers incluídos
 
 Pedido de Juan: «É um bocado podre ter de instalar os solvers» → «Podemos fazer uma app windows com instalador». Decisão: **Electron** (o agente já é Node e corre lá dentro sem alterações; Tauri obrigava a um processo Node extra). Repositório: `jjvherbert/GALCAD` (público — ver bloqueios).
