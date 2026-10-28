@@ -4,6 +4,16 @@ CAD paramétrico no browser, para modelação de sólidos e de superfícies, com
 
 **Estado:** Fases 1 (peças), 2 (superfícies), 3 (montagens, desenhos 2D e BOM), 4 (inspirada no CATIA: GSD, classe A, forma livre, knowledgeware, publicações, STEP AP242) e 5 (PMI 3D semântico, vistas de modelo e atributos, inspirada no NX) implementadas. Pré-processador de simulação: F1 e F2 feitas (FEM linear e não linear no CalculiX e no code_aster, montagens com contacto colado ou com atrito, CFD com campos no 3D, convergência formal da malha). Automação: scripts `cad.*` (estudos paramétricos, superfície de resposta, lote em Node), copiloto Claude, análise integrada de painéis com a galkeel-calculadora e biblioteca de cálculos com XFOIL. Não substitui ainda um CAD/CAE comercial: ver a avaliação em [ROADMAP.md](ROADMAP.md#posicionamento-face-ao-solidworks-catia-e-fem-comercial-out-2026) e o estado em [HANDOFF.md](HANDOFF.md).
 
+## App Windows (instalador)
+
+A GALCAD também existe como aplicação de ambiente de trabalho (Electron) com os solvers incluídos: instala-se com `GALCAD-Setup-<versão>.exe` e as simulações funcionam logo, sem instalar nada à parte nem copiar tokens.
+
+- **Incluídos no instalador** (~180 MB): CalculiX 2.23 (conda-forge, OpenBLAS), Gmsh 4.15.2 (biblioteca oficial + lançador próprio `desktop/gmsh-launcher.c`) e XFOIL 6.99 (código do Debian, compilado sem gráficos). Ficam em `resources/solvers` e correm como programas separados.
+- **Agente embutido**: arranca com a app em 127.0.0.1, com um token novo a cada arranque passado à página (`window.cadDesktop`); a página não tem acesso ao Node.
+- **Não incluídos** (pesados ou sem versão Windows): code_aster e OpenFOAM — continuam a funcionar se estiverem instalados (WSL/Docker) e indicados em `CAD_ASTER`/no PATH.
+- **Obter o instalador**: GitHub → Actions → «Instalador Windows» → artefacto `GALCAD-Setup` (ou a release, nas etiquetas `v*`). O workflow testa os solvers num Windows real contra os casos de referência antes de empacotar.
+- **Construir localmente**: `python3 desktop/build-solvers.py` (Linux: micromamba, mingw-w64 gcc/gfortran, pip) e `npm run dist:win`; `npm run desktop` abre a app de ambiente de trabalho a partir do código.
+
 ## Correr
 
 ```bash

@@ -1,5 +1,28 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: app Windows com instalador e solvers incluídos
+
+Pedido de Juan: «É um bocado podre ter de instalar os solvers» → «Podemos fazer uma app windows com instalador». Decisão: **Electron** (o agente já é Node e corre lá dentro sem alterações; Tauri obrigava a um processo Node extra). Repositório: `jjvherbert/GALCAD` (público — ver bloqueios).
+
+**Alterações**
+- `desktop/main.cjs` (servidor estático + agente em 127.0.0.1 com token novo por arranque, solvers de `resources/solvers` por `CAD_CCX`/`CAD_GMSH`/`CAD_XFOIL`), `desktop/preload.cjs` (`window.cadDesktop`, só endereço/token/versão), `desktop/build-solvers.py`, `desktop/gmsh-launcher.c`, `desktop/xfoil-nogfx.c`.
+- `src/app/store.ts`: agente embutido por defeito; `AgentBox` mostra «embutido na app».
+- `package.json`: `main`, scripts `desktop`, `solvers:win`, `dist:win` e configuração do electron-builder (NSIS, solvers em `extraResources`).
+- `.github/workflows/windows-installer.yml`: solvers em Linux → testes num Windows real → instalador (artefacto; release nas etiquetas `v*`).
+
+**Testes**
+- Executáveis Windows no Wine 9 com os testes de referência: consola (Timoshenko), modal e térmica, barras em série coladas, atrito (μ·N) e XFOIL NACA 0012 — 5/5.
+- `tests/e2e/desktop.e2e.cjs` (Electron + Xvfb): agente embutido, página sem Node, consola calculada na janela (0,1910 mm para 0,1920) — com os solvers Linux e com os executáveis Windows no Wine.
+- Problema real encontrado pelo Wine e corrigido: a `liblapack.dll` do conda reencaminha as funções para a `openblas.dll` (a modal abortava); o script segue agora importações **e** reencaminhamentos.
+
+**Bloqueios**
+- O instalador ainda não foi executado num Windows real por uma pessoa: o workflow testa os solvers no Windows do GitHub, mas a instalação e a janela da app só foram vistas em Linux.
+- Instalador sem assinatura de código: o Windows SmartScreen vai avisar («Mais informações» → «Executar mesmo assim»).
+- GPL: falta publicar o código-fonte dos solvers com cada release (ver `THIRD_PARTY_NOTICES.md`) — VALIDAR com jurista.
+- `jjvherbert/GALCAD` é público e o `LICENSE` diz proprietário: decidir a visibilidade.
+
+**Próxima ação:** Juan instala o `GALCAD-Setup` do artefacto do Actions num Windows e corre um estudo; depois code_aster opcional instalado pela app.
+
 ## Atualização: code_aster, convergência formal, scripts e IA, análise integrada Galkeel, cálculos/XFOIL, atrito e PMI nos desenhos
 
 Pedido de Juan: competitividade face ao SolidWorks/CATIA/FEM formal; instalação por conda-forge autorizada; estudo de convergência, simulações automáticas e scripts, copiloto, IA, análise integrada com relatório para a Galkeel, escantilhonamento e cálculos aeronáuticos com ferramentas abertas. Commits locais (**sem push**, por indicação de Juan): `3ee5531`, `7165e58`, `f176e6a`, `a5fdadc`, `a77ecc2`, `f4a7005` e o desta documentação.

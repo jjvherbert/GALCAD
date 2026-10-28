@@ -12,6 +12,20 @@ O código deste projeto é proprietário (ver `LICENSE`). Usa as bibliotecas aba
 | Anthropic TypeScript SDK, `@anthropic-ai/sdk` | 1.3.0 | Apache-2.0 | Sugestões de BOM com o Claude (opcional, só com a chave do utilizador) | https://github.com/anthropics/anthropic-sdk-typescript |
 | Zod | 4.6.7 | MIT | Esquema da resposta estruturada do assistente | https://github.com/colinhacks/zod |
 
+## Solvers distribuídos com o instalador Windows
+
+O instalador da app de ambiente de trabalho **inclui** estes programas (pasta `resources/solvers`), que a app corre como **programas separados** através do agente; não são ligados ao código da GALCAD. Versões, origens e SHA-256 em `solvers/MANIFEST.json`; textos das licenças em `solvers/<solver>/licenses/`.
+
+| Programa | Versão | Licença | Origem |
+|---|---|---|---|
+| CalculiX (ccx) | 2.23 | GPL-2.0 | pacote conda-forge win-64 (código: http://www.dhondt.de, receita conda-forge `calculix-feedstock`) |
+| OpenBLAS, ARPACK-ng, runtime gfortran/gcc (libgfortran, libgomp, libquadmath, winpthreads), VC runtime | ver MANIFEST | BSD-3 / BSD-3 / GPL-3 com exceção de runtime / MIT·ZPL / licença de redistribuição da Microsoft | dependências do pacote CalculiX (conda-forge) |
+| Gmsh | 4.15.2 | GPL-2.0-or-later (com as exceções do Gmsh) | biblioteca do pacote oficial `gmsh` (PyPI, win_amd64); código: https://gitlab.onelab.info/gmsh/gmsh |
+| XFOIL | 6.99 | GPL-2.0 (plotlib: LGPL-2) | código do pacote Debian/Ubuntu `xfoil_6.99.dfsg+1` (com as correções do pacote), compilado sem gráficos |
+| Lançador `gmsh.exe`, backend gráfico nulo do XFOIL | — | código próprio | `desktop/gmsh-launcher.c`, `desktop/xfoil-nogfx.c` |
+
+**Obrigações da GPL ao distribuir binários** (resumo, não substitui aconselhamento jurídico): incluir os textos das licenças (feito) e acompanhar o instalador com o código-fonte correspondente ou com uma oferta escrita válida por 3 anos (GPL-2 §3). **PENDENTE/VALIDAR**: publicar os arquivos de código-fonte exatos junto de cada release (os links e somas estão no MANIFEST) e confirmar com um jurista que a agregação (app proprietária + solvers GPL como programas separados, no mesmo instalador) está bem enquadrada.
+
 ## Solvers e malhadores externos (não distribuídos)
 
 O pré-processador escreve ficheiros para o Gmsh (GPL-2+), o CalculiX (GPL-2), o OpenFOAM (GPL-3) e o SU2 (LGPL-2.1), e o agente local (`cad-runner.mjs`, código próprio, sem dependências) corre-os como **programas separados** já instalados na máquina do utilizador. Nenhum deles é incluído nem ligado à aplicação. Se um dia forem distribuídos em conjunto (instalador, imagem de servidor), cumprir as respetivas licenças (texto, código-fonte; na AGPL do OpenCourant, também em serviço de rede) — **VALIDAR com aconselhamento jurídico**.

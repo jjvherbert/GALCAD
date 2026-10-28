@@ -56,6 +56,9 @@ import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
 
+/** App de ambiente de trabalho (GALCAD para Windows): agente embutido, com endereço e token próprios. */
+export const desktopAgent = (): { url: string; token: string } | null => (globalThis as { cadDesktop?: { agent: { url: string; token: string } | null } }).cadDesktop?.agent ?? null;
+
 export type Pick =
   /** `body`: "" = corpo sólido, senão o id do corpo de superfície; `point`: ponto clicado. */
   | { kind: "face"; name: string; hint: GeoHint; type: string; body?: string; point?: Vec3; component?: string }
@@ -188,7 +191,7 @@ class Store {
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
-      simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: { url: "http://127.0.0.1:8765", token: "" },
+      simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: "http://127.0.0.1:8765", token: "" },
     };
     this.rebuild(0);
   }

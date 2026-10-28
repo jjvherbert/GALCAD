@@ -3,7 +3,7 @@
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
 import { type CfdStudy, type FemLoad, type FemStudy, type Probe, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
-import { store, useStore } from "./store.ts";
+import { desktopAgent, store, useStore } from "./store.ts";
 import { Check, ExprInput, Field, RefList, Select } from "./forms.tsx";
 import { type RunResult, agentStatus, exportStudyCase, resultView, runStudy } from "./sim-client.ts";
 import { fieldRange, layerShown, toggleLayer } from "../sim/result.ts";
@@ -89,6 +89,13 @@ export function AgentBox() {
   const st = useStore();
   const a = st.agent;
   const [status, setStatus] = useState("");
+  if (desktopAgent()) return (
+    <details class="claude-box">
+      <summary>Agente local <span class="muted">· embutido na app{status && ` · ${status}`}</span></summary>
+      <p class="field-hint">Os solvers (CalculiX, Gmsh, XFOIL) vêm instalados com a GALCAD e correm na sua máquina como programas separados; não é preciso configurar nada.</p>
+      <button class="small" onClick={async () => { const x = await agentStatus(a.url, a.token); setStatus(x.ok ? Object.entries(x.tools ?? {}).map(([k, t]) => `${k} ${t ? "✓" : "✗"}`).join(" · ") : x.error ?? "erro"); }}>Ver solvers</button>
+    </details>
+  );
   return (
     <details class="claude-box">
         <summary>Agente local {status && <span class="muted">· {status}</span>}</summary>
