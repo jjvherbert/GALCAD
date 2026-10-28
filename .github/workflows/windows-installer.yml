@@ -70,8 +70,11 @@ jobs:
       - name: Solvers no Windows (versões)
         shell: bash
         run: |
-          desktop/solvers/win/calculix/ccx.exe -v | head -3
+          # o ccx -v imprime a versão e sai com um código diferente de zero
+          desktop/solvers/win/calculix/ccx.exe -v || true
           desktop/solvers/win/gmsh/gmsh.exe --version
+          ls desktop/solvers/win desktop/solvers/win/openfoam desktop/solvers/win/su2
+          du -sh desktop/solvers/win/*
       - name: Casos de referência com os solvers incluídos
         shell: pwsh
         run: |
