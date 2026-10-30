@@ -99,7 +99,8 @@ function splashWindow() {
     @keyframes run{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
   </style><div class="c"><img src="data:image/png;base64,${logo}"><h1>GALCAD</h1><p>A iniciar o agente de simulação e os solvers…</p><div class="bar"><i></i></div></div>`;
   const w = new BrowserWindow({ width: 420, height: 300, frame: false, resizable: false, show: false, backgroundColor: "#0a2464", center: true, alwaysOnTop: true, skipTaskbar: true, webPreferences: { sandbox: true } });
-  w.once("ready-to-show", () => { w.show(); global.galcadSplash = "shown"; });
+  // `w.shownAt` fica definido quando o ecrã de arranque aparece; a janela principal espera por ele (no máx. 3 s)
+  w.shown = new Promise((ok) => { w.once("ready-to-show", () => { w.show(); w.shownAt = Date.now(); global.galcadSplash = "shown"; ok(); }); setTimeout(ok, 3000); });
   void w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
   return w;
 }
@@ -131,7 +132,13 @@ if (!setupMode) app.whenReady().then(async () => {
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!url.startsWith(own)) { e.preventDefault(); shell.openExternal(url); } });
   // a janela principal aparece já desenhada (sem ecrã branco) e o splash fecha
-  win.once("ready-to-show", () => { win.maximize(); win.show(); if (!splash.isDestroyed()) splash.close(); });
+  win.once("ready-to-show", async () => {
+    // o ecrã de arranque mostra-se sempre primeiro e fica pelo menos meio segundo (a marca à vista)
+    await splash.shown;
+    const wait = splash.shownAt ? Math.max(0, 500 - (Date.now() - splash.shownAt)) : 0;
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    win.maximize(); win.show(); if (!splash.isDestroyed()) splash.close();
+  });
   await win.loadURL(`${own}/`);
 });
 
