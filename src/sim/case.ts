@@ -53,7 +53,13 @@ export interface FemCase {
   physics: "fem";
   solver: "calculix" | "code_aster";
   title: string;
-  analysis: "static" | "modal" | "buckling" | "thermal";
+  analysis: "static" | "modal" | "buckling" | "thermal" | "dynamic";
+  /**
+   * Dinâmica transitória: esquema, duração e passo (s; no explícito sem `dt` o agente usa o passo
+   * estável da malha), amplitude das cargas (pares tempo–fator, interpolação linear), Rayleigh
+   * C = α·M + β·K e n.º de instantes guardados.
+   */
+  dynamic?: { scheme: "implicit" | "explicit"; duration: number; dt?: number; amplitude: [number, number][]; alpha: number; beta: number; frames: number };
   /** Estática não linear: geometria (grandes deslocamentos), plasticidade bilinear, incrementos. */
   nonlinear?: { geometry: boolean; plasticity: boolean; increments: number };
   modes: number;
@@ -110,3 +116,32 @@ export type SimCase = FemCase | CfdCase;
 
 /** Grupos físicos gerados para cada carga (`L1_FIXED`, …) e os do refinamento local (`R1`, …). */
 export const loadGroup = (i: number, kind: string) => `L${i + 1}_${kind.toUpperCase()}`;
+
+/** Fator da amplitude no instante t (interpolação linear; constante fora da tabela). Sem dinâmica: 1. */
+export function amplitudeAt(c: FemCase, t: number): number {
+  const a = c.dynamic?.amplitude;
+  if (!a?.length) return 1;
+  if (t <= a[0][0]) return a[0][1];
+  for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + ((a[i][1] - a[i - 1][1]) * (t - a[i - 1][0])) / (a[i][0] - a[i - 1][0] || 1);
+  return a[a.length - 1][1];
+}
+
+/** Tabela da amplitude (pares tempo–fator) de uma carga em degrau, rampa, meio seno ou seno. */
+export function amplitudeTable(load: "step" | "ramp" | "halfsine" | "sine", duration: number, rise?: number, period?: number): [number, number][] {
+  if (load === "step") return [[0, 1], [duration, 1]];
+  if (load === "ramp") {
+    const r = Math.min(rise ?? duration, duration);
+    return r >= duration ? [[0, 0], [duration, 1]] : [[0, 0], [r, 1], [duration, 1]];
+  }
+  const T = period ?? duration;
+  const end = load === "halfsine" ? Math.min(T, duration) : duration;
+  // 24 pontos por meio período (o seno amostrado com erro < 0,5 %)
+  const n = Math.max(24, Math.ceil((48 * end) / T));
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = (end * i) / n;
+    pts.push([t, load === "halfsine" ? Math.sin((Math.PI * t) / T) : Math.sin((2 * Math.PI * t) / T)]);
+  }
+  if (load === "halfsine" && end < duration) pts.push([duration, 0]);
+  return pts.map(([t, v]) => [t, Math.abs(v) < 1e-12 ? 0 : v]);
+}

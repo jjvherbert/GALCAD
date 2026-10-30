@@ -169,3 +169,29 @@ export function meshQuality(m: Msh, bodies?: { group: string }[]): MeshQuality {
   if (warn) notes.push(`${warn} assinalamento(s) de qualidade (elementos distorcidos): confirme se estão em zonas que importam para o resultado`);
   return { elements: perElement.length, nodes: used.size, types, volume, metrics, perElement, worst, ok: errors === 0, notes };
 }
+
+/**
+ * Passo de tempo estável do explícito (diferenças centrais), com margem: 0,35·Lc/cd, Lc = V/Amáx
+ * (hexaedros) ou a menor altura 3V/Amáx (tetraedros), metade nos elementos quadráticos; cd =
+ * √(E(1−ν)/(ρ(1+ν)(1−2ν))) em mm/s (E em MPa, ρ em g/cm³). Abaixo do limite que o CalculiX calcula,
+ * para não ativar o escalamento seletivo de massa.
+ */
+export function stableIncrement(m: Msh, materials: { group: string; E: number; nu: number; density: number }[]): { dt: number; element: number; lc: number } {
+  let best = { dt: Infinity, element: 0, lc: 0 };
+  let el = 0;
+  for (const mat of materials) {
+    const rho = mat.density * 1e-9;
+    const cd = Math.sqrt((mat.E * (1 - mat.nu)) / (rho * (1 + mat.nu) * (1 - 2 * mat.nu)));
+    for (const e of elementsOf(solidBlocks(m, [{ group: mat.group }]))) {
+      el++;
+      const st = SOLIDS[e.type];
+      const P = e.nodes.slice(0, st.corners).map((n) => m.nodes.get(n)!) as P3[];
+      const V = Math.abs(elementQuality(st.kind, P).volume);
+      const Amax = Math.max(...st.faces.map((f) => (f.length === 3 ? len(cross(sub(P[f[1]], P[f[0]]), sub(P[f[2]], P[f[0]]))) / 2 : len(cross(sub(P[f[2]], P[f[0]]), sub(P[f[3]], P[f[1]]))) / 2)));
+      const lc = ((st.kind === "tet" ? 3 : 1) * V) / (Amax || 1e-300) * (st.order === 2 ? 0.5 : 1);
+      const dt = (0.35 * lc) / cd;
+      if (dt < best.dt) best = { dt, element: el, lc };
+    }
+  }
+  return best;
+}

@@ -2,7 +2,7 @@
 // condições nas faces pelo nome topológico, malha, exportação do caso e cálculo no agente local.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
+import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { desktopAgent, store, useStore } from "./store.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
 import { type RunResult, agentStatus, exportStudyCase, previewStudyMesh, resultView, runStudy } from "./sim-client.ts";
@@ -165,7 +165,7 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
   return (
     <>
       <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX"], ["code_aster", "code_aster (EDF)"]]} onChange={(solver) => up({ solver })} />
-      <Select label="Análise" value={s.analysis} options={[["static", "Estática linear"], ["modal", "Modal (frequências próprias)"], ["buckling", "Encurvadura linear"], ["thermal", "Térmica (regime permanente)"]]}
+      <Select label="Análise" value={s.analysis} options={[["static", "Estática linear"], ["modal", "Modal (frequências próprias)"], ["buckling", "Encurvadura linear"], ["dynamic", "Dinâmica transitória"], ["thermal", "Térmica (regime permanente)"]]}
         onChange={(analysis) => up({ analysis, loads: s.loads.filter((l) => (analysis === "thermal" ? THERM : STRUCT).includes(l.kind)) })} />
       {s.analysis === "static" && (
         <fieldset class="checklist">
@@ -175,6 +175,7 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
           {(s.nonlinear?.geometry || s.nonlinear?.plasticity) && <Field label="Incrementos de carga"><input type="number" min="1" max="200" value={s.nonlinear?.increments ?? 10} onChange={(e) => up({ nonlinear: { ...s.nonlinear, increments: Number((e.target as HTMLInputElement).value) || 10 } })} /></Field>}
         </fieldset>
       )}
+      {s.analysis === "dynamic" && <DynamicEditor d={s.dynamic ?? { scheme: "implicit", duration: 0.01, load: "step" }} onChange={(dynamic) => up({ dynamic })} />}
       {(s.analysis === "modal" || s.analysis === "buckling") && <Field label="N.º de modos"><input type="number" min="1" max="50" value={s.modes ?? 6} onChange={(e) => up({ modes: Number((e.target as HTMLInputElement).value) || 6 })} /></Field>}
       <fieldset class="checklist">
         <legend class="field-label">Material</legend>
@@ -235,6 +236,67 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
       <button class="small" onClick={() => up({ probes: [...(s.probes ?? []), { name: `Sonda ${(s.probes ?? []).length + 1}`, quantity: thermal ? "T" : "u", at: { kind: "faces", faces: [] } }] })}>+ sonda</button>
       <MeshEditor mesh={s.mesh} thermal={thermal} onChange={(mesh) => up({ mesh })} />
     </>
+  );
+}
+
+/** Dinâmica transitória: esquema, tempo, amplitude da carga e amortecimento de Rayleigh. */
+function DynamicEditor({ d, onChange }: { d: FemDynamic; onChange: (d: FemDynamic) => void }) {
+  const set = (p: Partial<FemDynamic>) => onChange({ ...d, ...p });
+  const [zeta, setZeta] = useState(2);
+  const [freq, setFreq] = useState(100);
+  return (
+    <fieldset class="checklist">
+      <legend class="field-label">Dinâmica</legend>
+      <div class="row">
+        <Select label="Integração" value={d.scheme} options={[["implicit", "Implícita (Newmark/HHT)"], ["explicit", "Explícita (diferenças centrais)"]]} onChange={(scheme) => set({ scheme })} />
+        <Select label="Carga no tempo" value={d.load} options={[["step", "Degrau"], ["ramp", "Rampa"], ["halfsine", "Meio seno (choque)"], ["sine", "Seno (harmónica)"]]} onChange={(load) => set({ load })} />
+      </div>
+      <div class="row">
+        <ExprInput label="Duração" unit="s" value={d.duration} onChange={(duration) => set({ duration: duration ?? 0.01 })} />
+        <ExprInput label="Passo" unit="s" allowEmpty value={d.dt} onChange={(dt) => set({ dt })} />
+      </div>
+      {d.load === "ramp" && <ExprInput label="Tempo de subida" unit="s" value={d.rise ?? d.duration} onChange={(rise) => set({ rise })} />}
+      {(d.load === "halfsine" || d.load === "sine") && <ExprInput label={d.load === "halfsine" ? "Duração do choque" : "Período"} unit="s" value={d.period ?? ""} onChange={(period) => set({ period })} />}
+      <div class="row">
+        <ExprInput label="Rayleigh α (massa)" unit="1/s" allowEmpty value={d.alpha} onChange={(alpha) => set({ alpha })} />
+        <ExprInput label="Rayleigh β (rigidez)" unit="s" allowEmpty value={d.beta} onChange={(beta) => set({ beta })} />
+      </div>
+      <div class="row">
+        <Field label="ζ (%)"><input type="number" min="0" max="50" step="0.5" value={zeta} onChange={(e) => setZeta(Number((e.target as HTMLInputElement).value) || 0)} /></Field>
+        <Field label="no modo de (Hz)"><input type="number" min="0" value={freq} onChange={(e) => setFreq(Number((e.target as HTMLInputElement).value) || 0)} /></Field>
+        <button class="small" title="α = 2ζω (amortecimento proporcional à massa, exato nessa frequência)" onClick={() => set({ alpha: Number((2 * (zeta / 100) * 2 * Math.PI * freq).toPrecision(4)), beta: undefined })}>α de ζ</button>
+      </div>
+      <Field label="Instantes guardados"><input type="number" min="5" max="400" value={d.frames ?? 50} onChange={(e) => set({ frames: Number((e.target as HTMLInputElement).value) || 50 })} /></Field>
+      <p class="field-hint">{d.scheme === "implicit"
+        ? "Implícita: vibrações e choques lentos; passo por omissão duração/200 (≈ 20 passos por período do modo mais alto que interessa)."
+        : "Explícita: impacto e ondas; passo em branco = o estável da malha (Courant), sem escalar massa. Use hexaedros lineares C3D8R; o custo cresce com elementos pequenos."} Corra primeiro a modal para conhecer f₁ e escolher a duração e o amortecimento.</p>
+    </fieldset>
+  );
+}
+
+/** Histórias no tempo da dinâmica (deslocamento máx. e sondas). */
+function TimePlot({ h }: { h: NonNullable<NonNullable<RunResult["fem"]>["timeHistory"]> }) {
+  const [k, setK] = useState(h.series.length > 1 ? 1 : 0);
+  const s = h.series[Math.min(k, h.series.length - 1)];
+  const pts = h.times.map((t, i) => [t, s.values[i]] as const).filter(([, v]) => Number.isFinite(v));
+  if (!pts.length) return null;
+  const W = 260, H = 120, P = 30;
+  const t1 = Math.max(...pts.map((p) => p[0])) || 1, v0 = Math.min(0, ...pts.map((p) => p[1])), v1 = Math.max(0, ...pts.map((p) => p[1]));
+  const X = (t: number) => P + (t / t1) * (W - P - 6), Y = (v: number) => H - 18 - ((v - v0) / (v1 - v0 || 1)) * (H - 30);
+  return (
+    <details open class="history">
+      <summary>Resposta no tempo</summary>
+      {h.series.length > 1 && <Select label="Série" value={String(k)} options={h.series.map((x, i) => [String(i), `${x.label} (${x.unit})`])} onChange={(x) => setK(Number(x))} />}
+      <svg class="conv-plot time-plot" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Resposta no tempo">
+        <line x1={P} y1={Y(0)} x2={W - 4} y2={Y(0)} class="axis" />
+        <line x1={P} y1={6} x2={P} y2={H - 18} class="axis" />
+        <polyline points={pts.map(([t, v]) => `${X(t)},${Y(v)}`).join(" ")} class="curve" />
+        <text x={P} y={H - 4}>0</text>
+        <text x={W - 6} y={H - 4} text-anchor="end">{num(t1 * 1e3)} ms</text>
+        <text x={P - 3} y={Y(v1) + 3} text-anchor="end">{num(v1)}</text>
+        <text x={P - 3} y={Y(v0) + 3} text-anchor="end">{num(v0)}</text>
+      </svg>
+    </details>
   );
 }
 
@@ -465,6 +527,7 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
               <SimLegend />
             </>
           )}
+          {r.fem?.timeHistory && <TimePlot h={r.fem.timeHistory} />}
           {r.fem && r.fem.history.length > 1 && (
             <details class="history">
               <summary>Curva carga–deslocamento ({r.fem.history.length} incrementos)</summary>

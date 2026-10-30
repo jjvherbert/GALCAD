@@ -18,7 +18,7 @@ A GALCAD também existe como aplicação de ambiente de trabalho (Electron) com 
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 166 testes (Node; os de solvers correm se o Gmsh/CalculiX/code_aster/OpenFOAM/XFOIL estiverem instalados, e a leitura do PMI se houver o OCP em Python)
+npm test             # 172 testes (Node; os de solvers correm se o Gmsh/CalculiX/code_aster/OpenFOAM/XFOIL estiverem instalados, e a leitura do PMI se houver o OCP em Python)
 npm run typecheck    # TypeScript estrito
 npm run build && npm run test:e2e   # 11 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4, simulação, PMI, scripts, Galkeel, cálculos
 node public/cad-runner.mjs --status # solvers encontrados pelo agente local
@@ -104,6 +104,7 @@ Solvers (instalados à parte, processos separados): Gmsh, CalculiX, OpenFOAM, SU
 - **Não linear** (estática): grandes deslocamentos e rotações (NLGEOM) e plasticidade de von Mises com encruamento bilinear (cedência e módulo tangente do material), em incrementos, com a curva carga–deslocamento e a deformação plástica equivalente.
 - **Montagens**: estudos FEM na própria montagem, um volume e um material por corpo, condições nas faces dos componentes e contacto nas faces planas coincidentes entre corpos: **colado** (*TIE) ou **com atrito de Coulomb e separação** (penalidade face a face, carga em incrementos), com a reação de cada apoio (ex.: a força de atrito transmitida).
 - **CFD no 3D**: pressão nas paredes/entrada/saída e cortes planos pela malha do OpenFOAM com pressão e |U|, camadas que se ligam e desligam, escala comum.
+- **Dinâmica transitória**: implícita (CalculiX α-HHT, code_aster Newmark) para vibrações e choques, explícita (diferenças centrais, passo estável da malha) para impacto; carga em degrau, rampa, meio seno ou seno; Rayleigh (α a partir de ζ e f₁); envolventes no tempo, deformadas por instante e a resposta no tempo das sondas.
 - **Malha manual (ao estilo do Femap)**: tetraedros ou **hexaedros** (estruturados/mapeados nos volumes com 6 faces de 4 arestas, ou subdivisão para qualquer forma), **seeds** nas arestas (n.º de elementos ou tamanho, razão maior/menor e onde ficam os elementos pequenos) propagadas às arestas opostas, faces mapeadas e refinamento local; elementos C3D8I/C3D8/C3D8R/C3D20R/C3D20 no CalculiX e HEXA8/HEXA20 no code_aster. **Pré-visualizar malha**: qualidade ao estilo do Verify Mesh do Abaqus (jacobiano escalado, razão de aspeto, ângulos, empeno, fator de forma), histograma, piores elementos e a malha no 3D com as arestas e a cor por elemento.
 - **Convergência da malha**: três malhas (h, r·h, r²·h), **±3 níveis à volta da malha pedida num ponto escolhido no 3D** (7 malhas, monotonia, erro estimado da malha pedida) ou **refinamento automático até ao GCI alvo**, com a ordem aparente, o valor extrapolado (Richardson), o GCI (Celik et al. 2008 / ASME V&V 20) e o gráfico por nível; **sondas** (média ou máximo numa face, nó mais próximo de um ponto) como grandezas a seguir.
 - **code_aster 18.1** como alternativa ao CalculiX (estática linear e não linear — plasticidade, grandes deslocamentos —, modal e montagens coladas por LIAISON_MAIL), verificado com os mesmos casos analíticos.
@@ -219,7 +220,7 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
   - referências externas: a posição lida de uma montagem é guardada (não acompanha a montagem automaticamente: "Ler posição" de novo); peças em contexto completas (editar a peça dentro da montagem) continuam por fazer;
   - AP242: estrutura de montagem achatada (uma ocorrência por instância, sem subconjuntos aninhados).
 - Simulação:
-  - material isotrópico; só elementos sólidos (tetraedros e hexaedros; sem cascas nem vigas); hexaedros estruturados só em volumes que já são blocos (sem partição dentro da app); contacto só em faces planas coincidentes (atrito só no CalculiX); sem transitório nem fadiga;
+  - material isotrópico; só elementos sólidos (tetraedros e hexaedros; sem cascas nem vigas); hexaedros estruturados só em volumes que já são blocos (sem partição dentro da app); contacto só em faces planas coincidentes (atrito só no CalculiX); dinâmica só linear (sem contacto nem plasticidade no tempo) e o explícito do CalculiX/code_aster é para modelos pequenos (impacto pesado: OpenRadioss, a seguir); sem fadiga;
   - o code_aster cobre estática, não linear, modal e contacto colado (não encurvadura, térmica nem atrito);
   - XFOIL: a compilação Debian precisa da biblioteca `xfoil-nofpe`; ângulos que não convergem são omitidos (com uma segunda passagem automática);
   - o copiloto só foi testado com respostas simuladas (sem chave da API neste ambiente);

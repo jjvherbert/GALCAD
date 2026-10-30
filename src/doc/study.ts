@@ -81,6 +81,28 @@ export interface MeshSeed {
   biasAt?: "start" | "end" | "ends" | "center";
 }
 
+/**
+ * Dinâmica transitória: integração implícita (Newmark/HHT — vibrações, choques lentos) ou explícita
+ * (diferenças centrais — impacto, ondas; passo estável calculado pela malha). As cargas do estudo são
+ * multiplicadas pela amplitude no tempo; amortecimento de Rayleigh C = α·M + β·K.
+ */
+export interface FemDynamic {
+  scheme: "implicit" | "explicit";
+  /** Duração (s). */
+  duration: Expr;
+  /** Passo (s): implícito por omissão duração/200; explícito por omissão o passo estável da malha. */
+  dt?: Expr;
+  /** Amplitude: degrau, rampa até `rise`, meio seno de duração `period`, seno de período `period`. */
+  load: "step" | "ramp" | "halfsine" | "sine";
+  rise?: Expr;
+  period?: Expr;
+  /** Rayleigh: α (1/s, proporcional à massa) e β (s, proporcional à rigidez). */
+  alpha?: Expr;
+  beta?: Expr;
+  /** Instantes guardados (deformadas e histórias), por omissão 50. */
+  frames?: number;
+}
+
 /** Não linearidades da análise estática. */
 export interface FemNonlinear {
   /** Grandes deslocamentos e rotações (NLGEOM / GROT_GDEP). */
@@ -109,8 +131,10 @@ export interface FemStudy {
   physics: "fem";
   /** CalculiX (por omissão) ou code_aster (EDF, GPL), para os mesmos casos. */
   solver: "calculix" | "code_aster";
-  analysis: "static" | "modal" | "buckling" | "thermal";
+  analysis: "static" | "modal" | "buckling" | "thermal" | "dynamic";
   nonlinear?: FemNonlinear;
+  /** Dinâmica transitória (análise "dynamic"). */
+  dynamic?: FemDynamic;
   material: SimMaterial;
   loads: FemLoad[];
   /** Modos próprios (modal) ou de encurvadura. */

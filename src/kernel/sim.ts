@@ -8,7 +8,7 @@ import type { TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
 import { meshPlan } from "./meshplan.ts";
 import { T, type TopoDS_Shape, bbox, distance, explore, faceProps, makeCompound, normalOnFace, oc, v3, vertexAt, volume } from "./occ.ts";
-import { type CaseFace, type CfdCase, type FemCase, type FemCaseLoad, type SimCase, type V3, loadGroup } from "../sim/case.ts";
+import { type CaseFace, type CfdCase, type FemCase, type FemCaseLoad, type SimCase, type V3, amplitudeTable, loadGroup } from "../sim/case.ts";
 import { femGeo, su2Geo } from "../sim/gmsh.ts";
 import { openfoamCase } from "../sim/openfoam.ts";
 import { su2Config } from "../sim/su2.ts";
@@ -48,6 +48,7 @@ const FEM_HYP: Record<FemStudy["analysis"], string> = {
   modal: "Modal: frequências próprias com as condições de apoio indicadas (sem cargas, sem amortecimento)",
   buckling: "Encurvadura linear (valores próprios): fatores sobre as cargas indicadas, sem imperfeições nem plasticidade",
   thermal: "Térmica em regime permanente: condução isotrópica, convecção e fluxo impostos, sem radiação",
+  dynamic: "Dinâmica transitória linear: pequenos deslocamentos, material elástico linear, cargas com amplitude no tempo, condições iniciais nulas",
 };
 
 export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
@@ -126,10 +127,29 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
   const m = s.material;
   if (nl?.plasticity && !(m.yield! > 0)) throw new Error("Plasticidade: indique a tensão de cedência do material");
   if (nl?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) throw new Error("Plasticidade: o módulo tangente tem de estar entre 0 e E");
-  const analysisHyp = !nl ? FEM_HYP[s.analysis]
+  // dinâmica: duração, passo, amplitude e Rayleigh resolvidos
+  let dynamic: FemCase["dynamic"];
+  if (s.analysis === "dynamic") {
+    const d = s.dynamic ?? { scheme: "implicit", duration: 0.01, load: "step" };
+    const T = evalParam(d.duration, sc, "Duração");
+    if (!(T > 0)) throw new Error("Dinâmica: a duração tem de ser positiva");
+    const opt = (x: unknown, label: string) => (x === undefined || x === "" ? undefined : evalParam(x as never, sc, label));
+    const dt = opt(d.dt, "Passo de tempo") ?? (d.scheme === "implicit" ? T / 200 : undefined);
+    if (dt !== undefined && !(dt > 0 && dt <= T)) throw new Error("Dinâmica: o passo tem de estar entre 0 e a duração");
+    const rise = opt(d.rise, "Tempo de subida"), period = opt(d.period, "Período");
+    if ((d.load === "halfsine" || d.load === "sine") && !(period! > 0)) throw new Error("Dinâmica: indique o período (ou a duração do meio seno)");
+    const alpha = opt(d.alpha, "Rayleigh α") ?? 0, beta = opt(d.beta, "Rayleigh β") ?? 0;
+    if (alpha < 0 || beta < 0) throw new Error("Dinâmica: os coeficientes de Rayleigh não podem ser negativos");
+    dynamic = { scheme: d.scheme, duration: T, dt, amplitude: amplitudeTable(d.load, T, rise, period), alpha, beta, frames: Math.min(400, Math.max(5, Math.round(d.frames ?? 50))) };
+    if (s.solver === "code_aster" && d.scheme === "explicit") report.warnings.push("code_aster explícito (DIFF_CENT): lento e só com integração completa — para impacto use o CalculiX (ou o OpenRadioss)");
+  }
+  const LOAD_NAME = { step: "degrau", ramp: "rampa", halfsine: "meio seno", sine: "seno" } as const;
+  const analysisHyp = dynamic
+    ? `${FEM_HYP.dynamic}; ${dynamic.scheme === "implicit" ? "integração implícita (CalculiX: α-HHT, α = −0,05; code_aster: Newmark, aceleração média)" : "integração explícita (diferenças centrais, massa diagonal, passo abaixo do limite de estabilidade)"}; ${dynamic.duration} s${dynamic.dt ? `, passo ${dynamic.dt} s` : ", passo estável da malha"}; carga em ${LOAD_NAME[s.dynamic?.load ?? "step"]}; ${dynamic.alpha || dynamic.beta ? `amortecimento de Rayleigh α = ${dynamic.alpha} 1/s, β = ${dynamic.beta} s` : "sem amortecimento físico"}`
+    : !nl ? FEM_HYP[s.analysis]
     : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && "plasticidade de von Mises com encruamento isotrópico bilinear"].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
-    format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, probes: probes.length ? probes : undefined,
+    format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, dynamic, probes: probes.length ? probes : undefined,
     material: s.material, groups, faces, loads, bbox: box,
     mesh: {
       size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local,

@@ -89,6 +89,17 @@ async function main() {
       check("convergência ±3: 7 malhas e monotonia", (await p.$$(".sim-panel table.sweep tr")).length === 8 && /monotónica/.test(sw) && /\(pedida\)/.test(sw), sw.slice(0, 240));
       await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-varrimento.png") });
       await p.click(".sim-panel label:has-text('Estudo de convergência') input");
+      // dinâmica implícita (carga em degrau): pico ≈ 2× a flecha estática e a resposta no tempo
+      await p.selectOption(".sim-panel label.field:has-text('Análise') select", "dynamic");
+      await p.fill(".sim-panel label.field:has-text('Duração') input", "0.0015"); await p.press(".sim-panel label.field:has-text('Duração') input", "Tab");
+      await p.click(".sim-panel button:has-text('Calcular no agente local')");
+      await p.waitForSelector(".sim-panel details.history svg.time-plot", { timeout: 600000 });
+      const td = (await p.textContent(".sim-panel .info-table")).replace(/\s+/g, " ");
+      const pk = Number(td.match(/Deslocamento máx\. \(pico\)\s*([\d.]+) mm/)?.[1]);
+      check("dinâmica implícita: pico ≈ 2 × 0,191 mm", Math.abs(pk / 0.191 - 2) < 0.12 && /implícita/.test(td), td.slice(0, 220));
+      check("dinâmica: deformadas por instante", (await p.$$eval(".sim-panel label.field:has-text('Deformada') option", (o) => o.length)) > 10);
+      await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-dinamica.png") });
+      await p.selectOption(".sim-panel label.field:has-text('Análise') select", "static");
       await p.selectOption(".sim-panel label.field:has-text('Elementos') select", "tet");
       if (has("simpleFoam") || fs.existsSync("/usr/share/openfoam/etc/bashrc")) {
         await p.selectOption(".sim-panel select[aria-label=Estudo]", "s2");

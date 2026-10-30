@@ -18,7 +18,15 @@ Pedido de Juan: «Quero elementos hexaédricos e dinâmica implícita e explíci
 
 **Convergência ±3 níveis num ponto** (mesmo pedido): modo «±3 níveis» no estudo de convergência — 7 malhas h·r^k, k = 3 … −3 (`RunOptions.convergence.sweep`), sonda «Ponto» com «Escolher ponto no 3D», gráfico e tabela com a malha pedida destacada, monotonia, extrapolação/GCI no trio mais fino e erro estimado da malha pedida (`ConvergenceReport.sweep`). Testado no agente (`tests/mesh.test.ts`) e na app (e2e da simulação: 7 malhas de hexaedros, monotónica).
 
-**Próxima ação:** dinâmica implícita e explícita (CalculiX/code_aster); depois OpenRadioss em CI.
+## Atualização: dinâmica implícita e explícita (CalculiX e code_aster)
+
+Análise «Dinâmica transitória» no estudo FEM (`FemStudy.dynamic`, `FemCase.dynamic`): implícita (CalculiX `*DYNAMIC, DIRECT`, α-HHT; code_aster `DYNA_NON_LINE` Newmark) ou explícita (CalculiX `*DYNAMIC, EXPLICIT`; code_aster `DIFF_CENT` com `MASS_DIAG`, sempre `3D`); cargas em degrau, rampa, meio seno ou seno (`*AMPLITUDE`, `FONC_MULT`); Rayleigh C = α·M + β·K (`*DAMPING`; no code_aster AMOR_BETA = α e AMOR_ALPHA = β, confirmado pelo teste); passo estável da malha no explícito (`stableIncrement`: 0,35·Lc/cd, metade nos quadráticos — abaixo do limite do CalculiX, sem escalamento de massa; aviso se o utilizador forçar um passo maior); resultados com envolventes no tempo, deformadas por instante (o pico assinalado), histórias do deslocamento máximo e das sondas (`FemResult.timeHistory`) e gráfico na app.
+
+**Testes** (`tests/dynamics.test.ts`, 6; CalculiX 2.21 e code_aster 18.1 reais): consola sob degrau — fator 2 e pico em T₁/2 (f₁ = 835 Hz) no implícito e no explícito dos dois solvers (< 6–8 %); Rayleigh ζ = 5 % → 1 + e^(−ζπ/√(1−ζ²)) = 1,855 (< 6 %) nos dois; explícito sem escalamento de massa. E2e da simulação: dinâmica implícita na app (pico 0,3715 mm em 0,600 ms, deformadas por instante). Na CI do Windows entram o implícito/explícito do CalculiX e o implícito do code_aster.
+
+**Limites:** só dinâmica linear (sem contacto, plasticidade nem grandes deslocamentos no tempo); o explícito do code_aster é lento (3–4 min para 7500 passos em 640 elementos) e o do CalculiX serve para modelos pequenos — para impacto/crash: OpenRadioss (a seguir).
+
+**Próxima ação:** adaptador OpenRadioss (OpenCourant, AGPL-3.0) verificado na CI Linux com o binário oficial e incluído no instalador.
 
 ## Atualização: o setup instala todos os solvers
 
