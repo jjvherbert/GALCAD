@@ -91,6 +91,7 @@ const FEM_TABS: Tab[] = [
     { title: "Tamanho", ids: ["sim.mesh.finer", "sim.mesh.coarser"] },
     { title: "Controlos", ids: ["sim.section.mesh"] },
     { title: "Verificar", ids: ["sim.mesh.preview"] },
+    { title: "Convergência", ids: ["sim.section.convergence", "sim.convergence.run"] },
   ] },
   { id: "solve", label: "Resolver", groups: [
     { title: "Sondas", ids: ["sim.add.probe", "sim.section.probes"] },
@@ -104,7 +105,7 @@ const FEM_TABS: Tab[] = [
 const CFD_TABS: Tab[] = [
   { id: "study", label: "Estudo", groups: [{ title: "Novo estudo", ids: ["sim.new.cfdInternal", "sim.new.cfdExternal"] }, { title: "Estudo", ids: ["sim.section.study"] }] },
   { id: "loads", label: "Condições", groups: [{ title: "Fluido e fronteiras", ids: ["sim.section.conditions"] }] },
-  { id: "mesh", label: "Malha", groups: [{ title: "Malha", ids: ["sim.section.mesh"] }] },
+  { id: "mesh", label: "Malha", groups: [{ title: "Malha", ids: ["sim.section.mesh"] }, { title: "Convergência", ids: ["sim.section.convergence", "sim.convergence.run"] }] },
   { id: "solve", label: "Resolver", groups: [{ title: "Modelo", ids: ["sim.section.check"] }, { title: "Resolver", ids: ["sim.section.run", "sim.run"] }] },
   { id: "results", label: "Resultados", groups: [{ title: "Resultados", ids: ["sim.section.results", "sim.toggleResult"] }] },
 ];

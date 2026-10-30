@@ -9,7 +9,7 @@ import { VIEWS } from "./viewport.ts";
 import { EXPORTS, exportAs, exportDrawing, importStep, openProject, saveProject } from "./fileio.ts";
 import { autoBalloons, importModelDims, importPmi } from "../drawing/edit.ts";
 import { WORKSPACES, openSimSection, setWorkspace } from "./workspaces.ts";
-import { addCondition, addProbe, addStudy, patchMesh, runActiveStudy, setStudyMaterial } from "./sim-actions.ts";
+import { addCondition, addProbe, addStudy, patchMesh, runActiveStudy, runConvergence, setStudyMaterial } from "./sim-actions.ts";
 import { SIM_MATERIALS } from "../doc/study.ts";
 
 /** Ações do desenho sobre a vista selecionada (ou todas). */
@@ -174,7 +174,7 @@ export const COMMANDS: Command[] = [
   })),
   { id: "sim.new.cfdInternal", label: "Novo estudo CFD interno (conduta)", short: "Interno", group: "Simulação", icon: "⇉", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "internal" } as never); } },
   { id: "sim.new.cfdExternal", label: "Novo estudo CFD externo (corpo)", short: "Externo", group: "Simulação", icon: "➶", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "external" } as never); } },
-  ...([["study", "Estudo: análise e solver", "⚙"], ["material", "Material", "◧"], ["conditions", "Cargas e apoios", "⤓"], ["contact", "Contacto entre corpos", "⧉"], ["mesh", "Malha: elementos, seeds e controlos", "▦"], ["probes", "Sondas", "⌖"], ["check", "Verificação do modelo e compatibilidade por solver", "✔"], ["run", "Resolver: solver e convergência", "▶"], ["results", "Resultados", "◑"]] as const).map(([section, label, icon]): Command => ({
+  ...([["study", "Estudo: análise e solver", "⚙"], ["material", "Material", "◧"], ["conditions", "Cargas e apoios", "⤓"], ["contact", "Contacto entre corpos", "⧉"], ["mesh", "Malha: elementos, seeds e controlos", "▦"], ["probes", "Sondas", "⌖"], ["convergence", "Convergência da malha: configurar, correr e extrair", "⤳"], ["check", "Verificação do modelo e compatibilidade por solver", "✔"], ["run", "Resolver: solver e convergência", "▶"], ["results", "Resultados", "◑"]] as const).map(([section, label, icon]): Command => ({
     id: `sim.section.${section}`, label, short: label.split(":")[0].replace(" entre corpos", ""), group: "Simulação", icon, run: () => openSimSection(section),
   })),
   // cargas, apoios e sondas a partir da barra: abre a secção com a seleção de faces ativa
@@ -191,6 +191,7 @@ export const COMMANDS: Command[] = [
   { id: "sim.mesh.finer", label: "Refinar a malha (tamanho × 0,7)", short: "Refinar", group: "Simulação", icon: "⊞", run: () => patchMesh((m) => ({ size: typeof m.size === "number" ? Number((m.size * 0.7).toPrecision(3)) : m.size })) },
   { id: "sim.mesh.coarser", label: "Engrossar a malha (tamanho × 1,4)", short: "Engrossar", group: "Simulação", icon: "⊟", run: () => patchMesh((m) => ({ size: typeof m.size === "number" ? Number((m.size * 1.4).toPrecision(3)) : m.size })) },
   { id: "sim.mesh.preview", label: "Pré-visualizar a malha e a qualidade dos elementos", short: "Gerar malha", group: "Simulação", icon: "⬚", run: () => void runActiveStudy(true) },
+  { id: "sim.convergence.run", label: "Correr o estudo de convergência da malha", short: "Correr convergência", group: "Simulação", icon: "⤳", run: () => runConvergence() },
   { id: "sim.run", label: "Calcular no agente local", short: "Calcular", group: "Simulação", icon: "▶", keys: ["F5"], run: () => void runActiveStudy(false) },
   { id: "sim.toggleResult", label: "Mostrar/esconder o resultado no 3D", short: "Mostrar/esconder", group: "Simulação", icon: "◐", run: () => store.set({ simHidden: !store.state.simHidden }) },
   { id: "kw.panel", label: "Conhecimento: regras, verificações, configurações e templates", group: "Conhecimento", icon: "⚙", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "knowledge" ? null : "knowledge" }); } },

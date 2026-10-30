@@ -35,11 +35,18 @@ function femNodes(s: FemStudy, asm: boolean, hasResult: boolean): Node[] {
     },
     ...(asm ? [{ section: "contact" as const, icon: "⧉", label: "Contacto", detail: ({ bonded: "colado", friction: `atrito μ = ${s.contact?.mu ?? 0.3}`, none: "sem ligação" } as Record<string, string>)[s.contact?.mode ?? "bonded"], state: "ok" as const }] : []),
     { section: "mesh", icon: "▦", label: "Malha", detail: `${m.element === "hex" ? "hexaedros" : "tetraedros"} ${m.order === 2 ? "quadráticos" : "lineares"} · ${m.size} mm${seeds ? ` · ${seeds} seed(s)` : ""}`, state: "ok" },
+    convNode(s),
     { section: "probes", icon: "⌖", label: "Sondas", detail: `${s.probes?.length ?? 0}`, state: s.probes?.length ? "ok" : "todo" },
     checkNode(s, asm),
     { section: "run", icon: "▶", label: "Resolver", detail: "agente local", state: "todo" },
     { section: "results", icon: "◑", label: "Resultados", detail: hasResult ? "calculado" : "por calcular", state: hasResult ? "ok" : "todo" },
   ];
+}
+
+function convNode(s: Study): Node {
+  const c = s.convergence, runs = s.convergenceRuns?.length ?? 0;
+  const mode = c ? { three: "3 malhas", sweep: `±${c.levels} níveis`, auto: `GCI ≤ ${c.target} %` }[c.mode] : "";
+  return { section: "convergence", icon: "⤳", label: "Convergência", detail: [c?.enabled ? `ligada · ${mode} · r ${c.ratio}` : runs ? "" : "desligada", runs ? `${runs} guardado(s)` : ""].filter(Boolean).join(" · "), state: runs ? "ok" : "todo" };
 }
 
 function checkNode(s: Study, asm: boolean): Node {
@@ -55,6 +62,7 @@ function cfdNodes(s: CfdStudy, hasResult: boolean): Node[] {
       children: s.regime === "internal" ? [{ label: "Entrada", detail: `${s.inlet?.faces.length ?? 0} face(s)`, color: CONDITION_COLORS.inlet }, { label: "Saída", detail: `${s.outlet?.faces.length ?? 0} face(s)`, color: CONDITION_COLORS.outlet }] : [],
     },
     { section: "mesh", icon: "▦", label: "Malha", detail: `${s.mesh.size} mm`, state: "ok" },
+    convNode(s),
     checkNode(s, false),
     { section: "run", icon: "▶", label: "Resolver", detail: `${s.iterations} iterações`, state: "todo" },
     { section: "results", icon: "◑", label: "Resultados", detail: hasResult ? "calculado" : "por calcular", state: hasResult ? "ok" : "todo" },

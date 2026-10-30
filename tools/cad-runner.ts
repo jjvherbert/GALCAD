@@ -30,7 +30,7 @@ import { su2Config } from "../src/sim/su2.ts";
 import { asterCase, asterResult } from "../src/sim/aster.ts";
 import { type LayerField, type FoamMeshFull, patchLayer, readField, sliceLayer } from "../src/sim/foamfields.ts";
 import { type ResultLayer, type ResultView, femView } from "../src/sim/result.ts";
-import { type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci, isMonotonic } from "../src/sim/convergence.ts";
+import { type ConvergenceLevel, type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci, isMonotonic } from "../src/sim/convergence.ts";
 import { type XfoilRequest, type XfoilResult, XFOIL_HYPOTHESES, parsePolar, polarSummary, xfoilCommands, xfoilRetryCommands } from "../src/sim/xfoil.ts";
 
 export interface RunResult {
@@ -521,14 +521,17 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
     if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
     const runs: Omit<RunResult, "seconds" | "hypotheses">[] = [];
     const steps: NonNullable<ConvergenceReport["sweep"]>["steps"] = [];
+    const all: ConvergenceLevel[] = [];
     let metric = opts.convergence.metric, stop: string | undefined;
     for (let k = n; k >= -n; k--) {
       // estimativa dos elementos da malha seguinte (∝ h⁻³) a partir da anterior
       if (runs.length && runs.at(-1)!.cells * ratio ** 3 > maxCells) { stop = `as malhas abaixo de ${steps.at(-1)!.size.toPrecision(3)} mm passariam de ${maxCells.toExponential(1)} elementos`; break; }
       const { sub, ck } = prepare(ratio ** k, `nivel${k >= 0 ? "+" : ""}${k}`);
       log(`— nível ${k > 0 ? "+" : ""}${k} (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+      const tk = Date.now();
       const r1 = await runOnce(ck, sub, log, true);
       runs.push(r1);
+      all.push({ level: k, size: ck.mesh.size, cells: r1.cells, seconds: (Date.now() - tk) / 1000, metrics: r1.metrics });
       metric ??= r1.metrics.find((x) => x.key.startsWith("probe"))?.key ?? r1.metrics[0]?.key;
       steps.push({ level: k, size: ck.mesh.size, cells: r1.cells, value: r1.metrics.find((x) => x.key === metric)?.value ?? NaN });
     }
@@ -538,6 +541,8 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
     const row = report.rows.find((x) => x.key === metric);
     const base = steps.find((x) => x.level === 0)!.value;
     const values = steps.map((x) => x.value).filter(Number.isFinite);
+    report.levels = all;
+    report.setup = { mode: "sweep", ratio, levels: n, metric };
     report.sweep = { metric: metric ?? "", levels: n, steps, monotonic: isMonotonic(values), base, baseError: row && Number.isFinite(row.gci.extrapolated) ? Math.abs((base - row.gci.extrapolated) / row.gci.extrapolated) : undefined, stop };
     report.hypotheses.push(`Varrimento de ${steps.length} malhas (tamanho h·r^k, k = ${n} … ${steps.at(-1)!.level}, r = ${ratio}); GCI e extrapolação pelas três mais finas; erro da malha pedida = |f(h) − f extrapolado| / |f extrapolado|`);
     const baseRun = runs[steps.findIndex((x) => x.level === 0)];
@@ -549,13 +554,16 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
     if (!(target > 0 && target < 1)) throw new Error("GCI alvo fora de ]0; 1[ (fração, ex. 0,01 = 1 %)");
     const runs: Omit<RunResult, "seconds" | "hypotheses">[] = [];
     const steps: NonNullable<ConvergenceReport["auto"]>["steps"] = [];
+    const all: ConvergenceLevel[] = [];
     let metric = opts.convergence.metric;
     let achieved = false, stop = "";
     for (let k = 0; k < maxLevels; k++) {
       const { sub, ck } = prepare(ratio ** -k, `nivel${k + 1}`);
       log(`— nível ${k + 1} (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+      const tk = Date.now();
       const r1 = await runOnce(ck, sub, log, true);
       runs.push(r1);
+      all.push({ level: -k, size: ck.mesh.size, cells: r1.cells, seconds: (Date.now() - tk) / 1000, metrics: r1.metrics });
       metric ??= r1.metrics.find((x) => x.key.startsWith("probe"))?.key ?? r1.metrics[0]?.key;
       const val = r1.metrics.find((x) => x.key === metric)?.value ?? NaN;
       let g: GciResult | undefined;
@@ -573,6 +581,8 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
     const last = runs.slice(-3).reverse();
     const report = last.length === 3 ? convergenceReport(ratio, last.map((x) => ({ cells: x.cells, size: NaN, metrics: x.metrics }))) : { ratio, meshes: [], rows: [], hypotheses: [] };
     report.meshes = last.map((x, i) => ({ cells: x.cells, size: steps[steps.length - 1 - i].size }));
+    report.levels = all;
+    report.setup = { mode: "auto", ratio, target, levels: maxLevels, metric };
     report.auto = { target, metric: metric ?? "", achieved, stop, steps };
     const fine = runs.at(-1)!;
     r = { ...fine, convergence: report, warnings: [...fine.warnings, ...(achieved ? [] : [`Convergência não atingida: ${stop}`]), ...report.rows.filter((x) => x.key === metric).flatMap((x) => x.gci.notes.map((n) => `${x.label}: ${n}`))] };
@@ -581,12 +591,17 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
     if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
     // da mais grossa (mais rápida, falha cedo) para a pedida
     const runs: Omit<RunResult, "seconds" | "hypotheses">[] = [];
+    const all: ConvergenceLevel[] = [];
     for (const lvl of [2, 1, 0]) {
       const { sub, ck } = prepare(ratio ** lvl, `malha${lvl + 1}`);
       log(`— malha ${lvl + 1} de 3 (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+      const tk = Date.now();
       runs[lvl] = await runOnce(ck, sub, log, true);
+      all.push({ level: lvl, size: ck.mesh.size, cells: runs[lvl].cells, seconds: (Date.now() - tk) / 1000, metrics: runs[lvl].metrics });
     }
     const report = convergenceReport(ratio, runs.map((x, i) => ({ cells: x.cells, size: c.mesh.size * ratio ** i, metrics: x.metrics })));
+    report.levels = all;
+    report.setup = { mode: "three", ratio };
     r = { ...runs[0], convergence: report, warnings: [...runs[0].warnings, ...report.rows.flatMap((x) => x.gci.notes.map((n) => `${x.label}: ${n}`))] };
   } else r = await runOnce(c, dir, log, regenerate);
   const res: RunResult = { ...r, summary: [...r.summary], hypotheses: c.hypotheses, seconds: (Date.now() - t0) / 1000 };

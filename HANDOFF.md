@@ -1,5 +1,21 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: esboço transparente sobre o modelo e convergência da malha configurável
+
+Pedido de Juan: «Garante que o esboço é apresentável. Gosto da animação do esboço do SolidWorks quando passas da peça ao esboço e não gosto do fundo azul. Gosto do fundo transparente… Garante que o pré-processador consegue competir com o Abaqus e ser tão forte como o Femap, permitindo configurar internamente já estudos de convergência de malha e extrair tabelas, gráficos e resultados das mesmas». A maquinagem (R5) fica para depois.
+
+**Esboço (commit `996ca9d`)**
+- `Viewport.setSketchCamera` / `leaveSketchView` (`viewport.ts`): a câmara 3D fica normal ao plano e alinhada com o editor 2D (px = tx + u·k, py = ty − v·k), por isso o modelo vê-se por trás do esboço transparente; panorâmica e zoom movem os dois. Ao abrir, a vista desliza da peça para o plano (como o SolidWorks) e o esboço entra depois; ao sair, volta à vista anterior com transição. O seletor de plano já não roda a câmara (fá-lo o editor), e sem planos azuis durante o esboço.
+- Barra compacta (ícones; nome da ferramenta ativa), canto de confirmação ✓/✕, grelha discreta, contorno claro nas entidades.
+
+**Convergência (este commit)**
+- Relatório (`src/sim/convergence.ts`, `tools/cad-runner.ts`): `levels` (todas as malhas com todas as grandezas, tamanho, elementos, tempo) e `setup`. Estudo: `FemStudy/CfdStudy.convergence` (configuração) e `convergenceRuns` (últimos 6). `runActiveStudy` usa a configuração do estudo (já não o estado global `simRun`, removido) e guarda o relatório; `runConvergence` liga-a e corre.
+- `src/sim/convreport.ts` (puro): tabelas (malhas, GCI, erro vs. extrapolado), gráficos SVG em texto, CSV, relatório HTML, tamanhos previstos. `src/io/table.ts`: XLSX com várias folhas. `ConvergencePanel.tsx`: configuração, malhas previstas, histórico, tabelas, três gráficos e exportações (CSV, XLSX, JSON, SVG, PNG, HTML, imprimir/PDF); `ResultExports` extrai resumo, métricas, histórias no tempo e qualidade da malha.
+- Correção: os blocos do painel de simulação já não encolhem (um `fieldset` num contentor flex sobrepunha o bloco seguinte).
+- **Testes** (`tests/convstudy.test.ts`, 4, CalculiX real: 3 malhas com todas as grandezas, extrapolação a 5 % de Timoshenko; tabelas, CSV, XLSX, SVG e HTML; planeamento) e e2e da simulação reescrito (configurar, correr, tabelas, 3 gráficos, guardado no estudo, extrair CSV/XLSX/JSON/SVG/HTML, varrimento de 7 malhas com dois estudos guardados).
+- **Limites:** o GCI é uma estimativa de incerteza (três malhas mais finas), não uma garantia; modos «automático» e «varrimento» seguem uma grandeza (as outras ficam nas tabelas, com GCI do trio mais fino); a CFD usa o mesmo painel mas não foi reverificada nesta passagem; os PNG dependem do canvas do navegador.
+- **Por fazer no R4:** cargas e apoios em arestas, molas, massas pontuais, acoplamentos, referenciais locais, passos múltiplos, conjuntos de arestas e volumes.
+
 ## Atualização: revisão de usabilidade do R3 e primeira parte do R4 (pré-processador)
 
 Pedido de Juan: «Verifica que não me obriga a fazer cliques demais, que há boas animações e que os duplos cliques funcionam. Depois passa ao r4».

@@ -65,7 +65,16 @@ export function gci(n: [number, number, number], f: [number, number, number], di
 /** Métrica escalar de um cálculo (para a convergência e para comparar estudos). */
 export interface Metric { key: string; label: string; unit: string; value: number }
 
+/** Uma malha do estudo: tamanho, células, tempo de cálculo e TODAS as grandezas (para tabelas e gráficos de qualquer uma). */
+export interface ConvergenceLevel { level: number; size: number; cells: number; seconds: number; metrics: Metric[] }
+
+/** Configuração do estudo de convergência que gerou o relatório (modo, razão, alvo, grandeza seguida). */
+export interface ConvergenceSetup { mode: "three" | "sweep" | "auto"; ratio: number; /** GCI alvo (fração) no modo automático. */ target?: number; /** Máx. de malhas (automático) ou n.º de níveis para cada lado (varrimento). */ levels?: number; metric?: string }
+
 export interface ConvergenceReport {
+  /** Todas as malhas corridas (da mais grossa para a mais fina) com todas as grandezas. */
+  levels?: ConvergenceLevel[];
+  setup?: ConvergenceSetup;
   /** Razão pedida entre tamanhos de malha consecutivos. */
   ratio: number;
   /** Malhas (fina → grossa): número de células/elementos e tamanho máximo pedido (mm). */

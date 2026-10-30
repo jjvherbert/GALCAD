@@ -1,7 +1,7 @@
 // Ações dos estudos de simulação partilhadas pela barra do espaço de trabalho, pela árvore do modelo e
 // pelo painel: estudos da peça ou da montagem ativa, criar, gravar, calcular e pré-visualizar a malha.
 import { loadFaces } from "../doc/study.ts";
-import { type FemLoad, type FemStudy, type SimMesh, type Study, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
+import { type ConvergenceConfig, DEFAULT_CONVERGENCE, type StoredConvergence, type FemLoad, type FemStudy, type SimMesh, type Study, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
 import { previewStudyMesh, runStudy } from "./sim-client.ts";
@@ -69,17 +69,44 @@ export async function runActiveStudy(meshOnly = false) {
     if (err) { store.set({ error: `${err.text} — ver «Verificação do modelo»`, simSection: "check" }); return; }
   }
   const doc = store.activeAssembly()?.id ?? st.doc.id;
-  const o = st.simRun;
-  const conv = !meshOnly && o.conv ? { ratio: o.ratio, ...(o.mode === "auto" ? { target: o.target / 100, maxLevels: o.levels, metric: o.metric || undefined } : o.mode === "sweep" ? { sweep: 3, metric: o.metric || undefined } : {}) } : undefined;
+  const cc = s.convergence;
+  const conv = !meshOnly && cc?.enabled ? convOptions(cc) : undefined;
   store.set({ simBusy: meshOnly ? "mesh" : "run", error: null });
   try {
     const { result } = meshOnly ? await previewStudyMesh(s.id, st.agent.url, st.agent.token) : await runStudy(s.id, st.agent.url, st.agent.token, conv);
-    store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : "results" } : {}) });
+    store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
+    // o estudo de convergência fica guardado no estudo (últimos 6) para consultar, comparar e exportar
+    if (result.convergence) {
+      const cur = activeStudies().find((x) => x.id === s.id);
+      const run: StoredConvergence = { id: `c${Date.now().toString(36)}`, at: new Date().toISOString(), solver: result.solver, report: result.convergence };
+      if (cur) updateStudy(s.id, { convergenceRuns: [run, ...(cur.convergenceRuns ?? [])].slice(0, 6) });
+    }
   } catch (e) {
     store.set({ error: (e as Error).message });
   } finally {
     store.set({ simBusy: null });
   }
+}
+
+/** Opções do agente para o estudo de convergência configurado. */
+export function convOptions(c: ConvergenceConfig) {
+  const metric = c.metric || undefined;
+  return { ratio: c.ratio, ...(c.mode === "auto" ? { target: c.target / 100, maxLevels: c.levels, metric } : c.mode === "sweep" ? { sweep: c.levels, metric } : { metric }) };
+}
+
+/** Altera (ou cria) a configuração de convergência do estudo ativo. */
+export function setConvergence(patch: Partial<ConvergenceConfig>) {
+  const s = activeStudy(store.state.workspace === "cfd" ? "cfd" : "fem");
+  if (!s) return;
+  updateStudy(s.id, { convergence: { ...DEFAULT_CONVERGENCE, ...s.convergence, ...patch } } as Partial<Study>);
+}
+
+/** Liga a convergência no estudo ativo e calcula (o painel «Convergência» mostra o resultado). */
+export function runConvergence() {
+  const s = activeStudy(store.state.workspace === "cfd" ? "cfd" : "fem");
+  if (!s) { store.set({ error: "Crie primeiro um estudo" }); return; }
+  if (!s.convergence?.enabled) setConvergence({ enabled: true });
+  void runActiveStudy(false);
 }
 
 export const STRUCT_LOADS: FemLoad["kind"][] = ["fixed", "displacement", "symmetry", "force", "pointForce", "pressure", "gravity"];

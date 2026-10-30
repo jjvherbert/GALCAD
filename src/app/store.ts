@@ -165,7 +165,6 @@ export interface State {
   simSection: SimSection;
   /** Cálculo em curso no agente e opções do estudo de convergência (partilhadas pela barra e pelo painel). */
   simBusy: "run" | "mesh" | null;
-  simRun: { conv: boolean; ratio: number; mode: "three" | "auto" | "sweep"; target: number; levels: number; metric: string };
   /** Ferramenta ativa no editor de desenhos. */
   drawingTool: DrawingTool | null;
   /** Seleção no desenho (vista ou anotação). */
@@ -173,7 +172,7 @@ export interface State {
 }
 
 export type Workspace = "design" | "fem" | "cfd" | "drawing";
-export type SimSection = "study" | "material" | "conditions" | "contact" | "probes" | "mesh" | "check" | "run" | "results";
+export type SimSection = "study" | "material" | "conditions" | "contact" | "probes" | "mesh" | "convergence" | "check" | "run" | "results";
 
 export type DrawingTool =
   | { kind: "modelView"; source: { kind: "part" | "assembly"; id: string }; orientation: import("../doc/project.ts").StdView }
@@ -210,7 +209,6 @@ class Store {
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
       workspace: "design", simStudy: null, simSection: "study", simBusy: null,
-      simRun: { conv: false, ratio: 1.5, mode: "three", target: 1, levels: 5, metric: "" },
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: "http://127.0.0.1:8765", token: "" },
     };
     this.rebuild(0);

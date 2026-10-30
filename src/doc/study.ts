@@ -4,6 +4,7 @@
 // Unidades no documento: comprimentos em mm (como o CAD); FEM em mm–N–MPa–t–s (o deck do CalculiX
 // usa este sistema coerente); propriedades térmicas e de fluidos em SI, convertidas na exportação.
 import type { Expr, TopoRef, Vec3 } from "./types.ts";
+import type { ConvergenceReport } from "../sim/convergence.ts";
 
 /** Material isotrópico linear (com a origem dos valores). */
 export interface SimMaterial {
@@ -132,6 +133,34 @@ export interface Probe {
   stat?: "mean" | "max";
 }
 
+/**
+ * Estudo de convergência da malha configurado no estudo («internamente», como um passo do modelo): o
+ * modo, a razão, o GCI alvo, os níveis e a grandeza seguida; se `enabled`, o cálculo corre-o.
+ */
+export interface ConvergenceConfig {
+  enabled: boolean;
+  mode: "three" | "sweep" | "auto";
+  /** Razão entre tamanhos de malha consecutivos (≥ 1,1; recomendado ≥ 1,3). */
+  ratio: number;
+  /** GCI alvo em % (modo automático). */
+  target: number;
+  /** Níveis para cada lado do tamanho pedido (varrimento) ou máx. de malhas (automático). */
+  levels: number;
+  /** Grandeza seguida (chave da métrica: umax, vmax, f1, probe1, dp…); vazio = a 1.ª sonda ou o deslocamento máximo. */
+  metric: string;
+}
+
+export const DEFAULT_CONVERGENCE: ConvergenceConfig = { enabled: false, mode: "sweep", ratio: 1.35, target: 1, levels: 3, metric: "" };
+
+/** Estudo de convergência já corrido, guardado no estudo para consultar e exportar (últimos 6). */
+export interface StoredConvergence {
+  id: string;
+  /** Data ISO. */
+  at: string;
+  solver: string;
+  report: ConvergenceReport;
+}
+
 export interface FemStudy {
   id: string;
   name: string;
@@ -144,6 +173,8 @@ export interface FemStudy {
   dynamic?: FemDynamic;
   material: SimMaterial;
   loads: FemLoad[];
+  convergence?: ConvergenceConfig;
+  convergenceRuns?: StoredConvergence[];
   /** Conjuntos de faces nomeados, usados pelas condições (`sets`). */
   sets?: FemSet[];
   /** Modos próprios (modal) ou de encurvadura. */
@@ -192,6 +223,8 @@ export interface CfdStudy {
   freestream?: { velocity: [Expr, Expr, Expr]; domain?: [number, number, number] };
   iterations: number;
   mesh: CfdMesh;
+  convergence?: ConvergenceConfig;
+  convergenceRuns?: StoredConvergence[];
 }
 
 export type Study = FemStudy | CfdStudy;

@@ -4613,6 +4613,7 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 		if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
 		const runs = [];
 		const steps = [];
+		const all = [];
 		let metric = opts.convergence.metric, stop;
 		for (let k = n; k >= -n; k--) {
 			if (runs.length && runs.at(-1).cells * ratio ** 3 > maxCells) {
@@ -4621,8 +4622,16 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 			}
 			const { sub, ck } = prepare(ratio ** k, `nivel${k >= 0 ? "+" : ""}${k}`);
 			log(`— nível ${k > 0 ? "+" : ""}${k} (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+			const tk = Date.now();
 			const r1 = await runOnce(ck, sub, log, true);
 			runs.push(r1);
+			all.push({
+				level: k,
+				size: ck.mesh.size,
+				cells: r1.cells,
+				seconds: (Date.now() - tk) / 1e3,
+				metrics: r1.metrics
+			});
 			metric ??= r1.metrics.find((x) => x.key.startsWith("probe"))?.key ?? r1.metrics[0]?.key;
 			steps.push({
 				level: k,
@@ -4640,6 +4649,13 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 		const row = report.rows.find((x) => x.key === metric);
 		const base = steps.find((x) => x.level === 0).value;
 		const values = steps.map((x) => x.value).filter(Number.isFinite);
+		report.levels = all;
+		report.setup = {
+			mode: "sweep",
+			ratio,
+			levels: n,
+			metric
+		};
 		report.sweep = {
 			metric: metric ?? "",
 			levels: n,
@@ -4668,13 +4684,22 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 		if (!(target > 0 && target < 1)) throw new Error("GCI alvo fora de ]0; 1[ (fração, ex. 0,01 = 1 %)");
 		const runs = [];
 		const steps = [];
+		const all = [];
 		let metric = opts.convergence.metric;
 		let achieved = false, stop = "";
 		for (let k = 0; k < maxLevels; k++) {
 			const { sub, ck } = prepare(ratio ** -k, `nivel${k + 1}`);
 			log(`— nível ${k + 1} (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+			const tk = Date.now();
 			const r1 = await runOnce(ck, sub, log, true);
 			runs.push(r1);
+			all.push({
+				level: -k,
+				size: ck.mesh.size,
+				cells: r1.cells,
+				seconds: (Date.now() - tk) / 1e3,
+				metrics: r1.metrics
+			});
 			metric ??= r1.metrics.find((x) => x.key.startsWith("probe"))?.key ?? r1.metrics[0]?.key;
 			const val = r1.metrics.find((x) => x.key === metric)?.value ?? NaN;
 			let g;
@@ -4730,6 +4755,14 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 			cells: x.cells,
 			size: steps[steps.length - 1 - i].size
 		}));
+		report.levels = all;
+		report.setup = {
+			mode: "auto",
+			ratio,
+			target,
+			levels: maxLevels,
+			metric
+		};
 		report.auto = {
 			target,
 			metric: metric ?? "",
@@ -4751,6 +4784,7 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 		const ratio = opts.convergence.ratio;
 		if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
 		const runs = [];
+		const all = [];
 		for (const lvl of [
 			2,
 			1,
@@ -4758,13 +4792,26 @@ async function runCase(dir, log = () => {}, regenerate = false, opts = {}) {
 		]) {
 			const { sub, ck } = prepare(ratio ** lvl, `malha${lvl + 1}`);
 			log(`— malha ${lvl + 1} de 3 (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+			const tk = Date.now();
 			runs[lvl] = await runOnce(ck, sub, log, true);
+			all.push({
+				level: lvl,
+				size: ck.mesh.size,
+				cells: runs[lvl].cells,
+				seconds: (Date.now() - tk) / 1e3,
+				metrics: runs[lvl].metrics
+			});
 		}
 		const report = convergenceReport(ratio, runs.map((x, i) => ({
 			cells: x.cells,
 			size: c.mesh.size * ratio ** i,
 			metrics: x.metrics
 		})));
+		report.levels = all;
+		report.setup = {
+			mode: "three",
+			ratio
+		};
 		r = {
 			...runs[0],
 			convergence: report,

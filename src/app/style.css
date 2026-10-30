@@ -590,3 +590,21 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .sk-confirm .ok { background: var(--panel); border-color: #16a34a; } .sk-confirm .ok .ic { background: #16a34a; }
 .sk-confirm .no { background: var(--panel); border-color: #dc2626; } .sk-confirm .no .ic { background: #dc2626; }
 .sk-confirm button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(10, 36, 100, .26); }
+
+/* convergência da malha: gráficos, tabelas e exportações */
+.conv-plan { margin: 4px 0; padding: 4px 8px; border-radius: 8px; background: var(--accent-soft); font-size: 12px; }
+.conv-runs { align-items: flex-end; flex-wrap: nowrap; }
+.conv-charts { display: grid; gap: 8px; margin: 6px 0; }
+.conv-chart { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; animation: rise .25s var(--ease) both; }
+.conv-chart svg { display: block; width: 100%; height: auto; }
+.conv-table-wrap { overflow-x: auto; margin: 6px 0; border: 1px solid var(--line); border-radius: 8px; }
+.conv-table { border-collapse: collapse; font-size: 11px; width: max-content; min-width: 100%; }
+.conv-table caption { text-align: left; font-weight: 700; padding: 4px 6px; font-size: 12px; position: sticky; left: 0; }
+.conv-table th, .conv-table td { padding: 3px 7px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.conv-table th { background: var(--panel2); position: sticky; top: 0; }
+.conv-table th:first-child, .conv-table td:first-child { text-align: left; position: sticky; left: 0; background: var(--panel); }
+.conv-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 8px 0; padding: 6px 8px; border: 1px dashed var(--line); border-radius: 8px; }
+.conv-actions b { margin-right: 4px; font-size: 12px; }
+
+/* os blocos do painel de simulação não encolhem (um fieldset num contentor flex sobrepunha o seguinte) */
+.sim-panel > * { flex-shrink: 0; }

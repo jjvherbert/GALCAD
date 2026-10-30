@@ -6,6 +6,9 @@ import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshS
 import { type SimSection, desktopAgent, store, useStore } from "./store.ts";
 import { Fragment } from "preact";
 import type { FemSet } from "../doc/study.ts";
+import { ConvergencePanel } from "./ConvergencePanel.tsx";
+import { download } from "./fileio.ts";
+import { fmt, toCsvText, type Table } from "../sim/convreport.ts";
 import { CAPABILITIES, checkStudy, solverVerdict, usedFeatures } from "../sim/modelcheck.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, activeStudy, newLoad, runActiveStudy, updateStudy } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
@@ -41,7 +44,7 @@ function Vec3Input({ label, unit, value, onChange }: { label: string; unit: stri
 
 const SECTION_TITLE: Record<SimSection, string> = {
   study: "Estudo", material: "Material", conditions: "Cargas e apoios", contact: "Contacto entre corpos", mesh: "Malha",
-  probes: "Sondas", check: "Verificação do modelo", run: "Resolver", results: "Resultados",
+  probes: "Sondas", convergence: "Convergência da malha", check: "Verificação do modelo", run: "Resolver", results: "Resultados",
 };
 
 /**
@@ -69,6 +72,7 @@ export function SimPanel() {
       {s?.physics === "fem" && !asm && sec === "contact" && <p class="field-hint">O contacto entre corpos existe nos estudos de montagem.</p>}
       {s?.physics === "fem" && sec === "mesh" && <MeshPreviewBox s={s} doc={docId} />}
       {s?.physics === "cfd" && <CfdEditor s={s} up={up} section={sec} />}
+      {s && sec === "convergence" && <ConvergencePanel s={s} />}
       {s && sec === "check" && <CheckPanel s={s} assembly={!!asm} up={up} />}
       {s && (sec === "run" || sec === "results") && <RunBox s={s} doc={docId} part={sec} />}
       {!s && <p class="field-hint">{asm
@@ -81,6 +85,23 @@ export function SimPanel() {
 const ICON = { erro: "✖", aviso: "⚠", info: "ℹ" } as const;
 const SUPPORT = { sim: ["✓", "sim", "Suportado"], parcial: ["◐", "parcial", "Suportado com restrições"], nao: ["✕", "nao", "Não suportado"] } as const;
 const SOLVER_NAME = { calculix: "CalculiX", code_aster: "code_aster", openradioss: "OpenRadioss" } as const;
+
+/** Extrair os resultados do cálculo: resumo, histórias no tempo, métricas, qualidade da malha e JSON. */
+function ResultExports({ r, name }: { r: RunResult; name: string }) {
+  const base = name.replace(/[^\wÀ-ÿ-]+/g, "_").replace(/^_+|_+$/g, "") || "estudo";
+  const csv = (file: string, t: Table) => download(`${base}-${file}.csv`, toCsvText(t), "text/csv;charset=utf-8");
+  const th = r.fem?.timeHistory;
+  return (
+    <div class="conv-actions" role="group" aria-label="Extrair os resultados">
+      <b>Extrair</b>
+      <button class="small" onClick={() => csv("resumo", { header: ["Grandeza", "Valor"], rows: r.summary.map(([k, v]) => [k, v]) })}>Resumo CSV</button>
+      <button class="small" onClick={() => csv("metricas", { header: ["Chave", "Grandeza", "Unidade", "Valor"], rows: r.metrics.map((m) => [m.key, m.label, m.unit, fmt(m.value)]) })}>Métricas CSV</button>
+      {th && <button class="small" onClick={() => csv("historias", { header: ["Tempo (s)", ...th.series.map((x) => `${x.label}${x.unit ? ` (${x.unit})` : ""}`)], rows: th.times.map((t, i) => [fmt(t, 8), ...th.series.map((x) => fmt(x.values[i]))]) })}>Histórias no tempo CSV</button>}
+      {r.quality && <button class="small" onClick={() => csv("qualidade", { header: ["Métrica", "Unidade", "Mín.", "Média", "Máx.", "Elementos fora do limite"], rows: r.quality!.metrics.map((m) => [m.label, m.unit, fmt(m.min), fmt(m.mean), fmt(m.max), m.fail.join(" / ")]) })}>Qualidade CSV</button>}
+      <button class="small" onClick={() => download(`${base}-resultados.json`, JSON.stringify({ solver: r.solver, segundos: r.seconds, resumo: r.summary, metricas: r.metrics, avisos: r.warnings, hipoteses: r.hypotheses, elementos: r.cells }, null, 2), "application/json")}>JSON</button>
+    </div>
+  );
+}
 
 /** Verificação dos dados do modelo e matriz de compatibilidade por solver (como o Model Check do Abaqus). */
 function CheckPanel({ s, assembly, up }: { s: Study; assembly: boolean; up: (p: Partial<Study>) => void }) {
@@ -148,6 +169,7 @@ function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
           <table class="info-table">{res.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>
           {res.warnings.map((w) => <p key={w} class="error-text">{w}</p>)}
           <QualityReport q={res.quality} />
+          <ResultExports r={res} name={s.name} />
         </div>
       )}
     </>
@@ -561,13 +583,6 @@ const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", diver
 function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "results" }) {
   const st = useStore();
   const busy = !!st.simBusy;
-  // opções de convergência no store: a barra (Calcular, F5) usa as mesmas
-  const o = st.simRun;
-  const setO = (p: Partial<typeof o>) => store.set({ simRun: { ...store.state.simRun, ...p } });
-  const { conv, ratio, mode, target, levels, metric } = o;
-  const auto = mode === "auto";
-  const setConv = (x: boolean) => setO({ conv: x }), setRatio = (x: number) => setO({ ratio: x });
-  const setTarget = (x: number) => setO({ target: x }), setLevels = (x: number) => setO({ levels: x }), setMetric = (x: string) => setO({ metric: x });
   const a = st.agent;
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult : null;
   const run = (meshOnly = false) => runActiveStudy(meshOnly);
@@ -582,23 +597,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
         <a class="small button" href="cad-runner.mjs" download="cad-runner.mjs">Agente local (cad-runner.mjs)</a>
       </div>
       <AgentBox />
-      <Check label="Estudo de convergência da malha (GCI)" value={conv} onChange={setConv} />
-      {conv && (
-        <fieldset class="checklist">
-          <Select label="Modo" value={mode} options={[["three", "3 malhas: h, r·h, r²·h"], ["sweep", "±3 níveis: 7 malhas à volta de h"], ["auto", "Automático: refinar até ao GCI alvo"]]} onChange={(m) => setO({ mode: m, ...(m === "sweep" && ratio > 1.4 ? { ratio: 1.35 } : {}) })} />
-          <Field label="Razão r entre malhas"><input type="number" min="1.1" max="3" step="0.1" value={ratio} onChange={(e) => setRatio(Number((e.target as HTMLInputElement).value) || 1.5)} /></Field>
-          {(auto || mode === "sweep") && (
-            <>
-              {auto && <div class="row">
-                <Field label="GCI alvo (%)"><input type="number" min="0.05" max="50" step="0.1" value={target} onChange={(e) => setTarget(Number((e.target as HTMLInputElement).value) || 1)} /></Field>
-                <Field label="Máx. malhas"><input type="number" min="3" max="8" value={levels} onChange={(e) => setLevels(Number((e.target as HTMLInputElement).value) || 5)} /></Field>
-              </div>}
-              <Select label="Grandeza seguida" value={metric} options={[["", "Primeira sonda (ou deslocamento máx.)"], ...((s.physics === "fem" ? s.probes ?? [] : []).map((p, i): [string, string] => [`probe${i + 1}`, `Sonda: ${p.name}`])), ["umax", "Deslocamento máx."], ["f1", "Frequência 1"], ["tmax", "Temperatura máx."], ["dp", "Queda de pressão (CFD)"], ["drag", "Arrasto (CFD)"]]} onChange={setMetric} />
-            </>
-          )}
-          <p class="field-hint">{mode === "sweep" ? "Sete malhas h·r^k (k = 3 … −3): três mais grossas e três mais finas que a pedida, a grandeza seguida em cada uma, monotonia, extrapolação pelo trio mais fino e o erro estimado da malha pedida. Para um ponto da peça: crie uma sonda «Ponto» e escolha-o no 3D (r = 1,35 por omissão: a mais fina tem ~15× os elementos da pedida)." : auto ? "Refina a partir do tamanho pedido (h, h/r, h/r², …) até o GCI da grandeza ficar abaixo do alvo com convergência monotónica, ou até ao máximo de malhas." : "Corre também com malhas r·h e r²·h (mais grossas) e estima a incerteza da malha pedida."} Use sondas (valores em pontos ou médias em faces): os máximos junto a cantos vivos e apoios não convergem. Celik et al. 2008 / ASME V&V 20.</p>
-        </fieldset>
-      )}
+      <p class="field-hint">{s.convergence?.enabled ? "A convergência da malha está ligada: este cálculo corre também as malhas do estudo (secção «Convergência»)." : "A convergência da malha configura-se na secção «Convergência»."}</p>
       <div class="row">
         {s.physics === "fem" && <button class="small" disabled={busy || !a.token} onClick={() => void run(true)}>Pré-visualizar malha</button>}
         <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{st.simBusy === "run" ? "A calcular…" : "Calcular no agente local"}</button>
@@ -660,6 +659,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
               <ul class="muted">{r.convergence.hypotheses.map((h) => <li key={h}>{h}</li>)}</ul>
             </details>
           )}
+          <ResultExports r={r} name={s.name} />
           <Check label="Mostrar resultados no 3D" value={!st.simHidden} onChange={(x) => store.set({ simHidden: !x })} />
           <details><summary>Hipóteses</summary><ul>{(r.hypotheses ?? r.fem?.hypotheses ?? []).map((h) => <li key={h}>{h}</li>)}</ul></details>
         </div>
