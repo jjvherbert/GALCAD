@@ -30,8 +30,7 @@ async function main() {
     await p.evaluate((t) => { localStorage.clear(); localStorage.setItem("cad-prototipo:autosave", t); }, fs.readFileSync(path.join(__dirname, "fixtures/simulacao.cadp.json"), "utf8"));
     await p.reload();
     await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 120000 });
-    await p.click("[role=tab]:has-text('Simulação')");
-    await p.click(".commands button[title^='Simulação']");
+    await p.click(".ws-button"); await p.click(".ws-menu button:has-text('Simulação FEM')"); await p.click(".sim-node:has-text('Resolver')");
     await p.waitForSelector(".sim-panel");
     await p.click(".sim-panel summary:has-text('Agente local')");
     check("painel indica o agente embutido", /embutido na app/.test(await p.textContent(".sim-panel")));

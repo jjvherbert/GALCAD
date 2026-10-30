@@ -44,12 +44,12 @@ async function main() {
     // pressão de fundo 48,09 kN/m² e espessura 6,57 mm (as mesmas da galkeel-calculadora, ver tests/galkeel.test.ts)
     check("análise: fundo, P = 48,09 kN/m², t = 6,57 mm, real/req. 1,07", /Fundo/.test(row) && /400×600/.test(row) && /48\.09/.test(row) && /6\.57/.test(row) && /1\.07/.test(row), row);
     if (solvers) {
-      await p.locator("[role=tab]:has-text('Simulação')").click();
-      await p.locator(".commands button[title^='Simulação']").click();
+      await p.locator(".ws-button").click(); await p.locator(".ws-menu button:has-text('Simulação FEM')").click(); await p.locator(".sim-node:has-text('Resolver')").click();
       await p.locator(".sim-panel summary:has-text('Agente local')").click();
       await p.locator(".sim-panel label.field:has-text('Endereço') input").fill(`http://127.0.0.1:${AGENT}`);
       await p.locator(".sim-panel label.field:has-text('Endereço') input").press("Tab");
       await p.locator(".sim-panel input[type=password]").fill(TOKEN);
+      await p.locator(".ws-button").click(); await p.locator(".ws-menu button:has-text('Design')").click();
       await p.locator("[role=tab]:has-text('Automação')").click();
       await p.locator(".commands button[title^='Galkeel']").click();
       await p.locator(".galkeel-panel button:has-text('Verificar com FEM')").click();

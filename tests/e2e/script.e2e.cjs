@@ -60,11 +60,11 @@ async function main() {
     check("erro do script na consola", /Feature inexistente: f99/.test(await p.textContent(".script-panel .script-console")));
 
     if (solvers) {
-      await p.click("[role=tab]:has-text('Simulação')");
-      await p.click(".commands button[title^='Simulação']");
+      await p.click(".ws-button"); await p.click(".ws-menu button:has-text('Simulação FEM')"); await p.click(".sim-node:has-text('Resolver')");
       await p.click(".sim-panel summary:has-text('Agente local')");
       await p.fill(".sim-panel label.field:has-text('Endereço') input", `http://127.0.0.1:${AGENT}`); await p.press(".sim-panel label.field:has-text('Endereço') input", "Tab");
       await p.fill(".sim-panel input[type=password]", TOKEN);
+      await p.click(".ws-button"); await p.click(".ws-menu button:has-text('Design')");
       await p.click("[role=tab]:has-text('Automação')");
       await p.click(".commands button[title^='Scripts']");
       await p.selectOption(".script-panel select[aria-label='Scripts guardados e exemplos']", { label: "Simulações em série + superfície de resposta" });
