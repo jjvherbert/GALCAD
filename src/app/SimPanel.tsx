@@ -460,7 +460,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
   const busy = !!st.simBusy;
   // opções de convergência no store: a barra (Calcular, F5) usa as mesmas
   const o = st.simRun;
-  const setO = (p: Partial<typeof o>) => store.set({ simRun: { ...o, ...p } });
+  const setO = (p: Partial<typeof o>) => store.set({ simRun: { ...store.state.simRun, ...p } });
   const { conv, ratio, mode, target, levels, metric } = o;
   const auto = mode === "auto";
   const setConv = (x: boolean) => setO({ conv: x }), setRatio = (x: number) => setO({ ratio: x }), setMode = (x: typeof mode) => setO({ mode: x });
@@ -482,7 +482,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
       <Check label="Estudo de convergência da malha (GCI)" value={conv} onChange={setConv} />
       {conv && (
         <fieldset class="checklist">
-          <Select label="Modo" value={mode} options={[["three", "3 malhas: h, r·h, r²·h"], ["sweep", "±3 níveis: 7 malhas à volta de h"], ["auto", "Automático: refinar até ao GCI alvo"]]} onChange={(m) => { setMode(m); if (m === "sweep" && ratio > 1.4) setRatio(1.35); }} />
+          <Select label="Modo" value={mode} options={[["three", "3 malhas: h, r·h, r²·h"], ["sweep", "±3 níveis: 7 malhas à volta de h"], ["auto", "Automático: refinar até ao GCI alvo"]]} onChange={(m) => setO({ mode: m, ...(m === "sweep" && ratio > 1.4 ? { ratio: 1.35 } : {}) })} />
           <Field label="Razão r entre malhas"><input type="number" min="1.1" max="3" step="0.1" value={ratio} onChange={(e) => setRatio(Number((e.target as HTMLInputElement).value) || 1.5)} /></Field>
           {(auto || mode === "sweep") && (
             <>
