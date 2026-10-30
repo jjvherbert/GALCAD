@@ -16,7 +16,7 @@ Os solvers continuam programas separados (GPL), chamados pelo agente da app. Cad
 textos das licenças e o MANIFEST.json regista versões, origens e SHA-256 (código-fonte: ver
 THIRD_PARTY_NOTICES.md).
 """
-import argparse, hashlib, json, os, shutil, subprocess, sys, tarfile, urllib.request, zipfile
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tarfile, urllib.request, zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -223,6 +223,38 @@ def openfoam(out, work):
     return {"openfoam": {"dir": f"openfoam/{proj}", "version": OPENFOAM["version"], "source": OPENFOAM["url"], "sha256": OPENFOAM["sha256"], "notes": "versão MinGW oficial (openfoam.com); Pstream de série; sem MSYS2"}}
 
 
+OPENRADIOSS = {"version": "latest-20261011",
+               "url": "https://github.com/OpenCourant/OpenCourant/releases/download/latest-20261011/OpenCourant_win64.zip",
+               "sha256": "6d0ea8b43b68aa12f0a2787b339384a554978cbb65a5d3dbaf1e40598f02e7e6"}
+
+
+def openradioss(out, work):
+    """OpenCourant (OpenRadioss, AGPL-3.0) oficial win64: Starter/Engine sem MPI, anim_to_vtk, leitor de
+    entradas (hm_cfg_files, hm_reader), h3d e o runtime Intel oneAPI de que os executáveis dependem
+    (sem Intel MPI nem as variantes de precisão simples)."""
+    z = work / "OpenCourant_win64.zip"
+    fetch(OPENRADIOSS["url"], z, OPENRADIOSS["sha256"])
+    dst = out / "openradioss"
+    keep = re.compile(r"^OpenCourant/(COPYRIGHT\.md|LICENSE.*|licenses/.*|hm_cfg_files/.*|extlib/hm_reader/win64/.*\.dll|extlib/h3d/lib/win64/.*\.dll"
+                      r"|extlib/intelOneAPI_runtime/license/.*|extlib/intelOneAPI_runtime/win64/(?!impi|libfabric).*\.dll"
+                      r"|exec/(starter_win64|engine_win64|anim_to_vtk_win64)\.exe)$")
+    n = 0
+    with zipfile.ZipFile(z) as zf:
+        for info in zf.infolist():
+            if info.is_dir() or not keep.match(info.filename):
+                continue
+            target = dst / info.filename[len("OpenCourant/"):]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(zf.read(info))
+            n += 1
+    for exe in ("starter_win64.exe", "engine_win64.exe", "anim_to_vtk_win64.exe"):
+        if not (dst / "exec" / exe).exists():
+            raise SystemExit(f"OpenCourant: falta exec/{exe}")
+    print(f"OpenCourant: {n} ficheiros")
+    return {"openradioss": {"dir": "openradioss", "version": OPENRADIOSS["version"], "source": OPENRADIOSS["url"], "sha256": OPENRADIOSS["sha256"],
+                            "notes": "OpenCourant (continuação do OpenRadioss), AGPL-3.0; Starter/Engine sem MPI e o runtime Intel oneAPI"}}
+
+
 def code_aster(out, work):
     """Ambiente conda win-64 relocável: a app substitui o caminho de construção nos ficheiros de texto no 1.º arranque."""
     mm = os.environ.get("MICROMAMBA") or shutil.which("micromamba") or "/opt/mamba/bin/micromamba"
@@ -285,14 +317,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(HERE / "solvers" / "win"))
     ap.add_argument("--work", default="/tmp/galcad-solvers")
-    ap.add_argument("--only", nargs="*", choices=["calculix", "gmsh", "xfoil", "su2", "openfoam", "code_aster"])
+    ap.add_argument("--only", nargs="*", choices=["calculix", "gmsh", "xfoil", "su2", "openfoam", "code_aster", "openradioss"])
     a = ap.parse_args()
     out, work = Path(a.out), Path(a.work)
     out.mkdir(parents=True, exist_ok=True)
     work.mkdir(parents=True, exist_ok=True)
     manifest_path = out / "MANIFEST.json"
     manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
-    for name, fn in (("calculix", calculix), ("gmsh", gmsh), ("xfoil", xfoil), ("su2", su2), ("openfoam", openfoam), ("code_aster", code_aster)):
+    for name, fn in (("calculix", calculix), ("gmsh", gmsh), ("xfoil", xfoil), ("su2", su2), ("openfoam", openfoam), ("code_aster", code_aster), ("openradioss", openradioss)):
         if not a.only or name in a.only:
             manifest.update(fn(out, work))
     manifest_path.write_text(json.dumps(manifest, indent=1))

@@ -4078,7 +4078,11 @@ async function runRadioss(c, dir, log, regenerate) {
 	writeFileSync(join(dir, `${deck.name}_0000.rad`), deck.starter);
 	writeFileSync(join(dir, `${deck.name}_0001.rad`), deck.engine);
 	const plat = process.platform === "win32" ? "win64" : "linux64";
-	const libs = [join(r.dir, "extlib", "hm_reader", plat), join(r.dir, "extlib", "h3d", "lib", plat)];
+	const libs = [
+		join(r.dir, "extlib", "hm_reader", plat),
+		join(r.dir, "extlib", "h3d", "lib", plat),
+		...plat === "win64" ? [join(r.dir, "extlib", "intelOneAPI_runtime", "win64")] : []
+	];
 	const env = {
 		RAD_CFG_PATH: join(r.dir, "hm_cfg_files"),
 		RAD_H3D_PATH: libs[1],
@@ -4097,7 +4101,7 @@ async function runRadioss(c, dir, log, regenerate) {
 	], dir, "log.starter", log, env);
 	const out0 = existsSync(join(dir, `${deck.name}_0000.out`)) ? readFileSync(join(dir, `${deck.name}_0000.out`), "utf8") : "";
 	const nerr = /(\d+)\s+ERROR\(S\)/.exec(out0);
-	if (!existsSync(join(dir, `${deck.name}_0001.rst`)) || nerr && Number(nerr[1]) > 0) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
+	if (!/NORMAL TERMINATION/i.test(out0) || !nerr || Number(nerr[1]) > 0) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
 	await run(r.engine, [
 		"-i",
 		`${deck.name}_0001.rad`,

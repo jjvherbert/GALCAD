@@ -164,7 +164,11 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
   const m = s.material;
   return (
     <>
-      <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX"], ["code_aster", "code_aster (EDF)"]]} onChange={(solver) => up({ solver })} />
+      <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX"], ["code_aster", "code_aster (EDF)"], ["openradioss", "OpenRadioss (explícito, impacto)"]]}
+        onChange={(solver) => up(solver === "openradioss"
+          ? { solver, analysis: "dynamic", dynamic: { ...(s.dynamic ?? { duration: 0.001, load: "step" }), scheme: "explicit" }, mesh: { ...s.mesh, order: 1, element: s.mesh.element ?? "hex", integration: "reduced" } }
+          : { solver })} />
+      {s.solver === "openradioss" && <p class="field-hint">OpenRadioss (OpenCourant, AGPL-3.0): explícito de impacto e choque; hexaedros de 8 nós com estabilização física do hourglass (Isolid 24) ou tetraedros de 4 nós; o passo é o estável do Engine.</p>}
       <Select label="Análise" value={s.analysis} options={[["static", "Estática linear"], ["modal", "Modal (frequências próprias)"], ["buckling", "Encurvadura linear"], ["dynamic", "Dinâmica transitória"], ["thermal", "Térmica (regime permanente)"]]}
         onChange={(analysis) => up({ analysis, loads: s.loads.filter((l) => (analysis === "thermal" ? THERM : STRUCT).includes(l.kind)) })} />
       {s.analysis === "static" && (

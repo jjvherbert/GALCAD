@@ -6,9 +6,9 @@
 //   workers e os módulos ES precisam de http, não de file://.
 // - Agente (`dist/cad-runner.mjs`, o mesmo da versão web) em 127.0.0.1 noutra porta, com um token
 //   novo a cada arranque, passado à página pelo preload (window.cadDesktop).
-// - Solvers em `resources/solvers` (CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster): o agente
-//   recebe-os por CAD_CCX, CAD_GMSH, CAD_XFOIL, CAD_SU2, CAD_FOAM_DIR, CAD_ASTER e corre-os como
-//   programas separados.
+// - Solvers em `resources/solvers` (CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster, OpenRadioss):
+//   o agente recebe-os por CAD_CCX, CAD_GMSH, CAD_XFOIL, CAD_SU2, CAD_FOAM_DIR, CAD_ASTER,
+//   CAD_RADIOSS_DIR e corre-os como programas separados.
 // - `GALCAD.exe --galcad-setup` (chamado pelo instalador): reloca o ambiente do code_aster para a
 //   pasta de instalação e sai.
 const { app, BrowserWindow, Menu, shell, dialog } = require("electron");
@@ -37,6 +37,8 @@ function solverEnv() {
   set("CAD_XFOIL", `xfoil/xfoil${exe}`);
   set("CAD_SU2", `su2/SU2_CFD${exe}`);
   set("CAD_ASTER", process.platform === "win32" ? "code_aster/run_aster.cmd" : "code_aster/bin/run_aster");
+  const rad = path.join(solvers, "openradioss");
+  if (!process.env.CAD_RADIOSS_DIR && fs.existsSync(path.join(rad, "exec"))) env.CAD_RADIOSS_DIR = rad;
   const foam = path.join(solvers, "openfoam");
   if (!process.env.CAD_FOAM_DIR && fs.existsSync(foam)) {
     const d = fs.readdirSync(foam).find((x) => x.startsWith("OpenFOAM-"));

@@ -1,5 +1,5 @@
-# Instalador Windows da GALCAD com todos os solvers: CalculiX, Gmsh, XFOIL, SU2, OpenFOAM e
-# code_aster. Os solvers são preparados em Linux (desktop/build-solvers.py: compilação cruzada e
+# Instalador Windows da GALCAD com todos os solvers: CalculiX, Gmsh, XFOIL, SU2, OpenFOAM,
+# code_aster e OpenRadioss (OpenCourant). Os solvers são preparados em Linux (desktop/build-solvers.py: compilação cruzada e
 # pacotes oficiais, versões fixas e SHA-256), testados num Windows real contra os casos de referência
 # e empacotados com a app Electron num instalador NSIS, que é instalado em silêncio e testado.
 # O instalador fica como artefacto da execução e, nas etiquetas v*, como release.
@@ -29,7 +29,7 @@ jobs:
           curl -fsSL -o micromamba https://github.com/mamba-org/micromamba-releases/releases/download/2.3.3-0/micromamba-linux-64
           chmod +x micromamba
           echo "MICROMAMBA=$PWD/micromamba" >> "$GITHUB_ENV"
-      - name: Solvers (CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster)
+      - name: Solvers (CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster, OpenRadioss)
         run: python3 desktop/build-solvers.py --out desktop/solvers/win --work /tmp/galcad-solvers
       - uses: actions/upload-artifact@v4
         with:
@@ -85,7 +85,8 @@ jobs:
           $env:CAD_SU2 = "$s\su2\SU2_CFD.exe"
           $env:CAD_ASTER = "$s\code_aster\run_aster.cmd"
           $env:CAD_FOAM_DIR = (Get-ChildItem "$s\openfoam" -Directory | Select-Object -First 1).FullName
-          node --test --test-concurrency=1 --test-name-pattern="consola — flecha|frequência própria|atrito|XFOIL real|conduta quadrada laminar|code_aster: consola|code_aster: pressão|hexaedros C3D8I|hexaedros estruturados com seeds|pré-visualização da malha|CalculiX implícito|CalculiX explícito|code_aster implícito" tests/sim.test.ts tests/sim-assembly.test.ts tests/calc.test.ts tests/aster-solver.test.ts tests/mesh.test.ts tests/dynamics.test.ts
+          $env:CAD_RADIOSS_DIR = "$s\openradioss"
+          node --test --test-concurrency=1 --test-name-pattern="consola — flecha|frequência própria|atrito|XFOIL real|conduta quadrada laminar|code_aster: consola|code_aster: pressão|hexaedros C3D8I|hexaedros estruturados com seeds|pré-visualização da malha|CalculiX implícito|CalculiX explícito|code_aster implícito|OpenRadioss" tests/sim.test.ts tests/sim-assembly.test.ts tests/calc.test.ts tests/aster-solver.test.ts tests/mesh.test.ts tests/dynamics.test.ts tests/radioss.test.ts
       - name: Instalador
         run: npm run dist:win
       - name: Instalar em silêncio e testar a app instalada (agente embutido + consola no CalculiX)

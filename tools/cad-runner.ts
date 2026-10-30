@@ -250,7 +250,8 @@ async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean
   writeFileSync(join(dir, `${deck.name}_0000.rad`), deck.starter);
   writeFileSync(join(dir, `${deck.name}_0001.rad`), deck.engine);
   const plat = process.platform === "win32" ? "win64" : "linux64";
-  const libs = [join(r.dir, "extlib", "hm_reader", plat), join(r.dir, "extlib", "h3d", "lib", plat)];
+  // bibliotecas do leitor de entradas e do h3d; no Windows também o runtime Intel oneAPI dos executáveis
+  const libs = [join(r.dir, "extlib", "hm_reader", plat), join(r.dir, "extlib", "h3d", "lib", plat), ...(plat === "win64" ? [join(r.dir, "extlib", "intelOneAPI_runtime", "win64")] : [])];
   const env = {
     RAD_CFG_PATH: join(r.dir, "hm_cfg_files"), RAD_H3D_PATH: libs[1], OMP_NUM_THREADS: "1", KMP_STACKSIZE: "400m", OMP_STACKSIZE: "400m",
     ...(process.platform === "win32" ? { PATH_PREPEND: libs.join(";") } : { LD_LIBRARY_PATH: [...libs, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }),
@@ -258,7 +259,7 @@ async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean
   await run(r.starter, ["-i", `${deck.name}_0000.rad`, "-np", "1", "-nt", "1"], dir, "log.starter", log, env);
   const out0 = existsSync(join(dir, `${deck.name}_0000.out`)) ? readFileSync(join(dir, `${deck.name}_0000.out`), "utf8") : "";
   const nerr = /(\d+)\s+ERROR\(S\)/.exec(out0);
-  if (!existsSync(join(dir, `${deck.name}_0001.rst`)) || (nerr && Number(nerr[1]) > 0)) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
+  if (!/NORMAL TERMINATION/i.test(out0) || !nerr || Number(nerr[1]) > 0) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
   await run(r.engine, ["-i", `${deck.name}_0001.rad`, "-nt", "1"], dir, "log.engine", log, env);
   const out1 = existsSync(join(dir, `${deck.name}_0001.out`)) ? readFileSync(join(dir, `${deck.name}_0001.out`), "utf8") : "";
   if (!/NORMAL TERMINATION/i.test(out1)) throw new Error(`Engine do OpenRadioss não terminou normalmente:\n${tail(join(dir, `${deck.name}_0001.out`), 40)}`);
