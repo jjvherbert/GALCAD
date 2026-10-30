@@ -51,7 +51,7 @@ export interface FemCase {
   format: "cadp-sim-case";
   version: 1;
   physics: "fem";
-  solver: "calculix" | "code_aster";
+  solver: "calculix" | "code_aster" | "openradioss";
   title: string;
   analysis: "static" | "modal" | "buckling" | "thermal" | "dynamic";
   /**

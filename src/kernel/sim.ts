@@ -127,6 +127,7 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
   const m = s.material;
   if (nl?.plasticity && !(m.yield! > 0)) throw new Error("Plasticidade: indique a tensão de cedência do material");
   if (nl?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) throw new Error("Plasticidade: o módulo tangente tem de estar entre 0 e E");
+  if (s.solver === "openradioss" && s.analysis !== "dynamic") throw new Error("OpenRadioss: escolha a análise «Dinâmica transitória» (explícita)");
   // dinâmica: duração, passo, amplitude e Rayleigh resolvidos
   let dynamic: FemCase["dynamic"];
   if (s.analysis === "dynamic") {
@@ -141,6 +142,7 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
     const alpha = opt(d.alpha, "Rayleigh α") ?? 0, beta = opt(d.beta, "Rayleigh β") ?? 0;
     if (alpha < 0 || beta < 0) throw new Error("Dinâmica: os coeficientes de Rayleigh não podem ser negativos");
     dynamic = { scheme: d.scheme, duration: T, dt, amplitude: amplitudeTable(d.load, T, rise, period), alpha, beta, frames: Math.min(400, Math.max(5, Math.round(d.frames ?? 50))) };
+    if (s.solver === "openradioss" && d.scheme !== "explicit") throw new Error("OpenRadioss: só integração explícita");
     if (s.solver === "code_aster" && d.scheme === "explicit") report.warnings.push("code_aster explícito (DIFF_CENT): lento e só com integração completa — para impacto use o CalculiX (ou o OpenRadioss)");
   }
   const LOAD_NAME = { step: "degrau", ramp: "rampa", halfsine: "meio seno", sine: "seno" } as const;

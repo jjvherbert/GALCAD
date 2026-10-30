@@ -1,0 +1,53 @@
+# OpenRadioss (OpenCourant, AGPL-3.0) com o binário oficial Linux: o adaptador (src/sim/radioss.ts)
+# é verificado aqui contra a consola sob carga em degrau (tests/radioss.test.ts), porque o binário não
+# corre no ambiente de desenvolvimento. Versão e SHA-256 fixos.
+name: OpenRadioss
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OC_TAG: latest-20261011
+  OC_SHA256: 6cb419677ca36d73acb96218cc0cf5e4f7d50494d9c7812ba27935e3c0f8ec94
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Gmsh
+        run: sudo apt-get update -q && sudo apt-get install -y -q gmsh && gmsh --version
+      - name: OpenCourant (binário oficial, SHA-256 conferido)
+        run: |
+          curl -fsSL -o oc.zip "https://github.com/OpenCourant/OpenCourant/releases/download/${OC_TAG}/OpenCourant_linux64.zip"
+          echo "${OC_SHA256}  oc.zip" | sha256sum -c -
+          unzip -q oc.zip -d "$HOME"
+          ls "$HOME/OpenCourant/exec"
+          echo "CAD_RADIOSS_DIR=$HOME/OpenCourant" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Adaptador OpenRadioss (deck, leitura e consola real)
+        run: CAD_KEEP=1 node --test --test-concurrency=1 tests/radioss.test.ts
+      - name: Ficheiros do caso (se falhar)
+        if: failure()
+        run: |
+          mkdir -p rad-debug
+          for d in /tmp/cad-rad-*; do [ -d "$d" ] && cp -r "$d" rad-debug/ ; done
+          find rad-debug -name "*.vtk" -delete
+          ls -R rad-debug | head -50
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: openradioss-debug
+          path: rad-debug
+          retention-days: 7

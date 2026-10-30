@@ -1988,6 +1988,315 @@ function meshPreview(c, m) {
 		summary
 	};
 }
+// src/sim/radioss.ts
+const I = (x) => String(Math.round(x)).padStart(10);
+const F = (x) => {
+	return (Number.isInteger(x) && Math.abs(x) < 0x38d7ea4c68000 ? String(x) : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1")).padStart(20);
+};
+const title = (s) => s.replace(/[^\x20-\x7e]/g, "_").slice(0, 80);
+/** Lista de tags em linhas de 10 inteiros (formato de /GRNOD/NODE). */
+const ids = (list) => {
+	const out = [];
+	for (let k = 0; k < list.length; k += 10) out.push(list.slice(k, k + 10).map(I).join(""));
+	return out;
+};
+function radiossDeck(c, m) {
+	if (c.analysis !== "dynamic" || c.dynamic?.scheme !== "explicit") throw new Error("OpenRadioss: só dinâmica explícita (escolha «Dinâmica transitória» e «Explícita»)");
+	if ((c.ties ?? []).length) throw new Error("OpenRadioss: montagens com contacto ainda não estão neste adaptador (use uma peça)");
+	const warnings = [];
+	const D = c.dynamic;
+	const name = "galcad";
+	const S = ["#RADIOSS STARTER", `# ${title(c.title)} — gerado pelo GALCAD (unidades: kg, mm, ms; força kN, tensão GPa)`];
+	for (const h of c.hypotheses) S.push(`# ${title(h)}`);
+	S.push("/BEGIN", name, `${I(2019)}${I(0)}`, `${"kg".padStart(20)}${"mm".padStart(20)}${"ms".padStart(20)}`, `${"kg".padStart(20)}${"mm".padStart(20)}${"ms".padStart(20)}`);
+	S.push("/TITLE", title(c.title));
+	const bodies = c.bodies?.length ? c.bodies.map((b) => ({
+		group: b.group,
+		mat: b.material
+	})) : [{
+		group: "SOLID",
+		mat: c.material
+	}];
+	bodies.forEach((b, k) => {
+		S.push(`/MAT/ELAST/${k + 1}`, title(b.mat.name), "#        Init. dens.          Ref. dens.", `${F(b.mat.density * 1e-6)}${F(0)}`, "#                  E                  nu", `${F(b.mat.E / 1e3)}${F(b.mat.nu)}`);
+	});
+	const prop = (id, label, isolid) => S.push(`/PROP/SOLID/${id}`, label, "#   Isolid    Ismstr               Icpre               Inpts    Itetra    Iframe                  dn", `${I(isolid)}${I(0)}${" ".repeat(10)}${I(isolid === 24 ? 1 : 0)}${" ".repeat(10)}${I(0)}${I(0)}${I(0)}${F(0)}`, "#                q_a                 q_b                   h            LAMBDA_V                MU_V", `${F(0)}${F(0)}${F(0)}${F(0)}${F(0)}`, "#             dt_min   istrain      IHKT", `${F(0)}${I(0)}${I(0)}`);
+	prop(1, "hexaedros (Isolid 24)", 24);
+	prop(2, "tetraedros", 0);
+	const used = /* @__PURE__ */ new Set();
+	const parts = [];
+	let elements = 0;
+	bodies.forEach((b, k) => {
+		const hex = [], tet = [];
+		for (const e of elementsOf(solidBlocks(m, [{ group: b.group }]))) {
+			const st = SOLIDS[e.type];
+			if (st.order !== 1) throw new Error("OpenRadioss: use elementos lineares (hexaedros de 8 nós ou tetraedros de 4) — os quadráticos não são próprios do explícito");
+			(st.kind === "hex" ? hex : tet).push(e.nodes);
+			e.nodes.forEach((n) => used.add(n));
+		}
+		if (hex.length) parts.push({
+			id: 10 * (k + 1) + 1,
+			kind: "hex",
+			body: k,
+			els: hex
+		});
+		if (tet.length) parts.push({
+			id: 10 * (k + 1) + 2,
+			kind: "tet",
+			body: k,
+			els: tet
+		});
+	});
+	if (!parts.length) throw new Error("A malha não tem elementos de volume");
+	const nodeIds = [...used].sort((a, b) => a - b);
+	S.push("/NODE");
+	for (const t of nodeIds) {
+		const p = m.nodes.get(t);
+		S.push(`${I(t)}${F(p[0])}${F(p[1])}${F(p[2])}`);
+	}
+	let eid = 1;
+	for (const pt of parts) {
+		S.push(`/PART/${pt.id}`, `${bodies[pt.body].group} ${pt.kind === "hex" ? "hexaedros" : "tetraedros"}`, `${I(pt.kind === "hex" ? 1 : 2)}${I(pt.body + 1)}${I(0)}`);
+		S.push(`/${pt.kind === "hex" ? "BRICK" : "TETRA4"}/${pt.id}`);
+		for (const e of pt.els) S.push(`${I(eid++)}${e.map(I).join("")}`);
+		elements += pt.els.length;
+	}
+	let gid = 100;
+	const group = (label, nodes) => {
+		const id = ++gid;
+		S.push(`/GRNOD/NODE/${id}`, title(label), ...ids(nodes));
+		return id;
+	};
+	const faceNodes = (g) => [...new Set([...elementsOf(faceBlocks(m, g))].flatMap((e) => e.nodes))].sort((a, b) => a - b);
+	S.push("/FUNCT/1", "amplitude", "#                  X                   Y", ...D.amplitude.map(([t, v]) => `${F(t * 1e3)}${F(v)}`));
+	let bcs = 0, loads = 0;
+	for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") {
+		const fix = ld.kind === "fixed" ? [
+			true,
+			true,
+			true
+		] : ld.u.map((u) => u !== null);
+		if (ld.kind === "displacement" && ld.u.some((u) => u !== null && u !== 0)) throw new Error("OpenRadioss: deslocamentos impostos não nulos ainda não estão neste adaptador (use forças)");
+		const g = group(`apoio ${ld.group}`, faceNodes(ld.group));
+		S.push(`/BCS/${++bcs}`, `apoio ${ld.group}`, "#  Tra rot   skew_ID  grnod_ID", `   ${fix.map((x) => x ? "1" : "0").join("")} 000${I(0)}${I(g)}`);
+	}
+	const nodal = /* @__PURE__ */ new Map();
+	const add = (n, f) => {
+		const a = nodal.get(n) ?? [
+			0,
+			0,
+			0
+		];
+		for (let k = 0; k < 3; k++) a[k] += f[k];
+		nodal.set(n, a);
+	};
+	const centers = /* @__PURE__ */ new Map();
+	for (const e of elementsOf(solidBlocks(m, c.bodies))) {
+		const st = SOLIDS[e.type];
+		const P = e.nodes.slice(0, st.corners).map((n) => m.nodes.get(n));
+		const ce = [
+			0,
+			1,
+			2
+		].map((q) => P.reduce((s, p) => s + p[q], 0) / P.length);
+		for (const f of st.faces) centers.set(f.map((i) => e.nodes[i]).sort((a, b) => a - b).join(","), ce);
+	}
+	for (const ld of c.loads) if (ld.kind === "force") {
+		const fs = [...elementsOf(faceBlocks(m, ld.group))].map((e) => ({
+			e,
+			fi: faceIntegrals(e.type, e.nodes.map((n) => m.nodes.get(n)))
+		}));
+		const A = fs.reduce((s, x) => s + x.fi.area, 0);
+		if (!(A > 0)) {
+			warnings.push(`Força no grupo ${ld.group} sem área`);
+			continue;
+		}
+		for (const { e, fi } of fs) e.nodes.forEach((n, i) => add(n, [
+			0,
+			1,
+			2
+		].map((k) => ld.f[k] * fi.nodal[i] / A)));
+	} else if (ld.kind === "pressure") for (const e of elementsOf(faceBlocks(m, ld.group))) {
+		const P = e.nodes.map((n) => m.nodes.get(n));
+		const fi = faceIntegrals(e.type, P);
+		const corners = e.nodes.slice(0, e.type === 2 || e.type === 9 ? 3 : 4);
+		const ce = centers.get([...corners].sort((a, b) => a - b).join(","));
+		const nv = fi.vec.reduce((s, v) => [
+			s[0] + v[0],
+			s[1] + v[1],
+			s[2] + v[2]
+		], [
+			0,
+			0,
+			0
+		]);
+		const sgn = ce ? Math.sign(nv[0] * (P[0][0] - ce[0]) + nv[1] * (P[0][1] - ce[1]) + nv[2] * (P[0][2] - ce[2])) || 1 : 1;
+		e.nodes.forEach((n, i) => add(n, fi.vec[i].map((v) => -ld.p * sgn * v)));
+	}
+	else if (ld.kind === "gravity") {
+		const all = group("todos os nós", nodeIds);
+		ld.g.forEach((g, k) => {
+			if (g) S.push(`/GRAV/${++loads}`, "gravidade", "#funct_IDT       Dir   skew_ID sensor_ID  grnod_ID                       Ascalex             Fscaley", `${I(1)}${"XYZ"[k].padStart(10)}${I(0)}${I(0)}${I(all)}${" ".repeat(10)}${F(1)}${F(g * 1e-6)}`);
+		});
+	} else if (ld.kind !== "fixed" && ld.kind !== "displacement") warnings.push(`OpenRadioss: condição "${ld.kind}" ignorada (térmica)`);
+	for (let k = 0; k < 3; k++) {
+		const byVal = /* @__PURE__ */ new Map();
+		for (const [n, f] of nodal) {
+			if (Math.abs(f[k]) < 1e-14) continue;
+			const key = f[k].toPrecision(9);
+			const x = byVal.get(key) ?? {
+				v: f[k],
+				nodes: []
+			};
+			x.nodes.push(n);
+			byVal.set(key, x);
+		}
+		for (const { v, nodes } of byVal.values()) {
+			const g = group(`carga ${"XYZ"[k]} ${v.toPrecision(4)} N`, nodes.sort((a, b) => a - b));
+			S.push(`/CLOAD/${++loads}`, `forca ${"XYZ"[k]}`, "#funct_IDT       Dir   skew_ID sensor_ID  grnod_ID                       Ascalex             Fscaley", `${I(1)}${"XYZ"[k].padStart(10)}${I(0)}${I(0)}${I(g)}${" ".repeat(10)}${F(1)}${F(v / 1e3)}`);
+		}
+	}
+	if (!bcs) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
+	if (D.alpha || D.beta) {
+		const all = group("amortecimento", nodeIds);
+		S.push("/DAMP/1", "Rayleigh", "#              alpha                beta  grnod_ID   skew_ID              Tstart               Tstop", `${F(D.alpha / 1e3)}${F(D.beta * 1e3)}${I(all)}${I(0)}${F(0)}${F(0)}`);
+	}
+	S.push("/END");
+	const T = D.duration * 1e3;
+	const E = [
+		"#RADIOSS ENGINE",
+		`/RUN/${name}/1`,
+		F(T),
+		"/ANIM/DT",
+		`${F(0)}${F(T / D.frames)}`,
+		"/ANIM/VECT/DISP",
+		"/ANIM/ELEM/VONM",
+		"/PRINT/-1000"
+	];
+	if (D.dt) warnings.push("OpenRadioss: o passo é o estável calculado pelo Engine (o passo indicado é ignorado)");
+	return {
+		starter: S.join("\n") + "\n",
+		engine: E.join("\n") + "\n",
+		name,
+		warnings,
+		nodes: nodeIds.length,
+		elements
+	};
+}
+/** Lê um VTK legado ASCII (UNSTRUCTURED_GRID) do anim_to_vtk. */
+function parseVtk(text) {
+	const tok = text.split(/\s+/).filter(Boolean);
+	let i = 0;
+	const f = {
+		time: 0,
+		nodeIds: [],
+		points: [],
+		vectors: {},
+		cellScalars: {},
+		cells: [],
+		cellTypes: []
+	};
+	let section = null, nPts = 0, nCells = 0;
+	while (i < tok.length) {
+		const t = tok[i++];
+		if (t === "TIME" && tok[i] === "1" && tok[i + 1] === "1") {
+			i += 3;
+			f.time = Number(tok[i++]);
+		} else if (t === "POINTS") {
+			nPts = Number(tok[i++]);
+			i++;
+			for (let k = 0; k < 3 * nPts; k++) f.points.push(Number(tok[i++]));
+		} else if (t === "CELLS") {
+			nCells = Number(tok[i++]);
+			i++;
+			for (let k = 0; k < nCells; k++) {
+				const n = Number(tok[i++]);
+				const c = [];
+				for (let q = 0; q < n; q++) c.push(Number(tok[i++]));
+				f.cells.push(c);
+			}
+		} else if (t === "CELL_TYPES") {
+			const n = Number(tok[i++]);
+			for (let k = 0; k < n; k++) f.cellTypes.push(Number(tok[i++]));
+		} else if (t === "POINT_DATA") {
+			section = "point";
+			i++;
+		} else if (t === "CELL_DATA") {
+			section = "cell";
+			i++;
+		} else if (t === "SCALARS") {
+			const nameParts = [];
+			while (i < tok.length && !/^(int|float|double)$/.test(tok[i])) nameParts.push(tok[i++]);
+			const name = nameParts.join(" ");
+			i++;
+			if (/^\d+$/.test(tok[i])) i++;
+			if (tok[i] === "LOOKUP_TABLE") i += 2;
+			const n = section === "point" ? nPts : nCells;
+			const vals = [];
+			for (let k = 0; k < n; k++) vals.push(Number(tok[i++]));
+			if (section === "point" && name === "NODE_ID") f.nodeIds = vals;
+			else if (section === "cell") f.cellScalars[name] = vals;
+		} else if (t === "VECTORS") {
+			const nameParts = [];
+			while (i < tok.length && !/^(int|float|double)$/.test(tok[i])) nameParts.push(tok[i++]);
+			i++;
+			const vals = [];
+			for (let k = 0; k < 3 * nPts; k++) vals.push(Number(tok[i++]));
+			f.vectors[nameParts.join(" ")] = vals;
+		}
+	}
+	return f;
+}
+/**
+* Blocos nodais (formato do .frd: DISP em mm, VMIS em MPa, valor = tempo em s) a partir das
+* animações: deslocamentos pelo NODE_ID e von Mises por célula, média nos nós dos elementos.
+*/
+function radiossBlocks(frames) {
+	const out = [];
+	for (const fr of frames) {
+		const t = fr.time / 1e3;
+		const dKey = Object.keys(fr.vectors).find((k) => /disp/i.test(k));
+		if (dKey) {
+			const v = fr.vectors[dKey], data = /* @__PURE__ */ new Map();
+			fr.nodeIds.forEach((id, p) => data.set(id, [
+				v[3 * p],
+				v[3 * p + 1],
+				v[3 * p + 2]
+			]));
+			out.push({
+				name: "DISP",
+				value: t,
+				components: [
+					"D1",
+					"D2",
+					"D3"
+				],
+				data
+			});
+		}
+		const sKey = Object.keys(fr.cellScalars).find((k) => /mises/i.test(k));
+		if (sKey) {
+			const s = fr.cellScalars[sKey], sum = /* @__PURE__ */ new Map();
+			fr.cells.forEach((c, e) => {
+				if (fr.cellTypes[e] !== 10 && fr.cellTypes[e] !== 12) return;
+				for (const p of c) {
+					const id = fr.nodeIds[p];
+					const a = sum.get(id) ?? [0, 0];
+					a[0] += s[e] * 1e3;
+					a[1]++;
+					sum.set(id, a);
+				}
+			});
+			out.push({
+				name: "VMIS",
+				value: t,
+				components: ["VM"],
+				data: new Map([...sum].map(([id, [a, n]]) => [id, [a / n]]))
+			});
+		}
+	}
+	return out;
+}
 // src/sim/openfoam.ts
 const head = (cls, object, location) => `/*--------------------------------*- C++ -*----------------------------------*\\
   Gerado pelo CAD prototipo (ficheiros ASCII puros, como o OpenFOAM espera)
@@ -3486,6 +3795,12 @@ function tools() {
 	].find((p) => p && existsSync(p));
 	const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
 	const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
+	const radDir = [
+		process.env.CAD_RADIOSS_DIR,
+		`${home}/OpenCourant`,
+		"/opt/OpenCourant"
+	].find((p) => p && existsSync(join(p, "exec")));
+	const radExe = radDir ? radiossExecutables(radDir) : null;
 	const foamDir = process.env.CAD_FOAM_DIR && existsSync(process.env.CAD_FOAM_DIR) ? process.env.CAD_FOAM_DIR : null;
 	const foamBin = foamDir ? (() => {
 		const pl = join(foamDir, "platforms");
@@ -3534,8 +3849,28 @@ function tools() {
 			path: xfoil,
 			version: "XFOIL 6.9x",
 			preload: process.env.CAD_XFOIL_PRELOAD ?? null
+		} : null,
+		openradioss: radDir && radExe ? {
+			path: radExe.engine,
+			version: "OpenCourant",
+			dir: radDir,
+			...radExe
 		} : null
 	};
+}
+/** Executáveis da distribuição do OpenCourant: Starter, Engine (sem MPI, dupla precisão) e anim_to_vtk. */
+function radiossExecutables(dir) {
+	const ex = readdirSync(join(dir, "exec"));
+	const pick = (re) => {
+		const f = ex.filter((x) => re.test(x) && !/_sp(\.exe)?$|ompi|impi|msmpi/.test(x)).sort((a, b) => a.length - b.length)[0];
+		return f ? join(dir, "exec", f) : null;
+	};
+	const starter = pick(/^starter_/), engine = pick(/^engine_/), animToVtk = pick(/^anim_to_vtk/);
+	return starter && engine && animToVtk ? {
+		starter,
+		engine,
+		animToVtk
+	} : null;
 }
 /** Ambiente do processo com variáveis extra; `PATH` junta-se ao existente (no Windows a chave é "Path"). */
 function withEnv(extra) {
@@ -3717,8 +4052,100 @@ async function runAster(c, dir, log, regenerate) {
 		log: tail(join(dir, "job.mess"))
 	};
 }
+/**
+* OpenRadioss (OpenCourant): Starter e Engine sobre a malha Gmsh, animações convertidas em VTK pelo
+* anim_to_vtk e lidas como blocos nodais (deslocamento, von Mises) para o mesmo resultado dinâmico.
+*/
+async function runRadioss(c, dir, log, regenerate) {
+	const t = tools();
+	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+	const r = t.openradioss;
+	if (!r) throw new Error("OpenRadioss/OpenCourant não encontrado (https://github.com/OpenCourant/OpenCourant/releases: descompacte e defina CAD_RADIOSS_DIR)");
+	if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
+	await run(t.gmsh.path, [
+		"mesh.geo",
+		"-3",
+		"-o",
+		"mesh.msh",
+		"-nt",
+		"1"
+	], dir, "log.gmsh", log);
+	const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+	const warnings = checkGroups(c, msh);
+	if (warnings.length) throw new Error(warnings.join("\n"));
+	const deck = radiossDeck(c, msh);
+	warnings.push(...deck.warnings);
+	writeFileSync(join(dir, `${deck.name}_0000.rad`), deck.starter);
+	writeFileSync(join(dir, `${deck.name}_0001.rad`), deck.engine);
+	const plat = process.platform === "win32" ? "win64" : "linux64";
+	const libs = [join(r.dir, "extlib", "hm_reader", plat), join(r.dir, "extlib", "h3d", "lib", plat)];
+	const env = {
+		RAD_CFG_PATH: join(r.dir, "hm_cfg_files"),
+		RAD_H3D_PATH: libs[1],
+		OMP_NUM_THREADS: "1",
+		KMP_STACKSIZE: "400m",
+		OMP_STACKSIZE: "400m",
+		...process.platform === "win32" ? { PATH_PREPEND: libs.join(";") } : { LD_LIBRARY_PATH: [...libs, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }
+	};
+	await run(r.starter, [
+		"-i",
+		`${deck.name}_0000.rad`,
+		"-np",
+		"1",
+		"-nt",
+		"1"
+	], dir, "log.starter", log, env);
+	const out0 = existsSync(join(dir, `${deck.name}_0000.out`)) ? readFileSync(join(dir, `${deck.name}_0000.out`), "utf8") : "";
+	const nerr = /(\d+)\s+ERROR\(S\)/.exec(out0);
+	if (!existsSync(join(dir, `${deck.name}_0001.rst`)) || nerr && Number(nerr[1]) > 0) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
+	await run(r.engine, [
+		"-i",
+		`${deck.name}_0001.rad`,
+		"-nt",
+		"1"
+	], dir, "log.engine", log, env);
+	const out1 = existsSync(join(dir, `${deck.name}_0001.out`)) ? readFileSync(join(dir, `${deck.name}_0001.out`), "utf8") : "";
+	if (!/NORMAL TERMINATION/i.test(out1)) throw new Error(`Engine do OpenRadioss não terminou normalmente:\n${tail(join(dir, `${deck.name}_0001.out`), 40)}`);
+	const anims = readdirSync(dir).filter((f) => new RegExp(`^${deck.name}A\\d+$`).test(f)).sort();
+	if (!anims.length) throw new Error("O OpenRadioss não escreveu animações");
+	const frames = [];
+	for (const a of anims) {
+		const res = spawnSync(r.animToVtk, [a], {
+			cwd: dir,
+			env: withEnv(env),
+			encoding: "utf8",
+			maxBuffer: 1 << 30
+		});
+		if (res.status !== 0 || !res.stdout.includes("UNSTRUCTURED_GRID")) throw new Error(`anim_to_vtk falhou em ${a}: ${(res.stderr || res.stdout).slice(-400)}`);
+		frames.push(parseVtk(res.stdout));
+	}
+	const fem = femResultFrom(c, msh, radiossBlocks(frames), {
+		frequencies: [],
+		buckling: [],
+		reactions: [],
+		reactionHistory: []
+	});
+	const dtm = /TIME STEP\s*[:=]?\s*([\d.Ee+-]+)/.exec(out1) ?? /DT\s*=\s*([\d.Ee+-]+)/.exec(out1);
+	return {
+		ok: true,
+		physics: "fem",
+		solver: "OpenRadioss (OpenCourant)",
+		summary: [
+			["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`],
+			["Integração no tempo", `explícita (OpenRadioss), passo estável do Engine${dtm ? ` ≈ ${(Number(dtm[1]) / 1e3).toExponential(3)} s` : ""}, ${frames.length} animações`],
+			...fem.summary
+		],
+		warnings,
+		fem,
+		view: femView(fem),
+		metrics: fem.metrics,
+		cells: deck.elements,
+		log: tail(join(dir, `${deck.name}_0001.out`))
+	};
+}
 async function runFem(c, dir, log, regenerate) {
 	if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
+	if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
 	const t = tools();
 	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
 	if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");

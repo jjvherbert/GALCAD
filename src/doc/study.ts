@@ -129,8 +129,8 @@ export interface FemStudy {
   id: string;
   name: string;
   physics: "fem";
-  /** CalculiX (por omissão) ou code_aster (EDF, GPL), para os mesmos casos. */
-  solver: "calculix" | "code_aster";
+  /** CalculiX (por omissão), code_aster (EDF, GPL) ou OpenRadioss/OpenCourant (AGPL, só explícito). */
+  solver: "calculix" | "code_aster" | "openradioss";
   analysis: "static" | "modal" | "buckling" | "thermal" | "dynamic";
   nonlinear?: FemNonlinear;
   /** Dinâmica transitória (análise "dynamic"). */

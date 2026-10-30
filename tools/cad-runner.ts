@@ -21,8 +21,9 @@ import { femGeo, su2Geo } from "../src/sim/gmsh.ts";
 import { elementsOf, faceBlocks, parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
 import { faceIntegrals } from "../src/sim/elements.ts";
 import { meshPreview } from "../src/sim/meshview.ts";
+import { type VtkFrame, parseVtk, radiossBlocks, radiossDeck } from "../src/sim/radioss.ts";
 import type { MeshQuality } from "../src/sim/quality.ts";
-import { calculixDeck, femResult, type FemResult } from "../src/sim/calculix.ts";
+import { calculixDeck, femResult, femResultFrom, type FemResult } from "../src/sim/calculix.ts";
 import { openfoamCase } from "../src/sim/openfoam.ts";
 import { patchAverage, patchFlux, patchPressureForce, readBoundary, readFaces, readLabels, readPoints, readScalarField } from "../src/sim/foamread.ts";
 import { su2Config } from "../src/sim/su2.ts";
@@ -76,6 +77,9 @@ export function tools() {
   const condaAster = [process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`, `${home}/micromamba/envs/aster/bin/run_aster`, `${home}/miniforge3/envs/aster/bin/run_aster`, "/opt/mamba/root/envs/aster/bin/run_aster", "/opt/conda/envs/aster/bin/run_aster"].find((p) => p && existsSync(p));
   const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
   const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
+  // OpenRadioss/OpenCourant: pasta da distribuição oficial (exec/, hm_cfg_files/, extlib/)
+  const radDir = [process.env.CAD_RADIOSS_DIR, `${home}/OpenCourant`, "/opt/OpenCourant"].find((p) => p && existsSync(join(p, "exec")));
+  const radExe = radDir ? radiossExecutables(radDir) : null;
   // OpenFOAM nativo para Windows (versão MinGW da openfoam.com): pasta OpenFOAM-vXXXX com platforms/*/bin
   const foamDir = process.env.CAD_FOAM_DIR && existsSync(process.env.CAD_FOAM_DIR) ? process.env.CAD_FOAM_DIR : null;
   const foamBin = foamDir ? (() => { const pl = join(foamDir, "platforms"); const t = existsSync(pl) ? readdirSync(pl).find((d) => existsSync(join(pl, d, "bin"))) : undefined; return t ? join(pl, t, "bin") : null; })() : null;
@@ -95,7 +99,16 @@ export function tools() {
     su2: su2 ? { path: su2, version: "SU2_CFD" } : null,
     code_aster: aster ? { path: aster, version: aster.endsWith("as_run") ? "as_run" : "run_aster" } : null,
     xfoil: xfoil ? { path: xfoil, version: "XFOIL 6.9x", preload: process.env.CAD_XFOIL_PRELOAD ?? null } : null,
+    openradioss: radDir && radExe ? { path: radExe.engine, version: "OpenCourant", dir: radDir, ...radExe } : null,
   };
+}
+
+/** Executáveis da distribuição do OpenCourant: Starter, Engine (sem MPI, dupla precisão) e anim_to_vtk. */
+function radiossExecutables(dir: string): { starter: string; engine: string; animToVtk: string } | null {
+  const ex = readdirSync(join(dir, "exec"));
+  const pick = (re: RegExp) => { const f = ex.filter((x) => re.test(x) && !/_sp(\.exe)?$|ompi|impi|msmpi/.test(x)).sort((a, b) => a.length - b.length)[0]; return f ? join(dir, "exec", f) : null; };
+  const starter = pick(/^starter_/), engine = pick(/^engine_/), animToVtk = pick(/^anim_to_vtk/);
+  return starter && engine && animToVtk ? { starter, engine, animToVtk } : null;
 }
 
 /** Ambiente do processo com variáveis extra; `PATH` junta-se ao existente (no Windows a chave é "Path"). */
@@ -218,8 +231,55 @@ async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean):
   return { ok: true, physics: "fem", solver: "code_aster", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
 }
 
+/**
+ * OpenRadioss (OpenCourant): Starter e Engine sobre a malha Gmsh, animações convertidas em VTK pelo
+ * anim_to_vtk e lidas como blocos nodais (deslocamento, von Mises) para o mesmo resultado dinâmico.
+ */
+async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
+  const t = tools();
+  if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+  const r = t.openradioss;
+  if (!r) throw new Error("OpenRadioss/OpenCourant não encontrado (https://github.com/OpenCourant/OpenCourant/releases: descompacte e defina CAD_RADIOSS_DIR)");
+  if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
+  await run(t.gmsh.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], dir, "log.gmsh", log);
+  const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const warnings = checkGroups(c, msh);
+  if (warnings.length) throw new Error(warnings.join("\n"));
+  const deck = radiossDeck(c, msh);
+  warnings.push(...deck.warnings);
+  writeFileSync(join(dir, `${deck.name}_0000.rad`), deck.starter);
+  writeFileSync(join(dir, `${deck.name}_0001.rad`), deck.engine);
+  const plat = process.platform === "win32" ? "win64" : "linux64";
+  const libs = [join(r.dir, "extlib", "hm_reader", plat), join(r.dir, "extlib", "h3d", "lib", plat)];
+  const env = {
+    RAD_CFG_PATH: join(r.dir, "hm_cfg_files"), RAD_H3D_PATH: libs[1], OMP_NUM_THREADS: "1", KMP_STACKSIZE: "400m", OMP_STACKSIZE: "400m",
+    ...(process.platform === "win32" ? { PATH_PREPEND: libs.join(";") } : { LD_LIBRARY_PATH: [...libs, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }),
+  };
+  await run(r.starter, ["-i", `${deck.name}_0000.rad`, "-np", "1", "-nt", "1"], dir, "log.starter", log, env);
+  const out0 = existsSync(join(dir, `${deck.name}_0000.out`)) ? readFileSync(join(dir, `${deck.name}_0000.out`), "utf8") : "";
+  const nerr = /(\d+)\s+ERROR\(S\)/.exec(out0);
+  if (!existsSync(join(dir, `${deck.name}_0001.rst`)) || (nerr && Number(nerr[1]) > 0)) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
+  await run(r.engine, ["-i", `${deck.name}_0001.rad`, "-nt", "1"], dir, "log.engine", log, env);
+  const out1 = existsSync(join(dir, `${deck.name}_0001.out`)) ? readFileSync(join(dir, `${deck.name}_0001.out`), "utf8") : "";
+  if (!/NORMAL TERMINATION/i.test(out1)) throw new Error(`Engine do OpenRadioss não terminou normalmente:\n${tail(join(dir, `${deck.name}_0001.out`), 40)}`);
+  // animações galcadA001, galcadA002, … → VTK (o anim_to_vtk escreve no stdout)
+  const anims = readdirSync(dir).filter((f) => new RegExp(`^${deck.name}A\\d+$`).test(f)).sort();
+  if (!anims.length) throw new Error("O OpenRadioss não escreveu animações");
+  const frames: VtkFrame[] = [];
+  for (const a of anims) {
+    const res = spawnSync(r.animToVtk, [a], { cwd: dir, env: withEnv(env), encoding: "utf8", maxBuffer: 1 << 30 });
+    if (res.status !== 0 || !res.stdout.includes("UNSTRUCTURED_GRID")) throw new Error(`anim_to_vtk falhou em ${a}: ${(res.stderr || res.stdout).slice(-400)}`);
+    frames.push(parseVtk(res.stdout));
+  }
+  const fem = femResultFrom(c, msh, radiossBlocks(frames), { frequencies: [], buckling: [], reactions: [], reactionHistory: [] });
+  const dtm = /TIME STEP\s*[:=]?\s*([\d.Ee+-]+)/.exec(out1) ?? /DT\s*=\s*([\d.Ee+-]+)/.exec(out1);
+  const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`], ["Integração no tempo", `explícita (OpenRadioss), passo estável do Engine${dtm ? ` ≈ ${(Number(dtm[1]) / 1000).toExponential(3)} s` : ""}, ${frames.length} animações`], ...fem.summary];
+  return { ok: true, physics: "fem", solver: "OpenRadioss (OpenCourant)", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, `${deck.name}_0001.out`)) };
+}
+
 async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
   if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
+  if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
   if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
