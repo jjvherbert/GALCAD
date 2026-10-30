@@ -52,3 +52,7 @@ Resumo técnico, que não substitui aconselhamento jurídico:
 **Galkeel — galkeel-calculadora:** submódulo em `vendor/galkeel-calculadora` (repositório da Galkeel); os módulos de cálculo são carregados sem alteração e o seu código não é copiado para este repositório.
 
 **Verificação do PMI (só desenvolvimento):** `tools/read-step-pmi.py` usa o OCP (`cadquery-ocp`, ligações Python do OpenCASCADE, LGPL-2.1 com exceção) para ler o STEP exportado. Não é dependência da aplicação nem distribuído com ela.
+
+## Marca
+
+O símbolo GK, o logótipo Galkeel e as imagens do instalador (`desktop/brand/`, `desktop/build/`) são marca da Galkeel e não estão abrangidos pela licença do código. A tipografia das imagens é a Montserrat (SIL Open Font License 1.1), usada só para as gerar (`desktop/brand/make-assets.py`).

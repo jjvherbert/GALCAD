@@ -1,6 +1,6 @@
 {
   "name": "galcad",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GALCAD — CAD paramétrico com FEM/CFD integrado (OpenCASCADE, CalculiX, Gmsh, XFOIL)",
   "scripts": {
     "dev": "vite",
@@ -52,7 +52,9 @@
       "desktop/main.cjs",
       "desktop/preload.cjs",
       "desktop/relocate.cjs",
-      "package.json"
+      "package.json",
+      "desktop/brand/splash-logo.png",
+      "desktop/build/icon.png"
     ],
     "extraResources": [
       {
@@ -81,7 +83,9 @@
           ]
         }
       ],
-      "signAndEditExecutable": false
+      "icon": "desktop/build/icon.ico",
+      "signExecutable": false,
+      "legalTrademarks": "Galkeel"
     },
     "nsis": {
       "oneClick": false,
@@ -92,7 +96,16 @@
       "shortcutName": "GALCAD",
       "artifactName": "GALCAD-Setup-${version}.exe",
       "language": "2070",
-      "include": "desktop/installer.nsh"
+      "include": "desktop/installer.nsh",
+      "installerIcon": "desktop/build/icon.ico",
+      "uninstallerIcon": "desktop/build/icon.ico",
+      "installerSidebar": "desktop/build/installerSidebar.bmp",
+      "uninstallerSidebar": "desktop/build/uninstallerSidebar.bmp",
+      "installerHeader": "desktop/build/installerHeader.bmp",
+      "runAfterFinish": true,
+      "menuCategory": "Galkeel",
+      "uninstallDisplayName": "GALCAD (Galkeel)",
+      "deleteAppDataOnUninstall": false
     }
   }
 }

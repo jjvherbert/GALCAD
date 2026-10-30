@@ -18,9 +18,12 @@ async function main() {
     env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0" },
   });
   try {
-    const p = await app.firstWindow();
+    // ecrã de arranque com a marca (janela data:, que o Playwright não lista): confirmado no processo principal
+    let p = app.windows().find((w) => w.url().startsWith("http://127.0.0.1"));
+    while (!p) { const w = await app.waitForEvent("window", { timeout: 120000 }); await w.waitForLoadState("domcontentloaded").catch(() => {}); if (w.url().startsWith("http://127.0.0.1")) p = w; else p = app.windows().find((x) => x.url().startsWith("http://127.0.0.1")); }
     const logs = []; p.on("pageerror", (e) => logs.push(e.message));
     await p.waitForLoadState("domcontentloaded");
+    check("ecrã de arranque com a marca mostrado", (await app.evaluate(() => global.galcadSplash)) === "shown");
     const desk = await p.evaluate(() => window.cadDesktop);
     check("agente embutido injetado (endereço e token)", !!desk?.agent?.url?.startsWith("http://127.0.0.1:") && /^[0-9a-f]{32}$/.test(desk.agent.token), JSON.stringify(desk?.agent?.url));
     check("a página não tem Node", await p.evaluate(() => typeof require === "undefined" && typeof process === "undefined"));

@@ -84,12 +84,34 @@ async function startAgent() {
 
 if (!setupMode && !app.requestSingleInstanceLock()) app.quit();
 
+/** Ecrã de arranque com a marca Galkeel enquanto o agente e os solvers arrancam. */
+function splashWindow() {
+  const logo = fs.readFileSync(path.join(__dirname, "brand", "splash-logo.png")).toString("base64");
+  const html = `<!doctype html><meta charset="utf-8"><style>
+    html,body{margin:0;height:100%;font-family:Montserrat,"Segoe UI",sans-serif;background:#0a2464;color:#fff;overflow:hidden;-webkit-user-select:none}
+    .c{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+    img{width:120px;height:auto;filter:brightness(0) invert(1);animation:in .7s cubic-bezier(.2,.8,.2,1) both}
+    h1{margin:0;font-size:26px;letter-spacing:.12em;font-weight:700;animation:in .7s .12s both}
+    p{margin:0;font-size:12px;color:#bccde1;animation:in .7s .24s both}
+    .bar{width:180px;height:3px;background:rgba(255,255,255,.15);border-radius:2px;overflow:hidden;margin-top:8px}
+    .bar i{display:block;width:40%;height:100%;background:#018a8a;animation:run 1.1s ease-in-out infinite}
+    @keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+    @keyframes run{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
+  </style><div class="c"><img src="data:image/png;base64,${logo}"><h1>GALCAD</h1><p>A iniciar o agente de simulação e os solvers…</p><div class="bar"><i></i></div></div>`;
+  const w = new BrowserWindow({ width: 420, height: 300, frame: false, resizable: false, show: false, backgroundColor: "#0a2464", center: true, alwaysOnTop: true, skipTaskbar: true, webPreferences: { sandbox: true } });
+  w.once("ready-to-show", () => { w.show(); global.galcadSplash = "shown"; });
+  void w.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  return w;
+}
+
 if (!setupMode) app.whenReady().then(async () => {
+  const splash = splashWindow();
   let agent = null;
   try { agent = await startAgent(); } catch (e) { dialog.showErrorBox("GALCAD", `O agente de simulação não arrancou: ${e.message}\nA modelação funciona; as simulações não.`); }
   const site = await serveStatic();
   const win = new BrowserWindow({
-    width: 1440, height: 900, title: "GALCAD", backgroundColor: "#ffffff",
+    width: 1440, height: 900, title: "GALCAD", backgroundColor: "#ffffff", show: false,
+    icon: path.join(__dirname, "build", "icon.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true,
       additionalArguments: [`--cad-agent=${agent ? `${agent.url}|${agent.token}` : ""}`, `--cad-version=${app.getVersion()}`],
@@ -108,6 +130,8 @@ if (!setupMode) app.whenReady().then(async () => {
   const own = `http://127.0.0.1:${site.port}`;
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: "deny" }; });
   win.webContents.on("will-navigate", (e, url) => { if (!url.startsWith(own)) { e.preventDefault(); shell.openExternal(url); } });
+  // a janela principal aparece já desenhada (sem ecrã branco) e o splash fecha
+  win.once("ready-to-show", () => { win.maximize(); win.show(); if (!splash.isDestroyed()) splash.close(); });
   await win.loadURL(`${own}/`);
 });
 
