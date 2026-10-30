@@ -1,5 +1,21 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: revisão de usabilidade do R3 e primeira parte do R4 (pré-processador)
+
+Pedido de Juan: «Verifica que não me obriga a fazer cliques demais, que há boas animações e que os duplos cliques funcionam. Depois passa ao r4».
+
+**Revisão (R3)** — achados e correções
+- Duplo clique numa face no espaço FEM/CFD entrava numa edição de feature invisível (sete botões da barra desativados até Esc): agora abre e destaca a condição da face (`conditionAtFace`), ou avisa; na árvore do modelo o duplo clique no estudo renomeia e na condição ativa a escolha das suas faces.
+- Enter com a escolha de faces ativa repetia o último comando; agora conclui a seleção.
+- O espaço FEM abria no separador «Estudo» e tinha de se clicar em «Cargas e apoios»: abre agora direto nele (com a secção correspondente no painel). Escolha do plano: teclas 1, 2, 3 e Enter. Contagem: condição = 1 clique na barra + 1 na face.
+- Animações acrescentadas: entrada dos painéis, mensagens, banner da seleção, menus, diálogos, linhas da árvore, destaque da condição, e as faces de uma feature recém-confirmada acendem e desvanecem-se (`flashFeature`). Falta: animar a deformada ao aparecer um resultado.
+- Teste auxiliar: `data-last-dbl-click` no `.viewport` (o último duplo clique no 3D).
+
+**R4 (parte 1)** — `src/sim/modelcheck.ts` (novo): `checkStudy` (erros/avisos/notas por secção), `CAPABILITIES` (matriz por solver) e `solverVerdict`; `runActiveStudy` bloqueia com erros (não bloqueia a pré-visualização da malha). Painel «Verificação do modelo» (`CheckPanel` em `SimPanel.tsx`) e nó «Verificação» na árvore. `FemSet`/`FemStudy.sets` e `sets` em cada condição; carga `symmetry` (resolvida em `kernel/sim.ts` para deslocamento normal nulo por eixo, com `CaseFace.normal`); carga `pointForce` (nó mais próximo; CalculiX `*CLOAD`, code_aster `FORCE_NODALE`; recusada no OpenRadioss).
+- **Testes** (`tests/preproc.test.ts`, 8, CalculiX 2.21 e code_aster 18.1 reais): conjuntos = faces diretas; simetria (meia viga com metade da carga = viga inteira a 1 %, Timoshenko a 4 %; code_aster a 5 %); força pontual (flecha a meio vão contra Timoshenko a 3 % nos dois solvers, reação = força); regras de verificação; matriz por solver; CFD. E2e de interação alargado (duplo clique, renomear, atalhos, conjuntos, simetria, verificação, bloqueio com F5).
+- **Limites:** a matriz diz o que *este software* implementa, não o que o solver sabe fazer; a simetria só aceita faces planas alinhadas com os eixos (as inclinadas pedem *TRANSFORM/referencial local, por fazer); a força pontual dá singularidade local (aviso no resultado).
+- **Por fazer no R4:** cargas e apoios em arestas (grupos físicos de curvas no Gmsh), molas, massas pontuais, acoplamentos RBE2/RBE3, referenciais locais, passos múltiplos, conjuntos de arestas e volumes.
+
 ## Atualização: redesign R3 (interação ao estilo do SolidWorks)
 
 Pedido de Juan: «O desenho deve mesmo imitar o solidworks, com os atalhos do rato, as animações na aplicação e as transições e escolhas de plano… Deve ter funções de preview também e deve ter a mesma cena do solidworks que explica o que uma feature faz».

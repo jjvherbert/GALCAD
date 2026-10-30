@@ -8,6 +8,7 @@ import type { TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
 import { meshPlan } from "./meshplan.ts";
 import { T, type TopoDS_Shape, bbox, distance, explore, faceProps, makeCompound, normalOnFace, oc, v3, vertexAt, volume } from "./occ.ts";
+import { loadFaces } from "../doc/study.ts";
 import { type CaseFace, type CfdCase, type FemCase, type FemCaseLoad, type SimCase, type V3, amplitudeTable, loadGroup } from "../sim/case.ts";
 import { femGeo, su2Geo } from "../sim/gmsh.ts";
 import { openfoamCase } from "../sim/openfoam.ts";
@@ -27,7 +28,7 @@ function caseFaces(ctx: Ctx, solid: TopoDS_Shape): CaseFace[] {
   const named = ctx.body!.faces;
   return explore(solid, "face").map((f, i) => {
     const p = faceProps(f);
-    return { tag: i + 1, name: named.find((n) => n.face.IsSame(f))?.name ?? `?${i + 1}`, center: p.center as V3, area: p.area };
+    return { tag: i + 1, name: named.find((n) => n.face.IsSame(f))?.name ?? `?${i + 1}`, center: p.center as V3, area: p.area, normal: p.type === "plane" ? normalOnFace(f, p.center) as V3 : undefined };
   });
 }
 
@@ -79,8 +80,27 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
   const loads: FemCaseLoad[] = [];
   s.loads.forEach((l, i) => {
     if (l.kind === "gravity") { loads.push({ kind: "gravity", g: n3(l.g, sc, "Gravidade") }); return; }
+    if (l.kind === "pointForce") { loads.push({ kind: "pointForce", point: n3(l.point, sc, `Condição ${i + 1}: ponto`), f: n3(l.f, sc, `Condição ${i + 1}: força`) }); return; }
     const g = loadGroup(i, l.kind);
-    groups[g] = tags(l.faces, `Condição ${i + 1}`);
+    groups[g] = tags(loadFaces(s, l), `Condição ${i + 1}`);
+    if (l.kind === "symmetry") {
+      // simetria: o deslocamento normal ao plano é nulo (faces planas alinhadas com um eixo); desliza no plano
+      const byAxis: number[][] = [[], [], []];
+      for (const t of groups[g]) {
+        const f = faces.find((x) => x.tag === t)!;
+        const k = f.normal ? f.normal.findIndex((c) => Math.abs(Math.abs(c) - 1) < 1e-6) : -1;
+        if (k < 0) throw new Error(`Condição ${i + 1} (simetria): a face ${f.name} tem de ser plana e alinhada com X, Y ou Z`);
+        byAxis[k].push(t);
+      }
+      delete groups[g];
+      byAxis.forEach((ts, k) => {
+        if (!ts.length) return;
+        const gk = `${g}_${"XYZ"[k]}`;
+        groups[gk] = ts;
+        loads.push({ kind: "displacement", group: gk, u: [0, 1, 2].map((q) => (q === k ? 0 : null)) });
+      });
+      return;
+    }
     switch (l.kind) {
       case "fixed": loads.push({ kind: "fixed", group: g }); break;
       case "displacement": loads.push({ kind: "displacement", group: g, u: [l.ux, l.uy, l.uz].map((x, k) => (x === undefined || x === "" ? null : evalParam(x, sc, `Deslocamento ${"XYZ"[k]}`))) }); break;
@@ -163,6 +183,7 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k ?? 50} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, Et = ${m.tangent} MPa` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
+      ...(s.loads.some((l) => l.kind === "symmetry") ? ["Simetria: modelo parcial — geometria, apoios e cargas têm de ser simétricos em relação ao plano; as cargas são as da parte modelada (metade da total) e os resultados só valem nessa parte"] : []),
       "Apoio à decisão de engenharia: não é certificação nem decisão de uma autoridade ou de um organismo notificado",
     ],
   };
@@ -219,7 +240,7 @@ export function assemblyStudyCase(bodies: AsmBody[], s: FemStudy, scope: Ctx["sc
     explore(bd.placed, "face").forEach((f, i) => {
       const p = faceProps(f);
       const nm = bd.ctx.body!.faces.find((n) => n.face.IsSame(orig[i]))?.name ?? `?${i + 1}`;
-      faces.push({ tag: faces.length + 1, name: `${bd.path}/${nm}`, center: p.center as V3, area: p.area });
+      faces.push({ tag: faces.length + 1, name: `${bd.path}/${nm}`, center: p.center as V3, area: p.area, normal: p.type === "plane" ? normalOnFace(f, p.center) as V3 : undefined });
     });
   }
   const tags = (refs: TopoRef[], what: string) => {

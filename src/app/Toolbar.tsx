@@ -41,7 +41,7 @@ export function Toolbar() {
   const tabs = workspaceTabs(st.workspace, st.active.kind);
   // separador escolhido por espaço de trabalho (cada espaço lembra o seu)
   const key = `${st.workspace}:${st.active.kind}`;
-  const current = tabs.find((t) => t.id === tabs0[key]) ?? tabs[0];
+  const current = tabs.find((t) => t.id === tabs0[key]) ?? (st.workspace === "fem" ? tabs.find((t) => t.id === "loads") : undefined) ?? tabs[0];
   return (
     <header class="toolbar" style={{ "--ws-accent": ws.accent }} onClick={() => menu && setMenu(null)}>
       <div class="tb-row">

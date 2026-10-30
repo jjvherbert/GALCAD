@@ -69,7 +69,7 @@ async function main() {
       await p.waitForSelector(".plane-card");
       check("três planos para escolher", (await p.$$(".plane-card")).length === 3);
       check("seleção no 3D ativa logo", /Modo de seleção: faces \/ planos/.test(await p.textContent("body")));
-      await p.click(".plane-card:has-text('Frente')");
+      await p.keyboard.press("2");  // tecla 2 = Frente (sem clicar)
       check("Frente: vista normal ao plano XZ", (await ds(p, "viewDir")) === "0.000,-1.000,0.000", await ds(p, "viewDir"));
       await p.waitForSelector(".sk-canvas", { timeout: 5000 });
       check("o esboço abre depois da rotação", true);
@@ -92,6 +92,75 @@ async function main() {
       await p.click(".property-panel button[title^='Cancelar']");
       await p.waitForTimeout(300);
       check("sem pré-visualização fora da edição", Number(await ds(p, "previewFaces")) === 0);
+      check("sem erros na página", logs.length === 0, logs.join(" | "));
+      await ctx.close();
+    }
+
+    // 6. espaço FEM: duplo clique, renomear, atalhos e poucos cliques
+    {
+      const ctx = await b.newContext({ viewport: { width: 1400, height: 860 } });
+      const p = await ctx.newPage();
+      const logs = []; p.on("pageerror", (e) => logs.push(e.message));
+      await p.goto(URL);
+      await p.evaluate((t) => { localStorage.clear(); localStorage.setItem("cad-prototipo:autosave", t); }, fs.readFileSync(path.join(__dirname, "fixtures/simulacao.cadp.json"), "utf8"));
+      await p.reload();
+      await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 });
+      await p.waitForTimeout(500);
+      await p.keyboard.press("Control+Alt+2");
+      await p.waitForSelector(".sim-browser");
+      const vb = await p.locator(".viewport canvas").first().boundingBox(); const cx = vb.x + vb.width / 2, cy = vb.y + vb.height / 2; // o canvas, não a área com os painéis
+      await p.mouse.move(cx, cy);
+      check("FEM abre no separador «Cargas e apoios» (sem clicar)", /Cargas e apoios/.test(await p.textContent(".tabs button.on")) && /Encastrar/.test(await p.textContent(".tb-row.commands")) && /Cargas e apoios/.test(await p.textContent(".sim-panel .pm-title")));
+      // duplo clique na face com a força (vista da direita) → abre a condição e destaca-a
+      await p.keyboard.press("Control+4"); await p.waitForTimeout(600);
+      const d4 = await ds(p, "viewDir");
+      await p.mouse.dblclick(cx, cy); await p.waitForTimeout(400);
+      const foc = d4 === "1.000,0.000,0.000" ? "Força" : "Encastramento";
+      check("duplo clique numa face com condição abre-a e destaca-a", /Cargas e apoios/.test(await p.textContent(".sim-panel .pm-title")) && (await p.$$(".sim-panel .kw-item.focus")).length === 1 && new RegExp(foc).test(await p.textContent(".sim-panel .kw-item.focus")), `${d4} ${await p.textContent(".sim-panel .kw-item.focus").catch(() => "—")}`.slice(0, 80));
+      check("duplo clique não deixa features em edição às escuras", (await p.$$(".toolbar .cmd:disabled")).length === 0);
+      // face sem condição: mensagem, sem efeitos
+      await p.keyboard.press("Control+5"); await p.waitForTimeout(600);
+      await p.mouse.dblclick(cx, cy); await p.waitForTimeout(300);
+      check("duplo clique numa face sem condição avisa", /não tem condições/.test(await p.textContent(".statusbar")) && (await p.$$(".toolbar .cmd:disabled")).length === 0);
+      // folha da árvore: duplo clique escolhe as faces da condição
+      await p.dblclick(".sim-leaves li:has-text('Força')");
+      check("duplo clique na condição da árvore ativa a escolha de faces", /Modo de seleção: faces/.test(await p.textContent("body")));
+      await p.keyboard.press("Enter");
+      check("Enter conclui a escolha de faces", !/Modo de seleção/.test(await p.textContent("body")));
+      // renomear o estudo
+      await p.dblclick(".sim-study-head b");
+      await p.fill(".sim-study-head input.rename", "Consola v2"); await p.keyboard.press("Enter");
+      check("duplo clique renomeia o estudo", /Consola v2/.test(await p.textContent(".sim-study-head")));
+      // um clique + uma face = uma condição nova (sem passar por menus)
+      const n0 = (await p.$$(".sim-panel .kw-item")).length;
+      await p.click(".cmd:has-text('Pressão')");
+      await p.keyboard.press("Control+4"); await p.waitForTimeout(500);
+      await p.mouse.click(cx, cy);
+      await p.keyboard.press("Enter");
+      check("Pressão: 1 clique na barra + 1 na face", (await p.$$(".sim-panel .kw-item")).length === n0 + 1 && /1 face/.test(await p.textContent(".sim-node:has-text('Cargas e apoios')") + await p.textContent(".sim-leaves")));
+      // R4: conjuntos, simetria, verificação do modelo e compatibilidade por solver
+      await p.click(".sim-node:has-text('Cargas e apoios')");
+      await p.click(`.sim-panel .kw-item:has-text('Força total') button:has-text('guardar como conjunto')`);
+      check("→ conjunto: a condição passa a usar o conjunto", (await p.$$(".sim-panel .set-chips .chip.on")).length === 1 && /Conjuntos de faces \(1\)/.test(await p.textContent(".sim-panel .sets-box summary")));
+      await p.click(".tabs button:has-text('Cargas e apoios')");
+      await p.click(".cmd:has-text('Simetria')");
+      await p.keyboard.press("Escape");
+      check("barra: Simetria acrescenta a condição", /Simetria \(plano\)/.test(await p.textContent(".sim-panel")));
+      await p.click(".sim-node:has-text('Verificação')");
+      await p.waitForSelector(".sim-panel .check-list");
+      check("verificação: simetria sem faces é erro", (await p.$$(".sim-panel .chk-erro")).length >= 1 && /sem faces/.test(await p.textContent(".sim-panel .chk-erro")));
+      check("verificação: matriz com os 3 solvers", (await p.$$(".sim-panel .verdict")).length === 3 && (await p.$$(".sim-panel table.matrix tr.used")).length >= 4);
+      await p.keyboard.press("F5");
+      await p.waitForTimeout(300);
+      check("F5 com erros no modelo: bloqueia e explica", /sem faces/.test(await p.textContent(".statusbar")) && /Verificação do modelo/.test(await p.textContent(".sim-panel .pm-title")));
+      await p.click(".sim-panel .verdict:has-text('OpenRadioss')");
+      check("matriz: escolher outro solver recalcula a verificação", /Estática linear: não suportado/.test(await p.textContent(".sim-panel .check-list")));
+      await p.click(".sim-panel .verdict:has-text('CalculiX')");
+      // retirar a simetria vazia: o modelo volta a estar limpo de erros
+      await p.click(".sim-node:has-text('Cargas e apoios')");
+      await p.click(".sim-panel .kw-item:has-text('Simetria') button[aria-label^='Retirar']");
+      await p.click(".sim-node:has-text('Verificação')");
+      check("sem erros depois de retirar a condição vazia", (await p.$$(".sim-panel .chk-erro")).length === 0);
       check("sem erros na página", logs.length === 0, logs.join(" | "));
       await ctx.close();
     }

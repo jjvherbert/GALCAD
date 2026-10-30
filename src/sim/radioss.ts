@@ -92,6 +92,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
 
   let bcs = 0, loads = 0;
   for (const ld of c.loads) {
+    if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
     if (ld.kind === "fixed" || ld.kind === "displacement") {
       const fix = ld.kind === "fixed" ? [true, true, true] : ld.u.map((u) => u !== null);
       if (ld.kind === "displacement" && ld.u.some((u) => u !== null && u !== 0)) throw new Error("OpenRadioss: deslocamentos impostos não nulos ainda não estão neste adaptador (use forças)");

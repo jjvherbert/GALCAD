@@ -24,21 +24,28 @@ export interface SimMaterial {
   source?: string;
 }
 
+/** Conjunto nomeado de faces (como os «sets» do Abaqus e os grupos do Femap): reutilizável em várias condições. */
+export interface FemSet { id: string; name: string; faces: TopoRef[] }
+
 export type FemLoad =
-  | { kind: "fixed"; faces: TopoRef[] }
-  | { kind: "displacement"; faces: TopoRef[]; ux?: Expr; uy?: Expr; uz?: Expr }
+  | { kind: "fixed"; faces: TopoRef[]; sets?: string[] }
+  | { kind: "displacement"; faces: TopoRef[]; sets?: string[]; ux?: Expr; uy?: Expr; uz?: Expr }
+  /** Simetria: impede o deslocamento normal ao plano (faces planas alinhadas com X, Y ou Z); permite deslizar no plano. */
+  | { kind: "symmetry"; faces: TopoRef[]; sets?: string[] }
   /** Força total (N) distribuída uniformemente pela área das faces. */
-  | { kind: "force"; faces: TopoRef[]; f: [Expr, Expr, Expr] }
+  | { kind: "force"; faces: TopoRef[]; sets?: string[]; f: [Expr, Expr, Expr] }
+  /** Força (N) concentrada no nó da malha mais próximo de um ponto (mm). Dá tensões locais irreais: ver só a resposta global. */
+  | { kind: "pointForce"; point: [Expr, Expr, Expr]; f: [Expr, Expr, Expr] }
   /** Pressão (MPa), positiva a empurrar contra a face. */
-  | { kind: "pressure"; faces: TopoRef[]; p: Expr }
+  | { kind: "pressure"; faces: TopoRef[]; sets?: string[]; p: Expr }
   /** Aceleração da gravidade (mm/s²). */
   | { kind: "gravity"; g: [Expr, Expr, Expr] }
   /** Temperatura imposta (°C). */
-  | { kind: "temperature"; faces: TopoRef[]; t: Expr }
+  | { kind: "temperature"; faces: TopoRef[]; sets?: string[]; t: Expr }
   /** Convecção: coeficiente (W/(m²·K)) e temperatura do fluido (°C). */
-  | { kind: "convection"; faces: TopoRef[]; h: Expr; tInf: Expr }
+  | { kind: "convection"; faces: TopoRef[]; sets?: string[]; h: Expr; tInf: Expr }
   /** Fluxo de calor (W/m²) a entrar nas faces. */
-  | { kind: "heatFlux"; faces: TopoRef[]; q: Expr };
+  | { kind: "heatFlux"; faces: TopoRef[]; sets?: string[]; q: Expr };
 
 export interface SimMesh {
   /** Tamanho máximo dos elementos (mm). */
@@ -137,6 +144,8 @@ export interface FemStudy {
   dynamic?: FemDynamic;
   material: SimMaterial;
   loads: FemLoad[];
+  /** Conjuntos de faces nomeados, usados pelas condições (`sets`). */
+  sets?: FemSet[];
   /** Modos próprios (modal) ou de encurvadura. */
   modes?: number;
   mesh: SimMesh;
@@ -214,9 +223,17 @@ export function newCfdStudy(id: string, n: number): CfdStudy {
   };
 }
 
+/** Faces de uma condição: as escolhidas e as dos conjuntos que usa (sem repetir). */
+export function loadFaces(s: FemStudy, l: FemLoad): TopoRef[] {
+  if (!("faces" in l)) return [];
+  const out = [...l.faces];
+  for (const id of l.sets ?? []) for (const f of s.sets?.find((x) => x.id === id)?.faces ?? []) if (!out.some((o) => o.name === f.name)) out.push(f);
+  return out;
+}
+
 /** Todas as referências a faces de um estudo (para dependências e validação). */
 export function studyFaces(s: Study): TopoRef[] {
-  if (s.physics === "fem") return [...s.loads.flatMap((l) => ("faces" in l ? l.faces : [])), ...(s.mesh.local ?? []).flatMap((l) => l.faces)];
+  if (s.physics === "fem") return [...s.loads.flatMap((l) => loadFaces(s, l)), ...(s.mesh.local ?? []).flatMap((l) => l.faces)];
   return [...(s.inlet?.faces ?? []), ...(s.outlet?.faces ?? [])];
 }
 

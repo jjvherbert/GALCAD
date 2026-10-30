@@ -37,7 +37,7 @@ async function main() {
     const convOn = async (on) => { await node("Resolver"); const c = p.locator(`${P} label:has-text('Estudo de convergência') input`); if ((await c.isChecked()) !== on) await c.click(); };
     await ws("Simulação FEM");
     await p.waitForSelector(".sim-browser");
-    check("espaço FEM: árvore e barra próprias", /Consola — estática/.test(await p.textContent(".sim-study.on")) && (await p.$$(".tabs button")).length === 6 && /Encastrar/.test(await p.textContent(".tb-row.commands")) === false);
+    check("espaço FEM: árvore e barra próprias", /Consola — estática/.test(await p.textContent(".sim-study.on")) && (await p.$$(".tabs button")).length === 6);
     await p.click(".tabs button:has-text('Cargas e apoios')");
     await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
     const panel = await p.textContent(P);

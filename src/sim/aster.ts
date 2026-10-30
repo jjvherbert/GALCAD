@@ -24,6 +24,16 @@ export interface AsterFiles {
   warnings: string[];
 }
 
+/** Nó da malha mais próximo de cada força pontual (ordem das condições `pointForce`), com a distância ao ponto pedido. */
+function pointNodes(c: FemCase, m: Msh, nodes: number[]): { node: number; dist: number }[] {
+  return c.loads.flatMap((ld) => {
+    if (ld.kind !== "pointForce") return [];
+    let best = -1, bd = Infinity;
+    for (const t of nodes) { const q = m.nodes.get(t)!; const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2; if (d < bd) { bd = d; best = t; } }
+    return [{ node: best, dist: Math.sqrt(bd) }];
+  });
+}
+
 /** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
 export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number[]; areas: Record<string, number> } {
   if (!solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
@@ -83,6 +93,8 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
   block("GROUP_MA", "SOLID", cells.map((e) => e.name));
   for (const [g, ids] of Object.entries(bodyCells)) if (g !== "SOLID") block("GROUP_MA", g, ids);
   for (const [g, ids] of Object.entries(faceGroups)) if (ids.length) block("GROUP_MA", g, ids);
+  // forças pontuais: um grupo de nós (o mais próximo do ponto) por condição, PF1, PF2…
+  pointNodes(c, m, nodeOrder).forEach((n, k) => { if (n.node >= 0) nodeGroups[`PF${k + 1}`] = [n.node]; });
   for (const [g, ns] of Object.entries(nodeGroups)) if (ns.length) block("GROUP_NO", g, ns.map((x) => `N${x}`));
   // contacto colado: nós escravos sem os dos apoios (o code_aster não aceita relações redundantes
   // entre um grau imposto e a ligação; nesses poucos nós da aresta comum fica só o apoio)
@@ -135,7 +147,8 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
   }
   // apoios (BC) e cargas (CH) em cargas separadas: nos não lineares só as cargas sobem em rampa
-  const ddl: string[] = [], ddlAmp: string[] = [], force: string[] = [], pres: string[] = [];
+  const ddl: string[] = [], ddlAmp: string[] = [], force: string[] = [], pres: string[] = [], nodal: string[] = [];
+  let pf = 0;
   let grav = "";
   for (const ld of c.loads) {
     switch (ld.kind) {
@@ -150,6 +163,13 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
         const A = areas[ld.group];
         if (!(A > 0)) { warnings.push(`Força no grupo ${ld.group} sem área`); break; }
         force.push(`_F(GROUP_MA='${ld.group}', FX=${num(ld.f[0] / A)}, FY=${num(ld.f[1] / A)}, FZ=${num(ld.f[2] / A)})`);
+        break;
+      }
+      case "pointForce": {
+        const pn = pointNodes(c, m, nodeOrder)[pf++];
+        if (!pn || pn.node < 0) { warnings.push("Força pontual sem nó da malha"); break; }
+        nodal.push(`_F(GROUP_NO='PF${pf}', FX=${num(ld.f[0])}, FY=${num(ld.f[1])}, FZ=${num(ld.f[2])})`);
+        warnings.push(`Força pontual aplicada no nó ${pn.node}, a ${pn.dist.toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
         break;
       }
       case "pressure": pres.push(`_F(GROUP_MA='${ld.group}', PRES=${num(ld.p)})`); break;
@@ -167,7 +187,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
   if (!bcParts.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
   C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
-  const chParts = [force.length && `FORCE_FACE=(${force.join(", ")},)`, pres.length && `PRES_REP=(${pres.join(", ")},)`, grav].filter(Boolean);
+  const chParts = [force.length && `FORCE_FACE=(${force.join(", ")},)`, nodal.length && `FORCE_NODALE=(${nodal.join(", ")},)`, pres.length && `PRES_REP=(${pres.join(", ")},)`, grav].filter(Boolean);
   const hasCh = chParts.length > 0 && (c.analysis === "static" || c.analysis === "dynamic");
   if (hasCh) C.push(`CH = AFFE_CHAR_MECA(MODELE=MO, ${chParts.join(", ")})`);
   if (ddlAmp.length) C.push(`BCA = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddlAmp.join(", ")},))`);

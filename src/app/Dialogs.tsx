@@ -1,5 +1,5 @@
 // Diálogos: variáveis globais/equações e escolha do plano de esboço.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { PlaneRef, Variable } from "../doc/types.ts";
 import { resolveVariables } from "../doc/variables.ts";
 import { store, useStore } from "./store.ts";
@@ -83,9 +83,20 @@ export function PlaneChooser() {
       begin({ kind: "face", ref: { kind: "face", name: p.name, hint: p.hint } });
     }
   });
+  const planeRef = useRef(plane);
+  planeRef.current = plane;
   useEffect(() => {
     store.set({ pickTarget: { field: "sketch-start", accept: ["face", "plane"] } });
-    return () => commandViewport()?.setHoverKey(null);
+    // 1, 2, 3 escolhem Planta, Frente, Lateral; Enter começa no plano escolhido (menos cliques)
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.ctrlKey || e.altKey || e.metaKey || (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName))) return;
+      const i = ["1", "2", "3"].indexOf(e.key);
+      if (i >= 0) { e.stopImmediatePropagation(); e.preventDefault(); begin({ kind: "std", name: STD_PLANES[i].name }); }
+      else if (e.key === "Enter") { e.stopImmediatePropagation(); e.preventDefault(); begin(planeRef.current); }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("keydown", onKey, true); commandViewport()?.setHoverKey(null); };
   }, []);
   return (
     <div class="property-panel plane-chooser">
@@ -96,7 +107,7 @@ export function PlaneChooser() {
           <button onClick={() => store.set({ choosingPlane: false, pickTarget: null })} title="Cancelar (Esc)">✕</button>
         </div>
       </header>
-      <p class="muted">Clique num plano ou numa face plana do modelo, ou escolha abaixo.</p>
+      <p class="muted">Clique num plano ou numa face plana do modelo, ou carregue em 1, 2 ou 3 (Enter = Planta).</p>
       <div class="plane-cards">
         {STD_PLANES.map((p) => (
           <button key={p.name} class="plane-card" title={`Esboço no ${p.hint}`}
@@ -104,7 +115,7 @@ export function PlaneChooser() {
             onFocus={() => commandViewport()?.setHoverKey(planeKey(p.name))} onBlur={() => commandViewport()?.setHoverKey(null)}
             onClick={() => begin({ kind: "std", name: p.name })}>
             <svg viewBox="0 0 40 30" aria-hidden="true"><polygon class={`pl pl-${p.name}`} points={p.name === "XY" ? "4,18 20,10 36,18 20,26" : p.name === "XZ" ? "8,22 8,6 24,12 24,28" : "36,22 36,6 20,12 20,28"} /></svg>
-            <b>{p.label}</b><small>{p.name}</small>
+            <b>{p.label}</b><small>{p.name} · tecla {STD_PLANES.indexOf(p) + 1}</small>
           </button>
         ))}
       </div>

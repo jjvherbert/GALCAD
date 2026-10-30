@@ -1,6 +1,8 @@
 // Ações dos estudos de simulação partilhadas pela barra do espaço de trabalho, pela árvore do modelo e
 // pelo painel: estudos da peça ou da montagem ativa, criar, gravar, calcular e pré-visualizar a malha.
+import { loadFaces } from "../doc/study.ts";
 import { type FemLoad, type FemStudy, type SimMesh, type Study, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
+import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
 import { previewStudyMesh, runStudy } from "./sim-client.ts";
 
@@ -61,6 +63,11 @@ export async function runActiveStudy(meshOnly = false) {
   if (!s) { store.set({ error: "Crie primeiro um estudo" }); return; }
   if (st.simBusy) return;
   if (meshOnly && s.physics !== "fem") { store.set({ error: "A pré-visualização da malha é para estudos FEM" }); return; }
+  if (!meshOnly) {
+    // a verificação do modelo apanha antes do solver o que o impede de correr (erros bloqueiam; avisos não)
+    const err = checkStudy(s, !!store.activeAssembly()).find((i) => i.level === "erro");
+    if (err) { store.set({ error: `${err.text} — ver «Verificação do modelo»`, simSection: "check" }); return; }
+  }
   const doc = store.activeAssembly()?.id ?? st.doc.id;
   const o = st.simRun;
   const conv = !meshOnly && o.conv ? { ratio: o.ratio, ...(o.mode === "auto" ? { target: o.target / 100, maxLevels: o.levels, metric: o.metric || undefined } : o.mode === "sweep" ? { sweep: 3, metric: o.metric || undefined } : {}) } : undefined;
@@ -75,14 +82,16 @@ export async function runActiveStudy(meshOnly = false) {
   }
 }
 
-export const STRUCT_LOADS: FemLoad["kind"][] = ["fixed", "displacement", "force", "pressure", "gravity"];
+export const STRUCT_LOADS: FemLoad["kind"][] = ["fixed", "displacement", "symmetry", "force", "pointForce", "pressure", "gravity"];
 export const THERMAL_LOADS: FemLoad["kind"][] = ["temperature", "convection", "heatFlux"];
 
 export function newLoad(kind: FemLoad["kind"]): FemLoad {
   switch (kind) {
     case "fixed": return { kind, faces: [] };
+    case "symmetry": return { kind, faces: [] };
     case "displacement": return { kind, faces: [], ux: 0 };
     case "force": return { kind, faces: [], f: [0, 0, -100] };
+    case "pointForce": return { kind, point: [0, 0, 0], f: [0, 0, -100] };
     case "pressure": return { kind, faces: [], p: 1 };
     case "gravity": return { kind, g: [0, 0, -9810] };
     case "temperature": return { kind, faces: [], t: 100 };
@@ -111,7 +120,7 @@ export function addCondition(kind: FemLoad["kind"]) {
   if (thermal !== THERMAL_LOADS.includes(kind)) { store.set({ error: thermal ? "Num estudo térmico use temperatura, convecção ou fluxo de calor" : "Temperatura, convecção e fluxo de calor são para estudos térmicos" }); return; }
   const i = s.loads.length;
   updateStudy(s.id, { loads: [...s.loads, newLoad(kind)] });
-  store.set({ simStudy: s.id, simSection: "conditions", pickTarget: kind === "gravity" ? null : { field: `load${i}`, accept: ["face"] } });
+  store.set({ simStudy: s.id, simSection: "conditions", pickTarget: kind === "gravity" ? null : kind === "pointForce" ? { field: `loadpt${i}`, accept: ["face"] } : { field: `load${i}`, accept: ["face"] } });
 }
 
 /** Sonda nova (média em faces), com a seleção ativa. */
@@ -142,7 +151,7 @@ export function patchMesh(f: (m: SimMesh) => Partial<SimMesh>) {
 
 /** Cores das condições no 3D (apoios em azul, cargas em âmbar/vermelho, térmicas em laranja/ciano; CFD: entrada verde, saída vermelha). */
 export const CONDITION_COLORS: Record<FemLoad["kind"] | "inlet" | "outlet", number> = {
-  fixed: 0x2563eb, displacement: 0x0891b2, force: 0xf59e0b, pressure: 0xdc2626, gravity: 0xf59e0b,
+  fixed: 0x2563eb, pointForce: 0xf59e0b, symmetry: 0x7c3aed, displacement: 0x0891b2, force: 0xf59e0b, pressure: 0xdc2626, gravity: 0xf59e0b,
   temperature: 0xef4444, convection: 0x06b6d4, heatFlux: 0xf97316, inlet: 0x16a34a, outlet: 0xdc2626,
 };
 
@@ -157,10 +166,24 @@ export function conditionFaceColors(): Map<string, number> | null {
   const key = (n: string) => (asm ? n.replace(/\/(?=[^/]*$)/, "|") : n);
   const out = new Map<string, number>();
   if (s.physics === "fem") {
-    for (const l of s.loads) if ("faces" in l) for (const f of l.faces) out.set(key(f.name), CONDITION_COLORS[l.kind]);
+    for (const l of s.loads) for (const f of loadFaces(s, l)) out.set(key(f.name), CONDITION_COLORS[l.kind]);
   } else {
     for (const f of s.inlet?.faces ?? []) out.set(key(f.name), CONDITION_COLORS.inlet);
     for (const f of s.outlet?.faces ?? []) out.set(key(f.name), CONDITION_COLORS.outlet);
   }
   return out;
+}
+
+/** Duplo clique numa face dos espaços de simulação: abre (e destaca) a condição que a usa; sem condição, não faz nada. */
+export function conditionAtFace(p: { kind: string; name?: string; component?: string }) {
+  if (p.kind !== "face" || !p.name) return;
+  const st = store.state;
+  const s = activeStudy(st.workspace === "cfd" ? "cfd" : "fem");
+  if (!s) return;
+  const names = new Set([p.name, p.component ? `${p.component}/${p.name}` : p.name]);
+  let index = -1;
+  if (s.physics === "fem") index = s.loads.findIndex((l) => loadFaces(s, l).some((f) => names.has(f.name)));
+  else index = [s.inlet?.faces ?? [], s.outlet?.faces ?? []].findIndex((fs) => fs.some((f) => names.has(f.name)));
+  if (index < 0) { store.set({ message: "Esta face não tem condições (um clique escolhe faces quando a seleção está ativa)" }); return; }
+  store.set({ simStudy: s.id, simSection: "conditions", pickTarget: null, simFocus: { index, n: (st.simFocus?.n ?? 0) + 1 } });
 }

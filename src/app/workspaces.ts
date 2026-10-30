@@ -80,8 +80,8 @@ const FEM_TABS: Tab[] = [
     { title: "Biblioteca", ids: SIM_MATERIALS.map((_, i) => `sim.material.${i}`) },
   ] },
   { id: "loads", label: "Cargas e apoios", groups: [
-    { title: "Apoios", ids: ["sim.add.fixed", "sim.add.displacement"] },
-    { title: "Cargas", ids: ["sim.add.force", "sim.add.pressure", "sim.add.gravity"] },
+    { title: "Apoios", ids: ["sim.add.fixed", "sim.add.displacement", "sim.add.symmetry"] },
+    { title: "Cargas", ids: ["sim.add.force", "sim.add.pointForce", "sim.add.pressure", "sim.add.gravity"] },
     { title: "Térmicas", ids: ["sim.add.temperature", "sim.add.convection", "sim.add.heatFlux"] },
     { title: "Interações", ids: ["sim.section.contact"] },
     { title: "Lista", ids: ["sim.section.conditions"] },
@@ -94,6 +94,7 @@ const FEM_TABS: Tab[] = [
   ] },
   { id: "solve", label: "Resolver", groups: [
     { title: "Sondas", ids: ["sim.add.probe", "sim.section.probes"] },
+    { title: "Modelo", ids: ["sim.section.check"] },
     { title: "Solver", ids: ["sim.section.run"] },
     { title: "Calcular", ids: ["sim.mesh.preview", "sim.run"] },
   ] },
@@ -104,7 +105,7 @@ const CFD_TABS: Tab[] = [
   { id: "study", label: "Estudo", groups: [{ title: "Novo estudo", ids: ["sim.new.cfdInternal", "sim.new.cfdExternal"] }, { title: "Estudo", ids: ["sim.section.study"] }] },
   { id: "loads", label: "Condições", groups: [{ title: "Fluido e fronteiras", ids: ["sim.section.conditions"] }] },
   { id: "mesh", label: "Malha", groups: [{ title: "Malha", ids: ["sim.section.mesh"] }] },
-  { id: "solve", label: "Resolver", groups: [{ title: "Resolver", ids: ["sim.section.run", "sim.run"] }] },
+  { id: "solve", label: "Resolver", groups: [{ title: "Modelo", ids: ["sim.section.check"] }, { title: "Resolver", ids: ["sim.section.run", "sim.run"] }] },
   { id: "results", label: "Resultados", groups: [{ title: "Resultados", ids: ["sim.section.results", "sim.toggleResult"] }] },
 ];
 
@@ -140,7 +141,7 @@ export function setWorkspace(ws: Workspace) {
   const keep = studies.some((x) => x.id === st.simStudy);
   store.set({
     workspace: ws, sidePanel: null, edit: null, mateEdit: null, componentEdit: null, pickTarget: null,
-    ...(ws === "fem" || ws === "cfd" ? { simStudy: keep ? st.simStudy : studies[0]?.id ?? null, simSection: keep ? st.simSection : "study" } : {}),
+    ...(ws === "fem" || ws === "cfd" ? { simStudy: keep ? st.simStudy : studies[0]?.id ?? null, simSection: keep ? st.simSection : ws === "fem" ? "conditions" : "study" } : {}),
   });
 }
 

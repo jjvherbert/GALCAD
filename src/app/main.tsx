@@ -18,7 +18,7 @@ import { DocTabs } from "./DocTabs.tsx";
 import { BomPanel } from "./BomPanel.tsx";
 import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { SimPanel } from "./SimPanel.tsx";
-import { conditionFaceColors } from "./sim-actions.ts";
+import { conditionAtFace, conditionFaceColors } from "./sim-actions.ts";
 import { SimBrowser } from "./SimBrowser.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
 import { DrawingEditor } from "./DrawingEditor.tsx";
@@ -80,6 +80,8 @@ function App() {
     v.onGestureTrack = (dir, at) => store.set({ gesture: at ? { at, dir } : null });
     v.onBoxSelect = (picks, add) => store.setSelection(picks, add);
     v.onDoubleClick = (p) => {
+      // espaços de simulação: duplo clique numa face com condição abre essa condição (nunca editar features às escuras)
+      if (store.state.workspace === "fem" || store.state.workspace === "cfd") { conditionAtFace(p); return; }
       // duplo clique numa face/aresta: editar a feature que a criou
       if (store.state.active.kind === "assembly") {
         const name = p.kind === "face" || p.kind === "edge" ? p.name : "";
@@ -119,6 +121,7 @@ function App() {
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
   useEffect(() => { vp.current?.setPreviewFeature(st.edit?.id ?? null); }, [st.edit?.id]);
+  useEffect(() => { if (st.confirmed) vp.current?.flashFeature(st.confirmed.id); }, [st.confirmed]);
   // sair do esboço volta à vista anterior, se a escolha do plano a rodou
   const hadSketch = useRef(false);
   useEffect(() => {

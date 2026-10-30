@@ -3,12 +3,15 @@
 // contacto, malha, sondas, resolver, resultados) com um resumo e o estado. Clicar abre a secção no
 // painel à direita; o 3D mostra o resultado do estudo escolhido.
 import type { CfdStudy, FemLoad, FemStudy, Study } from "../doc/study.ts";
+import { useState } from "preact/hooks";
 import { type SimSection, store, useStore } from "./store.ts";
-import { CONDITION_COLORS, activeStudies, activeStudy, addStudy, deleteStudy } from "./sim-actions.ts";
+import { CONDITION_COLORS, activeStudies, activeStudy, addStudy, deleteStudy, updateStudy } from "./sim-actions.ts";
 import { runCommand } from "./commands.ts";
+import { checkStudy, checkSummary } from "../sim/modelcheck.ts";
+import { loadFaces } from "../doc/study.ts";
 
 const LOAD_SHORT: Record<FemLoad["kind"], string> = {
-  fixed: "Encastramento", displacement: "Deslocamento", force: "Força", pressure: "Pressão", gravity: "Gravidade",
+  fixed: "Encastramento", displacement: "Deslocamento", symmetry: "Simetria", pointForce: "Força pontual", force: "Força", pressure: "Pressão", gravity: "Gravidade",
   temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
 };
 const ANALYSIS: Record<FemStudy["analysis"], string> = { static: "Estática", modal: "Modal", buckling: "Encurvadura", dynamic: "Dinâmica", thermal: "Térmica" };
@@ -28,14 +31,20 @@ function femNodes(s: FemStudy, asm: boolean, hasResult: boolean): Node[] {
     {
       section: "conditions", icon: "⤓", label: "Cargas e apoios", detail: `${loads.length} condição(ões)`,
       state: structural && !supports && s.analysis !== "modal" ? "warn" : loads.length ? "ok" : "todo",
-      children: loads.map((l) => ({ label: LOAD_SHORT[l.kind], detail: "faces" in l ? `${l.faces.length} face(s)` : "", color: CONDITION_COLORS[l.kind] })),
+      children: loads.map((l) => ({ label: LOAD_SHORT[l.kind], detail: "faces" in l ? `${loadFaces(s, l).length} face(s)` : "", color: CONDITION_COLORS[l.kind] })),
     },
     ...(asm ? [{ section: "contact" as const, icon: "⧉", label: "Contacto", detail: ({ bonded: "colado", friction: `atrito μ = ${s.contact?.mu ?? 0.3}`, none: "sem ligação" } as Record<string, string>)[s.contact?.mode ?? "bonded"], state: "ok" as const }] : []),
     { section: "mesh", icon: "▦", label: "Malha", detail: `${m.element === "hex" ? "hexaedros" : "tetraedros"} ${m.order === 2 ? "quadráticos" : "lineares"} · ${m.size} mm${seeds ? ` · ${seeds} seed(s)` : ""}`, state: "ok" },
     { section: "probes", icon: "⌖", label: "Sondas", detail: `${s.probes?.length ?? 0}`, state: s.probes?.length ? "ok" : "todo" },
+    checkNode(s, asm),
     { section: "run", icon: "▶", label: "Resolver", detail: "agente local", state: "todo" },
     { section: "results", icon: "◑", label: "Resultados", detail: hasResult ? "calculado" : "por calcular", state: hasResult ? "ok" : "todo" },
   ];
+}
+
+function checkNode(s: Study, asm: boolean): Node {
+  const items = checkStudy(s, asm);
+  return { section: "check", icon: "✔", label: "Verificação", detail: checkSummary(items), state: items.some((i) => i.level !== "info") ? "warn" : "ok" };
 }
 
 function cfdNodes(s: CfdStudy, hasResult: boolean): Node[] {
@@ -46,6 +55,7 @@ function cfdNodes(s: CfdStudy, hasResult: boolean): Node[] {
       children: s.regime === "internal" ? [{ label: "Entrada", detail: `${s.inlet?.faces.length ?? 0} face(s)`, color: CONDITION_COLORS.inlet }, { label: "Saída", detail: `${s.outlet?.faces.length ?? 0} face(s)`, color: CONDITION_COLORS.outlet }] : [],
     },
     { section: "mesh", icon: "▦", label: "Malha", detail: `${s.mesh.size} mm`, state: "ok" },
+    checkNode(s, false),
     { section: "run", icon: "▶", label: "Resolver", detail: `${s.iterations} iterações`, state: "todo" },
     { section: "results", icon: "◑", label: "Resultados", detail: hasResult ? "calculado" : "por calcular", state: hasResult ? "ok" : "todo" },
   ];
@@ -53,6 +63,7 @@ function cfdNodes(s: CfdStudy, hasResult: boolean): Node[] {
 
 export function SimBrowser() {
   const st = useStore();
+  const [renaming, setRenaming] = useState<string | null>(null);
   const physics = st.workspace === "cfd" ? "cfd" : "fem";
   const asm = !!store.activeAssembly();
   const studies = activeStudies(physics);
@@ -71,7 +82,11 @@ export function SimBrowser() {
           <div key={s.id} class={`sim-study ${on ? "on" : ""}`}>
             <div class="sim-study-head" onClick={() => store.set({ simStudy: s.id, simSection: on ? st.simSection : "study", simResult: on ? st.simResult : null })}>
               <span class="caret">{on ? "▾" : "▸"}</span>
-              <b>{s.name}</b>
+              {renaming === s.id
+                ? <input class="rename" autoFocus value={s.name} aria-label="Nome do estudo" onClick={(e) => e.stopPropagation()}
+                    onInput={(e) => updateStudy(s.id, { name: (e.target as HTMLInputElement).value })}
+                    onBlur={() => setRenaming(null)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") setRenaming(null); }} />
+                : <b title="Duplo clique para renomear" onDblClick={(e) => { e.stopPropagation(); setRenaming(s.id); }}>{s.name}</b>}
               <button class="icon" title="Apagar estudo" aria-label={`Apagar ${s.name}`} onClick={(e) => { e.stopPropagation(); if (confirm(`Apagar o estudo «${s.name}»?`)) deleteStudy(s.id); }}>✕</button>
             </div>
             {on && (
@@ -83,7 +98,7 @@ export function SimBrowser() {
                       {n.state === "warn" && <span class="st" title="Falta informação">!</span>}
                     </button>
                     {n.children?.length ? (
-                      <ul class="sim-leaves">{n.children.map((c, k) => <li key={k} onClick={() => store.set({ simSection: n.section })}><span>{c.color !== undefined && <i class="sw" style={{ background: `#${c.color.toString(16).padStart(6, "0")}` }} />}{c.label}</span><span class="dt">{c.detail}</span></li>)}</ul>
+                      <ul class="sim-leaves">{n.children.map((c, k) => <li key={k} title="Duplo clique: escolher as faces desta condição" onClick={() => store.set({ simSection: n.section })} onDblClick={() => store.set({ simSection: n.section, pickTarget: n.section === "conditions" ? { field: `load${k}`, accept: ["face"] } : null })}><span>{c.color !== undefined && <i class="sw" style={{ background: `#${c.color.toString(16).padStart(6, "0")}` }} />}{c.label}</span><span class="dt">{c.detail}</span></li>)}</ul>
                     ) : null}
                   </li>
                 ))}

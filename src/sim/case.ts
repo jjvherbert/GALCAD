@@ -6,12 +6,13 @@ import type { SimMaterial } from "../doc/study.ts";
 export type V3 = [number, number, number];
 
 /** Face do corpo: tag (índice 1… pela ordem do OpenCASCADE, igual ao do Gmsh), centroide e área (mm, mm²). */
-export interface CaseFace { tag: number; name: string; center: V3; area: number }
+export interface CaseFace { tag: number; name: string; center: V3; area: number; /** Normal exterior (faces planas). */ normal?: V3 }
 
 export type FemCaseLoad =
   | { kind: "fixed"; group: string }
   | { kind: "displacement"; group: string; u: (number | null)[] }
   | { kind: "force"; group: string; f: V3 }
+  | { kind: "pointForce"; point: V3; f: V3 }
   | { kind: "pressure"; group: string; p: number }
   | { kind: "gravity"; g: V3 }
   | { kind: "temperature"; group: string; t: number }

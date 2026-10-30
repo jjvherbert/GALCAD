@@ -4,13 +4,16 @@ import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
 import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, type Study, SIM_FLUIDS, SIM_MATERIALS } from "../doc/study.ts";
 import { type SimSection, desktopAgent, store, useStore } from "./store.ts";
+import { Fragment } from "preact";
+import type { FemSet } from "../doc/study.ts";
+import { CAPABILITIES, checkStudy, solverVerdict, usedFeatures } from "../sim/modelcheck.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, activeStudy, newLoad, runActiveStudy, updateStudy } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
 import { type RunResult, agentStatus, exportStudyCase, resultView } from "./sim-client.ts";
 import { fieldRange, layerShown, toggleLayer } from "../sim/result.ts";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
-  fixed: "Encastramento", displacement: "Deslocamento imposto", force: "Força total", pressure: "Pressão", gravity: "Gravidade",
+  fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria (plano)", pointForce: "Força pontual", force: "Força total", pressure: "Pressão", gravity: "Gravidade",
   temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
 };
 const STRUCT = STRUCT_LOADS;
@@ -38,7 +41,7 @@ function Vec3Input({ label, unit, value, onChange }: { label: string; unit: stri
 
 const SECTION_TITLE: Record<SimSection, string> = {
   study: "Estudo", material: "Material", conditions: "Cargas e apoios", contact: "Contacto entre corpos", mesh: "Malha",
-  probes: "Sondas", run: "Resolver", results: "Resultados",
+  probes: "Sondas", check: "Verificação do modelo", run: "Resolver", results: "Resultados",
 };
 
 /**
@@ -66,11 +69,67 @@ export function SimPanel() {
       {s?.physics === "fem" && !asm && sec === "contact" && <p class="field-hint">O contacto entre corpos existe nos estudos de montagem.</p>}
       {s?.physics === "fem" && sec === "mesh" && <MeshPreviewBox s={s} doc={docId} />}
       {s?.physics === "cfd" && <CfdEditor s={s} up={up} section={sec} />}
+      {s && sec === "check" && <CheckPanel s={s} assembly={!!asm} up={up} />}
       {s && (sec === "run" || sec === "results") && <RunBox s={s} doc={docId} part={sec} />}
       {!s && <p class="field-hint">{asm
         ? "Os estudos da montagem analisam vários corpos de uma vez: cada instância com o seu material e as faces planas coincidentes entre corpos coladas (contacto colado, *TIE no CalculiX). As faces das condições escolhem-se nos componentes."
         : "Os estudos preparam o modelo de análise dentro do CAD: condições ligadas às faces pelo nome topológico, malha e ficheiros dos solvers abertos. Crie um estudo no separador «Estudo» da barra."}</p>}
     </div>
+  );
+}
+
+const ICON = { erro: "✖", aviso: "⚠", info: "ℹ" } as const;
+const SUPPORT = { sim: ["✓", "sim", "Suportado"], parcial: ["◐", "parcial", "Suportado com restrições"], nao: ["✕", "nao", "Não suportado"] } as const;
+const SOLVER_NAME = { calculix: "CalculiX", code_aster: "code_aster", openradioss: "OpenRadioss" } as const;
+
+/** Verificação dos dados do modelo e matriz de compatibilidade por solver (como o Model Check do Abaqus). */
+function CheckPanel({ s, assembly, up }: { s: Study; assembly: boolean; up: (p: Partial<Study>) => void }) {
+  const items = checkStudy(s, assembly);
+  const fem = s.physics === "fem" ? s : null;
+  const used = fem ? usedFeatures(fem) : [];
+  return (
+    <>
+      <p class="field-hint">Confere o modelo antes do solver: erros bloqueiam o cálculo, avisos não. Clique num item para ir à secção onde se corrige.</p>
+      {items.length === 0 && <div class="kw-item ok"><b>✓ Sem problemas</b><p class="muted">Nada a assinalar nos dados do modelo (não substitui a verificação da malha e da convergência).</p></div>}
+      <ul class="check-list">
+        {items.map((i, k) => (
+          <li key={k} class={`chk chk-${i.level}`}>
+            <button onClick={() => store.set({ simSection: i.where === "sets" ? "conditions" : i.where })}><span class="chk-ic">{ICON[i.level]}</span><span>{i.text}</span></button>
+          </li>
+        ))}
+      </ul>
+      {fem && (
+        <details class="solver-matrix" open>
+          <summary>Compatibilidade por solver</summary>
+          <div class="row verdicts">
+            {(["calculix", "code_aster", "openradioss"] as const).map((sv) => {
+              const v = solverVerdict(fem, sv);
+              const [ic, cls, tip] = SUPPORT[v.support];
+              return (
+                <button key={sv} class={`verdict v-${cls} ${(fem.solver ?? "calculix") === sv ? "cur" : ""}`} title={v.reasons.join("\n") || tip} onClick={() => up({ solver: sv } as never)}>
+                  <b>{ic} {SOLVER_NAME[sv]}</b><small>{(fem.solver ?? "calculix") === sv ? "em uso" : v.support === "sim" ? "usar" : v.support === "parcial" ? "com restrições" : "incompatível"}</small>
+                </button>
+              );
+            })}
+          </div>
+          <table class="matrix">
+            <thead><tr><th /><th>CalculiX</th><th>code_aster</th><th>OpenRadioss</th></tr></thead>
+            <tbody>
+              {CAPABILITIES.map((c, k) => (
+                <Fragment key={c.feature}>
+                  {(k === 0 || CAPABILITIES[k - 1].group !== c.group) && <tr key={`g${c.group}`} class="grp"><td colSpan={4}>{c.group}</td></tr>}
+                  <tr key={c.feature} class={used.includes(c.feature) ? "used" : ""} title={c.note}>
+                    <td>{c.feature}{used.includes(c.feature) && <i title="Usado neste estudo"> ●</i>}</td>
+                    {(["calculix", "code_aster", "openradioss"] as const).map((sv) => <td key={sv} class={`sup-${SUPPORT[c[sv]][1]}`} title={SUPPORT[c[sv]][2]}>{SUPPORT[c[sv]][0]}</td>)}
+                  </tr>
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+          <p class="field-hint">● = usado neste estudo. A matriz descreve o que os adaptadores deste software implementam e verificam, não tudo o que cada solver sabe fazer.</p>
+        </details>
+      )}
+    </>
   );
 }
 
@@ -157,6 +216,7 @@ function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => 
 }
 
 function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: Partial<FemStudy>) => void; assembly?: boolean; section: SimSection }) {
+  const st = useStore();
   const thermal = s.analysis === "thermal";
   const kinds = thermal ? THERM : STRUCT;
   const setLoad = (i: number, l: FemLoad) => up({ loads: s.loads.map((x, k) => (k === i ? l : x)) });
@@ -203,12 +263,30 @@ function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: Partial<
         {m.source && <p class="muted">{m.source}</p>}
       </fieldset>}
       {section === "conditions" && <>
+      <SetsBox s={s} up={up} />
       {s.loads.map((l, i) => (
-        <div class="kw-item" key={i}>
+        <div class={`kw-item ${st.simFocus?.index === i ? "focus" : ""}`} key={`${i}:${st.simFocus?.index === i ? st.simFocus.n : 0}`} ref={(el) => { if (el && st.simFocus?.index === i) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }}>
           <div class="row"><b>{LOAD_LABELS[l.kind]}</b><button class="icon" aria-label={`Retirar condição ${i + 1}`} onClick={() => up({ loads: s.loads.filter((_, k) => k !== i) })}>✕</button></div>
           {"faces" in l && <RefList field={`load${i}`} label="Faces" accept={["face"]} refs={l.faces} onChange={(faces) => setLoad(i, { ...l, faces } as FemLoad)} />}
+          {"faces" in l && (s.sets?.length ?? 0) > 0 && (
+            <div class="set-chips" aria-label="Conjuntos desta condição">
+              {s.sets!.map((g) => {
+                const on = !!l.sets?.includes(g.id);
+                return <button key={g.id} class={`chip ${on ? "on" : ""}`} aria-pressed={on} title={`${g.faces.length} face(s)`} onClick={() => setLoad(i, { ...l, sets: on ? (l.sets ?? []).filter((x) => x !== g.id) : [...(l.sets ?? []), g.id] } as FemLoad)}>{on ? "✓ " : "+ "}{g.name}</button>;
+              })}
+            </div>
+          )}
+          {"faces" in l && l.faces.length > 0 && <button class="small" title="Guarda as faces desta condição como conjunto para as reutilizar" onClick={() => { const id = nextSetId(s); up({ sets: [...(s.sets ?? []), { id, name: `${LOAD_LABELS[l.kind]} ${(s.sets?.length ?? 0) + 1}`, faces: l.faces }], loads: s.loads.map((x, k) => (k === i && "faces" in x ? { ...x, faces: [], sets: [...(x.sets ?? []), id] } as FemLoad : x)) }); }}>→ guardar como conjunto</button>}
           {l.kind === "displacement" && <div class="row3">{(["ux", "uy", "uz"] as const).map((k) => <ExprInput key={k} label={k} allowEmpty value={l[k]} onChange={(x) => setLoad(i, { ...l, [k]: x })} />)}</div>}
           {l.kind === "force" && <Vec3Input label="F" unit="N" value={l.f} onChange={(f) => setLoad(i, { ...l, f })} />}
+          {l.kind === "pointForce" && (
+            <>
+              <Vec3Input label="Ponto" unit="mm" value={l.point} onChange={(point) => setLoad(i, { ...l, point })} />
+              <PointPick field={`loadpt${i}`} onPick={(point) => setLoad(i, { ...l, point })} />
+              <Vec3Input label="F" unit="N" value={l.f} onChange={(f) => setLoad(i, { ...l, f })} />
+              <p class="field-hint">Aplicada no nó da malha mais próximo: dá tensões locais irreais junto ao ponto (singularidade); a resposta global (flechas longe do ponto, reações) é válida.</p>
+            </>
+          )}
           {l.kind === "pressure" && <ExprInput label="Pressão (MPa)" unit="MPa" value={l.p} onChange={(p) => setLoad(i, { ...l, p: p ?? 0 })} />}
           {l.kind === "gravity" && <Vec3Input label="g" unit="mm/s²" value={l.g} onChange={(g) => setLoad(i, { ...l, g })} />}
           {l.kind === "temperature" && <ExprInput label="Temperatura" unit="°C" value={l.t} onChange={(t) => setLoad(i, { ...l, t: t ?? 0 })} />}
@@ -244,6 +322,31 @@ function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: Partial<
       </>}
       {section === "mesh" && <MeshEditor mesh={s.mesh} thermal={thermal} onChange={(mesh) => up({ mesh })} />}
     </>
+  );
+}
+
+const nextSetId = (s: FemStudy) => `g${(s.sets ?? []).reduce((m, g) => Math.max(m, Number(g.id.slice(1)) || 0), 0) + 1}`;
+
+/** Conjuntos de faces nomeados (como os sets do Abaqus): definem-se uma vez e usam-se em várias condições. */
+function SetsBox({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
+  const sets = s.sets ?? [];
+  const setSet = (i: number, patch: Partial<FemSet>) => up({ sets: sets.map((g, k) => (k === i ? { ...g, ...patch } : g)) });
+  const remove = (i: number) => up({ sets: sets.filter((_, k) => k !== i), loads: s.loads.map((l) => ("faces" in l && l.sets?.includes(sets[i].id) ? { ...l, sets: l.sets.filter((x) => x !== sets[i].id) } as FemLoad : l)) });
+  return (
+    <details class="sets-box" open={sets.length > 0}>
+      <summary>Conjuntos de faces ({sets.length})</summary>
+      {sets.map((g, i) => (
+        <div class="kw-item" key={g.id}>
+          <div class="row">
+            <input aria-label={`Nome do conjunto ${i + 1}`} value={g.name} onChange={(e) => setSet(i, { name: (e.target as HTMLInputElement).value })} />
+            <button class="icon" aria-label={`Apagar o conjunto ${g.name}`} onClick={() => remove(i)}>✕</button>
+          </div>
+          <RefList field={`set${i}`} label="Faces" accept={["face"]} refs={g.faces} onChange={(faces) => setSet(i, { faces })} />
+        </div>
+      ))}
+      <button class="small" onClick={() => { const id = nextSetId(s); up({ sets: [...sets, { id, name: `Conjunto ${sets.length + 1}`, faces: [] }] }); store.set({ pickTarget: { field: `set${sets.length}`, accept: ["face"] } }); }}>+ conjunto</button>
+      <p class="field-hint">Um conjunto agrupa faces com nome (ex.: «Apoios») e usa-se em várias condições; mudar o conjunto muda todas.</p>
+    </details>
   );
 }
 

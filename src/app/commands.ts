@@ -174,11 +174,11 @@ export const COMMANDS: Command[] = [
   })),
   { id: "sim.new.cfdInternal", label: "Novo estudo CFD interno (conduta)", short: "Interno", group: "Simulação", icon: "⇉", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "internal" } as never); } },
   { id: "sim.new.cfdExternal", label: "Novo estudo CFD externo (corpo)", short: "Externo", group: "Simulação", icon: "➶", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "external" } as never); } },
-  ...([["study", "Estudo: análise e solver", "⚙"], ["material", "Material", "◧"], ["conditions", "Cargas e apoios", "⤓"], ["contact", "Contacto entre corpos", "⧉"], ["mesh", "Malha: elementos, seeds e controlos", "▦"], ["probes", "Sondas", "⌖"], ["run", "Resolver: solver e convergência", "▶"], ["results", "Resultados", "◑"]] as const).map(([section, label, icon]): Command => ({
+  ...([["study", "Estudo: análise e solver", "⚙"], ["material", "Material", "◧"], ["conditions", "Cargas e apoios", "⤓"], ["contact", "Contacto entre corpos", "⧉"], ["mesh", "Malha: elementos, seeds e controlos", "▦"], ["probes", "Sondas", "⌖"], ["check", "Verificação do modelo e compatibilidade por solver", "✔"], ["run", "Resolver: solver e convergência", "▶"], ["results", "Resultados", "◑"]] as const).map(([section, label, icon]): Command => ({
     id: `sim.section.${section}`, label, short: label.split(":")[0].replace(" entre corpos", ""), group: "Simulação", icon, run: () => openSimSection(section),
   })),
   // cargas, apoios e sondas a partir da barra: abre a secção com a seleção de faces ativa
-  ...([["fixed", "Encastramento (apoio fixo nas faces)", "Encastrar", "⊥"], ["displacement", "Deslocamento imposto nas faces", "Deslocam.", "⇥"], ["force", "Força total distribuída nas faces", "Força", "↓"], ["pressure", "Pressão normal nas faces", "Pressão", "⇊"], ["gravity", "Gravidade (peso próprio)", "Gravidade", "g"], ["temperature", "Temperatura imposta nas faces", "Temperatura", "🌡"], ["convection", "Convecção nas faces (h, T do fluido)", "Convecção", "≈"], ["heatFlux", "Fluxo de calor nas faces", "Fluxo", "⇶"]] as const).map(([kind, label, short, icon]): Command => ({
+  ...([["fixed", "Encastramento (apoio fixo nas faces)", "Encastrar", "⊥"], ["displacement", "Deslocamento imposto nas faces", "Deslocam.", "⇥"], ["symmetry", "Simetria: impede o deslocamento normal ao plano (modelo parcial)", "Simetria", "⇋"], ["force", "Força total distribuída nas faces", "Força", "↓"], ["pointForce", "Força concentrada num ponto (nó mais próximo)", "Força pontual", "⬇"], ["pressure", "Pressão normal nas faces", "Pressão", "⇊"], ["gravity", "Gravidade (peso próprio)", "Gravidade", "g"], ["temperature", "Temperatura imposta nas faces", "Temperatura", "🌡"], ["convection", "Convecção nas faces (h, T do fluido)", "Convecção", "≈"], ["heatFlux", "Fluxo de calor nas faces", "Fluxo", "⇶"]] as const).map(([kind, label, short, icon]): Command => ({
     id: `sim.add.${kind}`, label, short, group: "Simulação", icon, run: () => { if (store.state.workspace !== "fem") setWorkspace("fem"); addCondition(kind); },
   })),
   { id: "sim.add.probe", label: "Sonda (grandeza média em faces ou num ponto)", short: "Sonda", group: "Simulação", icon: "⌖", run: () => { if (store.state.workspace !== "fem") setWorkspace("fem"); addProbe(); } },
@@ -236,6 +236,7 @@ export function runCommand(id: string) {
 function repeatLast() {
   const st = store.state;
   if (st.edit) { store.confirmEdit(); return; } // Enter num painel aberto confirma, como o OK
+  if (st.pickTarget) { store.set({ pickTarget: null }); return; } // Enter conclui a seleção de faces (simulação)
   if (st.lastCommand) runCommand(st.lastCommand);
 }
 

@@ -108,6 +108,10 @@ export interface State {
   sketch: SketchEdit | null;
   /** Escolha do plano antes de criar um esboço. */
   choosingPlane: boolean;
+  /** Última feature confirmada (o 3D mostra um realce que se desvanece). */
+  confirmed: { id: string; n: number } | null;
+  /** Condição de simulação a destacar no painel (duplo clique numa face com condição). */
+  simFocus: { index: number; n: number } | null;
   result: RebuildResponse | null;
   busy: boolean;
   error: string | null;
@@ -169,7 +173,7 @@ export interface State {
 }
 
 export type Workspace = "design" | "fem" | "cfd" | "drawing";
-export type SimSection = "study" | "material" | "conditions" | "contact" | "probes" | "mesh" | "run" | "results";
+export type SimSection = "study" | "material" | "conditions" | "contact" | "probes" | "mesh" | "check" | "run" | "results";
 
 export type DrawingTool =
   | { kind: "modelView"; source: { kind: "part" | "assembly"; id: string }; orientation: import("../doc/project.ts").StdView }
@@ -201,7 +205,7 @@ class Store {
     const doc = project.parts[0];
     this.state = {
       project, active: { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
-      edit: null, sketch: null, choosingPlane: false, result: null, busy: false, error: null, message: null,
+      edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
@@ -712,7 +716,7 @@ class Store {
     } else {
       next = updateFeature(doc, e.id, e.draft);
     }
-    this.set({ edit: null, pickTarget: null, selection: [], selectedFeature: e.id });
+    this.set({ edit: null, pickTarget: null, selection: [], selectedFeature: e.id, confirmed: { id: e.id, n: (this.state.confirmed?.n ?? 0) + 1 } });
     this.commit(next, `${e.isNew ? "Criar" : "Editar"} ${e.draft.name}`);
   }
 

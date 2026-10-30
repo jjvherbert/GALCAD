@@ -1264,6 +1264,31 @@ function calculixDeck(c, m) {
 		case "temperature":
 			bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`);
 			break;
+		case "pointForce": {
+			let best = -1, bd = Infinity;
+			for (const t of used) {
+				const q = m.nodes.get(t);
+				if (!q) continue;
+				const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2;
+				if (d < bd) {
+					bd = d;
+					best = t;
+				}
+			}
+			if (best < 0) {
+				warnings.push("Força pontual sem nó da malha");
+				break;
+			}
+			const acc = cload.get(best) ?? [
+				0,
+				0,
+				0
+			];
+			for (let k = 0; k < 3; k++) acc[k] += ld.f[k];
+			cload.set(best, acc);
+			warnings.push(`Força pontual aplicada no nó ${best}, a ${Math.sqrt(bd).toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
+			break;
+		}
 		case "force": {
 			const A = groupArea[ld.group];
 			if (!(A > 0)) {
@@ -2070,15 +2095,18 @@ function radiossDeck(c, m) {
 	const faceNodes = (g) => [...new Set([...elementsOf(faceBlocks(m, g))].flatMap((e) => e.nodes))].sort((a, b) => a - b);
 	S.push("/FUNCT/1", "amplitude", "#                  X                   Y", ...D.amplitude.map(([t, v]) => `${F(t * 1e3)}${F(v)}`));
 	let bcs = 0, loads = 0;
-	for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") {
-		const fix = ld.kind === "fixed" ? [
-			true,
-			true,
-			true
-		] : ld.u.map((u) => u !== null);
-		if (ld.kind === "displacement" && ld.u.some((u) => u !== null && u !== 0)) throw new Error("OpenRadioss: deslocamentos impostos não nulos ainda não estão neste adaptador (use forças)");
-		const g = group(`apoio ${ld.group}`, faceNodes(ld.group));
-		S.push(`/BCS/${++bcs}`, `apoio ${ld.group}`, "#  Tra rot   skew_ID  grnod_ID", `   ${fix.map((x) => x ? "1" : "0").join("")} 000${I(0)}${I(g)}`);
+	for (const ld of c.loads) {
+		if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
+		if (ld.kind === "fixed" || ld.kind === "displacement") {
+			const fix = ld.kind === "fixed" ? [
+				true,
+				true,
+				true
+			] : ld.u.map((u) => u !== null);
+			if (ld.kind === "displacement" && ld.u.some((u) => u !== null && u !== 0)) throw new Error("OpenRadioss: deslocamentos impostos não nulos ainda não estão neste adaptador (use forças)");
+			const g = group(`apoio ${ld.group}`, faceNodes(ld.group));
+			S.push(`/BCS/${++bcs}`, `apoio ${ld.group}`, "#  Tra rot   skew_ID  grnod_ID", `   ${fix.map((x) => x ? "1" : "0").join("")} 000${I(0)}${I(g)}`);
+		}
 	}
 	const nodal = /* @__PURE__ */ new Map();
 	const add = (n, f) => {
@@ -2936,6 +2964,25 @@ function su2Config(c) {
 }
 // src/sim/aster.ts
 const num$1 = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
+/** Nó da malha mais próximo de cada força pontual (ordem das condições `pointForce`), com a distância ao ponto pedido. */
+function pointNodes(c, m, nodes) {
+	return c.loads.flatMap((ld) => {
+		if (ld.kind !== "pointForce") return [];
+		let best = -1, bd = Infinity;
+		for (const t of nodes) {
+			const q = m.nodes.get(t);
+			const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2;
+			if (d < bd) {
+				bd = d;
+				best = t;
+			}
+		}
+		return [{
+			node: best,
+			dist: Math.sqrt(bd)
+		}];
+	});
+}
 /** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
 function asterMesh(c, m) {
 	if (!solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
@@ -3005,6 +3052,9 @@ function asterMesh(c, m) {
 	block("GROUP_MA", "SOLID", cells.map((e) => e.name));
 	for (const [g, ids] of Object.entries(bodyCells)) if (g !== "SOLID") block("GROUP_MA", g, ids);
 	for (const [g, ids] of Object.entries(faceGroups)) if (ids.length) block("GROUP_MA", g, ids);
+	pointNodes(c, m, nodeOrder).forEach((n, k) => {
+		if (n.node >= 0) nodeGroups[`PF${k + 1}`] = [n.node];
+	});
 	for (const [g, ns] of Object.entries(nodeGroups)) if (ns.length) block("GROUP_NO", g, ns.map((x) => `N${x}`));
 	const supportNodes = new Set(c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? nodeGroups[ld.group] ?? [] : []));
 	for (const t of c.ties ?? []) {
@@ -3052,7 +3102,8 @@ function asterCase(c, m) {
 		material("MAT", mat);
 		C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
 	}
-	const ddl = [], ddlAmp = [], force = [], pres = [];
+	const ddl = [], ddlAmp = [], force = [], pres = [], nodal = [];
+	let pf = 0;
 	let grav = "";
 	for (const ld of c.loads) switch (ld.kind) {
 		case "fixed":
@@ -3072,6 +3123,16 @@ function asterCase(c, m) {
 			force.push(`_F(GROUP_MA='${ld.group}', FX=${num$1(ld.f[0] / A)}, FY=${num$1(ld.f[1] / A)}, FZ=${num$1(ld.f[2] / A)})`);
 			break;
 		}
+		case "pointForce": {
+			const pn = pointNodes(c, m, nodeOrder)[pf++];
+			if (!pn || pn.node < 0) {
+				warnings.push("Força pontual sem nó da malha");
+				break;
+			}
+			nodal.push(`_F(GROUP_NO='PF${pf}', FX=${num$1(ld.f[0])}, FY=${num$1(ld.f[1])}, FZ=${num$1(ld.f[2])})`);
+			warnings.push(`Força pontual aplicada no nó ${pn.node}, a ${pn.dist.toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
+			break;
+		}
 		case "pressure":
 			pres.push(`_F(GROUP_MA='${ld.group}', PRES=${num$1(ld.p)})`);
 			break;
@@ -3089,6 +3150,7 @@ function asterCase(c, m) {
 	C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
 	const chParts = [
 		force.length && `FORCE_FACE=(${force.join(", ")},)`,
+		nodal.length && `FORCE_NODALE=(${nodal.join(", ")},)`,
 		pres.length && `PRES_REP=(${pres.join(", ")},)`,
 		grav
 	].filter(Boolean);

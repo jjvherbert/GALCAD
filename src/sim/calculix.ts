@@ -162,6 +162,17 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       // na dinâmica, os deslocamentos impostos não nulos seguem a amplitude
       case "displacement": ld.u.forEach((u, k) => { if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`); }); break;
       case "temperature": bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`); break;
+      case "pointForce": {
+        // nó da malha mais próximo do ponto (só nós que pertencem a elementos)
+        let best = -1, bd = Infinity;
+        for (const t of used) { const q = m.nodes.get(t); if (!q) continue; const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2; if (d < bd) { bd = d; best = t; } }
+        if (best < 0) { warnings.push("Força pontual sem nó da malha"); break; }
+        const acc = cload.get(best) ?? [0, 0, 0];
+        for (let k = 0; k < 3; k++) acc[k] += ld.f[k];
+        cload.set(best, acc);
+        warnings.push(`Força pontual aplicada no nó ${best}, a ${Math.sqrt(bd).toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
+        break;
+      }
       case "force": {
         // tração uniforme t = F/A → forças nodais consistentes ∫Nᵢ t dA (tri3: A/3 por canto; tri6:
         // A/3 por nó intermédio; quad8: −A/12 nos cantos e A/3 nos intermédios)

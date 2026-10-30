@@ -235,7 +235,7 @@ export class Viewport {
     this.pmiSvg.setAttribute("class", "pmi-leaders");
     this.pmiEl = Object.assign(document.createElement("div"), { className: "pmi-layer" });
     el.append(this.pmiSvg, this.pmiEl);
-    this.renderer.setAnimationLoop(() => { this.stepAnim(); this.renderer.render(this.scene, this.camera); this.placePmi(); });
+    this.renderer.setAnimationLoop(() => { this.stepAnim(); this.stepFlash(); this.renderer.render(this.scene, this.camera); this.placePmi(); });
   }
 
   // --- PMI 3D ------------------------------------------------------------------------
@@ -332,6 +332,10 @@ export class Viewport {
   setSelected(keys: string[]) { this.selected = new Set(keys); this.recolor(); }
 
   /** Realça as faces criadas por uma feature (ao passar o rato na árvore). */
+  private flashPending: string | null = null;
+  private flash: { prefix: string; t0: number } | null = null;
+  /** Realce que se desvanece nas faces de uma feature acabada de confirmar. */
+  flashFeature(fid: string) { this.flashPending = fid; }
   private previewFeature: string | null = null;
   /** Feature em edição: as faces que ela cria ficam amarelas (pré-visualização, como no SolidWorks). */
   setPreviewFeature(fid: string | null) { if (fid !== this.previewFeature) { this.previewFeature = fid; this.recolor(); } }
@@ -761,6 +765,7 @@ export class Viewport {
         return;
       }
       c.set(flat ?? (f.body ? this.theme.sheet : this.theme.body));
+      if (flat === null && this.flash && this.flashK > 0 && f.name.startsWith(this.flash.prefix)) c.lerp(this.flashColor.set(this.theme.preview), this.flashK);
       for (let v = lo; v <= hi; v++) col.setXYZ(v, c.r, c.g, c.b);
     });
     col.needsUpdate = true;
@@ -965,7 +970,11 @@ export class Viewport {
   private onDblClick(e: MouseEvent) {
     if (e.button !== 0) return;
     const h = this.hitTest(e, null);
-    if (h) this.onDoubleClick(this.toPick(h));
+    if (h) {
+      const pick = this.toPick(h);
+      this.el.dataset.lastDblClick = pick.kind === "face" || pick.kind === "edge" ? `${pick.kind}:${pick.name}` : pick.kind;
+      this.onDoubleClick(pick);
+    }
   }
 
   private wheelAt = 0;
@@ -1198,6 +1207,21 @@ export class Viewport {
     this.anim = { t0: performance.now(), ms, a, b, qa, qb };
     this.el.dataset.animating = "1";
     this.stepAnim();
+  }
+
+  private flashK = 0;
+  private flashColor = new THREE.Color();
+  private stepFlash() {
+    if (this.flashPending && this.mesh) {
+      const prefix = `${this.flashPending}:`;
+      this.flashPending = null;
+      if (this.animate && this.mesh.faces.some((f) => f.name.startsWith(prefix))) this.flash = { prefix, t0: performance.now() };
+    }
+    if (!this.flash) return;
+    const k = 1 - (performance.now() - this.flash.t0) / 900;
+    if (k <= 0) { this.flash = null; this.flashK = 0; this.recolor(); return; }
+    this.flashK = k * k;
+    this.recolor();
   }
 
   private stepAnim() {
