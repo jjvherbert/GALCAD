@@ -13,6 +13,11 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Criar a release (rascunho) v<versão do package.json> com o instalador"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -109,12 +114,18 @@ jobs:
       # etiquetas v*: release em rascunho com o instalador .exe (descarga direta, sem zip). Fica em
       # rascunho (só visível a quem tem acesso ao repositório) até se resolver a oferta do código-fonte
       # dos componentes GPL/AGPL; publica-se com um clique na página das releases.
-      - name: Release em rascunho (etiquetas v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Versão
+        id: ver
+        shell: bash
+        run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Release em rascunho (etiquetas v* ou lançamento manual com «release»)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          name: GALCAD ${{ github.ref_name }}
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.ver.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: GALCAD ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || steps.ver.outputs.tag }}
           body: |
             Instalador Windows da GALCAD (Galkeel) com todos os solvers: CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster e OpenRadioss.
             Instalação por utilizador (sem administrador), ~2,9 GB no disco. Sem assinatura de código: o SmartScreen pede «Mais informações» → «Executar mesmo assim».
