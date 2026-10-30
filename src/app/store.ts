@@ -151,11 +151,25 @@ export interface State {
   /** Forma livre em edição: polo selecionado e restrição do arrasto. */
   poleSel: [number, number] | null;
   poleAxis: "free" | "X" | "Y" | "Z";
+  /**
+   * Espaço de trabalho (ao estilo do Fusion): Design (CAD), Simulação FEM, CFD ou Desenho — cada um
+   * com a sua barra de comandos, a sua árvore e os seus painéis.
+   */
+  workspace: Workspace;
+  /** Simulação: estudo e secção do modelo em edição (árvore do modelo → painel à direita). */
+  simStudy: string | null;
+  simSection: SimSection;
+  /** Cálculo em curso no agente e opções do estudo de convergência (partilhadas pela barra e pelo painel). */
+  simBusy: "run" | "mesh" | null;
+  simRun: { conv: boolean; ratio: number; mode: "three" | "auto" | "sweep"; target: number; levels: number; metric: string };
   /** Ferramenta ativa no editor de desenhos. */
   drawingTool: DrawingTool | null;
   /** Seleção no desenho (vista ou anotação). */
   drawingSel: { kind: "view" | "ann"; id: string } | null;
 }
+
+export type Workspace = "design" | "fem" | "cfd" | "drawing";
+export type SimSection = "study" | "material" | "conditions" | "contact" | "probes" | "mesh" | "run" | "results";
 
 export type DrawingTool =
   | { kind: "modelView"; source: { kind: "part" | "assembly"; id: string }; orientation: import("../doc/project.ts").StdView }
@@ -191,6 +205,8 @@ class Store {
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
+      workspace: "design", simStudy: null, simSection: "study", simBusy: null,
+      simRun: { conv: false, ratio: 1.5, mode: "three", target: 1, levels: 5, metric: "" },
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: "http://127.0.0.1:8765", token: "" },
     };
     this.rebuild(0);
@@ -393,6 +409,8 @@ class Store {
     const doc = ref.kind === "part" ? this.state.project.parts.find((p) => p.id === ref.id) : undefined;
     this.set({
       active: ref, ...(doc ? { doc, result: null } : {}), selection: [], selectedFeature: null, pickTarget: null, analysis: null,
+      // o espaço de trabalho segue o documento: desenhos no Desenho; peças e montagens fora dele (CFD só em peças)
+      workspace: ref.kind === "drawing" ? "drawing" : this.state.workspace === "drawing" || (ref.kind === "assembly" && this.state.workspace === "cfd") ? "design" : this.state.workspace,
       asmResult: ref.kind === "assembly" ? this.state.asmResult : null, drawingResult: null, contextToolbar: null,
       mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null, simResult: null,
     });

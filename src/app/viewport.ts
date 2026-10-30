@@ -158,6 +158,7 @@ export class Viewport {
   private hover: Hit | null = null;
   private selected = new Set<string>();
   private featureHighlight: string | null = null;
+  private conditionFaces: Map<string, number> | null = null;
   private theme: Theme = themes.light;
   private ray = new THREE.Raycaster();
   private accept: PickKind[] | null = null;
@@ -326,6 +327,13 @@ export class Viewport {
 
   /** Realça as faces criadas por uma feature (ao passar o rato na árvore). */
   setFeatureHighlight(fid: string | null) { if (fid !== this.featureHighlight) { this.featureHighlight = fid; this.recolor(); } }
+  /** Cores das faces com condições de simulação (espaços FEM/CFD): o modelo mostra onde estão os apoios e as cargas. */
+  setConditionFaces(m: Map<string, number> | null) {
+    const same = m && this.conditionFaces && m.size === this.conditionFaces.size && [...m].every(([k, v]) => this.conditionFaces!.get(k) === v);
+    if (same || (!m && !this.conditionFaces)) return;
+    this.conditionFaces = m && m.size ? m : null;
+    this.recolor();
+  }
 
   // --- conteúdo ----------------------------------------------------------------
 
@@ -728,7 +736,7 @@ export class Viewport {
       const k = `face:${f.name}`;
       const [lo, hi] = this.faceVerts[i];
       const inComp = fhComp && (f.name.startsWith(`${fhComp}|`) || f.name.startsWith(`${fhComp}/`));
-      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : (fh && f.name.startsWith(fh)) || inComp ? this.theme.feat : null;
+      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : (fh && f.name.startsWith(fh)) || inComp ? this.theme.feat : this.conditionFaces?.get(f.name) ?? null;
       if (flat === null && (dir || curv)) {
         for (let v = lo; v <= hi; v++) {
           if (dir) {

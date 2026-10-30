@@ -1,66 +1,20 @@
-// Barra de comandos ao estilo do CommandManager do SolidWorks: menu Ficheiro, ações rápidas e separadores.
+// Barra de comandos: marca, seletor do espaço de trabalho (como no Fusion), menu Ficheiro, ações rápidas
+// e os separadores do CommandManager (como no SolidWorks) do espaço de trabalho ativo.
 import { useState } from "preact/hooks";
 import { FILE_EXTENSION } from "../doc/io.ts";
 import { commandById, runCommand } from "./commands.ts";
 import { EXPORTS } from "./fileio.ts";
-import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
-import { DRAWING_TABS } from "./drawing-commands.ts";
-
-type Tab = "features" | "surfaces" | "sketch" | "refs" | "evaluate" | "knowledge" | "pmi" | "simulation" | "automation" | "modules" | "assembly" | "drawing" | "annotate";
-
-const TABS: { id: Tab; label: string; groups: { title: string; ids: string[] }[] }[] = [
-  {
-    id: "features", label: "Features",
-    groups: [
-      { title: "Esboço", ids: ["sketch.new"] },
-      { title: "Sólidos", ids: ["feature.extrude", "feature.revolve", "feature.sweep", "feature.loft", "feature.rib", "feature.cut"] },
-      { title: "Furos", ids: ["feature.hole"] },
-      { title: "Acabamento", ids: ["feature.fillet", "feature.chamfer", "feature.shell", "feature.draft"] },
-      { title: "Padrões", ids: ["feature.linearPattern", "feature.circularPattern", "feature.mirror"] },
-    ],
-  },
-  {
-    id: "surfaces", label: "Superfícies",
-    groups: [
-      { title: "Esboço", ids: ["sketch.new"] },
-      { title: "Curvas", ids: ["feature.curve"] },
-      { title: "Criar", ids: ["feature.surfaceExtrude", "feature.surfaceRevolve", "feature.surfaceSweep", "feature.surfaceLoft", "feature.boundary", "feature.fill", "feature.ruled", "feature.offsetSurface"] },
-      { title: "Editar", ids: ["feature.trimSurface", "feature.untrim", "feature.knit", "feature.deleteFace"] },
-      { title: "Para sólido", ids: ["feature.thicken", "feature.replaceFace"] },
-      { title: "GSD", ids: ["feature.multiSection", "feature.blend", "feature.circleSweep", "feature.extrapolate", "feature.heal"] },
-      { title: "Forma livre", ids: ["feature.freeform"] },
-      { title: "Análise", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation"] },
-      { title: "Classe A", ids: ["analysis.continuity", "analysis.highlight", "analysis.combs"] },
-    ],
-  },
-  { id: "sketch", label: "Esboço", groups: [{ title: "Esboço", ids: ["sketch.new"] }] },
-  { id: "refs", label: "Referências", groups: [{ title: "Geometria de referência", ids: ["feature.plane", "feature.axis", "feature.csys"] }] },
-  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.variables", "edit.rebuild", "edit.forceRebuild"] }, { title: "Análise de superfícies", ids: ["analysis.zebra", "analysis.curvature", "analysis.draft", "analysis.deviation", "analysis.continuity", "analysis.highlight", "analysis.combs"] }] },
-  { id: "knowledge", label: "Conhecimento", groups: [{ title: "Knowledgeware", ids: ["kw.panel", "edit.variables"] }, { title: "Publicação", ids: ["feature.external"] }] },
-  { id: "pmi", label: "PMI", groups: [{ title: "PMI 3D e atributos", ids: ["pmi.panel"] }, { title: "Exportar", ids: ["export.step242"] }] },
-  { id: "simulation", label: "Simulação", groups: [{ title: "Pré-processador", ids: ["sim.panel"] }, { title: "Análise", ids: ["analysis.curvature", "analysis.deviation"] }] },
-  { id: "automation", label: "Automação", groups: [{ title: "Scripts", ids: ["script.panel"] }, { title: "Análise integrada", ids: ["galkeel.panel", "calc.panel", "sim.panel"] }] },
-  { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
-];
-
-const ASM_TABS: typeof TABS = [
-  { id: "assembly", label: "Montagem", groups: [
-    { title: "Mates", ids: ["asm.mate.coincident", "asm.mate.concentric", "asm.mate.parallel", "asm.mate.perpendicular", "asm.mate.distance", "asm.mate.angle", "asm.mate.tangent", "asm.mate.lock"] },
-    { title: "Avaliar", ids: ["asm.interference"] },
-    { title: "BOM", ids: ["asm.bom"] },
-  ] },
-  { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.rebuild", "edit.forceRebuild", "asm.interference"] }] },
-  { id: "simulation", label: "Simulação", groups: [{ title: "Pré-processador", ids: ["sim.panel"] }] },
-];
+import { TAB_SECTION, WORKSPACES, openSimSection, setWorkspace, workspaceDef, workspaceTabs } from "./workspaces.ts";
+import logo from "../../desktop/brand/splash-logo.png";
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const short = (label: string) => cap(label.replace(/^Mate: /, "").replace(/^Vista de /, "").replace(/^Vista (projetada|auxiliar)$/, "$1")).replace("Deteção de interferências", "Interferências").replace("Lista de materiais (BOM) e assistente", "BOM").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace(/^Continuidade.*/, "Continuidade").replace(/^Linhas de realce.*/, "Realce").replace(/^Pentes de curvatura.*/, "Pentes").replace(/^Conhecimento:.*/, "Regras e configs.").replace(/^Simulação:.*/, "Estudos").replace(/^PMI:.*/, "Anotações PMI").replace(/^Exportar STEP AP242.*/, "STEP AP242").replace(/^Scripts:.*/, "Scripts").replace(/^Galkeel:.*/, "Painéis Galkeel").replace(/^Cálculos:.*/, "Cálculos e perfis").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
   const st = useStore();
-  const [tab, setTab] = useState<Tab>("features");
-  const [menu, setMenu] = useState<"file" | null>(null);
+  const [tabs0, setTab] = useState<Record<string, string>>({});
+  const [menu, setMenu] = useState<"file" | "ws" | null>(null);
   const busy = !!st.edit || !!st.sketch || !!st.mateEdit;
 
   const cmdButton = (id: string) => {
@@ -69,17 +23,34 @@ export function Toolbar() {
     const key = c.keys?.[0];
     return (
       <button key={id} class="cmd" title={`${c.label}${key ? ` (${key})` : ""}`} disabled={busy && c.group !== "Editar" && c.group !== "Avaliar"} onClick={() => runCommand(id)}>
-        <span class="ic">{c.icon ?? "•"}</span><span class="lb">{short(c.label)}</span>
+        <span class="ic">{c.icon ?? "•"}</span><span class="lb">{c.short ?? short(c.label)}</span>
       </button>
     );
   };
 
-  const tabs = st.active.kind === "assembly" ? ASM_TABS : st.active.kind === "drawing" ? DRAWING_TABS : TABS;
-  const current = tabs.find((t) => t.id === tab) ?? tabs[0];
+  const ws = workspaceDef(st.workspace);
+  const tabs = workspaceTabs(st.workspace, st.active.kind);
+  // separador escolhido por espaço de trabalho (cada espaço lembra o seu)
+  const key = `${st.workspace}:${st.active.kind}`;
+  const current = tabs.find((t) => t.id === tabs0[key]) ?? tabs[0];
   return (
-    <header class="toolbar" onClick={() => menu && setMenu(null)}>
+    <header class="toolbar" style={{ "--ws-accent": ws.accent }} onClick={() => menu && setMenu(null)}>
       <div class="tb-row">
-        <div class="brand">CAD<span>protótipo</span></div>
+        <div class="brand" title="GALCAD — Galkeel"><img src={logo} alt="" /><b>GALCAD</b></div>
+        <div class="dropdown ws-switch">
+          <button class="ws-button" aria-label="Espaço de trabalho" aria-haspopup="menu" onClick={(e) => { e.stopPropagation(); setMenu(menu === "ws" ? null : "ws"); }} disabled={busy}>
+            <span class="ws-ic">{ws.icon}</span><span class="ws-lb">{ws.label.toUpperCase()}</span><span class="ws-car">▾</span>
+          </button>
+          {menu === "ws" && (
+            <div class="menu ws-menu" role="menu">
+              {WORKSPACES.map((w, k) => (
+                <button key={w.id} role="menuitem" class={w.id === st.workspace ? "on" : ""} style={{ "--ws-accent": w.accent }} onClick={() => { setMenu(null); setWorkspace(w.id); }}>
+                  <span class="ws-ic">{w.icon}</span><span><b>{w.label}</b><small>{w.hint}</small></span><kbd>Ctrl+Alt+{k + 1}</kbd>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div class="dropdown">
           <button onClick={(e) => { e.stopPropagation(); setMenu(menu === "file" ? null : "file"); }} disabled={busy}>Ficheiro ▾</button>
           {menu === "file" && (
@@ -99,10 +70,11 @@ export function Toolbar() {
         <button title="Variáveis globais e equações" disabled={!!st.sketch} onClick={() => runCommand("edit.variables")}>𝑥 = Variáveis</button>
         <button title="Barra de atalhos (S)" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); store.set({ shortcutBar: { at: [r.left, r.bottom + 4] } }); }}>🔍 Comandos <kbd>S</kbd></button>
         <nav class="tabs" role="tablist" aria-label="CommandManager">
-          {tabs.map((t) => <button key={t.id} role="tab" aria-selected={current.id === t.id} class={current.id === t.id ? "on" : ""} onClick={() => setTab(t.id)}>{t.label}</button>)}
+          {tabs.map((t) => <button key={t.id} role="tab" aria-selected={current.id === t.id} class={current.id === t.id ? "on" : ""} onClick={() => { setTab({ ...tabs0, [key]: t.id }); const sec = TAB_SECTION[t.id]; if ((st.workspace === "fem" || st.workspace === "cfd") && sec) openSimSection(sec); }}>{t.label}</button>)}
         </nav>
       </div>
-      <div class="tb-row commands" role="tabpanel">
+      {/* a chave refaz o painel a cada mudança: os grupos entram com a animação de transição */}
+      <div class="tb-row commands" role="tabpanel" key={`${key}:${current.id}`}>
         {current.groups.map((g) => (
           <div class="group" key={g.title} aria-label={g.title}>{g.ids.map(cmdButton)}</div>
         ))}

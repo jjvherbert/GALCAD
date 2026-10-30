@@ -2,31 +2,19 @@
 // condições nas faces pelo nome topológico, malha, exportação do caso e cálculo no agente local.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
-import { desktopAgent, store, useStore } from "./store.ts";
+import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, type Study, SIM_FLUIDS, SIM_MATERIALS } from "../doc/study.ts";
+import { type SimSection, desktopAgent, store, useStore } from "./store.ts";
+import { STRUCT_LOADS, THERMAL_LOADS, activeStudy, newLoad, runActiveStudy, updateStudy } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
-import { type RunResult, agentStatus, exportStudyCase, previewStudyMesh, resultView, runStudy } from "./sim-client.ts";
+import { type RunResult, agentStatus, exportStudyCase, resultView } from "./sim-client.ts";
 import { fieldRange, layerShown, toggleLayer } from "../sim/result.ts";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento imposto", force: "Força total", pressure: "Pressão", gravity: "Gravidade",
   temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
 };
-const STRUCT: FemLoad["kind"][] = ["fixed", "displacement", "force", "pressure", "gravity"];
-const THERM: FemLoad["kind"][] = ["temperature", "convection", "heatFlux"];
-
-function newLoad(kind: FemLoad["kind"]): FemLoad {
-  switch (kind) {
-    case "fixed": return { kind, faces: [] };
-    case "displacement": return { kind, faces: [], ux: 0 };
-    case "force": return { kind, faces: [], f: [0, 0, -100] };
-    case "pressure": return { kind, faces: [], p: 1 };
-    case "gravity": return { kind, g: [0, 0, -9810] };
-    case "temperature": return { kind, faces: [], t: 100 };
-    case "convection": return { kind, faces: [], h: 10, tInf: 20 };
-    case "heatFlux": return { kind, faces: [], q: 1000 };
-  }
-}
+const STRUCT = STRUCT_LOADS;
+const THERM = THERMAL_LOADS;
 
 /** Escolher um ponto clicando numa face do modelo (o ponto da peça mais próximo do clique). */
 function PointPick({ field, onPick }: { field: string; onPick: (p: [number, number, number]) => void }) {
@@ -48,51 +36,62 @@ function Vec3Input({ label, unit, value, onChange }: { label: string; unit: stri
   );
 }
 
+const SECTION_TITLE: Record<SimSection, string> = {
+  study: "Estudo", material: "Material", conditions: "Cargas e apoios", contact: "Contacto entre corpos", mesh: "Malha",
+  probes: "Sondas", run: "Resolver", results: "Resultados",
+};
+
+/**
+ * Editor da secção escolhida na árvore do modelo (espaços FEM e CFD), à direita da vista: o estudo
+ * e a secção vêm do store (a barra do espaço de trabalho e a árvore mudam-nos).
+ */
 export function SimPanel() {
   const st = useStore();
-  // estudos da peça ativa ou, na montagem, da montagem (só FEM: vários corpos e contacto colado)
+  const physics = st.workspace === "cfd" ? "cfd" : "fem";
   const asm = store.activeAssembly() ?? null;
-  const studies: Study[] = asm ? asm.studies ?? [] : st.doc.studies ?? [];
-  const [sel, setSel] = useState<string>(studies[0]?.id ?? "");
-  const s = studies.find((x) => x.id === sel) ?? studies[0];
-  const save = (next: Study[], label = "Estudos") => (asm ? store.commitAssembly({ ...asm, studies: next as FemStudy[] }, label, true) : store.commitDoc("part", { ...st.doc, studies: next }, label, true));
-  const up = (patch: Partial<Study>) => s && save(studies.map((x) => (x.id === s.id ? ({ ...x, ...patch } as Study) : x)));
-  const add = (kind: "fem" | "cfd") => {
-    const n = studies.reduce((m, x) => Math.max(m, Number(x.id.slice(1)) || 0), 0) + 1;
-    const ns = kind === "fem" ? newFemStudy(`s${n}`, n) : newCfdStudy(`s${n}`, n);
-    if (kind === "fem" && st.doc.properties?.material && !asm) {
-      const m = SIM_MATERIALS.find((x) => x.name === st.doc.properties!.material);
-      if (m) (ns as FemStudy).material = { ...m };
-    }
-    if (asm && ns.physics === "fem") ns.contact = { mode: "bonded" };
-    save([...studies, ns], "Novo estudo");
-    setSel(ns.id);
-  };
+  const s = activeStudy(physics);
+  const up = (patch: Partial<Study>) => s && updateStudy(s.id, patch);
+  const sec = st.simSection;
   const docId = asm?.id ?? st.doc.id;
+  const title = s?.physics === "cfd" && sec === "conditions" ? "Fluido e fronteiras" : SECTION_TITLE[sec];
   return (
-    <div class="knowledge-panel sim-panel">
-      <div class="tree-head">
-        <b>Simulação — {asm?.name ?? st.doc.name}</b>
-        <button class="small" onClick={() => store.set({ sidePanel: null, simResult: null })}>← Árvore</button>
+    <div class="knowledge-panel sim-panel section-panel" key={`${s?.id ?? ""}:${sec}`}>
+      <div class="pm-head">
+        <span class="pm-title">{title}</span>
+        {s && <span class="muted">{s.name}</span>}
       </div>
-      <div class="row">
-        <select aria-label="Estudo" value={s?.id ?? ""} onChange={(e) => { setSel((e.target as HTMLSelectElement).value); store.set({ simResult: null }); }}>
-          {studies.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.physics === "fem" ? "FEM" : "CFD"})</option>)}
-          {!studies.length && <option value="">— sem estudos —</option>}
-        </select>
-        <button class="small" onClick={() => add("fem")}>+ FEM</button>
-        {!asm && <button class="small" onClick={() => add("cfd")}>+ CFD</button>}
-        {s && <button class="icon" aria-label="Apagar estudo" onClick={() => { save(studies.filter((x) => x.id !== s.id), "Apagar estudo"); setSel(""); }}>✕</button>}
-      </div>
-      {s && <Field label="Nome"><input value={s.name} onChange={(e) => up({ name: (e.target as HTMLInputElement).value })} /></Field>}
-      {s?.physics === "fem" && <FemEditor s={s} up={up} assembly={!!asm} />}
-      {s?.physics === "fem" && asm && <AssemblyBodies s={s} up={up} />}
-      {s?.physics === "cfd" && <CfdEditor s={s} up={up} />}
-      {s && <RunBox s={s} doc={docId} />}
+      {s && sec === "study" && <Field label="Nome"><input value={s.name} onChange={(e) => up({ name: (e.target as HTMLInputElement).value })} /></Field>}
+      {s?.physics === "fem" && <FemEditor s={s} up={up} assembly={!!asm} section={sec} />}
+      {s?.physics === "fem" && asm && sec === "contact" && <AssemblyBodies s={s} up={up} />}
+      {s?.physics === "fem" && !asm && sec === "contact" && <p class="field-hint">O contacto entre corpos existe nos estudos de montagem.</p>}
+      {s?.physics === "fem" && sec === "mesh" && <MeshPreviewBox s={s} doc={docId} />}
+      {s?.physics === "cfd" && <CfdEditor s={s} up={up} section={sec} />}
+      {s && (sec === "run" || sec === "results") && <RunBox s={s} doc={docId} part={sec} />}
       {!s && <p class="field-hint">{asm
         ? "Os estudos da montagem analisam vários corpos de uma vez: cada instância com o seu material e as faces planas coincidentes entre corpos coladas (contacto colado, *TIE no CalculiX). As faces das condições escolhem-se nos componentes."
-        : "Os estudos preparam o modelo de análise dentro do CAD: condições ligadas às faces pelo nome topológico, malha e ficheiros dos solvers abertos (CalculiX para estruturas e térmica; OpenFOAM ou SU2 para escoamentos)."}</p>}
+        : "Os estudos preparam o modelo de análise dentro do CAD: condições ligadas às faces pelo nome topológico, malha e ficheiros dos solvers abertos. Crie um estudo no separador «Estudo» da barra."}</p>}
     </div>
+  );
+}
+
+/** Pré-visualizar a malha do estudo (Gmsh no agente) e a qualidade, dentro da secção Malha. */
+function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
+  const st = useStore();
+  const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult.result : null;
+  return (
+    <>
+      <div class="row">
+        <button class="small primary" disabled={!!st.simBusy || !st.agent.token} onClick={() => void runActiveStudy(true)}>{st.simBusy === "mesh" ? "A gerar a malha…" : "Pré-visualizar malha"}</button>
+      </div>
+      {st.simBusy === "mesh" && <div class="sim-progress" role="status"><i />A gerar a malha…</div>}
+      {res?.quality && (
+        <div class="kw-item ok">
+          <table class="info-table">{res.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>
+          {res.warnings.map((w) => <p key={w} class="error-text">{w}</p>)}
+          <QualityReport q={res.quality} />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -157,13 +156,15 @@ function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => 
   );
 }
 
-function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>) => void; assembly?: boolean }) {
+function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: Partial<FemStudy>) => void; assembly?: boolean; section: SimSection }) {
   const thermal = s.analysis === "thermal";
   const kinds = thermal ? THERM : STRUCT;
   const setLoad = (i: number, l: FemLoad) => up({ loads: s.loads.map((x, k) => (k === i ? l : x)) });
   const m = s.material;
+  void assembly;
   return (
     <>
+      {section === "study" && <>
       <Select label="Solver" value={s.solver ?? "calculix"} options={[["calculix", "CalculiX"], ["code_aster", "code_aster (EDF)"], ["openradioss", "OpenRadioss (explícito, impacto)"]]}
         onChange={(solver) => up(solver === "openradioss"
           ? { solver, analysis: "dynamic", dynamic: { ...(s.dynamic ?? { duration: 0.001, load: "step" }), scheme: "explicit" }, mesh: { ...s.mesh, order: 1, element: s.mesh.element ?? "hex", integration: "reduced" } }
@@ -181,7 +182,8 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
       )}
       {s.analysis === "dynamic" && <DynamicEditor d={s.dynamic ?? { scheme: "implicit", duration: 0.01, load: "step" }} onChange={(dynamic) => up({ dynamic })} />}
       {(s.analysis === "modal" || s.analysis === "buckling") && <Field label="N.º de modos"><input type="number" min="1" max="50" value={s.modes ?? 6} onChange={(e) => up({ modes: Number((e.target as HTMLInputElement).value) || 6 })} /></Field>}
-      <fieldset class="checklist">
+      </>}
+      {section === "material" && <fieldset class="checklist">
         <legend class="field-label">Material</legend>
         <select aria-label="Material de referência" value={SIM_MATERIALS.some((x) => x.name === m.name) ? m.name : ""} onChange={(e) => { const x = SIM_MATERIALS.find((y) => y.name === (e.target as HTMLSelectElement).value); if (x) up({ material: { ...x } }); }}>
           <option value="">Personalizado</option>
@@ -199,8 +201,8 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
         </div>
         {s.nonlinear?.plasticity && <p class="field-hint">Et (módulo tangente depois da cedência) dos materiais de referência é indicativo (≈ E/100): use a curva do certificado do material quando a plasticidade decide.</p>}
         {m.source && <p class="muted">{m.source}</p>}
-      </fieldset>
-      <h3>Condições</h3>
+      </fieldset>}
+      {section === "conditions" && <>
       {s.loads.map((l, i) => (
         <div class="kw-item" key={i}>
           <div class="row"><b>{LOAD_LABELS[l.kind]}</b><button class="icon" aria-label={`Retirar condição ${i + 1}`} onClick={() => up({ loads: s.loads.filter((_, k) => k !== i) })}>✕</button></div>
@@ -218,7 +220,8 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
         <option value="">+ condição…</option>
         {kinds.map((k) => <option key={k} value={k}>{LOAD_LABELS[k]}</option>)}
       </select>
-      <h3>Sondas</h3>
+      </>}
+      {section === "probes" && <>
       {(s.probes ?? []).map((pr, i) => {
         const set = (p: Partial<Probe>) => up({ probes: (s.probes ?? []).map((x, k) => (k === i ? { ...x, ...p } : x)) });
         return (
@@ -238,7 +241,8 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
         );
       })}
       <button class="small" onClick={() => up({ probes: [...(s.probes ?? []), { name: `Sonda ${(s.probes ?? []).length + 1}`, quantity: thermal ? "T" : "u", at: { kind: "faces", faces: [] } }] })}>+ sonda</button>
-      <MeshEditor mesh={s.mesh} thermal={thermal} onChange={(mesh) => up({ mesh })} />
+      </>}
+      {section === "mesh" && <MeshEditor mesh={s.mesh} thermal={thermal} onChange={(mesh) => up({ mesh })} />}
     </>
   );
 }
@@ -400,14 +404,14 @@ function QualityReport({ q }: { q: NonNullable<RunResult["quality"]> }) {
   );
 }
 
-function CfdEditor({ s, up }: { s: CfdStudy; up: (p: Partial<CfdStudy>) => void }) {
+function CfdEditor({ s, up, section }: { s: CfdStudy; up: (p: Partial<CfdStudy>) => void; section: SimSection }) {
   return (
     <>
-      <div class="row">
+      {section === "study" && <div class="row">
         <Select label="Solver" value={s.solver} options={[["openfoam", "OpenFOAM (simpleFoam + snappyHexMesh)"], ["su2", "SU2 (incompressível, malha Gmsh)"]]} onChange={(solver) => up({ solver })} />
         <Select label="Regime" value={s.regime} options={[["internal", "Interno (o corpo é o fluido)"], ["external", "Externo (o corpo é um obstáculo)"]]} onChange={(regime) => up({ regime })} />
-      </div>
-      <div class="row">
+      </div>}
+      {section === "conditions" && <><div class="row">
         <select aria-label="Fluido" value={SIM_FLUIDS.some((x) => x.name === s.fluid.name) ? s.fluid.name : ""} onChange={(e) => { const x = SIM_FLUIDS.find((y) => y.name === (e.target as HTMLSelectElement).value); if (x) up({ fluid: { ...x } }); }}>
           {SIM_FLUIDS.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
         </select>
@@ -430,8 +434,8 @@ function CfdEditor({ s, up }: { s: CfdStudy; up: (p: Partial<CfdStudy>) => void 
           </div>
         </>
       )}
-      <h3>Malha e cálculo</h3>
-      <div class="row">
+      </>}
+      {section === "mesh" && <><div class="row">
         <ExprInput label="Células de fundo" value={s.mesh.size} onChange={(size) => up({ mesh: { ...s.mesh, size: size ?? 5 } })} />
         <Field label="Iterações"><input type="number" min="10" value={s.iterations} onChange={(e) => up({ iterations: Number((e.target as HTMLInputElement).value) || 500 })} /></Field>
       </div>
@@ -442,6 +446,7 @@ function CfdEditor({ s, up }: { s: CfdStudy; up: (p: Partial<CfdStudy>) => void 
           <Field label="Camadas"><input type="number" min="0" max="10" value={s.mesh.layers ?? 3} onChange={(e) => up({ mesh: { ...s.mesh, layers: Number((e.target as HTMLInputElement).value) } })} /></Field>
         </div>
       )}
+      </>}
     </>
   );
 }
@@ -450,35 +455,25 @@ const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(2)} %` : "
 const num = (x: number) => (Number.isFinite(x) ? (Math.abs(x) >= 1e4 || (Math.abs(x) < 1e-3 && x !== 0) ? x.toExponential(3) : x.toPrecision(5)) : "—");
 const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida" } as const;
 
-function RunBox({ s, doc }: { s: Study; doc: string }) {
+function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "results" }) {
   const st = useStore();
-  const [busy, setBusy] = useState(false);
-  const [conv, setConv] = useState(false);
-  const [ratio, setRatio] = useState(1.5);
-  const [mode, setMode] = useState<"three" | "auto" | "sweep">("three");
+  const busy = !!st.simBusy;
+  // opções de convergência no store: a barra (Calcular, F5) usa as mesmas
+  const o = st.simRun;
+  const setO = (p: Partial<typeof o>) => store.set({ simRun: { ...o, ...p } });
+  const { conv, ratio, mode, target, levels, metric } = o;
   const auto = mode === "auto";
-  const [target, setTarget] = useState(1);
-  const [levels, setLevels] = useState(5);
-  const [metric, setMetric] = useState("");
+  const setConv = (x: boolean) => setO({ conv: x }), setRatio = (x: number) => setO({ ratio: x }), setMode = (x: typeof mode) => setO({ mode: x });
+  const setTarget = (x: number) => setO({ target: x }), setLevels = (x: number) => setO({ levels: x }), setMetric = (x: string) => setO({ metric: x });
   const a = st.agent;
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult : null;
-  const run = async (meshOnly = false) => {
-    setBusy(true);
-    try {
-      const { result } = meshOnly ? await previewStudyMesh(s.id, a.url, a.token) : await runStudy(s.id, a.url, a.token, conv ? { ratio, ...(auto ? { target: target / 100, maxLevels: levels, metric: metric || undefined } : mode === "sweep" ? { sweep: 3, metric: metric || undefined } : {}) } : undefined);
-      store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, message: `Calculado em ${result.seconds.toFixed(1)} s` });
-    } catch (e) {
-      store.set({ error: (e as Error).message });
-    } finally {
-      setBusy(false);
-    }
-  };
+  const run = (meshOnly = false) => runActiveStudy(meshOnly);
   const r = res?.result;
   const view = resultView(r);
   const v = st.simView;
   return (
     <>
-      <h3>Calcular</h3>
+      {part === "run" && <>
       <div class="row">
         <button class="small" onClick={() => void exportStudyCase(s.id)}>Exportar caso (.zip)</button>
         <a class="small button" href="cad-runner.mjs" download="cad-runner.mjs">Agente local (cad-runner.mjs)</a>
@@ -503,9 +498,13 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
       )}
       <div class="row">
         {s.physics === "fem" && <button class="small" disabled={busy || !a.token} onClick={() => void run(true)}>Pré-visualizar malha</button>}
-        <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{busy ? "A calcular…" : "Calcular no agente local"}</button>
+        <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{st.simBusy === "run" ? "A calcular…" : "Calcular no agente local"}</button>
       </div>
-      {r && (
+      {busy && <div class="sim-progress" role="status"><i />{st.simBusy === "mesh" ? "A gerar a malha…" : "A calcular no agente local…"}</div>}
+      {r && <p class="muted">Resultado disponível em «Resultados».</p>}
+      </>}
+      {part === "results" && !r && <p class="field-hint">Ainda sem resultados deste estudo: calcule em «Resolver» (ou F5).</p>}
+      {part === "results" && r && (
         <div class="kw-item ok">
           <b>{r.solver}</b>
           <table class="info-table">{r.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>

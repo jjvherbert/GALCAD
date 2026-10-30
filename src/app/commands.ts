@@ -8,6 +8,9 @@ import type { Viewport, ViewName } from "./viewport.ts";
 import { VIEWS } from "./viewport.ts";
 import { EXPORTS, exportAs, exportDrawing, importStep, openProject, saveProject } from "./fileio.ts";
 import { autoBalloons, importModelDims, importPmi } from "../drawing/edit.ts";
+import { WORKSPACES, openSimSection, setWorkspace } from "./workspaces.ts";
+import { addCondition, addProbe, addStudy, patchMesh, runActiveStudy, setStudyMaterial } from "./sim-actions.ts";
+import { SIM_MATERIALS } from "../doc/study.ts";
 
 /** Ações do desenho sobre a vista selecionada (ou todas). */
 function drawingAction(what: "modelDims" | "balloons" | "pmi") {
@@ -38,6 +41,8 @@ export interface Command {
   /** Atalhos, no formato "Ctrl+Shift+Z", "F", "Space", "ArrowLeft". */
   keys?: string[];
   icon?: string;
+  /** Rótulo curto na barra (o `label` completo fica na dica e na paleta de comandos). */
+  short?: string;
   run: () => void;
   /** Comando de criação (repetível com Enter). */
   repeatable?: boolean;
@@ -150,7 +155,35 @@ export const COMMANDS: Command[] = [
   { id: "calc.panel", label: "Cálculos: atmosfera, asa finita, perfis NACA e XFOIL, colunas, placas", group: "Automação", icon: "∫", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "calc" ? null : "calc", edit: null }); } },
   { id: "script.panel", label: "Scripts: automação, estudos paramétricos e copiloto", group: "Automação", icon: "{}", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "script" ? null : "script", edit: null }); } },
   { id: "pmi.panel", label: "PMI: cotas, tolerâncias geométricas, referências, vistas de modelo e atributos", group: "PMI", icon: "⌖", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "pmi" ? null : "pmi", edit: null }); } },
-  { id: "sim.panel", label: "Simulação: estudos FEM/CFD, malha e solvers abertos", group: "Simulação", icon: "≋", run: () => { if (store.state.active.kind !== "drawing") store.set({ sidePanel: store.state.sidePanel === "sim" ? null : "sim", edit: null, mateEdit: null, componentEdit: null }); } },
+  { id: "sim.panel", label: "Simulação: estudos FEM/CFD, malha e solvers abertos", group: "Simulação", icon: "≋", run: () => setWorkspace("fem") },
+  // espaços de trabalho (Fusion)
+  ...WORKSPACES.map((w): Command => ({ id: `ws.${w.id}`, label: `Espaço de trabalho: ${w.label}`, group: "Vista", icon: w.icon, keys: [`Ctrl+Alt+${WORKSPACES.indexOf(w) + 1}`], run: () => setWorkspace(w.id) })),
+  // simulação: novos estudos, secções do modelo, malha, cálculo e resultados
+  ...([["static", "Estático", "▤"], ["modal", "Modal", "∿"], ["buckling", "Encurvadura", "⌇"], ["dynamic", "Dinâmico", "⏱"], ["thermal", "Térmico", "♨"]] as const).map(([analysis, label, icon]): Command => ({
+    id: `sim.new.${analysis}`, label: `Novo estudo ${label.toLowerCase()}`, short: label, group: "Simulação", icon,
+    run: () => { if (store.state.workspace !== "fem") setWorkspace("fem"); addStudy("fem", { analysis, ...(analysis === "dynamic" ? { dynamic: { scheme: "implicit", duration: 0.01, load: "step" } } : {}) } as never); },
+  })),
+  { id: "sim.new.cfdInternal", label: "Novo estudo CFD interno (conduta)", short: "Interno", group: "Simulação", icon: "⇉", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "internal" } as never); } },
+  { id: "sim.new.cfdExternal", label: "Novo estudo CFD externo (corpo)", short: "Externo", group: "Simulação", icon: "➶", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "external" } as never); } },
+  ...([["study", "Estudo: análise e solver", "⚙"], ["material", "Material", "◧"], ["conditions", "Cargas e apoios", "⤓"], ["contact", "Contacto entre corpos", "⧉"], ["mesh", "Malha: elementos, seeds e controlos", "▦"], ["probes", "Sondas", "⌖"], ["run", "Resolver: solver e convergência", "▶"], ["results", "Resultados", "◑"]] as const).map(([section, label, icon]): Command => ({
+    id: `sim.section.${section}`, label, short: label.split(":")[0].replace(" entre corpos", ""), group: "Simulação", icon, run: () => openSimSection(section),
+  })),
+  // cargas, apoios e sondas a partir da barra: abre a secção com a seleção de faces ativa
+  ...([["fixed", "Encastramento (apoio fixo nas faces)", "Encastrar", "⊥"], ["displacement", "Deslocamento imposto nas faces", "Deslocam.", "⇥"], ["force", "Força total distribuída nas faces", "Força", "↓"], ["pressure", "Pressão normal nas faces", "Pressão", "⇊"], ["gravity", "Gravidade (peso próprio)", "Gravidade", "g"], ["temperature", "Temperatura imposta nas faces", "Temperatura", "🌡"], ["convection", "Convecção nas faces (h, T do fluido)", "Convecção", "≈"], ["heatFlux", "Fluxo de calor nas faces", "Fluxo", "⇶"]] as const).map(([kind, label, short, icon]): Command => ({
+    id: `sim.add.${kind}`, label, short, group: "Simulação", icon, run: () => { if (store.state.workspace !== "fem") setWorkspace("fem"); addCondition(kind); },
+  })),
+  { id: "sim.add.probe", label: "Sonda (grandeza média em faces ou num ponto)", short: "Sonda", group: "Simulação", icon: "⌖", run: () => { if (store.state.workspace !== "fem") setWorkspace("fem"); addProbe(); } },
+  ...SIM_MATERIALS.map((m, i): Command => ({
+    id: `sim.material.${i}`, label: `Material: ${m.name}`, short: m.name.replace(/^Alumínio EN AW-/, "Al ").replace(/^Aço inox AISI /, "Inox ").replace(/^Aço /, "Aço ").replace(/ \(.*$/, ""), group: "Simulação", icon: "◧", run: () => setStudyMaterial(m.name),
+  })),
+  { id: "sim.mesh.tet", label: "Malha de tetraedros (livre, qualquer geometria)", short: "Tetraedros", group: "Simulação", icon: "△", run: () => patchMesh(() => ({ element: "tet" })) },
+  { id: "sim.mesh.hex", label: "Malha de hexaedros (mapeada onde a geometria permite)", short: "Hexaedros", group: "Simulação", icon: "⬛", run: () => patchMesh(() => ({ element: "hex" })) },
+  { id: "sim.mesh.order", label: "Alternar elementos lineares / quadráticos", short: "Ordem 1/2", group: "Simulação", icon: "²", run: () => patchMesh((m) => ({ order: m.order === 2 ? 1 : 2 })) },
+  { id: "sim.mesh.finer", label: "Refinar a malha (tamanho × 0,7)", short: "Refinar", group: "Simulação", icon: "⊞", run: () => patchMesh((m) => ({ size: typeof m.size === "number" ? Number((m.size * 0.7).toPrecision(3)) : m.size })) },
+  { id: "sim.mesh.coarser", label: "Engrossar a malha (tamanho × 1,4)", short: "Engrossar", group: "Simulação", icon: "⊟", run: () => patchMesh((m) => ({ size: typeof m.size === "number" ? Number((m.size * 1.4).toPrecision(3)) : m.size })) },
+  { id: "sim.mesh.preview", label: "Pré-visualizar a malha e a qualidade dos elementos", short: "Gerar malha", group: "Simulação", icon: "⬚", run: () => void runActiveStudy(true) },
+  { id: "sim.run", label: "Calcular no agente local", short: "Calcular", group: "Simulação", icon: "▶", keys: ["F5"], run: () => void runActiveStudy(false) },
+  { id: "sim.toggleResult", label: "Mostrar/esconder o resultado no 3D", short: "Mostrar/esconder", group: "Simulação", icon: "◐", run: () => store.set({ simHidden: !store.state.simHidden }) },
   { id: "kw.panel", label: "Conhecimento: regras, verificações, configurações e templates", group: "Conhecimento", icon: "⚙", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "knowledge" ? null : "knowledge" }); } },
   { id: "asm.bom", label: "Lista de materiais (BOM) e assistente", group: "Montagem", icon: "☰", run: () => { if (store.state.active.kind === "assembly") store.set({ sidePanel: store.state.sidePanel === "bom" ? null : "bom", mateEdit: null, componentEdit: null }); } },
   { id: "asm.interference", label: "Deteção de interferências", group: "Montagem", icon: "⧯", run: () => { if (store.state.active.kind === "assembly") void store.checkInterference(); } },

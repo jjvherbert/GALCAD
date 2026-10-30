@@ -10,7 +10,8 @@ A GALCAD também existe como aplicação de ambiente de trabalho (Electron) com 
 
 - **Tudo incluído no instalador** (~560 MB; 2,4 GB instalado): CalculiX 2.23 (conda-forge, OpenBLAS), Gmsh 4.15.2 (biblioteca oficial + lançador próprio `desktop/gmsh-launcher.c`), XFOIL 6.99 (código do Debian, compilado sem gráficos), **SU2 8.3** (binário oficial de série), **OpenFOAM v2606** (versão MinGW oficial da openfoam.com, só executáveis e `etc`, em série sem MS-MPI) e **code_aster 18.1** (ambiente conda-forge win-64 relocável; o instalador corre `GALCAD.exe --galcad-setup` para o apontar à pasta de instalação). Ficam em `resources/solvers` e correm como programas separados.
 - **Agente embutido**: arranca com a app em 127.0.0.1, com um token novo a cada arranque passado à página (`window.cadDesktop`); a página não tem acesso ao Node.
-- **Obter o instalador**: GitHub → Actions → «Instalador Windows» → artefacto `GALCAD-Setup` (ou a release, nas etiquetas `v*`). O workflow testa os solvers num Windows real contra os casos de referência antes de empacotar.
+- **Obter o instalador**: a release (rascunho) do GitHub traz o `GALCAD-Setup-<versão>.exe` para descarregar diretamente, sem zip; cria-se com uma etiqueta `v*` ou lançando «Instalador Windows» à mão com `release = true`. Também fica como artefacto `GALCAD-Setup` de cada execução. O workflow testa os solvers num Windows real contra os casos de referência antes de empacotar.
+- **Instalador com a marca Galkeel**: assistente NSIS com o ícone GK, barra lateral azul-marinho e cabeçalho com o logótipo, escolha da pasta, atalhos no menu «Galkeel» e a GALCAD a abrir no fim; ao arrancar, um ecrã com a marca enquanto o agente e os solvers sobem.
 - **Construir localmente**: `python3 desktop/build-solvers.py` (Linux: micromamba, mingw-w64 gcc/gfortran, pip, 7-Zip) e `npm run dist:win`; `npm run desktop` abre a app de ambiente de trabalho a partir do código.
 
 ## Correr
@@ -159,6 +160,19 @@ Solvers (instalados à parte, processos separados): Gmsh, CalculiX, OpenFOAM, SU
 | Enter | Repetir o último comando (num painel aberto: OK) |
 | Ctrl+B / Ctrl+Q | Reconstruir / forçar reconstrução completa |
 | Ctrl+Z / Ctrl+Y · Ctrl+N/O/S · Delete · Esc | Desfazer / refazer · novo / abrir / guardar · apagar · cancelar |
+
+### Espaços de trabalho (como no Fusion 360)
+
+O seletor no canto superior esquerdo (ou Ctrl+Alt+1…4) muda de espaço sem mudar o modelo: cada um tem a sua barra de comandos, a sua árvore e os seus painéis.
+
+| Espaço | Barra | Árvore e painel |
+|---|---|---|
+| **Design** | Features, Superfícies, Esboço, Referências, Avaliar, Conhecimento, PMI, Automação, Módulos (Montagem nas montagens) | Árvore de features; PropertyManager |
+| **Simulação FEM** | Estudo → Propriedades → Cargas e apoios → Malha → Resolver → Resultados (ordem do Abaqus/CAE); apoios, cargas e térmicas com um clique (abre a seleção de faces), biblioteca de materiais, tetraedros/hexaedros, ordem, refinar/engrossar, gerar malha, F5 calcula | Árvore do modelo (estudo, material, condições com a cor de cada uma, contacto, malha, sondas, resolver, resultados, com aviso do que falta); cada separador abre a sua secção |
+| **Simulação CFD** | Estudo, Condições, Malha, Resolver, Resultados | Idem, com entrada/saída |
+| **Desenho** | Esquema de vistas, Anotação | Folha |
+
+Nos espaços de simulação as faces com condições aparecem coloridas no 3D (apoios a azul, forças a âmbar, pressão a vermelho; entrada a verde e saída a vermelho na CFD) e o resultado só se mostra aí; no Design volta o corpo.
 
 A barra de comandos está organizada em separadores como o CommandManager (Features, Esboço, Referências, Avaliar, Módulos). Sobre o 3D há uma barra de vista com ajustar, vista anterior, orientação, normal a, estilo de visualização e planos. Os comandos estão num registo único (`src/app/commands.ts`), que alimenta o teclado, os menus, os gestos e a pesquisa.
 

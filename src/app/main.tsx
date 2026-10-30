@@ -18,6 +18,8 @@ import { DocTabs } from "./DocTabs.tsx";
 import { BomPanel } from "./BomPanel.tsx";
 import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { SimPanel } from "./SimPanel.tsx";
+import { conditionFaceColors } from "./sim-actions.ts";
+import { SimBrowser } from "./SimBrowser.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
 import { DrawingEditor } from "./DrawingEditor.tsx";
 import { PartPropertiesDialog } from "./PropertiesDialog.tsx";
@@ -33,6 +35,10 @@ import { PmiPanel } from "./PmiPanel.tsx";
 import { ScriptPanel } from "./ScriptPanel.tsx";
 import { GalkeelPanel } from "./GalkeelPanel.tsx";
 import { CalcPanel } from "./CalcPanel.tsx";
+import "@fontsource/montserrat/400.css";
+import "@fontsource/montserrat/500.css";
+import "@fontsource/montserrat/600.css";
+import "@fontsource/montserrat/700.css";
 import "./style.css";
 
 function selectedKeys(): string[] {
@@ -112,12 +118,14 @@ function App() {
 
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
+  // espaços FEM/CFD: o modelo mostra as faces com condições (apoios, cargas, entrada/saída)
+  useEffect(() => { vp.current?.setConditionFaces(conditionFaceColors()); }, [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result, st.asmResult]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
   // resultados de simulação (FEM) no 3D
   useEffect(() => {
-    const show = st.sidePanel === "sim" && !st.simHidden && st.active.kind !== "drawing" && st.simResult?.doc === st.active.id;
+    const show = (st.workspace === "fem" || st.workspace === "cfd") && !st.simHidden && st.active.kind !== "drawing" && st.simResult?.doc === st.active.id;
     vp.current?.setSimResult(show ? resultView(st.simResult?.result) : null, st.simView);
-  }, [st.simResult, st.simView, st.simHidden, st.sidePanel, st.active, st.result, st.asmResult]);
+  }, [st.simResult, st.simView, st.simHidden, st.workspace, st.active, st.result, st.asmResult]);
   // PMI 3D: rótulos no modelo (todos os itens com o painel aberto ou quando há uma vista de modelo aplicada)
   useEffect(() => {
     const v = vp.current;
@@ -168,17 +176,20 @@ function App() {
   const selFeature = st.selectedFeature ? st.doc.features.find((f) => f.id === st.selectedFeature) : undefined;
   const r = st.result;
   const kind = st.active.kind;
+  // espaços de simulação: árvore do modelo à esquerda, editor da secção à direita
+  const simWs = st.workspace === "fem" || st.workspace === "cfd";
   const errors = kind === "part" && r ? Object.values(r.status).filter((s) => s.state === "error").length : 0;
 
   return (
     <div class="app">
       <Toolbar />
       <DocTabs />
-      <div class={`main ${kind === "drawing" ? "hidden-3d" : ""}`}>
+      <div class={`main ws-${st.workspace} ${kind === "drawing" ? "hidden-3d" : ""}`}>
         {kind === "drawing" && <DrawingEditor />}
-        {kind === "assembly" && (
+        {simWs && kind !== "drawing" && <aside class="side ws-side" key={`ws-${st.workspace}`}><SimBrowser /></aside>}
+        {!simWs && kind === "assembly" && (
           <aside class="side">
-            {st.mateEdit ? <MatePanel /> : st.componentEdit ? <ComponentPanel /> : st.sidePanel === "bom" ? <BomPanel /> : st.sidePanel === "sim" ? <SimPanel /> : (
+            {st.mateEdit ? <MatePanel /> : st.componentEdit ? <ComponentPanel /> : st.sidePanel === "bom" ? <BomPanel /> : (
               <>
                 <AssemblyTree />
                 <div class="side-info">
@@ -189,7 +200,7 @@ function App() {
             )}
           </aside>
         )}
-        {kind === "part" && !st.sketch && (
+        {!simWs && kind === "part" && !st.sketch && (
           <aside class="side">
             {st.choosingPlane ? <PlaneChooser /> : st.edit ? <PropertyPanel /> : st.sidePanel === "knowledge" ? <KnowledgePanel /> : st.sidePanel === "sim" ? <SimPanel /> : st.sidePanel === "pmi" ? <PmiPanel /> : st.sidePanel === "script" ? <ScriptPanel /> : st.sidePanel === "galkeel" ? <GalkeelPanel /> : st.sidePanel === "calc" ? <CalcPanel /> : (
               <>
@@ -222,6 +233,7 @@ function App() {
           {st.sketch && <SketchEditor key={st.sketch.id} result={r} />}
           {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[a]).join(" / ")} · Esc para terminar</div>}
         </section>
+        {simWs && kind !== "drawing" && <aside class="side side-right ws-side" key={`ws-r-${st.workspace}`}><SimPanel /></aside>}
       </div>
       <footer class="statusbar">
         <span class={st.busy ? "busy" : ""}>{st.busy ? "A reconstruir…" : r ? `Reconstruído em ${r.ms} ms (${r.reused} da cache)` : "A carregar o núcleo geométrico…"}</span>

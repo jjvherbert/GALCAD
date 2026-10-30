@@ -1,5 +1,24 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: redesign R1 (instalador) e R2 (espaços de trabalho)
+
+Pedido de Juan (redesign): «O desenho deve mesmo imitar o solidworks… As coisas devem ser por módulos, tipo fusion: modulo cad, módulo fem, cfd, machining, etc, cada um com a sua barra de tarefas inteira e especificidades e vai adaptando o modelo… A experiência do instalador deve ser melhor… Em vez de descarregar o zip descarregas logo o instalador com o logo… O módulo de pré-processado do fem está muito fraco». Plano em cinco etapas no `ROADMAP.md` («Redesign»); R1 e R2 feitas aqui, R3–R5 por fazer.
+
+**R1 — instalador** (commits `909dbda`, `ae1261b`): `desktop/brand/` (símbolo GK e logótipo horizontal — variações finais 03 e 02, as únicas válidas são as com GK — e o gerador `make-assets.py`), `desktop/build/` (ícone, barra lateral, cabeçalho), NSIS assistido com a marca, ecrã de arranque em `desktop/main.cjs`, versão 0.2.0; o workflow publica uma release em rascunho com o `.exe` (etiqueta `v*` ou lançamento manual com `release = true`; o proxy deste ambiente não deixa empurrar etiquetas).
+
+**R2 — espaços de trabalho** (Fusion 360):
+- `src/app/workspaces.ts` (novo): Design, Simulação FEM, Simulação CFD, Desenho; separadores de cada um; FEM na ordem do Abaqus/CAE (Estudo → Propriedades → Cargas e apoios → Malha → Resolver → Resultados); cada separador abre a secção correspondente; Ctrl+Alt+1…4.
+- `src/app/SimBrowser.tsx` (novo): árvore do modelo (estudos e secções com resumo e estado, condições com a cor de cada uma).
+- `src/app/sim-actions.ts` (novo): estudos, condições (`addCondition` abre a seleção de faces), sondas, materiais, malha, cálculo (`runActiveStudy`, também F5) e cores das condições no 3D.
+- `src/app/SimPanel.tsx` reorganizado por secções (cabeçalho do PropertyManager, barra de progresso); `src/app/Toolbar.tsx` (marca, seletor de espaço, rótulos curtos `Command.short`); `src/app/viewport.ts` (`setConditionFaces`); `src/app/style.css` (identidade Galkeel: navy/teal, Montserrat, animações discretas com `prefers-reduced-motion`).
+- O separador «Simulação» do Design deu lugar ao espaço FEM; o comando antigo `sim.panel` abre-o.
+
+**Testes:** `tsc` limpo; e2e da simulação reescrito para os espaços de trabalho (barra própria, separador → secção, + pressão com seleção de faces, convergência por F5 a partir de outra secção, hexaedros pela barra, Design volta a mostrar o corpo, montagem); capturas revistas (menu de espaços, árvore FEM, cargas a cores no 3D, materiais, malha).
+
+**Limites:** os comandos térmicos aparecem também nos estudos estruturais (dão uma mensagem clara em vez de ficarem cinzentos); sem espaço Fabrico ainda; o Desenho mantém a barra anterior.
+
+**Próxima ação:** R3 — interação SolidWorks (transições de câmara animadas, escolha do plano ao abrir um esboço, pré-visualização amarela, PropertyManager ✓/✕, dicas animadas por feature).
+
 ## Atualização: malha manual (seeds, hexaedros, qualidade e pré-visualização)
 
 Pedido de Juan: «Quero elementos hexaédricos e dinâmica implícita e explícita… O openradioss é uma opção» e «Quero um mesher bom em que possa pôr seeds… como o pré-processador do Femap… meshes de qualidade para poder equiparar a um Abaqus… convergence study: escolher um ponto aproximado da peça… 3 parâmetros acima e abaixo». Esta etapa fecha a malha; a convergência ±3, a dinâmica e o OpenRadioss vêm a seguir (ver `ROADMAP.md`, «Malha manual, dinâmica e explícito»). O módulo de otimização (scripts, otimização topológica) fica registado no ROADMAP para depois.
