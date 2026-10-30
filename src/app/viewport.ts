@@ -1173,6 +1173,8 @@ export class Viewport {
 
   /** Transições animadas das vistas; desligadas com prefers-reduced-motion. */
   animate = typeof matchMedia === "function" ? !matchMedia("(prefers-reduced-motion: reduce)").matches : true;
+  /** A vista foi rodada para o plano do esboço: voltar a ela ao sair do esboço. */
+  returnAfterSketch = false;
   private smoothing = false;
   private anim: { t0: number; ms: number; a: CamState; b: CamState; qa: THREE.Quaternion; qb: THREE.Quaternion } | null = null;
 
@@ -1182,8 +1184,8 @@ export class Viewport {
    */
   private smooth(change: () => void, ms = 380) {
     if (this.smoothing) { change(); return; }
-    const a = this.save();
-    this.anim = null;
+    const a = this.save(); // a transição seguinte parte de onde a câmara está agora…
+    this.finishAnim(); // …mas a mudança calcula-se a partir do estado final da anterior (ex.: Ctrl+5 e logo F)
     this.el.dataset.animating = "";
     this.smoothing = true;
     try { change(); } finally { this.smoothing = false; }
@@ -1226,6 +1228,7 @@ export class Viewport {
     this.camera.position.copy(s.pos); this.target.copy(s.target); this.camera.up.copy(s.up); this.camera.zoom = s.zoom; this.size = s.size;
     this.camera.lookAt(this.target);
     this.updateProj();
+    this.camera.updateMatrixWorld(true); // a seleção por raio usa já a câmara final
   }
 
 

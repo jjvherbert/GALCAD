@@ -119,6 +119,15 @@ function App() {
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);
   useEffect(() => { vp.current?.setPreviewFeature(st.edit?.id ?? null); }, [st.edit?.id]);
+  // sair do esboço volta à vista anterior, se a escolha do plano a rodou
+  const hadSketch = useRef(false);
+  useEffect(() => {
+    if (st.sketch) { hadSketch.current = true; return; }
+    if (!hadSketch.current) return;
+    hadSketch.current = false;
+    const v = vp.current;
+    if (v?.returnAfterSketch) { v.returnAfterSketch = false; v.previousView(); }
+  }, [!!st.sketch]);
   // espaços FEM/CFD: o modelo mostra as faces com condições (apoios, cargas, entrada/saída)
   useEffect(() => { vp.current?.setConditionFaces(conditionFaceColors()); }, [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result, st.asmResult]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);

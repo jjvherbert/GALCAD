@@ -72,7 +72,8 @@ export function PlaneChooser() {
     v?.setHoverKey(null);
     if (v && fr && v.animate) {
       v.normalTo(fr.o, fr.z, fr.y);
-      setTimeout(() => { if (store.state.choosingPlane) store.startSketch(p); }, 340);
+      v.returnAfterSketch = true; // ao sair do esboço, a vista volta à de antes (como no SolidWorks)
+      setTimeout(() => { if (store.state.choosingPlane) store.startSketch(p); else v.returnAfterSketch = false; }, 340);
     } else store.startSketch(p);
   };
   usePickTarget("sketch-start", (p) => {

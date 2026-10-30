@@ -43,6 +43,12 @@ async function main() {
       check("Ctrl+5: vista final já publicada", (await ds(p, "viewDir")) === "0.000,0.000,1.000");
       await p.waitForFunction(() => document.querySelector(".viewport").dataset.animating === "", null, { timeout: 3000 });
       check("a transição termina", true);
+      // duas mudanças seguidas (Ctrl+5 e logo F): o enquadramento conserva a vista de topo
+      await p.keyboard.press("Control+1");
+      await p.keyboard.press("Control+5");
+      await p.keyboard.press("f");
+      await p.waitForFunction(() => document.querySelector(".viewport").dataset.animating === "", null, { timeout: 3000 });
+      check("Ctrl+5 seguido de F mantém a vista de topo", (await ds(p, "viewDir")) === "0.000,0.000,1.000", await ds(p, "viewDir"));
       // um gesto do utilizador salta para o fim
       await p.keyboard.press("Control+7");
       await p.keyboard.press("ArrowLeft");
@@ -58,6 +64,7 @@ async function main() {
       check("a dica desaparece ao sair", true);
 
       // 3. escolha do plano: cartões, realce e rotação para o plano
+      const before = await ds(p, "viewDir");
       await p.click("button.cmd:has-text('Esboço')");
       await p.waitForSelector(".plane-card");
       check("três planos para escolher", (await p.$$(".plane-card")).length === 3);
@@ -67,7 +74,9 @@ async function main() {
       await p.waitForSelector(".sk-canvas", { timeout: 5000 });
       check("o esboço abre depois da rotação", true);
       await p.click(".sketch-editor button:has-text('Cancelar')");
-      await p.waitForTimeout(300);
+      await p.waitForFunction((b) => document.querySelector(".viewport").dataset.viewDir === b, before, { timeout: 3000 }).catch(() => {});
+      check("sair do esboço volta à vista anterior", (await ds(p, "viewDir")) === before, `${before} → ${await ds(p, "viewDir")}`);
+      await p.waitForTimeout(500);
 
       // 4. cartão «O que faz» e pré-visualização amarela
       await p.click("button.cmd:has-text('Extrusão')");
