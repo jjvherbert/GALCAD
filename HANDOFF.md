@@ -26,7 +26,15 @@ Análise «Dinâmica transitória» no estudo FEM (`FemStudy.dynamic`, `FemCase.
 
 **Limites:** só dinâmica linear (sem contacto, plasticidade nem grandes deslocamentos no tempo); o explícito do code_aster é lento (3–4 min para 7500 passos em 640 elementos) e o do CalculiX serve para modelos pequenos — para impacto/crash: OpenRadioss (a seguir).
 
-**Próxima ação:** adaptador OpenRadioss (OpenCourant, AGPL-3.0) verificado na CI Linux com o binário oficial e incluído no instalador.
+## Atualização: OpenRadioss (OpenCourant)
+
+Solver «OpenRadioss» no estudo FEM (só dinâmica explícita, elementos lineares). `src/sim/radioss.ts` escreve o Starter `galcad_0000.rad` (formato bloco 2019, kg–mm–ms: E em GPa, ρ em kg/mm³, F em kN, t em ms) e o Engine `galcad_0001.rad`, e lê as animações convertidas pelo `anim_to_vtk` (VTK ASCII: NODE_ID, deslocamento, von Mises por célula); o agente (`runRadioss`) encontra a distribuição por `CAD_RADIOSS_DIR` e corre Starter → Engine → anim_to_vtk. O formato foi tirado dos testes oficiais `qa-tests/miniqa/SOLIDES/nv_elts/poutre_flex` (CC BY-NC: lidos como referência, nada copiado para o GALCAD) e do código do `anim_to_vtk`.
+
+**Verificado** na CI Linux (`.github/workflows/openradioss.yml`, binário oficial `latest-20261011`, SHA-256 fixo; execução 41031990436): Starter «NORMAL TERMINATION, 0 erros, 0 avisos» e consola sob degrau com o Engine — fator 2 e pico em T₁/2 dentro de 10 %. Os binários não correm no ambiente de desenvolvimento (bloqueio de executáveis descarregados), por isso a verificação é só na CI. Instalador Windows: `build-solvers.py` extrai Starter/Engine sem MPI, anim_to_vtk, hm_cfg_files, hm_reader, h3d e o runtime Intel oneAPI (~490 MB); o teste real também corre na CI do Windows.
+
+**Limites:** só material elástico, forças e gravidade, sem contacto nem deslocamentos/velocidades impostos; AGPL-3.0 — oferecer o código com o instalador (VALIDAR com jurista).
+
+**Próxima ação:** confirmar o instalador Windows com o OpenRadioss; depois LAW2/LAW36, /INTER/TYPE7 e /IMPVEL para impacto real, e o módulo de otimização (scripts, otimização topológica).
 
 ## Atualização: o setup instala todos os solvers
 
