@@ -33,10 +33,10 @@ export const VIEWS = {
 } satisfies Record<string, { dir: Vec3; up: Vec3; label: string; key: string }>;
 export type ViewName = keyof typeof VIEWS;
 
-interface Theme { bg: number; body: number; sheet: number; curve: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number; feat: number }
+interface Theme { bg: number; body: number; sheet: number; curve: number; edge: number; hover: number; sel: number; plane: number; sketch: number; axis: number; feat: number; preview: number }
 const themes: Record<"light" | "dark", Theme> = {
-  light: { bg: 0xf3f4f6, body: 0xb9c7d6, sheet: 0xe5c07b, curve: 0xdb2777, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af, feat: 0x7dd3fc },
-  dark: { bg: 0x14181f, body: 0x7f93a8, sheet: 0xb08d3a, curve: 0xf472b6, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9 },
+  light: { bg: 0xf3f4f6, body: 0xb9c7d6, sheet: 0xe5c07b, curve: 0xdb2777, edge: 0x1f2937, hover: 0xf59e0b, sel: 0x2563eb, plane: 0x5b8def, sketch: 0x1d4ed8, axis: 0x9ca3af, feat: 0x7dd3fc, preview: 0xfde047 },
+  dark: { bg: 0x14181f, body: 0x7f93a8, sheet: 0xb08d3a, curve: 0xf472b6, edge: 0x0b0e13, hover: 0xf59e0b, sel: 0x60a5fa, plane: 0x5b8def, sketch: 0x93c5fd, axis: 0x6b7280, feat: 0x0ea5e9, preview: 0xeab308 },
 };
 
 /**
@@ -235,7 +235,7 @@ export class Viewport {
     this.pmiSvg.setAttribute("class", "pmi-leaders");
     this.pmiEl = Object.assign(document.createElement("div"), { className: "pmi-layer" });
     el.append(this.pmiSvg, this.pmiEl);
-    this.renderer.setAnimationLoop(() => { this.renderer.render(this.scene, this.camera); this.placePmi(); });
+    this.renderer.setAnimationLoop(() => { this.stepAnim(); this.renderer.render(this.scene, this.camera); this.placePmi(); });
   }
 
   // --- PMI 3D ------------------------------------------------------------------------
@@ -297,20 +297,26 @@ export class Viewport {
   /** Repõe uma orientação guardada (vista de modelo) e enquadra o modelo. */
   setCameraView(dir: Vec3, up: Vec3) {
     this.pushHistory();
-    this.camera.up.set(...up);
-    this.camera.position.copy(this.target).add(new THREE.Vector3(...dir).normalize().multiplyScalar(1000));
-    this.camera.lookAt(this.target);
-    this.fit(this.lastResult, false);
+    this.smooth(() => {
+      this.camera.up.set(...up);
+      this.camera.position.copy(this.target).add(new THREE.Vector3(...dir).normalize().multiplyScalar(1000));
+      this.camera.lookAt(this.target);
+      this.fitNow(this.lastResult, false);
+    });
   }
 
   private resize() {
     const w = this.el.clientWidth || 1, h = this.el.clientHeight || 1;
     this.renderer.setSize(w, h);
-    const a = w / h;
+    this.updateProj();
+    this.publish();
+  }
+
+  private updateProj() {
+    const a = (this.el.clientWidth || 1) / (this.el.clientHeight || 1);
     this.camera.left = -this.size * a; this.camera.right = this.size * a;
     this.camera.top = this.size; this.camera.bottom = -this.size;
     this.camera.updateProjectionMatrix();
-    this.publish();
   }
 
   /** Estado da vista em atributos do elemento (útil para testes e depuração). */
@@ -326,6 +332,12 @@ export class Viewport {
   setSelected(keys: string[]) { this.selected = new Set(keys); this.recolor(); }
 
   /** Realça as faces criadas por uma feature (ao passar o rato na árvore). */
+  private previewFeature: string | null = null;
+  /** Feature em edição: as faces que ela cria ficam amarelas (pré-visualização, como no SolidWorks). */
+  setPreviewFeature(fid: string | null) { if (fid !== this.previewFeature) { this.previewFeature = fid; this.recolor(); } }
+  private extHover = "";
+  /** Realce vindo de fora do 3D (ex.: botão de um plano no painel); chave como `plane:{...}`. */
+  setHoverKey(k: string | null) { if ((k ?? "") !== this.extHover) { this.extHover = k ?? ""; this.recolor(); } }
   setFeatureHighlight(fid: string | null) { if (fid !== this.featureHighlight) { this.featureHighlight = fid; this.recolor(); } }
   /** Cores das faces com condições de simulação (espaços FEM/CFD): o modelo mostra onde estão os apoios e as cargas. */
   setConditionFaces(m: Map<string, number> | null) {
@@ -707,7 +719,7 @@ export class Viewport {
   }
 
   private recolor() {
-    const hk = this.hover ? this.keyOf(this.hover) : "";
+    const hk = this.hover ? this.keyOf(this.hover) : this.extHover;
     for (const r of this.regionMeshes) {
       const k = `region:${r.sig.join("+")}`;
       const m = r.mesh.material as THREE.MeshBasicMaterial;
@@ -716,16 +728,17 @@ export class Viewport {
     }
     for (const p of this.planeMeshes) {
       const k = `plane:${JSON.stringify(p.ref)}`;
-      const hoverKey = this.hover ? this.keyOf(this.hover) : "";
+      const hoverKey = this.hover ? this.keyOf(this.hover) : this.extHover;
       (p.mesh.material as THREE.MeshBasicMaterial).color.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : p.ref.kind === "std" ? this.theme.plane : 0x22a06b);
     }
     if (!this.mesh || !this.faceMesh || !this.edgeLines) return;
     const col = this.faceMesh.geometry.getAttribute("color") as THREE.BufferAttribute;
     const c = new THREE.Color();
-    const hoverKey = this.hover ? this.keyOf(this.hover) : "";
+    const hoverKey = this.hover ? this.keyOf(this.hover) : this.extHover;
     // "@c2" realça o componente c2 da montagem (nomes "c2|…" e "c2/…|…")
     const fhComp = this.featureHighlight?.startsWith("@") ? this.featureHighlight.slice(1) : null;
     const fh = this.featureHighlight && !fhComp ? `${this.featureHighlight}:` : null;
+    const pv = this.previewFeature ? `${this.previewFeature}:` : null;
     const a = this.analysis;
     const nrm = this.mesh.normals;
     const dir = a?.kind === "draft" ? { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[a.dir] : null;
@@ -736,7 +749,7 @@ export class Viewport {
       const k = `face:${f.name}`;
       const [lo, hi] = this.faceVerts[i];
       const inComp = fhComp && (f.name.startsWith(`${fhComp}|`) || f.name.startsWith(`${fhComp}/`));
-      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : (fh && f.name.startsWith(fh)) || inComp ? this.theme.feat : this.conditionFaces?.get(f.name) ?? null;
+      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : (fh && f.name.startsWith(fh)) || inComp ? this.theme.feat : pv && f.name.startsWith(pv) ? this.theme.preview : this.conditionFaces?.get(f.name) ?? null;
       if (flat === null && (dir || curv)) {
         for (let v = lo; v <= hi; v++) {
           if (dir) {
@@ -751,6 +764,7 @@ export class Viewport {
       for (let v = lo; v <= hi; v++) col.setXYZ(v, c.r, c.g, c.b);
     });
     col.needsUpdate = true;
+    this.el.dataset.previewFaces = String(pv ? this.mesh.faces.filter((f) => f.name.startsWith(pv)).length : 0);
     const ecol = this.edgeLines.geometry.getAttribute("color") as THREE.BufferAttribute;
     const dev = a?.kind === "deviation" && a.data ? new Map(a.data.edges.map((x) => [x.name, x.deg])) : null;
     const cont = a?.kind === "continuity" && a.data ? new Map(a.data.edges.map((x) => [x.name, x.cls])) : null;
@@ -834,6 +848,7 @@ export class Viewport {
   // --- rato ------------------------------------------------------------------------
 
   private onDown(e: PointerEvent) {
+    this.finishAnim();
     const p = this.local(e);
     this.renderer.domElement.setPointerCapture(e.pointerId);
     let mode: Drag["mode"] = "pending";
@@ -955,6 +970,7 @@ export class Viewport {
 
   private wheelAt = 0;
   private onWheel(e: WheelEvent) {
+    this.finishAnim();
     e.preventDefault();
     // uma sequência de roda conta como uma só mudança de vista no histórico
     if (performance.now() - this.wheelAt > 500) this.pushHistory();
@@ -1033,7 +1049,7 @@ export class Viewport {
   private pushHistory() { this.history.push(this.save()); if (this.history.length > 30) this.history.shift(); }
 
   /** Vista anterior (como Ctrl+Shift+Z no SolidWorks). */
-  previousView() { const s = this.history.pop(); if (s) this.restore(s); }
+  previousView() { const s = this.history.pop(); if (s) this.smooth(() => this.restore(s)); }
 
   setPivot(p: THREE.Vector3 | null) {
     this.pivot = p ? p.clone() : null;
@@ -1043,6 +1059,7 @@ export class Viewport {
 
   /** Rodar (graus) em torno dos eixos do ecrã, centrado num ponto. */
   rotateBy(degX: number, degY: number, aboutPoint: THREE.Vector3 = this.pivot ?? this.target) {
+    this.finishAnim();
     const cam = this.camera;
     const about = aboutPoint.clone(); // pode ser o próprio target, que também é rodado
     const up = cam.up.clone().normalize();
@@ -1061,6 +1078,7 @@ export class Viewport {
 
   /** Rolar a vista (graus) em torno da direção de visão. */
   roll(deg: number) {
+    this.finishAnim();
     this.camera.up.applyAxisAngle(this.viewDir(), (deg * Math.PI) / 180);
     this.camera.lookAt(this.target);
     this.publish();
@@ -1068,6 +1086,7 @@ export class Viewport {
 
   /** Deslocar a vista em pixels. */
   panBy(dx: number, dy: number) {
+    this.finishAnim();
     const wpp = this.worldPerPx();
     const back = this.viewDir();
     const right = this.camera.up.clone().cross(back).normalize();
@@ -1080,6 +1099,7 @@ export class Viewport {
 
   /** Zoom por um fator (> 1 afasta, < 1 aproxima), mantendo fixo o ponto sob o cursor. */
   zoomAt(factor: number, at?: [number, number]) {
+    this.finishAnim();
     const w = this.el.clientWidth, h = this.el.clientHeight;
     const p = at ?? [w / 2, h / 2];
     const before = this.screenToWorld(p);
@@ -1099,6 +1119,11 @@ export class Viewport {
 
   fit(result: RebuildResponse | null = this.lastResult, record = true) {
     if (record) this.pushHistory();
+    this.smooth(() => this.fitNow(result, false));
+  }
+
+  private fitNow(result: RebuildResponse | null, record: boolean) {
+    if (record) this.pushHistory();
     const m = result?.mass;
     const c = m ? new THREE.Vector3((m.bbox.min[0] + m.bbox.max[0]) / 2, (m.bbox.min[1] + m.bbox.max[1]) / 2, (m.bbox.min[2] + m.bbox.max[2]) / 2) : new THREE.Vector3();
     this.size = this.modelSize(result) * 0.6;
@@ -1111,30 +1136,98 @@ export class Viewport {
     this.resize();
   }
 
-  view(name: ViewName, result: RebuildResponse | null = this.lastResult) {
+  /** `instant`: sem transição (primeiro enquadramento ao abrir). */
+  view(name: ViewName, result: RebuildResponse | null = this.lastResult, instant = false) {
     this.pushHistory();
-    const v = VIEWS[name];
-    this.camera.up.set(...v.up);
-    this.camera.position.copy(this.target).add(new THREE.Vector3(...v.dir).normalize().multiplyScalar(1000));
-    this.camera.lookAt(this.target);
-    this.fit(result, false);
+    const was = this.animate;
+    if (instant) this.animate = false;
+    this.smooth(() => {
+      const v = VIEWS[name];
+      this.camera.up.set(...v.up);
+      this.camera.position.copy(this.target).add(new THREE.Vector3(...v.dir).normalize().multiplyScalar(1000));
+      this.camera.lookAt(this.target);
+      this.fitNow(result, false);
+    });
+    this.animate = was;
   }
 
   /** Olhar perpendicularmente a um plano (Ctrl+8, "Normal a"). */
   normalTo(o: Vec3, n: Vec3, up?: Vec3) {
     this.pushHistory();
-    const nn = new THREE.Vector3(...n).normalize();
-    // "para cima" do ecrã: o eixo dado, ou o Z global projetado (ou Y, se a normal for vertical)
-    let u = up ? new THREE.Vector3(...up) : new THREE.Vector3(0, 0, 1);
-    if (Math.abs(u.dot(nn)) > 0.99) u = new THREE.Vector3(0, 1, 0);
-    u.sub(nn.clone().multiplyScalar(u.dot(nn))).normalize();
-    const dist = this.camera.position.distanceTo(this.target) || 1000;
-    this.target.set(...o);
-    this.camera.up.copy(u);
-    this.camera.position.copy(this.target).addScaledVector(nn, dist);
-    this.camera.lookAt(this.target);
-    this.publish();
+    this.smooth(() => {
+      const nn = new THREE.Vector3(...n).normalize();
+      // "para cima" do ecrã: o eixo dado, ou o Z global projetado (ou Y, se a normal for vertical)
+      let u = up ? new THREE.Vector3(...up) : new THREE.Vector3(0, 0, 1);
+      if (Math.abs(u.dot(nn)) > 0.99) u = new THREE.Vector3(0, 1, 0);
+      u.sub(nn.clone().multiplyScalar(u.dot(nn))).normalize();
+      const dist = this.camera.position.distanceTo(this.target) || 1000;
+      this.target.set(...o);
+      this.camera.up.copy(u);
+      this.camera.position.copy(this.target).addScaledVector(nn, dist);
+      this.camera.lookAt(this.target);
+      this.publish();
+    });
   }
+
+  // --- transições da câmara (como o SolidWorks: as mudanças de vista deslizam) ---------
+
+  /** Transições animadas das vistas; desligadas com prefers-reduced-motion. */
+  animate = typeof matchMedia === "function" ? !matchMedia("(prefers-reduced-motion: reduce)").matches : true;
+  private smoothing = false;
+  private anim: { t0: number; ms: number; a: CamState; b: CamState; qa: THREE.Quaternion; qb: THREE.Quaternion } | null = null;
+
+  /**
+   * Aplica uma mudança de câmara e anima do estado atual para o final (rotação por slerp, centro,
+   * distância e zoom interpolados). Os atributos de teste ficam já no estado final.
+   */
+  private smooth(change: () => void, ms = 380) {
+    if (this.smoothing) { change(); return; }
+    const a = this.save();
+    this.anim = null;
+    this.el.dataset.animating = "";
+    this.smoothing = true;
+    try { change(); } finally { this.smoothing = false; }
+    const b = this.save();
+    const moved = a.pos.distanceTo(b.pos) + a.target.distanceTo(b.target) + a.up.distanceTo(b.up) + Math.abs(a.zoom - b.zoom) + Math.abs(a.size - b.size) > 1e-6;
+    if (!this.animate || !moved) return;
+    const qb = this.camera.quaternion.clone();
+    this.camera.position.copy(a.pos); this.camera.up.copy(a.up); this.camera.lookAt(a.target);
+    const qa = this.camera.quaternion.clone();
+    this.anim = { t0: performance.now(), ms, a, b, qa, qb };
+    this.el.dataset.animating = "1";
+    this.stepAnim();
+  }
+
+  private stepAnim() {
+    const an = this.anim;
+    if (!an) return;
+    const t = Math.min(1, (performance.now() - an.t0) / an.ms);
+    if (t >= 1) { this.finishAnim(); return; }
+    const u = 1 - Math.pow(1 - t, 3); // desaceleração suave no fim
+    const q = an.qa.clone().slerp(an.qb, u);
+    const target = an.a.target.clone().lerp(an.b.target, u);
+    const dist = THREE.MathUtils.lerp(an.a.pos.distanceTo(an.a.target), an.b.pos.distanceTo(an.b.target), u);
+    this.target.copy(target);
+    this.camera.quaternion.copy(q);
+    this.camera.position.copy(target).add(new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(dist));
+    this.camera.up.set(0, 1, 0).applyQuaternion(q);
+    this.camera.zoom = Math.exp(THREE.MathUtils.lerp(Math.log(an.a.zoom), Math.log(an.b.zoom), u));
+    this.size = THREE.MathUtils.lerp(an.a.size, an.b.size, u);
+    this.updateProj();
+  }
+
+  /** Salta para o fim da transição em curso (qualquer gesto do utilizador). */
+  finishAnim() {
+    const an = this.anim;
+    if (!an) return;
+    this.anim = null;
+    this.el.dataset.animating = "";
+    const s = an.b;
+    this.camera.position.copy(s.pos); this.target.copy(s.target); this.camera.up.copy(s.up); this.camera.zoom = s.zoom; this.size = s.size;
+    this.camera.lookAt(this.target);
+    this.updateProj();
+  }
+
 
   /** Converte um ponto 3D em pixels do canvas (para sobreposições). */
   project(p: Vec3): [number, number] {

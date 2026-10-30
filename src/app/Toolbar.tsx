@@ -1,8 +1,9 @@
 // Barra de comandos: marca, seletor do espaço de trabalho (como no Fusion), menu Ficheiro, ações rápidas
 // e os separadores do CommandManager (como no SolidWorks) do espaço de trabalho ativo.
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import { FILE_EXTENSION } from "../doc/io.ts";
 import { commandById, runCommand } from "./commands.ts";
+import { FeatureTip, HELP } from "./featurehelp.tsx";
 import { EXPORTS } from "./fileio.ts";
 import { store, useStore } from "./store.ts";
 import { TAB_SECTION, WORKSPACES, openSimSection, setWorkspace, workspaceDef, workspaceTabs } from "./workspaces.ts";
@@ -15,6 +16,14 @@ export function Toolbar() {
   const st = useStore();
   const [tabs0, setTab] = useState<Record<string, string>>({});
   const [menu, setMenu] = useState<"file" | "ws" | null>(null);
+  const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);
+  const tipTimer = useRef<number>(0);
+  const showTip = (id: string, el: HTMLElement) => {
+    clearTimeout(tipTimer.current);
+    if (!HELP[id]) return;
+    tipTimer.current = window.setTimeout(() => { const r = el.getBoundingClientRect(); setTip({ id, x: r.left, y: r.bottom + 6 }); }, 550);
+  };
+  const hideTip = () => { clearTimeout(tipTimer.current); setTip(null); };
   const busy = !!st.edit || !!st.sketch || !!st.mateEdit;
 
   const cmdButton = (id: string) => {
@@ -22,7 +31,7 @@ export function Toolbar() {
     if (!c) return null;
     const key = c.keys?.[0];
     return (
-      <button key={id} class="cmd" title={`${c.label}${key ? ` (${key})` : ""}`} disabled={busy && c.group !== "Editar" && c.group !== "Avaliar"} onClick={() => runCommand(id)}>
+      <button key={id} class="cmd" title={HELP[id] ? undefined : `${c.label}${key ? ` (${key})` : ""}`} aria-label={`${c.label}${key ? ` (${key})` : ""}`} disabled={busy && c.group !== "Editar" && c.group !== "Avaliar"} onMouseEnter={(e) => showTip(id, e.currentTarget)} onMouseLeave={hideTip} onFocus={(e) => showTip(id, e.currentTarget)} onBlur={hideTip} onClick={() => { hideTip(); runCommand(id); }}>
         <span class="ic">{c.icon ?? "•"}</span><span class="lb">{c.short ?? short(c.label)}</span>
       </button>
     );
@@ -79,6 +88,7 @@ export function Toolbar() {
           <div class="group" key={g.title} aria-label={g.title}>{g.ids.map(cmdButton)}</div>
         ))}
       </div>
+      {tip && HELP[tip.id] && <FeatureTip h={{ ...HELP[tip.id], what: `${HELP[tip.id].what}${commandById.get(tip.id)?.keys?.[0] ? ` Atalho: ${commandById.get(tip.id)!.keys![0]}.` : ""}` }} x={tip.x} y={tip.y} />}
     </header>
   );
 }

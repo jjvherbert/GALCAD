@@ -6,6 +6,7 @@ import type { CadProject } from "../doc/project.ts";
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store, useStore } from "./store.ts";
+import { HelpCard, helpForFeature } from "./featurehelp.tsx";
 import { AxisSelect, Check, CurveList, EndEditor, ExprInput, FeatureChecklist, Field, PathSelect, PlaneSelect, PointList, PointsEditor, RefList, RegionList, Select, SheetList, SketchSelect, SweepOptionsEditor, TargetEditor } from "./forms.tsx";
 import { StatusBlock } from "./InfoPanel.tsx";
 
@@ -686,6 +687,7 @@ export function PropertyPanel() {
           <button onClick={() => store.cancelEdit()} title="Cancelar (Esc)">✕</button>
         </div>
       </header>
+      {helpForFeature(f) && <HelpCard h={helpForFeature(f)!} />}
       <Field label="Nome"><input value={f.name} onInput={(ev) => up({ name: (ev.target as HTMLInputElement).value })} /></Field>
       {body}
       <StatusBlock status={status} title={FEATURE_LABELS[f.type]} />

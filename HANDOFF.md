@@ -1,5 +1,19 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: redesign R3 (interação ao estilo do SolidWorks)
+
+Pedido de Juan: «O desenho deve mesmo imitar o solidworks, com os atalhos do rato, as animações na aplicação e as transições e escolhas de plano… Deve ter funções de preview também e deve ter a mesma cena do solidworks que explica o que uma feature faz».
+
+**Alterações**
+- `src/app/viewport.ts`: `smooth()` — as mudanças de câmara (`view`, `normalTo`, `fit`, `setCameraView`, `previousView`) animam ~380 ms (slerp da orientação, centro, distância e zoom em log); o estado final fica logo publicado nos atributos `data-*` e `data-animating` indica a transição; `finishAnim()` salta para o fim em qualquer gesto (`onDown`, `onWheel`, rodar, rolar, deslocar, zoom); `animate` desligado com `prefers-reduced-motion`; o primeiro enquadramento ao abrir é instantâneo. `setHoverKey` (realce vindo de um painel), `setPreviewFeature` (faces da feature em edição a amarelo; `data-preview-faces`).
+- `src/app/Dialogs.tsx`: `PlaneChooser` novo — cartões Planta/Frente/Lateral com realce do plano no 3D, seleção no 3D ativa logo (plano ou face plana), rotação para o plano (`planeFrame` em `commands.ts`) e só depois abre o esboço; o editor entra com uma transição (`.sketch-editor`).
+- `src/app/featurehelp.tsx` (novo): ajuda por feature — figuras SVG com SMIL (sem animação em movimento reduzido), texto (o que faz, passos, nota) para 18 features da barra e 11 comandos da simulação; `FeatureTip` (dica flutuante na barra, ~0,55 s) e `HelpCard` (cartão «O que faz» recolhível no painel, escolha em `localStorage`).
+- `tests/e2e/interacao.e2e.cjs` (novo, também em `npm run test:e2e`): transição e estado final, gesto a saltar a animação, dica na barra, escolha do plano com rotação, cartão e pré-visualização, movimento reduzido.
+
+**Limites:** a pré-visualização é a geometria reconstruída com as faces novas a amarelo (não há malha translúcida separada); uma feature que não cria faces próprias (ex.: união idêntica) não mostra amarelo; as figuras são esquemáticas (isometria fixa), não a geometria real do utilizador; só há dicas para as features do separador Features/Referências e para a simulação.
+
+**Próxima ação:** R4 — pré-processador FEM ao nível Abaqus/Femap (sets, passos múltiplos, acoplamentos, molas, massas pontuais, referenciais locais, cargas em arestas e vértices, simetria, verificação dos dados e matriz de compatibilidade por solver).
+
 ## Atualização: redesign R1 (instalador) e R2 (espaços de trabalho)
 
 Pedido de Juan (redesign): «O desenho deve mesmo imitar o solidworks… As coisas devem ser por módulos, tipo fusion: modulo cad, módulo fem, cfd, machining, etc, cada um com a sua barra de tarefas inteira e especificidades e vai adaptando o modelo… A experiência do instalador deve ser melhor… Em vez de descarregar o zip descarregas logo o instalador com o logo… O módulo de pré-processado do fem está muito fraco». Plano em cinco etapas no `ROADMAP.md` («Redesign»); R1 e R2 feitas aqui, R3–R5 por fazer.

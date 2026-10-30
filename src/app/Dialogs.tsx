@@ -1,9 +1,10 @@
 // Diálogos: variáveis globais/equações e escolha do plano de esboço.
-import { useState } from "preact/hooks";
-import type { Variable } from "../doc/types.ts";
+import { useEffect, useState } from "preact/hooks";
+import type { PlaneRef, Variable } from "../doc/types.ts";
 import { resolveVariables } from "../doc/variables.ts";
 import { store, useStore } from "./store.ts";
-import { PlaneSelect } from "./forms.tsx";
+import { PlaneSelect, usePickTarget } from "./forms.tsx";
+import { commandViewport, planeFrame } from "./commands.ts";
 
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 6 });
 
@@ -51,21 +52,62 @@ export function VariablesDialog() {
   );
 }
 
+const STD_PLANES = [
+  { name: "XY", label: "Planta", hint: "plano horizontal (XY)" },
+  { name: "XZ", label: "Frente", hint: "plano vertical de frente (XZ)" },
+  { name: "YZ", label: "Lateral", hint: "plano vertical lateral (YZ)" },
+] as const;
+const planeKey = (name: string) => `plane:${JSON.stringify({ kind: "std", name })}`;
+
+/**
+ * Escolha do plano do esboço como no SolidWorks: os três planos aparecem no 3D, realçam-se ao passar
+ * o rato (ou no botão) e, ao escolher um plano ou uma face plana, a vista roda para ficar normal a ele
+ * e só então abre o esboço.
+ */
 export function PlaneChooser() {
-  const st = useStore();
-  const [plane, setPlane] = useState<Parameters<typeof store.startSketch>[0]>({ kind: "std", name: "XY" });
+  const [plane, setPlane] = useState<PlaneRef>({ kind: "std", name: "XY" });
+  const begin = (p: PlaneRef) => {
+    const v = commandViewport();
+    const fr = planeFrame(p);
+    v?.setHoverKey(null);
+    if (v && fr && v.animate) {
+      v.normalTo(fr.o, fr.z, fr.y);
+      setTimeout(() => { if (store.state.choosingPlane) store.startSketch(p); }, 340);
+    } else store.startSketch(p);
+  };
+  usePickTarget("sketch-start", (p) => {
+    if (p.kind === "plane") begin(p.ref);
+    else if (p.kind === "face") {
+      if (p.type !== "plane") { store.set({ message: "Escolha uma face plana" }); return; }
+      begin({ kind: "face", ref: { kind: "face", name: p.name, hint: p.hint } });
+    }
+  });
+  useEffect(() => {
+    store.set({ pickTarget: { field: "sketch-start", accept: ["face", "plane"] } });
+    return () => commandViewport()?.setHoverKey(null);
+  }, []);
   return (
-    <div class="property-panel">
+    <div class="property-panel plane-chooser">
       <header>
         <h2>Novo esboço</h2>
         <div class="actions">
-          <button class="primary" onClick={() => store.startSketch(plane)}>Começar</button>
-          <button onClick={() => store.set({ choosingPlane: false, pickTarget: null })}>✕</button>
+          <button class="primary" onClick={() => begin(plane)} title="Começar o esboço no plano escolhido">✓ Começar</button>
+          <button onClick={() => store.set({ choosingPlane: false, pickTarget: null })} title="Cancelar (Esc)">✕</button>
         </div>
       </header>
-      <p class="muted">Escolha o plano, ou clique num plano ou numa face plana do modelo.</p>
-      {plane && <PlaneSelect field="sketch-plane" label="Plano do esboço" value={plane} before={store.insertIndex()} onChange={(p) => { setPlane(p); }} />}
-      {st.pickTarget?.field !== "sketch-plane" && <button class="small" onClick={() => store.set({ pickTarget: { field: "sketch-plane", accept: ["face", "plane"] } })}>Escolher no modelo</button>}
+      <p class="muted">Clique num plano ou numa face plana do modelo, ou escolha abaixo.</p>
+      <div class="plane-cards">
+        {STD_PLANES.map((p) => (
+          <button key={p.name} class="plane-card" title={`Esboço no ${p.hint}`}
+            onMouseEnter={() => commandViewport()?.setHoverKey(planeKey(p.name))} onMouseLeave={() => commandViewport()?.setHoverKey(null)}
+            onFocus={() => commandViewport()?.setHoverKey(planeKey(p.name))} onBlur={() => commandViewport()?.setHoverKey(null)}
+            onClick={() => begin({ kind: "std", name: p.name })}>
+            <svg viewBox="0 0 40 30" aria-hidden="true"><polygon class={`pl pl-${p.name}`} points={p.name === "XY" ? "4,18 20,10 36,18 20,26" : p.name === "XZ" ? "8,22 8,6 24,12 24,28" : "36,22 36,6 20,12 20,28"} /></svg>
+            <b>{p.label}</b><small>{p.name}</small>
+          </button>
+        ))}
+      </div>
+      {plane && <PlaneSelect field="sketch-plane" label="Outro plano (referência, sistema de coordenadas)" value={plane} before={store.insertIndex()} onChange={(p) => { setPlane(p); }} />}
     </div>
   );
 }

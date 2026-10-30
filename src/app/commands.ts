@@ -1,6 +1,6 @@
 // Registo central de comandos e atalhos de teclado (por defeito, os do SolidWorks).
 // Usado pelo teclado, pela barra de atalhos (S), pelos gestos e pelos menus.
-import type { FeatureType } from "../doc/types.ts";
+import type { FeatureType, PlaneRef, Vec3 } from "../doc/types.ts";
 import { FEATURE_ICONS, FEATURE_LABELS, SURFACE_TYPES } from "../doc/features.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { store } from "./store.ts";
@@ -55,6 +55,16 @@ export const commandViewport = () => viewport;
 
 const busy = () => !!store.state.edit || !!store.state.sketch;
 
+const STD_FRAMES = { XY: { o: [0, 0, 0], z: [0, 0, 1], y: [0, 1, 0] }, XZ: { o: [0, 0, 0], z: [0, -1, 0], y: [0, 0, 1] }, YZ: { o: [0, 0, 0], z: [1, 0, 0], y: [0, 0, 1] } } as const;
+
+/** Origem, normal e "para cima" de um plano (padrão, de referência ou face plana), para olhar normal a ele. */
+export function planeFrame(r: PlaneRef): { o: Vec3; z: Vec3; y?: Vec3 } | null {
+  if (r.kind === "std") return STD_FRAMES[r.name] as never;
+  if (r.kind === "datum") return (store.state.result?.planes[r.feature] as never) ?? null;
+  if (r.kind === "face") return r.ref.hint?.n && r.ref.hint.c ? { o: r.ref.hint.c as Vec3, z: r.ref.hint.n as Vec3 } : null;
+  return null;
+}
+
 /** "Normal a": face plana ou plano selecionado; sem seleção, a vista padrão mais próxima. */
 function normalTo() {
   const v = viewport;
@@ -62,9 +72,8 @@ function normalTo() {
   const sel = store.state.selection[0];
   if (sel?.kind === "face" && sel.hint.n) { v.normalTo(sel.hint.c, sel.hint.n); return; }
   if (sel?.kind === "plane") {
-    const r = sel.ref;
-    const fr = r.kind === "datum" ? store.state.result?.planes[r.feature] : r.kind === "std" ? { XY: { o: [0, 0, 0], z: [0, 0, 1], y: [0, 1, 0] }, XZ: { o: [0, 0, 0], z: [0, -1, 0], y: [0, 0, 1] }, YZ: { o: [0, 0, 0], z: [1, 0, 0], y: [0, 0, 1] } }[r.name] : undefined;
-    if (fr) { v.normalTo(fr.o as never, fr.z as never, fr.y as never); return; }
+    const fr = planeFrame(sel.ref);
+    if (fr) { v.normalTo(fr.o, fr.z, fr.y); return; }
   }
   store.set({ message: "Normal a: selecione uma face plana ou um plano" });
 }

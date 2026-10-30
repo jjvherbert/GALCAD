@@ -174,6 +174,14 @@ O seletor no canto superior esquerdo (ou Ctrl+Alt+1…4) muda de espaço sem mud
 
 Nos espaços de simulação as faces com condições aparecem coloridas no 3D (apoios a azul, forças a âmbar, pressão a vermelho; entrada a verde e saída a vermelho na CFD) e o resultado só se mostra aí; no Design volta o corpo.
 
+### Interação ao estilo do SolidWorks
+
+- **Transições de câmara animadas**: mudar de vista (Ctrl+1…8, Normal a, Ajustar, vista anterior, vistas de modelo PMI) desliza em ~0,4 s (rotação por slerp, centro, distância e zoom interpolados); qualquer gesto do rato ou do teclado salta logo para o fim. Desligadas com `prefers-reduced-motion`.
+- **Escolha do plano do esboço**: os três planos aparecem no 3D e realçam-se ao passar o rato nos cartões Planta/Frente/Lateral; clicar num plano, numa face plana ou num cartão roda a vista para ficar normal a ele e só então abre o esboço, que entra com uma transição.
+- **Pré-visualização amarela**: as faces que a feature em edição cria ficam amarelas no 3D (a geometria já se reconstrói a cada alteração); o painel de propriedades tem ✓ OK e ✕.
+- **Dicas animadas**: ao passar o rato numa feature da barra aparece uma figura curta em movimento (o antes e o depois), o que a feature faz, como se usa e uma nota — para o esboço, extrusão, corte, revolução, sweep, loft, nervura, furo, filete, chanfro, casca, inclinação, padrões, espelho e referências, e em texto para os apoios, cargas, sondas e malha da simulação. O mesmo conteúdo fica no topo do painel, num cartão «O que faz» recolhível que lembra a escolha (`src/app/featurehelp.tsx`).
+- Os gestos do rato (botão direito, 8 direções) e os atalhos mantêm-se.
+
 A barra de comandos está organizada em separadores como o CommandManager (Features, Esboço, Referências, Avaliar, Módulos). Sobre o 3D há uma barra de vista com ajustar, vista anterior, orientação, normal a, estilo de visualização e planos. Os comandos estão num registo único (`src/app/commands.ts`), que alimenta o teclado, os menus, os gestos e a pesquisa.
 
 ## Arquitetura
