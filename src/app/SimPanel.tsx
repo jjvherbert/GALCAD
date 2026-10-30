@@ -463,7 +463,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
   const setO = (p: Partial<typeof o>) => store.set({ simRun: { ...store.state.simRun, ...p } });
   const { conv, ratio, mode, target, levels, metric } = o;
   const auto = mode === "auto";
-  const setConv = (x: boolean) => setO({ conv: x }), setRatio = (x: number) => setO({ ratio: x }), setMode = (x: typeof mode) => setO({ mode: x });
+  const setConv = (x: boolean) => setO({ conv: x }), setRatio = (x: number) => setO({ ratio: x });
   const setTarget = (x: number) => setO({ target: x }), setLevels = (x: number) => setO({ levels: x }), setMetric = (x: string) => setO({ metric: x });
   const a = st.agent;
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult : null;
