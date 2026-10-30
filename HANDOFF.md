@@ -1,5 +1,25 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: malha manual (seeds, hexaedros, qualidade e pré-visualização)
+
+Pedido de Juan: «Quero elementos hexaédricos e dinâmica implícita e explícita… O openradioss é uma opção» e «Quero um mesher bom em que possa pôr seeds… como o pré-processador do Femap… meshes de qualidade para poder equiparar a um Abaqus… convergence study: escolher um ponto aproximado da peça… 3 parâmetros acima e abaixo». Esta etapa fecha a malha; a convergência ±3, a dinâmica e o OpenRadioss vêm a seguir (ver `ROADMAP.md`, «Malha manual, dinâmica e explícito»). O módulo de otimização (scripts, otimização topológica) fica registado no ROADMAP para depois.
+
+**Alterações**
+- `src/sim/elements.ts` (novo): topologia e numeração Gmsh → CalculiX/Abaqus → code_aster de tet4/tet10/hex8/hex20 e tri3/tri6/quad4/quad8; integrais das faces por Gauss (áreas nodais e vetores área consistentes).
+- `src/kernel/meshplan.ts` (novo): plano da malha a partir da topologia exata — volumes hexaédricos, classes de arestas opostas (union-find), seeds (n.º/tamanho, razão maior/menor, início/fim/pontas/meio), propagação e conflitos.
+- `src/sim/gmsh.ts`: `Transfinite Curve/Surface/Volume`, `Recombine`, `SubdivisionAlgorithm`, `SecondOrderIncomplete`; sem `HighOrderOptimize` nos hexaedros (o Gmsh ficava minutos a otimizar).
+- `src/sim/calculix.ts`, `src/sim/aster.ts`, `src/sim/msh.ts`: decks e resultados genéricos por tipo de elemento; C3D8I/C3D8/C3D8R/C3D20R/C3D20; HEXA8/HEXA20 com `3D`/`3D_SI` (linhas do `.mail` partidas a 80 colunas); prismas/pirâmides recusados com mensagem clara.
+- `src/sim/quality.ts`, `src/sim/meshview.ts` (novos), `tools/cad-runner.ts` (`previewMesh`, `POST /mesh`, conferência das arestas pelas caixas das curvas, seeds escaladas nas convergências).
+- `src/doc/study.ts` (`element`, `hexMethod`, `integration`, `seeds`, `mapped`), `src/kernel/sim.ts`, `src/app/SimPanel.tsx` (editor da malha, «Pré-visualizar malha», relatório de qualidade), `src/app/viewport.ts` (arestas dos elementos), `src/app/sim-client.ts`.
+
+**Testes** (`tests/mesh.test.ts`, 8; Gmsh 4.15.2, CalculiX 2.21, code_aster 18.1 reais): consola de Timoshenko (δ = 0,19196 mm) em C3D8I e C3D20R a < 3 %, HEXA20 a < 3 %, HEXA8 `3D_SI` a −5,5 % (4 camadas), C3D8 com bloqueio por corte visível (87 %); pressão em quad8 → reação 1000 N exata; seeds com bump e progressão no Gmsh real; numeração das arestas Gmsh = OpenCASCADE confirmada; subdivisão numa placa com furo (estruturado recusado, automático passa a subdivisão); pré-visualização (volume 10 000 mm³, jacobiano 1, 168 faces exteriores com arestas). E2e da simulação com hexaedros: pré-visualização, qualidade e consola em C3D20R na app (0,1910 mm). Os testes de hexaedros entram também na CI do instalador (Windows real).
+
+**Limites:** os limites de qualidade «do Abaqus» são os do Verify Mesh por omissão tal como os conheço (ângulos 10°/160° em quadriláteros e 5°/170° em triângulos, aspeto 10, fator de forma 10⁻⁴) — VALIDAR com a documentação do Abaqus de Juan; a distribuição «bump» do Gmsh é aproximada (a pré-visualização mostra a real); sem partição de sólidos em blocos dentro da app (uma peça que não é bloco só tem hexaedros por subdivisão).
+
+**Convergência ±3 níveis num ponto** (mesmo pedido): modo «±3 níveis» no estudo de convergência — 7 malhas h·r^k, k = 3 … −3 (`RunOptions.convergence.sweep`), sonda «Ponto» com «Escolher ponto no 3D», gráfico e tabela com a malha pedida destacada, monotonia, extrapolação/GCI no trio mais fino e erro estimado da malha pedida (`ConvergenceReport.sweep`). Testado no agente (`tests/mesh.test.ts`) e na app (e2e da simulação: 7 malhas de hexaedros, monotónica).
+
+**Próxima ação:** dinâmica implícita e explícita (CalculiX/code_aster); depois OpenRadioss em CI.
+
 ## Atualização: o setup instala todos os solvers
 
 Pedido de Juan: «Faz com que o setup do galcad instale logo tudo». O instalador (560 MB) inclui agora também **SU2 8.3** (binário oficial de série), **OpenFOAM v2606** (MinGW oficial: só `platforms/*/bin` e `etc`; `libPstream` de série, sem MS-MPI nem administrador) e **code_aster 18.1** (conda-forge win-64; `desktop/relocate.cjs` corrige os 33 ficheiros de texto que citam a pasta de construção, chamado pelo instalador com `GALCAD.exe --galcad-setup` e no arranque).

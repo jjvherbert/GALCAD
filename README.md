@@ -18,7 +18,7 @@ A GALCAD também existe como aplicação de ambiente de trabalho (Electron) com 
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 156 testes (Node; os de solvers correm se o Gmsh/CalculiX/code_aster/OpenFOAM/XFOIL estiverem instalados, e a leitura do PMI se houver o OCP em Python)
+npm test             # 166 testes (Node; os de solvers correm se o Gmsh/CalculiX/code_aster/OpenFOAM/XFOIL estiverem instalados, e a leitura do PMI se houver o OCP em Python)
 npm run typecheck    # TypeScript estrito
 npm run build && npm run test:e2e   # 11 suites no Chromium: aplicação, navegação, superfícies, montagens, desenhos, Fase 4, simulação, PMI, scripts, Galkeel, cálculos
 node public/cad-runner.mjs --status # solvers encontrados pelo agente local
@@ -98,13 +98,14 @@ Solvers (instalados à parte, processos separados): Gmsh, CalculiX, OpenFOAM, SU
 - **STEP AP242**: produtos com nome (número + nome), cores, corpos sólidos e de superfície separados e, nas montagens, a estrutura de produto com uma ocorrência por instância.
 
 **Simulação (pré-processador FEM/CFD, separador Simulação):**
-- **Estudos** na peça: FEM com o **CalculiX** (estática linear, modal, encurvadura, térmica em regime permanente) e CFD com o **OpenFOAM** (simpleFoam + snappyHexMesh, interno ou externo, laminar/k-ω SST/k-ε) ou o **SU2**. Condições nas faces pelo nome topológico (encastramento, deslocamento, força, pressão, gravidade, temperatura, convecção, fluxo; entrada/saída ou escoamento livre); materiais e fluidos de referência; malha **Gmsh** (tetraedros quadráticos) ou snappyHexMesh.
+- **Estudos** na peça: FEM com o **CalculiX** (estática linear, modal, encurvadura, térmica em regime permanente) e CFD com o **OpenFOAM** (simpleFoam + snappyHexMesh, interno ou externo, laminar/k-ω SST/k-ε) ou o **SU2**. Condições nas faces pelo nome topológico (encastramento, deslocamento, força, pressão, gravidade, temperatura, convecção, fluxo; entrada/saída ou escoamento livre); materiais e fluidos de referência; malha **Gmsh** (tetraedros ou hexaedros, ver a malha manual) ou snappyHexMesh.
 - **Exportar caso (.zip)**: BREP exato, script Gmsh, dicionários/deck, `case.json`, LEIA-ME com hipóteses e passos.
 - **Calcular no agente local**: `node cad-runner.mjs --serve` (descarrega-se no painel) corre os solvers instalados na máquina como processos separados e devolve os resultados: resumo (flecha, von Mises, fator de segurança, frequências, reações, caudal, balanço de massa, queda de pressão, arrasto de pressão) e, no FEM, os campos a cores no 3D com a deformada.
 - **Não linear** (estática): grandes deslocamentos e rotações (NLGEOM) e plasticidade de von Mises com encruamento bilinear (cedência e módulo tangente do material), em incrementos, com a curva carga–deslocamento e a deformação plástica equivalente.
 - **Montagens**: estudos FEM na própria montagem, um volume e um material por corpo, condições nas faces dos componentes e contacto nas faces planas coincidentes entre corpos: **colado** (*TIE) ou **com atrito de Coulomb e separação** (penalidade face a face, carga em incrementos), com a reação de cada apoio (ex.: a força de atrito transmitida).
 - **CFD no 3D**: pressão nas paredes/entrada/saída e cortes planos pela malha do OpenFOAM com pressão e |U|, camadas que se ligam e desligam, escala comum.
-- **Convergência da malha**: três malhas (h, r·h, r²·h) ou **refinamento automático até ao GCI alvo**, com a ordem aparente, o valor extrapolado (Richardson), o GCI (Celik et al. 2008 / ASME V&V 20) e o gráfico por nível; **sondas** (média ou máximo numa face, nó mais próximo de um ponto) como grandezas a seguir.
+- **Malha manual (ao estilo do Femap)**: tetraedros ou **hexaedros** (estruturados/mapeados nos volumes com 6 faces de 4 arestas, ou subdivisão para qualquer forma), **seeds** nas arestas (n.º de elementos ou tamanho, razão maior/menor e onde ficam os elementos pequenos) propagadas às arestas opostas, faces mapeadas e refinamento local; elementos C3D8I/C3D8/C3D8R/C3D20R/C3D20 no CalculiX e HEXA8/HEXA20 no code_aster. **Pré-visualizar malha**: qualidade ao estilo do Verify Mesh do Abaqus (jacobiano escalado, razão de aspeto, ângulos, empeno, fator de forma), histograma, piores elementos e a malha no 3D com as arestas e a cor por elemento.
+- **Convergência da malha**: três malhas (h, r·h, r²·h), **±3 níveis à volta da malha pedida num ponto escolhido no 3D** (7 malhas, monotonia, erro estimado da malha pedida) ou **refinamento automático até ao GCI alvo**, com a ordem aparente, o valor extrapolado (Richardson), o GCI (Celik et al. 2008 / ASME V&V 20) e o gráfico por nível; **sondas** (média ou máximo numa face, nó mais próximo de um ponto) como grandezas a seguir.
 - **code_aster 18.1** como alternativa ao CalculiX (estática linear e não linear — plasticidade, grandes deslocamentos —, modal e montagens coladas por LIAISON_MAIL), verificado com os mesmos casos analíticos.
 - Os resultados são apoio à decisão de engenharia, com as hipóteses à vista; não são certificação.
 
@@ -218,7 +219,7 @@ Registam-se em `src/plugins/meta.ts` e `src/plugins/geometry.ts`. Qualquer resul
   - referências externas: a posição lida de uma montagem é guardada (não acompanha a montagem automaticamente: "Ler posição" de novo); peças em contexto completas (editar a peça dentro da montagem) continuam por fazer;
   - AP242: estrutura de montagem achatada (uma ocorrência por instância, sem subconjuntos aninhados).
 - Simulação:
-  - material isotrópico; só elementos sólidos tetraédricos (sem cascas, vigas, hexaedros nem métricas de qualidade da malha); contacto só em faces planas coincidentes (atrito só no CalculiX); sem transitório nem fadiga;
+  - material isotrópico; só elementos sólidos (tetraedros e hexaedros; sem cascas nem vigas); hexaedros estruturados só em volumes que já são blocos (sem partição dentro da app); contacto só em faces planas coincidentes (atrito só no CalculiX); sem transitório nem fadiga;
   - o code_aster cobre estática, não linear, modal e contacto colado (não encurvadura, térmica nem atrito);
   - XFOIL: a compilação Debian precisa da biblioteca `xfoil-nofpe`; ângulos que não convergem são omitidos (com uma segunda passagem automática);
   - o copiloto só foi testado com respostas simuladas (sem chave da API neste ambiente);

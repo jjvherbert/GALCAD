@@ -14,6 +14,8 @@ export interface ResultLayer {
   values: (number[] | null)[];
   /** Deslocamentos por vértice (mm), alinhados com `ResultView.modes`. */
   displacements?: number[][];
+  /** Arestas da malha a desenhar (pares de índices de vértices): pré-visualização da malha. */
+  edges?: number[];
 }
 
 export interface ResultView {

@@ -51,6 +51,34 @@ export interface SimMesh {
   order: 1 | 2;
   /** Refinamento local em faces. */
   local?: { faces: TopoRef[]; size: Expr }[];
+  /** Tetraedros (por omissão, qualquer geometria) ou hexaedros. */
+  element?: "tet" | "hex";
+  /**
+   * Hexaedros: estruturados (volumes com 6 faces de 4 arestas, malha mapeada como no Femap/Abaqus),
+   * subdivisão (qualquer geometria, cada tetraedro em 4 hexaedros — qualidade inferior) ou
+   * automático (estruturado se todos os volumes o permitirem, senão subdivisão).
+   */
+  hexMethod?: "auto" | "structured" | "subdivision";
+  /** Integração dos hexaedros: modos incompatíveis (C3D8I, por omissão nos lineares), completa ou reduzida (C3D20R, por omissão nos quadráticos). */
+  integration?: "incompatible" | "full" | "reduced";
+  /** Seeds nas arestas (Femap: Mesh Size on Curves). */
+  seeds?: MeshSeed[];
+  /** Faces mapeadas (malha estruturada na face; quadriláteros com hexaedros). */
+  mapped?: TopoRef[];
+}
+
+/**
+ * Seed de arestas: n.º de elementos por aresta ou tamanho dos elementos, com distribuição — a razão
+ * entre o maior e o menor elemento (1 = uniforme) e onde ficam os pequenos. Nas malhas mapeadas o
+ * n.º propaga-se às arestas opostas (é o que torna a malha estruturada possível).
+ */
+export interface MeshSeed {
+  edges: TopoRef[];
+  mode: "count" | "size";
+  value: Expr;
+  bias?: Expr;
+  /** Elementos pequenos no início da aresta, no fim, nas duas pontas ou no meio. */
+  biasAt?: "start" | "end" | "ends" | "center";
 }
 
 /** Não linearidades da análise estática. */

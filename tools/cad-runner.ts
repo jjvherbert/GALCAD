@@ -18,7 +18,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CfdCase, FemCase, SimCase } from "../src/sim/case.ts";
 import { femGeo, su2Geo } from "../src/sim/gmsh.ts";
-import { parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
+import { elementsOf, faceBlocks, parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
+import { faceIntegrals } from "../src/sim/elements.ts";
+import { meshPreview } from "../src/sim/meshview.ts";
+import type { MeshQuality } from "../src/sim/quality.ts";
 import { calculixDeck, femResult, type FemResult } from "../src/sim/calculix.ts";
 import { openfoamCase } from "../src/sim/openfoam.ts";
 import { patchAverage, patchFlux, patchPressureForce, readBoundary, readFaces, readLabels, readPoints, readScalarField } from "../src/sim/foamread.ts";
@@ -26,7 +29,7 @@ import { su2Config } from "../src/sim/su2.ts";
 import { asterCase, asterResult } from "../src/sim/aster.ts";
 import { type LayerField, type FoamMeshFull, patchLayer, readField, sliceLayer } from "../src/sim/foamfields.ts";
 import { type ResultLayer, type ResultView, femView } from "../src/sim/result.ts";
-import { type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci } from "../src/sim/convergence.ts";
+import { type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci, isMonotonic } from "../src/sim/convergence.ts";
 import { type XfoilRequest, type XfoilResult, XFOIL_HYPOTHESES, parsePolar, polarSummary, xfoilCommands, xfoilRetryCommands } from "../src/sim/xfoil.ts";
 
 export interface RunResult {
@@ -48,6 +51,8 @@ export interface RunResult {
   /** Últimas linhas dos registos (diagnóstico). */
   log: string;
   seconds: number;
+  /** Pré-visualização da malha: relatório de qualidade. */
+  quality?: MeshQuality;
 }
 
 type Log = (s: string) => void;
@@ -160,17 +165,14 @@ function checkGroups(c: FemCase, m: Msh): string[] {
     const want = [0, 1, 2].map((k) => faces.reduce((s, f) => s + f.center[k] * f.area, 0) / A);
     let a = 0;
     const got = [0, 0, 0];
-    for (const b of physicalBlocks(m, name)) {
-      const per = b.type === 9 ? 6 : 3;
-      for (let k = 0; k < b.conn.length; k += per) {
-        const [P, Q, R] = b.conn.slice(k, k + 3).map((t) => m.nodes.get(t)!);
-        const u = [Q[0] - P[0], Q[1] - P[1], Q[2] - P[2]], v = [R[0] - P[0], R[1] - P[1], R[2] - P[2]];
-        const ar = 0.5 * Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
-        a += ar;
-        for (let q = 0; q < 3; q++) got[q] += ((P[q] + Q[q] + R[q]) / 3) * ar;
-      }
+    for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
+      const P = nodes.map((t) => m.nodes.get(t)!);
+      const fi = faceIntegrals(type, P);
+      a += fi.area;
+      // centroide da face pelas áreas nodais consistentes
+      fi.nodal.forEach((w, i) => { for (let q = 0; q < 3; q++) got[q] += w * P[i][q]; });
     }
-    if (!a) { out.push(`Grupo ${name}: sem triângulos na malha`); continue; }
+    if (!a) { out.push(`Grupo ${name}: sem faces na malha`); continue; }
     const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
     if (d > 0.02 * diag || Math.abs(a - A) > 0.05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
   }
@@ -181,8 +183,17 @@ function checkGroups(c: FemCase, m: Msh): string[] {
     const dev = Math.max(...[0, 1, 2].map((q) => Math.max(Math.abs(lo[q] - b.bbox.min[q]), Math.abs(hi[q] - b.bbox.max[q]))));
     if (!Number.isFinite(dev) || dev > 0.02 * diag) out.push(`Corpo ${b.name} (${b.group}): o volume da malha não corresponde ao corpo do CAD`);
   }
+  // seeds e faces mapeadas: as curvas do Gmsh têm de ser as arestas do CAD com a mesma tag
+  for (const cv of c.mesh.curves ?? []) {
+    const box = m.entityBox.get(`1:${cv.tag}`);
+    const dev = box ? Math.max(...[0, 1, 2].map((q) => Math.max(Math.abs(box[q] - cv.box.min[q]), Math.abs(box[q + 3] - cv.box.max[q])))) : Infinity;
+    if (dev > 1e-3 * diag + 1e-6) { out.push(`Aresta ${cv.tag}: a curva do Gmsh não corresponde à aresta do CAD (numeração diferente) — as seeds não podem ser aplicadas`); break; }
+  }
   return out;
 }
+
+/** Descrição curta dos elementos da malha (resumo). */
+const meshKind = (c: FemCase) => (c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`);
 
 /** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
 async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
@@ -202,8 +213,8 @@ async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean):
   const u = rd("u.tab");
   if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
   const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab") }, ac.nodeOrder);
-  const elements = solidBlocks(msh, c.bodies).reduce((n, b) => n + b.conn.length / (b.type === 11 ? 10 : 4), 0);
-  const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
+  const elements = [...elementsOf(solidBlocks(msh, c.bodies))].length;
+  const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} ${meshKind(c)}`], ...fem.summary];
   return { ok: true, physics: "fem", solver: "code_aster", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
 }
 
@@ -223,7 +234,7 @@ async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): P
   log(`malha: ${deck.nodes} nós, ${deck.elements} elementos`);
   await run(t.calculix.path, ["-i", "job"], dir, "log.ccx", log, { OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "2" });
   const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "", deck.supportLoad);
-  const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} tetraedros de ordem ${c.mesh.order}`], ...fem.summary];
+  const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`], ...fem.summary];
   return { ok: true, physics: "fem", solver: `CalculiX ${t.calculix.version ?? ""}`.trim(), summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, "log.ccx")) };
 }
 
@@ -372,8 +383,10 @@ export interface RunOptions {
    * Com `target` (GCI, fração): refina a partir de h (h, h/r, h/r², …) até o GCI da grandeza
    * `metric` (por omissão a primeira sonda, ou o deslocamento máximo) ficar abaixo do alvo, com
    * convergência monotónica, ou até `maxLevels` malhas (5) ou `maxCells` elementos/células.
+   * Com `sweep` = n: 2n + 1 malhas h·r^k, k = n … −n (n acima e n abaixo da pedida), da mais grossa
+   * para a mais fina, a parar antes de passar `maxCells`.
    */
-  convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number; maxCells?: number };
+  convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number; maxCells?: number; sweep?: number };
 }
 
 async function runOnce(c: SimCase, dir: string, log: Log, regenerate: boolean) {
@@ -385,9 +398,34 @@ async function runOnce(c: SimCase, dir: string, log: Log, regenerate: boolean) {
 export function coarsened(c: SimCase, k: number): SimCase {
   if (c.physics === "fem") {
     const curv = c.mesh.curvature > 0 ? Math.max(4, Math.round(c.mesh.curvature / k)) : 0;
-    return { ...c, mesh: { ...c.mesh, size: c.mesh.size * k, minSize: c.mesh.minSize * k, curvature: curv, local: c.mesh.local.map((l) => ({ ...l, size: l.size * k })) } };
+    // seeds e curvas mapeadas: n.º de elementos a escalar com o tamanho, mantendo a razão maior/menor
+    const curves = c.mesh.curves?.map((cv) => {
+      const n = Math.max(1, Math.round(cv.n / k));
+      const B = cv.progression ? cv.progression ** Math.max(0, cv.n - 1) : 1;
+      return { ...cv, n, ...(cv.progression ? { progression: n > 1 ? B ** (1 / (n - 1)) : 1 } : {}) };
+    });
+    return { ...c, mesh: { ...c.mesh, size: c.mesh.size * k, minSize: c.mesh.minSize * k, curvature: curv, local: c.mesh.local.map((l) => ({ ...l, size: l.size * k })), ...(curves ? { curves } : {}) } };
   }
   return { ...c, mesh: { ...c.mesh, size: c.mesh.size * k } };
+}
+
+/**
+ * Só a malha (pré-visualização, como no Femap antes de exportar): corre o Gmsh no caso FEM de uma
+ * pasta, confere os grupos e as seeds com o CAD e devolve a qualidade e a superfície da malha.
+ */
+export async function previewMesh(dir: string, log: Log = () => {}): Promise<RunResult> {
+  const t0 = Date.now();
+  const c = JSON.parse(readFileSync(join(dir, "case.json"), "utf8")) as SimCase;
+  if (c.format !== "cadp-sim-case" || c.physics !== "fem") throw new Error("A pré-visualização da malha é para estudos FEM");
+  const t = tools();
+  if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+  writeFileSync(join(dir, "mesh.geo"), femGeo(c));
+  await run(t.gmsh.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], dir, "log.gmsh", log);
+  const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const warnings = checkGroups(c, msh);
+  const p = meshPreview(c, msh);
+  warnings.push(...p.quality.notes);
+  return { ok: true, physics: "fem", solver: `Gmsh ${t.gmsh.version ?? ""} — pré-visualização da malha`.trim(), summary: p.summary, warnings, view: p.view, quality: p.quality, metrics: [], cells: p.quality.elements, hypotheses: c.hypotheses, log: tail(join(dir, "log.gmsh")), seconds: (Date.now() - t0) / 1000 };
 }
 
 /** Corre o caso de uma pasta (case.json + model.brep [+ STL]). `regenerate`: refaz os ficheiros dos solvers a partir do caso. */
@@ -408,7 +446,35 @@ export async function runCase(dir: string, log: Log = () => {}, regenerate = fal
     }
     return { sub, ck };
   };
-  if (opts.convergence?.target !== undefined) {
+  if (opts.convergence?.sweep) {
+    const { ratio } = opts.convergence;
+    const n = Math.round(opts.convergence.sweep), maxCells = opts.convergence.maxCells ?? 1.5e6;
+    if (!(n >= 1 && n <= 4)) throw new Error("Varrimento: entre 1 e 4 níveis para cada lado");
+    if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
+    const runs: Omit<RunResult, "seconds" | "hypotheses">[] = [];
+    const steps: NonNullable<ConvergenceReport["sweep"]>["steps"] = [];
+    let metric = opts.convergence.metric, stop: string | undefined;
+    for (let k = n; k >= -n; k--) {
+      // estimativa dos elementos da malha seguinte (∝ h⁻³) a partir da anterior
+      if (runs.length && runs.at(-1)!.cells * ratio ** 3 > maxCells) { stop = `as malhas abaixo de ${steps.at(-1)!.size.toPrecision(3)} mm passariam de ${maxCells.toExponential(1)} elementos`; break; }
+      const { sub, ck } = prepare(ratio ** k, `nivel${k >= 0 ? "+" : ""}${k}`);
+      log(`— nível ${k > 0 ? "+" : ""}${k} (tamanho ${ck.mesh.size.toPrecision(3)} mm)`);
+      const r1 = await runOnce(ck, sub, log, true);
+      runs.push(r1);
+      metric ??= r1.metrics.find((x) => x.key.startsWith("probe"))?.key ?? r1.metrics[0]?.key;
+      steps.push({ level: k, size: ck.mesh.size, cells: r1.cells, value: r1.metrics.find((x) => x.key === metric)?.value ?? NaN });
+    }
+    if (runs.length < 3) throw new Error(`Varrimento: só ${runs.length} malha(s) cabem no limite de ${maxCells.toExponential(1)} elementos — aumente o tamanho pedido`);
+    const fine = runs.slice(-3).reverse();
+    const report = convergenceReport(ratio, fine.map((x, i) => ({ cells: x.cells, size: steps[steps.length - 1 - i].size, metrics: x.metrics })));
+    const row = report.rows.find((x) => x.key === metric);
+    const base = steps.find((x) => x.level === 0)!.value;
+    const values = steps.map((x) => x.value).filter(Number.isFinite);
+    report.sweep = { metric: metric ?? "", levels: n, steps, monotonic: isMonotonic(values), base, baseError: row && Number.isFinite(row.gci.extrapolated) ? Math.abs((base - row.gci.extrapolated) / row.gci.extrapolated) : undefined, stop };
+    report.hypotheses.push(`Varrimento de ${steps.length} malhas (tamanho h·r^k, k = ${n} … ${steps.at(-1)!.level}, r = ${ratio}); GCI e extrapolação pelas três mais finas; erro da malha pedida = |f(h) − f extrapolado| / |f extrapolado|`);
+    const baseRun = runs[steps.findIndex((x) => x.level === 0)];
+    r = { ...baseRun, convergence: report, warnings: [...baseRun.warnings, ...(stop ? [`Varrimento incompleto: ${stop}`] : []), ...(report.sweep.monotonic ? [] : ["A grandeza não varia de forma monotónica com a malha: veja se o ponto está junto a uma singularidade (canto vivo, apoio, carga)"]), ...(row?.gci.notes ?? []).map((x) => `${row!.label}: ${x}`)] };
+  } else if (opts.convergence?.target !== undefined) {
     const { ratio, target } = opts.convergence;
     const maxLevels = Math.min(8, Math.max(3, opts.convergence.maxLevels ?? 5)), maxCells = opts.convergence.maxCells ?? 1.5e6;
     if (!(ratio >= 1.1 && ratio <= 3)) throw new Error("Razão de refinamento fora de [1,1; 3]");
@@ -548,7 +614,7 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     const send = (code: number, body: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     if (req.headers["x-cad-token"] !== token) { send(401, { error: "Token do agente em falta ou errado" }); return; }
     if (req.method === "GET" && req.url === "/status") { send(200, { ok: true, tools: tools(), busy }); return; }
-    if (req.method !== "POST" || (req.url !== "/run" && req.url !== "/xfoil")) { send(404, { error: "Pedido desconhecido" }); return; }
+    if (req.method !== "POST" || (req.url !== "/run" && req.url !== "/xfoil" && req.url !== "/mesh")) { send(404, { error: "Pedido desconhecido" }); return; }
     if (busy) { send(409, { error: "O agente está ocupado com outro cálculo" }); return; }
     const chunks: Buffer[] = [];
     let size = 0;
@@ -575,8 +641,8 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
       }
       const cv = body.convergence;
       const fin = (x: unknown) => (x === undefined || x === null ? undefined : Number.isFinite(Number(x)) ? Number(x) : undefined);
-      const conv = cv && Number.isFinite(Number(cv.ratio)) ? { ratio: Number(cv.ratio), target: fin(cv.target), metric: typeof cv.metric === "string" ? cv.metric : undefined, maxLevels: fin(cv.maxLevels), maxCells: fin(cv.maxCells) } : undefined;
-      const r = await runCase(dir, (s) => console.log(s), true, { convergence: conv });
+      const conv = cv && Number.isFinite(Number(cv.ratio)) ? { ratio: Number(cv.ratio), target: fin(cv.target), metric: typeof cv.metric === "string" ? cv.metric : undefined, maxLevels: fin(cv.maxLevels), maxCells: fin(cv.maxCells), sweep: fin(cv.sweep) } : undefined;
+      const r = req.url === "/mesh" ? await previewMesh(dir, (s) => console.log(s)) : await runCase(dir, (s) => console.log(s), true, { convergence: conv });
       send(200, r);
     } catch (e) {
       send(500, { error: (e as Error).message, log: tail(join(dir, "log.ccx")) || tail(join(dir, "log.gmsh")) });

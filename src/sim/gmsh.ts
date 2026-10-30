@@ -6,9 +6,10 @@ import type { CfdCase, FemCase } from "./case.ts";
 const list = (tags: number[]) => `{${tags.join(", ")}}`;
 
 export function femGeo(c: FemCase): string {
+  const hex = c.mesh.element === "hex";
   const out = [
     `// Gerado pelo CAD protótipo — ${c.title}`,
-    `// Unidades: mm. Elementos tetraédricos de ordem ${c.mesh.order}.`,
+    `// Unidades: mm. Elementos ${hex ? (c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados") : "tetraédricos"} de ordem ${c.mesh.order}.`,
     `SetFactory("OpenCASCADE");`,
     `Merge "model.brep";`,
   ];
@@ -21,8 +22,9 @@ export function femGeo(c: FemCase): string {
     `Mesh.MeshSizeMin = ${c.mesh.minSize};`,
     `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`,
     `Mesh.ElementOrder = ${c.mesh.order};`,
-    // elementos quadráticos com os nós intermédios na geometria; otimização leve da qualidade
-    `Mesh.HighOrderOptimize = ${c.mesh.order === 2 ? 1 : 0};`,
+    // elementos quadráticos com os nós intermédios na geometria; otimização leve da qualidade (só nos
+    // tetraedros: nos hexaedros de 20 nós a otimização do Gmsh pode não terminar)
+    `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex ? 1 : 0};`,
     `Mesh.Optimize = 1;`,
     `Mesh.Algorithm3D = 1;`,
     `Mesh.MshFileVersion = 4.1;`,
@@ -30,7 +32,34 @@ export function femGeo(c: FemCase): string {
     `Mesh.SaveAll = 0;`,
   );
   for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
+  out.push(...meshControls(c));
   return out.join("\n") + "\n";
+}
+
+/**
+ * Controlos manuais da malha (ao estilo do pré-processador do Femap): seeds nas arestas (n.º de
+ * elementos e distribuição), superfícies e volumes mapeados (transfinitos) e o tipo de elemento.
+ */
+export function meshControls(c: FemCase): string[] {
+  const m = c.mesh, out: string[] = [];
+  const hex = m.element === "hex";
+  for (const cv of m.curves ?? []) {
+    // n elementos = n + 1 nós; progressão geométrica (razão entre elementos consecutivos) ou bump
+    const dist = cv.progression && Math.abs(cv.progression - 1) > 1e-9 ? ` Using Progression ${cv.progression}` : cv.bump && Math.abs(cv.bump - 1) > 1e-9 ? ` Using Bump ${cv.bump}` : "";
+    out.push(`Transfinite Curve{${cv.tag}} = ${cv.n + 1}${dist};`);
+  }
+  if (m.surfaces?.length) {
+    out.push(`Transfinite Surface${list(m.surfaces)};`);
+    if (hex) out.push(`Recombine Surface${list(m.surfaces)};`);
+  }
+  if (m.volumes?.length) out.push(`Transfinite Volume${list(m.volumes)};`);
+  if (hex) {
+    // hexaedros de 20 nós (serendipity), como o C3D20R do Abaqus/CalculiX
+    if (m.order === 2) out.push(`Mesh.SecondOrderIncomplete = 1;`);
+    // subdivisão: cada tetraedro em 4 hexaedros (e cada triângulo em 3 quadriláteros)
+    if (m.hexMethod === "subdivision") out.push(`Mesh.SubdivisionAlgorithm = 2;`);
+  }
+  return out;
 }
 
 /**

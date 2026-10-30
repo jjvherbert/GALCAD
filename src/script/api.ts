@@ -40,7 +40,7 @@ export interface ScriptSimulation {
 /** O que o ambiente (browser ou Node) tem de fornecer ao motor de scripts. */
 export interface ScriptHost {
   rebuild(doc: CadDocument): Promise<ScriptRebuild>;
-  simulate(doc: CadDocument, studyId: string, opts: { convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number } }): Promise<ScriptSimulation>;
+  simulate(doc: CadDocument, studyId: string, opts: { convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number; sweep?: number } }): Promise<ScriptSimulation>;
   /** Polar de um perfil no XFOIL do agente local (opcional: sem ela, cad.xfoil dá erro claro). */
   xfoil?(req: XfoilRequest): Promise<ScriptPolar>;
 }

@@ -224,6 +224,22 @@ Objetivo: o utilizador define o estudo e carrega em "Calcular"; a malha e o fich
 
 Pendente: migrar a análise Galkeel para a ISO 12215-5:2019 quando a galkeel-calculadora a tiver (nunca reimplementar aqui); propor à galkeel-app uma etiqueta `cad-analysis` e alojar o CAD em `public/cad` (decisão de Juan; nada alterado na galkeel-app); mais cálculos (juntas aparafusadas VDI 2230, vigas, fadiga) só com referência e caso de verificação; AVL/VLM para asas; copiloto testado com a API real.
 
+## Malha manual, dinâmica e explícito (nov. 2026, em curso)
+
+Objetivo (Juan): um pré-processador ao nível do Femap — malha feita à mão, com seeds — e malhas de qualidade comparável ao Abaqus; dinâmica implícita e explícita; estudo de convergência num ponto escolhido.
+
+- ✅ **Malha manual** (`src/kernel/meshplan.ts`, `src/sim/gmsh.ts`): seeds nas arestas (n.º de elementos ou tamanho, razão maior/menor com os pequenos no início, no fim, nas pontas ou no meio), faces mapeadas, refinamento local; nas malhas mapeadas o n.º de elementos propaga-se às arestas opostas (classes de arestas opostas) e a distribuição segue no mesmo sentido geométrico; seeds incompatíveis assinaladas. As tags das arestas são as do OpenCASCADE e o agente confere-as com as caixas das curvas do Gmsh.
+- ✅ **Hexaedros**: estruturados (volumes com 6 faces de 4 arestas, transfinitos) ou por subdivisão (qualquer geometria, qualidade inferior), automático com aviso. CalculiX C3D8I (por omissão), C3D8, C3D8R, C3D20R (por omissão), C3D20; code_aster HEXA8/HEXA20 (`3D` ou `3D_SI`); faces QUAD4/QUAD8 com cargas nodais consistentes por integração de Gauss. Verificado contra Timoshenko: C3D8I, C3D20R, HEXA20 a < 3 %, HEXA8 3D_SI −5,5 % com 4 camadas; o C3D8 de integração completa mostra o bloqueio por corte (87 %).
+- ✅ **Qualidade da malha** (`src/sim/quality.ts`) e **pré-visualização** (agente `/mesh`): jacobiano escalado, razão de aspeto, ângulos das faces, empeno, fator de forma dos tetraedros, com limites por omissão do Verify Mesh do Abaqus/CAE (ângulos, aspeto, fator de forma) e do Femap (jacobiano, empeno), histograma, piores elementos e a malha no 3D com as arestas e a cor por elemento.
+- ✅ **Convergência ±3 níveis num ponto**: sonda num ponto escolhido no 3D (clique na peça), 7 malhas h·r^k (k = 3 … −3, r = 1,35 por omissão; seeds e contagens escaladas), tabela e gráfico com a malha pedida destacada, monotonia, GCI e Richardson no trio mais fino e erro estimado da malha pedida; para antes de passar o limite de elementos. Verificado: consola C3D20R, ponta extrapolada a < 2 % de Timoshenko e malha pedida a < 1 % do extrapolado.
+- ⬜ **Dinâmica implícita e explícita**: CalculiX `*DYNAMIC` (implícito) e `*DYNAMIC, EXPLICIT`; code_aster `DYNA_NON_LINE` (Newmark/HHT e `DIFF_CENTRE`); amplitude da carga, amortecimento de Rayleigh, histórias no tempo; verificação com a carga em degrau (amplificação 2, período 1/f1).
+- ⬜ **OpenRadioss (OpenCourant)**: explícito de crash/impacto (Starter/Engine, /BRICK e /TETRA4, LAW1/LAW2), verificado em CI Linux com o binário oficial e incluído no instalador Windows.
+- Pendente na malha: dividir sólidos em blocos dentro da app (partições, como no Femap/Abaqus), malha mapeada com faces de 3 arestas, controlo de camadas na espessura para cascas finas, seeds escolhidas por vértice (sentido) em vez de "início/fim", edição de nós/elementos individuais.
+
+## Otimização e scripts (módulo seguinte, por fazer)
+
+Depois da malha e da dinâmica: módulo de otimização sobre o mesmo estudo — scripts (`cad.*`) como motor, otimização paramétrica (cotas e variáveis, com restrições), **otimização topológica** (SIMP com filtro de densidade sobre a malha de hexaedros; candidato aberto: o próprio CalculiX tem *sensitivity*/*design response* desde a 2.16, ou ToPy/código próprio), otimização de forma (adjunto do SU2 no CFD) e estudos de convergência automáticos como parte de cada iteração. Os resultados voltam ao CAD como geometria proposta, sempre com verificação FEM completa e hipóteses à vista.
+
 ## Posicionamento face ao SolidWorks, CATIA e FEM comercial (out. 2026)
 
 **Conclusão: ainda não compete como substituto.** É um CAD paramétrico com CAE integrado credível para peças e montagens pequenas, com os solvers abertos de referência (CalculiX, code_aster, OpenFOAM, XFOIL) verificados contra soluções analíticas, automação por scripts e IA e ligação ao fluxo da Galkeel. Para uso profissional faltam, por ordem de impacto:
@@ -231,7 +247,7 @@ Pendente: migrar a análise Galkeel para a ISO 12215-5:2019 quando a galkeel-cal
 1. **Robustez do núcleo**: o OpenCASCADE em WASM falha em casos que o Parasolid/CGM resolvem (filetes complexos, cascas, booleanas degeneradas); falta medir a taxa de sucesso num conjunto de peças reais.
 2. **Escala**: montagens grandes (centenas de peças), modos leves, PDM/versões e trabalho em equipa.
 3. **Funcionalidades de produção**: chapa metálica, soldaduras/perfis, moldes, desenhos com cortes por patamares e normas completas, DWG.
-4. **FEM de nível formal**: cascas e vigas (estruturas de PRFV e chapa), hexaedros e métricas de qualidade da malha, contacto geral (faces curvas, auto-contacto), dinâmica e fadiga, compósitos laminados, e um **dossier de V&V** (benchmarks NAFEMS LE1/LE10/LE11, R0031, comparação com resultados publicados) — sem isto, não se defende um resultado perante um cliente ou um ON.
+4. **FEM de nível formal**: cascas e vigas (estruturas de PRFV e chapa), contacto geral (faces curvas, auto-contacto), dinâmica e fadiga, compósitos laminados, e um **dossier de V&V** (benchmarks NAFEMS LE1/LE10/LE11, R0031, comparação com resultados publicados) — sem isto, não se defende um resultado perante um cliente ou um ON.
 5. **Certificação de software**: nenhum. Os resultados são apoio à decisão de engenharia, com hipóteses à vista.
 
 Onde já é diferenciador: CAD + FEM/CFD + scripts + IA no mesmo documento, solvers abertos sem custo de licença, rastreabilidade (hipóteses, edição da norma, versão da ferramenta) em cada resultado, e a ligação direta ao caso da Galkeel.

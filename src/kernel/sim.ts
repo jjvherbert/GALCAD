@@ -5,7 +5,8 @@
 import type { CfdStudy, FemStudy, Study } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
 import type { TopoRef } from "../doc/types.ts";
-import { type Ctx, type StepReport, faces as resolveFaces } from "./context.ts";
+import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
+import { meshPlan } from "./meshplan.ts";
 import { T, type TopoDS_Shape, bbox, distance, explore, faceProps, makeCompound, normalOnFace, oc, v3, vertexAt, volume } from "./occ.ts";
 import { type CaseFace, type CfdCase, type FemCase, type FemCaseLoad, type SimCase, type V3, loadGroup } from "../sim/case.ts";
 import { femGeo, su2Geo } from "../sim/gmsh.ts";
@@ -53,11 +54,26 @@ export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
   const solid = bodyOf(ctx);
   const faces = caseFaces(ctx, solid);
   const b = bbox(solid);
-  return buildFemCase(s, ctx.scope, faces, (refs, what) => tagsOf(ctx, faces, solid, refs, what, report), { min: b.min as V3, max: b.max as V3 }, report);
+  const allEdges = explore(solid, "edge");
+  const edgeTags = (refs: TopoRef[], what: string) => {
+    if (!refs.length) throw new Error(`${what}: escolha as arestas`);
+    return resolveEdges(ctx, refs, report).map((ne) => {
+      const i = allEdges.findIndex((e) => e.IsSame(ne.edge));
+      if (i < 0) throw new Error(`${what}: a aresta "${ne.name}" não pertence ao corpo`);
+      return i + 1;
+    });
+  };
+  const geo: MeshGeo = { solids: [solid], faces: explore(solid, "face"), edges: allEdges, edgeTags };
+  return buildFemCase(s, ctx.scope, faces, (refs, what) => tagsOf(ctx, faces, solid, refs, what, report), { min: b.min as V3, max: b.max as V3 }, report, geo);
 }
 
 /** Caso FEM a partir das faces com tag e de um resolvedor de referências (peça ou montagem). */
-function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (refs: TopoRef[], what: string) => number[], box: { min: V3; max: V3 }, report: StepReport): FemCase {
+/** Topologia do BREP exportado para o plano da malha: sólidos, faces e arestas pela ordem do Gmsh. */
+interface MeshGeo { solids: TopoDS_Shape[]; faces: TopoDS_Shape[]; edges: TopoDS_Shape[]; edgeTags: (refs: TopoRef[], what: string) => number[]; names?: string[] }
+
+const HEX_NAME = (order: 1 | 2, integ: FemStudy["mesh"]["integration"]) => order === 2 ? (integ === "full" ? "C3D20 / HEXA20" : "C3D20R / HEXA20 (integração reduzida)") : integ === "full" ? "C3D8 / HEXA8 (integração completa)" : integ === "reduced" ? "C3D8R / HEXA8 (integração reduzida, controlo de hourglass)" : "C3D8I (modos incompatíveis) / HEXA8";
+
+function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (refs: TopoRef[], what: string) => number[], box: { min: V3; max: V3 }, report: StepReport, geo: MeshGeo): FemCase {
   const groups: Record<string, number[]> = {};
   const loads: FemCaseLoad[] = [];
   s.loads.forEach((l, i) => {
@@ -89,6 +105,19 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
   });
   const size = evalParam(s.mesh.size, sc, "Tamanho da malha");
   if (size <= 0) throw new Error("Tamanho da malha: tem de ser positivo");
+  // malha manual: seeds, faces mapeadas e hexaedros
+  const element = s.mesh.element ?? "tet";
+  const localSize = new Map<number, number>();
+  for (const l of local) for (const t of groups[l.group]) localSize.set(t, Math.min(l.size, localSize.get(t) ?? Infinity));
+  const plan = element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length ? meshPlan({
+    solids: geo.solids, faces: geo.faces, edges: geo.edges, size, localSize, element, hexMethod: s.mesh.hexMethod ?? "auto", names: geo.names,
+    seeds: (s.mesh.seeds ?? []).map((sd, i) => ({ tags: geo.edgeTags(sd.edges, `Seed ${i + 1}`), mode: sd.mode, value: evalParam(sd.value, sc, `Seed ${i + 1}`), bias: sd.bias === undefined || sd.bias === "" ? 1 : evalParam(sd.bias, sc, `Seed ${i + 1}: razão`), biasAt: sd.biasAt ?? "start" })),
+    mapped: s.mesh.mapped?.length ? tags(s.mesh.mapped, "Faces mapeadas") : [],
+  }) : undefined;
+  report.warnings.push(...(plan?.warnings ?? []));
+  const meshHyp = element === "hex"
+    ? `Malha: ${plan!.notes.join("; ")}, elementos ${HEX_NAME(s.mesh.order, s.mesh.integration)} (Gmsh), tamanho ${size} mm — confirmar a convergência refinando e a qualidade (pré-visualização da malha)`
+    : `Malha: tetraedros de ordem ${s.mesh.order} (Gmsh), tamanho máx. ${size} mm${plan?.notes.length ? `; ${plan.notes.join("; ")}` : ""} — confirmar a convergência refinando`;
   const thermal = s.analysis === "thermal";
   if (thermal && !s.loads.some((l) => l.kind === "temperature" || l.kind === "convection")) report.warnings.push("Térmica sem temperatura nem convecção imposta: o problema não tem solução única");
   if (!thermal && s.analysis !== "modal" && !s.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) report.warnings.push("Sem apoios: movimento de corpo rígido");
@@ -102,11 +131,15 @@ function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (r
   return {
     format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, probes: probes.length ? probes : undefined,
     material: s.material, groups, faces, loads, bbox: box,
-    mesh: { size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local },
+    mesh: {
+      size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local,
+      ...(element === "hex" ? { element, integration: s.mesh.integration ?? (s.mesh.order === 2 ? "reduced" : "incompatible") } : {}),
+      ...(plan ? { hexMethod: plan.hexMethod, volumes: plan.volumes, surfaces: plan.surfaces, curves: plan.curves } : {}),
+    },
     hypotheses: [
       analysisHyp,
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k ?? 50} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, Et = ${m.tangent} MPa` : ""})${m.source ? ` — ${m.source}` : ""}`,
-      `Malha: tetraedros de ordem ${s.mesh.order} (Gmsh), tamanho máx. ${size} mm — confirmar a convergência refinando`,
+      meshHyp,
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
       "Apoio à decisão de engenharia: não é certificação nem decisão de uma autoridade ou de um organismo notificado",
     ],
@@ -182,7 +215,26 @@ export function assemblyStudyCase(bodies: AsmBody[], s: FemStudy, scope: Ctx["sc
   };
   const boxes = bodies.map((b) => bbox(b.placed));
   const box = { min: [0, 1, 2].map((q) => Math.min(...boxes.map((b) => b.min[q]))) as V3, max: [0, 1, 2].map((q) => Math.max(...boxes.map((b) => b.max[q]))) as V3 };
-  const c = buildFemCase(s, scope, faces, tags, box, report);
+  const edgeOffset: number[] = [];
+  const allEdges: TopoDS_Shape[] = [];
+  for (const bd of bodies) { edgeOffset.push(allEdges.length); allEdges.push(...explore(bd.placed, "edge")); }
+  const edgeTags = (refs: TopoRef[], what: string) => {
+    if (!refs.length) throw new Error(`${what}: escolha as arestas`);
+    return refs.flatMap((r) => {
+      const cut = r.name.lastIndexOf("/");
+      const path = r.name.slice(0, cut), name = r.name.slice(cut + 1);
+      const k = bodies.findIndex((b) => b.path === path);
+      if (cut < 0 || k < 0) throw new Error(`${what}: a aresta "${r.name}" não é de um corpo da montagem`);
+      const local = explore(bodies[k].solid, "edge");
+      return resolveEdges(bodies[k].ctx, [{ ...r, name }], report).map((ne) => {
+        const i = local.findIndex((e) => e.IsSame(ne.edge));
+        if (i < 0) throw new Error(`${what}: a aresta "${name}" não existe em ${bodies[k].name}`);
+        return edgeOffset[k] + i + 1;
+      });
+    });
+  };
+  const geo: MeshGeo = { solids: bodies.map((b) => b.placed), faces: bodies.flatMap((b) => explore(b.placed, "face")), edges: allEdges, edgeTags, names: bodies.map((b) => b.name) };
+  const c = buildFemCase(s, scope, faces, tags, box, report, geo);
   c.title = title;
   c.bodies = bodies.map((b, k) => ({ group: `B${k + 1}`, path: b.path, name: b.name, material: s.bodyMaterials?.[b.path] ?? s.material, bbox: { min: boxes[k].min as V3, max: boxes[k].max as V3 } }));
   c.ties = [];

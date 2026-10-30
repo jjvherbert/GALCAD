@@ -10,11 +10,9 @@
 // escrava presos ao volume do corpo mestre).
 // Unidades: mm, N, MPa, t, s (como no CalculiX).
 import type { FemCase } from "./case.ts";
-import { type Msh, physicalBlocks, solidBlocks } from "./msh.ts";
+import { type Msh, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
+import { FACES, SOLIDS, faceIntegrals } from "./elements.ts";
 import { type FemResult, type FrdBlock, femResultFrom } from "./calculix.ts";
-
-/** Gmsh → ASTER/Abaqus: tetraedro de 10 nós com as arestas 2-4 e 3-4 trocadas (como no CalculiX). */
-const TET10_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 9, 8];
 const num = (x: number) => (Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1"));
 
 export interface AsterFiles {
@@ -27,56 +25,55 @@ export interface AsterFiles {
 
 /** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
 export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number[]; areas: Record<string, number> } {
-  const vol = solidBlocks(m, c.bodies);
-  if (!vol.length) throw new Error("A malha não tem tetraedros nos grupos dos corpos");
-  const quad = vol[0].type === 11;
+  if (!solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
   const L: string[] = ["TITRE", ` ${c.title.replace(/[^\x20-\x7e]/g, "_").slice(0, 70)}`, "FINSF", "%"];
   const used = new Set<number>();
-  const cells: { name: string; nodes: number[] }[] = [];
+  const cells: { name: string; type: string; nodes: number[] }[] = [];
   // células por corpo (montagens: B1, B2, …; peça: SOLID)
   const bodyCells: Record<string, string[]> = {};
   for (const g of c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"]) {
     bodyCells[g] = [];
-    for (const b of physicalBlocks(m, g).filter((x) => x.type === 4 || x.type === 11)) for (let k = 0; k < b.conn.length; k += quad ? 10 : 4) {
-      const e = b.conn.slice(k, k + (quad ? 10 : 4));
-      const n = quad ? TET10_ORDER.map((i) => e[i]) : e;
+    for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
+      const st = SOLIDS[e.type];
+      const n = st.toAster.map((i) => e.nodes[i]);
       n.forEach((x) => used.add(x));
-      cells.push({ name: `M${cells.length + 1}`, nodes: n });
+      cells.push({ name: `M${cells.length + 1}`, type: st.aster, nodes: n });
       bodyCells[g].push(cells.at(-1)!.name);
     }
   }
   const nodeOrder = [...used].sort((a, b) => a - b);
   L.push("COOR_3D");
   for (const t of nodeOrder) L.push(`N${t} ${m.nodes.get(t)!.map(num).join(" ")}`);
-  L.push("FINSF", "%", quad ? "TETRA10" : "TETRA4");
-  for (const e of cells) L.push(`${e.name} ${e.nodes.map((x) => `N${x}`).join(" ")}`);
   L.push("FINSF", "%");
+  // uma secção por tipo de célula (TETRA4/10, HEXA8/20; TRIA3/6, QUAD4/8)
+  const section = (list: { name: string; type: string; nodes: number[] }[]) => {
+    for (const type of [...new Set(list.map((x) => x.type))]) {
+      L.push(type);
+      // linhas até 80 colunas: as células grandes (HEXA20) continuam nas linhas seguintes
+      for (const e of list) if (e.type === type) for (let k = 0; k < e.nodes.length; k += 8) L.push(`${k ? "  " : `${e.name} `}${e.nodes.slice(k, k + 8).map((x) => `N${x}`).join(" ")}`);
+      L.push("FINSF", "%");
+    }
+  };
+  section(cells);
   const faceGroups: Record<string, string[]> = {};
   const nodeGroups: Record<string, number[]> = {};
   const areas: Record<string, number> = {};
-  const faces: string[] = [];
+  const faces: { name: string; type: string; nodes: number[] }[] = [];
   for (const name of Object.keys(c.groups)) {
-    const bl = physicalBlocks(m, name).filter((b) => b.type === 2 || b.type === 9);
     faceGroups[name] = [];
     const ns = new Set<number>();
     let A = 0;
-    for (const b of bl) {
-      const per = b.type === 9 ? 6 : 3;
-      for (let k = 0; k < b.conn.length; k += per) {
-        const n = b.conn.slice(k, k + per);
-        n.forEach((x) => ns.add(x));
-        const [P, Q, R] = n.slice(0, 3).map((x) => m.nodes.get(x)!);
-        const u = [Q[0] - P[0], Q[1] - P[1], Q[2] - P[2]], v = [R[0] - P[0], R[1] - P[1], R[2] - P[2]];
-        A += 0.5 * Math.hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
-        const id = `F${faces.length + 1}`;
-        faces.push(`${id} ${n.map((x) => `N${x}`).join(" ")}`);
-        faceGroups[name].push(id);
-      }
+    for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
+      nodes.forEach((x) => ns.add(x));
+      A += faceIntegrals(type, nodes.map((x) => m.nodes.get(x)!)).area;
+      const id = `F${faces.length + 1}`;
+      faces.push({ name: id, type: FACES[type].aster, nodes: FACES[type].toAster.map((i) => nodes[i]) });
+      faceGroups[name].push(id);
     }
     nodeGroups[name] = [...ns].sort((a, b) => a - b);
     areas[name] = A;
   }
-  if (faces.length) L.push(quad ? "TRIA6" : "TRIA3", ...faces, "FINSF", "%");
+  section(faces);
   const block = (kw: string, name: string, ids: string[]) => {
     L.push(kw, name);
     for (let k = 0; k < ids.length; k += 10) L.push(ids.slice(k, k + 10).join(" "));
@@ -114,7 +111,11 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   // a pressão segue a normal dos elementos de face: orientá-los para fora do volume
   const presGroups = c.loads.flatMap((ld) => (ld.kind === "pressure" ? [`'${ld.group}'`] : []));
   if (presGroups.length) C.push(`MA = MODI_MAILLAGE(reuse=MA, MAILLAGE=MA, ORIE_PEAU=_F(GROUP_MA_PEAU=(${presGroups.join(", ")},)))`);
-  C.push("MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='3D'))");
+  // hexaedros: integração reduzida = 3D_SI (sous-intégré); o code_aster não tem modos incompatíveis
+  const hex = c.mesh.element === "hex";
+  const modelisation = hex && c.mesh.integration === "reduced" ? "3D_SI" : "3D";
+  if (hex && c.mesh.order === 1 && c.mesh.integration !== "reduced") warnings.push("code_aster: HEXA8 com integração completa (o code_aster não tem modos incompatíveis como o C3D8I) bloqueia em flexão — use hexaedros de 20 nós ou o CalculiX");
+  C.push(`MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='${modelisation}'))`);
   const material = (name: string, m2: FemCase["material"]) => {
     if (nl?.plasticity && !(m2.yield! > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
     const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield!)})` : "";

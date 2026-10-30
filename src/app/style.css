@@ -352,6 +352,10 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .conv-plot .curve { fill: none; stroke: #2563eb; stroke-width: 1.5; }
 .conv-plot circle { fill: #2563eb; }
 .conv-plot .ext { stroke: #16a34a; stroke-dasharray: 4 3; }
+.conv-plot circle.base { fill: #dc2626; }
+.info-table tr.base td { font-weight: 600; }
+.quality .histogram { display: flex; align-items: flex-end; gap: 2px; height: 48px; max-width: 320px; margin: 6px 0 2px; border-bottom: 1px solid var(--line, #d1d5db); }
+.quality .histogram .bar { flex: 1; min-height: 1px; background: #2563eb; }
 .conv-plot text { fill: var(--muted, #6b7280); }
 /* scripts */
 .script-editor { width: 100%; min-height: 260px; font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace; tab-size: 2; white-space: pre; resize: vertical; box-sizing: border-box; }

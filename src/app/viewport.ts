@@ -455,7 +455,8 @@ export class Viewport {
       const col = new Float32Array(pos.length);
       if (vals && range) {
         const [lo, hi] = range;
-        vals.forEach((x, i) => { sequentialColor(hi > lo ? (x - lo) / (hi - lo) : 0, c); col.set([c.r, c.g, c.b], i * 3); });
+        // campo constante (ex.: malha toda perfeita): cor do meio da escala, para as arestas se verem
+        vals.forEach((x, i) => { sequentialColor(hi > lo ? (x - lo) / (hi - lo) : 0.5, c); col.set([c.r, c.g, c.b], i * 3); });
       } else col.fill(0.75);
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -463,6 +464,13 @@ export class Viewport {
       g.setIndex(l.triangles);
       g.computeVertexNormals();
       this.simGroup.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.7, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })));
+      // arestas dos elementos (pré-visualização da malha)
+      if (l.edges?.length) {
+        const eg = new THREE.BufferGeometry();
+        eg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        eg.setIndex(l.edges);
+        this.simGroup.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x1f2937, transparent: true, opacity: 0.55 })));
+      }
     }
     // contorno da peça não deformada, a cinzento, como referência
     if (this.edgeLines && fem && dmax > 0) {

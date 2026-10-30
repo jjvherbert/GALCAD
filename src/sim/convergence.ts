@@ -74,6 +74,17 @@ export interface ConvergenceReport {
   hypotheses: string[];
   /** Refinamento automático: alvo, grandeza seguida, se foi atingido, porquê parou e cada nível. */
   auto?: { target: number; metric: string; achieved: boolean; stop: string; steps: { level: number; size: number; cells: number; value: number; gci?: number; behaviour?: GciResult["behaviour"] }[] };
+  /**
+   * Varrimento ±n níveis à volta da malha pedida (k = +n … −n, tamanho h·r^k): valor da grandeza em
+   * cada malha, monotonia, extrapolação pelo trio mais fino e erro estimado da malha pedida.
+   */
+  sweep?: { metric: string; levels: number; steps: { level: number; size: number; cells: number; value: number }[]; monotonic: boolean; base: number; baseError?: number; stop?: string };
+}
+
+/** As diferenças entre malhas consecutivas mantêm o sinal (sem oscilação) — valores pela ordem do refinamento. */
+export function isMonotonic(values: number[]): boolean {
+  const d = values.slice(1).map((v, i) => v - values[i]).filter((x) => Math.abs(x) > 1e-12 * Math.max(1, ...values.map(Math.abs)));
+  return d.every((x) => Math.sign(x) === Math.sign(d[0]));
 }
 
 /** Junta as métricas das três malhas (fina → grossa) num relatório de convergência. */

@@ -18,6 +18,35 @@ export type FemCaseLoad =
   | { kind: "convection"; group: string; h: number; tInf: number }
   | { kind: "heatFlux"; group: string; q: number };
 
+/**
+ * Malha de um caso FEM (resolvida pelo núcleo; o Gmsh só a executa). Curvas e superfícies pelas
+ * tags do Gmsh (= ordem do OpenCASCADE), com a caixa envolvente de cada curva para conferir.
+ */
+export interface FemCaseMesh {
+  size: number;
+  minSize: number;
+  curvature: number;
+  order: 1 | 2;
+  local: { group: string; size: number }[];
+  /** Tetraedros (por omissão) ou hexaedros. */
+  element?: "tet" | "hex";
+  /**
+   * Hexaedros: volumes estruturados (transfinitos: cada volume tem 6 faces de 4 arestas) ou
+   * subdivisão de toda a malha em hexaedros (qualquer geometria, qualidade inferior).
+   */
+  hexMethod?: "structured" | "subdivision";
+  /** Volumes mapeados (transfinitos) e superfícies mapeadas (quadriláteros nos hexaedros). */
+  volumes?: number[];
+  surfaces?: number[];
+  /** Integração dos hexaedros: modos incompatíveis (C3D8I), completa ou reduzida. */
+  integration?: "incompatible" | "full" | "reduced";
+  /**
+   * Seeds das arestas: n.º de elementos e distribuição (progressão geométrica, "bump" nas duas
+   * pontas/no meio) — as do utilizador e as propagadas pelas faces mapeadas.
+   */
+  curves?: { tag: number; n: number; progression?: number; bump?: number; box: { min: V3; max: V3 }; length: number; user?: boolean }[];
+}
+
 export interface FemCase {
   format: "cadp-sim-case";
   version: 1;
@@ -33,7 +62,7 @@ export interface FemCase {
   groups: Record<string, number[]>;
   faces: CaseFace[];
   loads: FemCaseLoad[];
-  mesh: { size: number; minSize: number; curvature: number; order: 1 | 2; local: { group: string; size: number }[] };
+  mesh: FemCaseMesh;
   bbox: { min: V3; max: V3 };
   /**
    * Montagens: um corpo por volume (volume Gmsh k+1 → grupo B<k+1>) com o seu material e caixa

@@ -2,10 +2,10 @@
 // condições nas faces pelo nome topológico, malha, exportação do caso e cálculo no agente local.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemLoad, type FemStudy, type Probe, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
+import { type CfdStudy, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, type Study, SIM_FLUIDS, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { desktopAgent, store, useStore } from "./store.ts";
-import { Check, ExprInput, Field, RefList, Select } from "./forms.tsx";
-import { type RunResult, agentStatus, exportStudyCase, resultView, runStudy } from "./sim-client.ts";
+import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
+import { type RunResult, agentStatus, exportStudyCase, previewStudyMesh, resultView, runStudy } from "./sim-client.ts";
 import { fieldRange, layerShown, toggleLayer } from "../sim/result.ts";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
@@ -26,6 +26,18 @@ function newLoad(kind: FemLoad["kind"]): FemLoad {
     case "convection": return { kind, faces: [], h: 10, tInf: 20 };
     case "heatFlux": return { kind, faces: [], q: 1000 };
   }
+}
+
+/** Escolher um ponto clicando numa face do modelo (o ponto da peça mais próximo do clique). */
+function PointPick({ field, onPick }: { field: string; onPick: (p: [number, number, number]) => void }) {
+  const st = useStore();
+  const active = st.pickTarget?.field === field;
+  usePickTarget(field, (p) => {
+    if (p.kind !== "face" || !p.point) return;
+    onPick(p.point.map((x) => Math.round(x * 100) / 100) as [number, number, number]);
+    store.set({ pickTarget: null });
+  });
+  return <button class="small" onClick={() => store.set({ pickTarget: active ? null : { field, accept: ["face"] } })}>{active ? "Clique na peça…" : "Escolher ponto no 3D"}</button>;
 }
 
 function Vec3Input({ label, unit, value, onChange }: { label: string; unit: string; value: [Expr, Expr, Expr]; onChange: (v: [Expr, Expr, Expr]) => void }) {
@@ -216,18 +228,109 @@ function FemEditor({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>
             </div>
             {pr.at.kind === "faces"
               ? <RefList field={`probe${i}`} label="Faces" accept={["face"]} refs={pr.at.faces} onChange={(faces) => set({ at: { kind: "faces", faces } })} />
-              : <Vec3Input label="P" unit="mm" value={pr.at.point} onChange={(point) => set({ at: { kind: "point", point } })} />}
+              : <><Vec3Input label="P" unit="mm" value={pr.at.point} onChange={(point) => set({ at: { kind: "point", point } })} /><PointPick field={`probept${i}`} onPick={(point) => set({ at: { kind: "point", point } })} /></>}
           </div>
         );
       })}
       <button class="small" onClick={() => up({ probes: [...(s.probes ?? []), { name: `Sonda ${(s.probes ?? []).length + 1}`, quantity: thermal ? "T" : "u", at: { kind: "faces", faces: [] } }] })}>+ sonda</button>
+      <MeshEditor mesh={s.mesh} thermal={thermal} onChange={(mesh) => up({ mesh })} />
+    </>
+  );
+}
+
+const SEED_AT: [NonNullable<MeshSeed["biasAt"]>, string][] = [["start", "No início da aresta"], ["end", "No fim da aresta"], ["ends", "Nas duas pontas"], ["center", "No meio"]];
+
+/**
+ * Malha manual ao estilo do Femap: tamanho global e local, tetraedros ou hexaedros (estruturados ou
+ * por subdivisão), integração, seeds nas arestas (n.º ou tamanho, distribuição) e faces mapeadas.
+ */
+function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: boolean; onChange: (m: SimMesh) => void }) {
+  const set = (p: Partial<SimMesh>) => onChange({ ...m, ...p });
+  const hex = m.element === "hex";
+  const seeds = m.seeds ?? [];
+  const setSeed = (i: number, p: Partial<MeshSeed>) => set({ seeds: seeds.map((x, k) => (k === i ? { ...x, ...p } : x)) });
+  return (
+    <>
       <h3>Malha (Gmsh)</h3>
       <div class="row">
-        <ExprInput label="Tamanho máx." value={s.mesh.size} onChange={(size) => up({ mesh: { ...s.mesh, size: size ?? 5 } })} />
-        <Select label="Ordem" value={String(s.mesh.order) as "1" | "2"} options={[["2", "Quadráticos (C3D10)"], ["1", "Lineares (C3D4)"]]} onChange={(o) => up({ mesh: { ...s.mesh, order: Number(o) as 1 | 2 } })} />
+        <Select label="Elementos" value={m.element ?? "tet"} options={[["tet", "Tetraedros"], ["hex", "Hexaedros"]]} onChange={(element) => set({ element })} />
+        <Select label="Ordem" value={String(m.order) as "1" | "2"} options={hex ? [["2", "Quadráticos (20 nós)"], ["1", "Lineares (8 nós)"]] : [["2", "Quadráticos (C3D10)"], ["1", "Lineares (C3D4)"]]} onChange={(o) => set({ order: Number(o) as 1 | 2 })} />
       </div>
-      {s.mesh.order === 1 && !thermal && <p class="field-hint">Tetraedros lineares são demasiado rígidos em flexão: use quadráticos para tensões e deslocamentos.</p>}
+      <div class="row">
+        <ExprInput label="Tamanho máx." unit="mm" value={m.size} onChange={(size) => set({ size: size ?? 5 })} />
+        <Field label="Curvatura (elem./volta)"><input type="number" min="0" max="60" value={m.curvature ?? 12} onChange={(e) => set({ curvature: Number((e.target as HTMLInputElement).value) || 0 })} /></Field>
+      </div>
+      {hex && (
+        <div class="row">
+          <Select label="Método" value={m.hexMethod ?? "auto"} options={[["auto", "Automático"], ["structured", "Estruturado (mapeado)"], ["subdivision", "Subdivisão (qualquer forma)"]]} onChange={(hexMethod) => set({ hexMethod })} />
+          {!thermal && <Select label="Integração" value={m.integration ?? (m.order === 2 ? "reduced" : "incompatible")} options={m.order === 2 ? [["reduced", "Reduzida (C3D20R)"], ["full", "Completa (C3D20)"]] : [["incompatible", "Modos incompatíveis (C3D8I)"], ["full", "Completa (C3D8)"], ["reduced", "Reduzida (C3D8R)"]]} onChange={(integration) => set({ integration })} />}
+        </div>
+      )}
+      {hex && <p class="field-hint">Estruturado: cada volume tem de ser um bloco (6 faces de 4 arestas) — divida a peça em blocos como no Femap/Abaqus. Subdivisão: qualquer forma, cada tetraedro passa a 4 hexaedros (qualidade inferior).{m.order === 1 && m.integration === "full" ? " C3D8 com integração completa bloqueia em flexão: prefira C3D8I." : ""}{m.order === 1 && m.integration === "reduced" ? " C3D8R precisa de várias camadas na espessura (modos de hourglass)." : ""}</p>}
+      {!hex && m.order === 1 && !thermal && <p class="field-hint">Tetraedros lineares são demasiado rígidos em flexão: use quadráticos para tensões e deslocamentos.</p>}
+      <fieldset class="checklist">
+        <legend class="field-label">Seeds nas arestas</legend>
+        {seeds.map((sd, i) => (
+          <div class="kw-item" key={i}>
+            <div class="row">
+              <Select label="Por" value={sd.mode} options={[["count", "N.º de elementos"], ["size", "Tamanho (mm)"]]} onChange={(mode) => setSeed(i, { mode })} />
+              <ExprInput label={sd.mode === "count" ? "Elementos" : "Tamanho"} value={sd.value} onChange={(value) => setSeed(i, { value: value ?? 1 })} />
+              <button class="icon" aria-label={`Retirar seed ${i + 1}`} onClick={() => set({ seeds: seeds.filter((_, k) => k !== i) })}>✕</button>
+            </div>
+            <div class="row">
+              <ExprInput label="Razão maior/menor" allowEmpty value={sd.bias} onChange={(bias) => setSeed(i, { bias })} />
+              <Select label="Elementos pequenos" value={sd.biasAt ?? "start"} options={SEED_AT} onChange={(biasAt) => setSeed(i, { biasAt })} />
+            </div>
+            <RefList field={`seed${i}`} label="Arestas" accept={["edge", "face"]} refs={sd.edges} onChange={(edges) => setSeed(i, { edges })} />
+          </div>
+        ))}
+        <button class="small" onClick={() => set({ seeds: [...seeds, { edges: [], mode: "count", value: 10 }] })}>+ seed</button>
+        <p class="field-hint">Uma face escolhida conta como as suas arestas. Nas malhas mapeadas o n.º de elementos passa às arestas opostas; a distribuição também, no mesmo sentido. Confira o resultado na pré-visualização.</p>
+      </fieldset>
+      <RefList field="mesh.mapped" label="Faces mapeadas (4 arestas)" accept={["face"]} refs={m.mapped ?? []} onChange={(mapped) => set({ mapped })} />
+      <fieldset class="checklist">
+        <legend class="field-label">Refinamento local</legend>
+        {(m.local ?? []).map((l, i) => (
+          <div class="kw-item" key={i}>
+            <div class="row">
+              <ExprInput label="Tamanho" unit="mm" value={l.size} onChange={(size) => set({ local: (m.local ?? []).map((x, k) => (k === i ? { ...x, size: size ?? 1 } : x)) })} />
+              <button class="icon" aria-label={`Retirar refinamento ${i + 1}`} onClick={() => set({ local: (m.local ?? []).filter((_, k) => k !== i) })}>✕</button>
+            </div>
+            <RefList field={`local${i}`} label="Faces" accept={["face"]} refs={l.faces} onChange={(faces) => set({ local: (m.local ?? []).map((x, k) => (k === i ? { ...x, faces } : x)) })} />
+          </div>
+        ))}
+        <button class="small" onClick={() => set({ local: [...(m.local ?? []), { faces: [], size: 1 }] })}>+ refinamento</button>
+      </fieldset>
     </>
+  );
+}
+
+/** Relatório de qualidade da malha (pré-visualização): métricas, limites, histograma e piores elementos. */
+function QualityReport({ q }: { q: NonNullable<RunResult["quality"]> }) {
+  const lim = (l: { min?: number; max?: number }) => (l.min !== undefined ? `≥ ${l.min}` : `≤ ${l.max}`);
+  const sj = q.metrics.find((x) => x.key === "sj");
+  const peak = sj ? Math.max(...sj.hist.counts, 1) : 1;
+  return (
+    <details open class="quality">
+      <summary>Qualidade da malha {q.ok ? "" : "— com elementos inválidos"}</summary>
+      <table class="info-table">
+        <tr><td>Métrica</td><td>mín. · média · máx. — fora dos limites</td></tr>
+        {q.metrics.map((x) => (
+          <tr key={x.key}>
+            <td>{x.label}</td>
+            <td>{x.min.toPrecision(3)} · {x.mean.toPrecision(3)} · {x.max.toPrecision(3)}{x.unit} — {x.limits.map((l, i) => <span key={i} class={x.fail[i] ? "error-text" : ""}>{lim(l)}: {x.fail[i]}{i < x.limits.length - 1 ? "; " : ""}</span>)}</td>
+          </tr>
+        ))}
+      </table>
+      {sj && (
+        <div class="histogram" aria-label="Histograma do jacobiano escalado">
+          {sj.hist.counts.map((n, i) => <div key={i} class="bar" title={`${sj.hist.edges[i].toFixed(2)}–${sj.hist.edges[i + 1].toFixed(2)}: ${n}`} style={{ height: `${(100 * n) / peak}%` }} />)}
+        </div>
+      )}
+      {sj && <p class="muted">Jacobiano escalado de {sj.hist.edges[0].toFixed(1)} a 1 (1 = elemento perfeito)</p>}
+      {q.worst.length > 0 && <p class="muted">Piores elementos: {q.worst.slice(0, 5).map((w) => `n.º ${w.element} (J = ${w.sj.toFixed(2)}, em ${w.center.map((v) => v.toFixed(1)).join(", ")} mm)`).join("; ")}</p>}
+      <p class="field-hint">Limites por omissão: ângulos das faces, razão de aspeto e fator de forma como no Verify Mesh do Abaqus/CAE; jacobiano e empeno como no Femap. Elementos assinalados longe das zonas de interesse costumam ser aceitáveis.</p>
+    </details>
   );
 }
 
@@ -286,16 +389,17 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
   const [busy, setBusy] = useState(false);
   const [conv, setConv] = useState(false);
   const [ratio, setRatio] = useState(1.5);
-  const [auto, setAuto] = useState(false);
+  const [mode, setMode] = useState<"three" | "auto" | "sweep">("three");
+  const auto = mode === "auto";
   const [target, setTarget] = useState(1);
   const [levels, setLevels] = useState(5);
   const [metric, setMetric] = useState("");
   const a = st.agent;
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult : null;
-  const run = async () => {
+  const run = async (meshOnly = false) => {
     setBusy(true);
     try {
-      const { result } = await runStudy(s.id, a.url, a.token, conv ? { ratio, ...(auto ? { target: target / 100, maxLevels: levels, metric: metric || undefined } : {}) } : undefined);
+      const { result } = meshOnly ? await previewStudyMesh(s.id, a.url, a.token) : await runStudy(s.id, a.url, a.token, conv ? { ratio, ...(auto ? { target: target / 100, maxLevels: levels, metric: metric || undefined } : mode === "sweep" ? { sweep: 3, metric: metric || undefined } : {}) } : undefined);
       store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, message: `Calculado em ${result.seconds.toFixed(1)} s` });
     } catch (e) {
       store.set({ error: (e as Error).message });
@@ -317,26 +421,30 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
       <Check label="Estudo de convergência da malha (GCI)" value={conv} onChange={setConv} />
       {conv && (
         <fieldset class="checklist">
-          <Select label="Modo" value={auto ? "auto" : "three"} options={[["three", "3 malhas: h, r·h, r²·h"], ["auto", "Automático: refinar até ao GCI alvo"]]} onChange={(m) => setAuto(m === "auto")} />
+          <Select label="Modo" value={mode} options={[["three", "3 malhas: h, r·h, r²·h"], ["sweep", "±3 níveis: 7 malhas à volta de h"], ["auto", "Automático: refinar até ao GCI alvo"]]} onChange={(m) => { setMode(m); if (m === "sweep" && ratio > 1.4) setRatio(1.35); }} />
           <Field label="Razão r entre malhas"><input type="number" min="1.1" max="3" step="0.1" value={ratio} onChange={(e) => setRatio(Number((e.target as HTMLInputElement).value) || 1.5)} /></Field>
-          {auto && (
+          {(auto || mode === "sweep") && (
             <>
-              <div class="row">
+              {auto && <div class="row">
                 <Field label="GCI alvo (%)"><input type="number" min="0.05" max="50" step="0.1" value={target} onChange={(e) => setTarget(Number((e.target as HTMLInputElement).value) || 1)} /></Field>
                 <Field label="Máx. malhas"><input type="number" min="3" max="8" value={levels} onChange={(e) => setLevels(Number((e.target as HTMLInputElement).value) || 5)} /></Field>
-              </div>
+              </div>}
               <Select label="Grandeza seguida" value={metric} options={[["", "Primeira sonda (ou deslocamento máx.)"], ...((s.physics === "fem" ? s.probes ?? [] : []).map((p, i): [string, string] => [`probe${i + 1}`, `Sonda: ${p.name}`])), ["umax", "Deslocamento máx."], ["f1", "Frequência 1"], ["tmax", "Temperatura máx."], ["dp", "Queda de pressão (CFD)"], ["drag", "Arrasto (CFD)"]]} onChange={setMetric} />
             </>
           )}
-          <p class="field-hint">{auto ? "Refina a partir do tamanho pedido (h, h/r, h/r², …) até o GCI da grandeza ficar abaixo do alvo com convergência monotónica, ou até ao máximo de malhas." : "Corre também com malhas r·h e r²·h (mais grossas) e estima a incerteza da malha pedida."} Use sondas (valores em pontos ou médias em faces): os máximos junto a cantos vivos e apoios não convergem. Celik et al. 2008 / ASME V&V 20.</p>
+          <p class="field-hint">{mode === "sweep" ? "Sete malhas h·r^k (k = 3 … −3): três mais grossas e três mais finas que a pedida, a grandeza seguida em cada uma, monotonia, extrapolação pelo trio mais fino e o erro estimado da malha pedida. Para um ponto da peça: crie uma sonda «Ponto» e escolha-o no 3D (r = 1,35 por omissão: a mais fina tem ~15× os elementos da pedida)." : auto ? "Refina a partir do tamanho pedido (h, h/r, h/r², …) até o GCI da grandeza ficar abaixo do alvo com convergência monotónica, ou até ao máximo de malhas." : "Corre também com malhas r·h e r²·h (mais grossas) e estima a incerteza da malha pedida."} Use sondas (valores em pontos ou médias em faces): os máximos junto a cantos vivos e apoios não convergem. Celik et al. 2008 / ASME V&V 20.</p>
         </fieldset>
       )}
-      <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{busy ? "A calcular…" : "Calcular no agente local"}</button>
+      <div class="row">
+        {s.physics === "fem" && <button class="small" disabled={busy || !a.token} onClick={() => void run(true)}>Pré-visualizar malha</button>}
+        <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{busy ? "A calcular…" : "Calcular no agente local"}</button>
+      </div>
       {r && (
         <div class="kw-item ok">
           <b>{r.solver}</b>
           <table class="info-table">{r.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>
           {r.warnings.map((w) => <p key={w} class="error-text">{w}</p>)}
+          {r.quality && <QualityReport q={r.quality} />}
           {view && (
             <>
               {view.fields.length > 0 && (
@@ -378,6 +486,7 @@ function RunBox({ s, doc }: { s: Study; doc: string }) {
                   </tr>
                 ))}
               </table>
+              {r.convergence.sweep && <SweepPlot sw={r.convergence.sweep} ext={r.convergence.rows.find((x) => x.key === r.convergence!.sweep!.metric)?.gci.extrapolated} label={r.convergence.rows.find((x) => x.key === r.convergence!.sweep!.metric)?.label ?? r.convergence.sweep.metric} />}
               {r.convergence.auto && <ConvergencePlot auto={r.convergence.auto} ext={r.convergence.rows.find((x) => x.key === r.convergence!.auto!.metric)?.gci.extrapolated} label={r.convergence.rows.find((x) => x.key === r.convergence!.auto!.metric)?.label ?? r.convergence.auto.metric} />}
               <ul class="muted">{r.convergence.hypotheses.map((h) => <li key={h}>{h}</li>)}</ul>
             </details>
@@ -407,6 +516,37 @@ function SimLegend() {
 }
 
 /** Refinamento automático: valor da grandeza por nível contra o tamanho de malha, com o extrapolado. */
+/** Varrimento ±n níveis: valor por malha (h = (1/N)^⅓), extrapolado, monotonia e erro da malha pedida. */
+function SweepPlot({ sw, ext, label }: { sw: NonNullable<NonNullable<RunResult["convergence"]>["sweep"]>; ext?: number; label: string }) {
+  const pts = sw.steps.filter((x) => Number.isFinite(x.value));
+  if (!pts.length) return null;
+  const W = 260, H = 120, P = 28;
+  const hs = pts.map((x) => (1 / x.cells) ** (1 / 3));
+  const vs = [...pts.map((x) => x.value), ...(ext !== undefined && Number.isFinite(ext) ? [ext] : [])];
+  const h1 = Math.max(...hs) * 1.05, v0 = Math.min(...vs), v1 = Math.max(...vs);
+  const X = (h: number) => P + (h / (h1 || 1)) * (W - P - 6), Y = (v: number) => H - 18 - ((v - v0) / (v1 - v0 || 1)) * (H - 30);
+  return (
+    <>
+      <p class="muted">{label}: {sw.monotonic ? "✓ monotónica" : "✗ não monotónica"}{sw.baseError !== undefined ? ` · erro estimado da malha pedida ${pct(sw.baseError)}` : ""}{sw.stop ? ` · ${sw.stop}` : ""}</p>
+      <svg class="conv-plot" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Varrimento da malha">
+        <line x1={P} y1={H - 18} x2={W - 4} y2={H - 18} class="axis" />
+        <line x1={P} y1={6} x2={P} y2={H - 18} class="axis" />
+        {ext !== undefined && Number.isFinite(ext) && <line x1={P} x2={W - 4} y1={Y(ext)} y2={Y(ext)} class="ext" />}
+        <polyline points={pts.map((x, i) => `${X(hs[i])},${Y(x.value)}`).join(" ")} class="curve" />
+        {pts.map((x, i) => <circle key={i} cx={X(hs[i])} cy={Y(x.value)} r={x.level === 0 ? 4 : 2.5} class={x.level === 0 ? "base" : ""} />)}
+        <text x={P} y={H - 4}>0</text>
+        <text x={W - 6} y={H - 4} text-anchor="end">h = (1/N)^⅓</text>
+        <text x={P - 3} y={Y(v1) + 3} text-anchor="end">{num(v1)}</text>
+        <text x={P - 3} y={Y(v0) + 3} text-anchor="end">{num(v0)}</text>
+      </svg>
+      <table class="info-table sweep">
+        <tr><td>Nível · tamanho</td><td>Elementos · valor</td></tr>
+        {sw.steps.map((x) => <tr key={x.level} class={x.level === 0 ? "base" : ""}><td>{x.level > 0 ? `+${x.level}` : x.level}{x.level === 0 ? " (pedida)" : ""} · {num(x.size)} mm</td><td>{x.cells} · {num(x.value)}</td></tr>)}
+      </table>
+    </>
+  );
+}
+
 function ConvergencePlot({ auto, ext, label }: { auto: NonNullable<NonNullable<RunResult["convergence"]>["auto"]>; ext?: number; label: string }) {
   const pts = auto.steps.filter((x) => Number.isFinite(x.value));
   if (!pts.length) return null;

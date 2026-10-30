@@ -66,6 +66,30 @@ async function main() {
       const ext = Number(cv.match(/Deslocamento máx\. \(mm\)[\d.\s/]+→\s*([\d.]+)/)?.[1]);
       check("convergência: flecha extrapolada ≈ 0,192 mm", Math.abs(ext - 0.192) < 0.004 && /GCI/.test(cv), cv.slice(0, 260));
       await p.click(".sim-panel label:has-text('Estudo de convergência') input");
+      // malha manual: hexaedros estruturados, pré-visualização com a qualidade e as arestas no 3D
+      await p.selectOption(".sim-panel label.field:has-text('Elementos') select", "hex");
+      await p.waitForSelector(".sim-panel label.field:has-text('Método') select");
+      await p.click(".sim-panel button:has-text('Pré-visualizar malha')");
+      await p.waitForSelector(".sim-panel details.quality", { timeout: 120000 });
+      const q = (await p.textContent(".sim-panel details.quality")).replace(/\s+/g, " ");
+      check("pré-visualização: qualidade dos hexaedros", /Jacobiano escalado\s*1\.00 · 1\.00 · 1\.00/.test(q) && /Empeno/.test(q), q.slice(0, 200));
+      check("pré-visualização: malha estruturada no 3D", /hexaedros de 20 nós/.test(await p.textContent(".sim-panel .info-table")) && (await p.$eval(".viewport", (e) => e.dataset.sim)) === "1");
+      await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-malha.png") });
+      await p.click(".sim-panel button:has-text('Calcular no agente local')");
+      await p.waitForFunction(() => /Deslocamento máx/.test(document.querySelector(".sim-panel .info-table")?.textContent ?? ""), null, { timeout: 240000 });
+      const th = (await p.textContent(".sim-panel .info-table")).replace(/\s+/g, " ");
+      const dh = Number(th.match(/Deslocamento máx\.\s*([\d.]+) mm/)?.[1]);
+      check("consola em C3D20R ≈ 0,192 mm", Math.abs(dh - 0.192) < 0.01 && /hexaedros de 20 nós/.test(th), th.slice(0, 160));
+      // convergência ±3 níveis (7 malhas de hexaedros à volta de h)
+      await p.click(".sim-panel label:has-text('Estudo de convergência') input");
+      await p.selectOption(".sim-panel label.field:has-text('Modo') select", "sweep");
+      await p.click(".sim-panel button:has-text('Calcular no agente local')");
+      await p.waitForSelector(".sim-panel table.sweep", { timeout: 600000 });
+      const sw = (await p.textContent(".sim-panel details.convergence")).replace(/\s+/g, " ");
+      check("convergência ±3: 7 malhas e monotonia", (await p.$$(".sim-panel table.sweep tr")).length === 8 && /monotónica/.test(sw) && /\(pedida\)/.test(sw), sw.slice(0, 240));
+      await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-varrimento.png") });
+      await p.click(".sim-panel label:has-text('Estudo de convergência') input");
+      await p.selectOption(".sim-panel label.field:has-text('Elementos') select", "tet");
       if (has("simpleFoam") || fs.existsSync("/usr/share/openfoam/etc/bashrc")) {
         await p.selectOption(".sim-panel select[aria-label=Estudo]", "s2");
         await p.waitForTimeout(300);
