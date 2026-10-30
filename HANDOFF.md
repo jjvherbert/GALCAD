@@ -34,7 +34,9 @@ Solver «OpenRadioss» no estudo FEM (só dinâmica explícita, elementos linear
 
 **Limites:** só material elástico, forças e gravidade, sem contacto nem deslocamentos/velocidades impostos; AGPL-3.0 — oferecer o código com o instalador (VALIDAR com jurista).
 
-**Próxima ação:** confirmar o instalador Windows com o OpenRadioss; depois LAW2/LAW36, /INTER/TYPE7 e /IMPVEL para impacto real, e o módulo de otimização (scripts, otimização topológica).
+**Verificado no Windows real** (Instalador Windows, execução 41032863195, commit `291ff14`): 18/18 casos de referência com os solvers incluídos, 0 saltados — OpenRadioss real (consola sob degrau), dinâmica implícita/explícita do CalculiX e implícita do code_aster, hexaedros (C3D8I/C3D20R, HEXA20, seeds, pré-visualização), e os anteriores (code_aster, XFOIL, atrito, modal/térmica, OpenFOAM, SU2). Instalador de 673 MB (artefacto `GALCAD-Setup` dessa execução), instalado em silêncio e a app instalada calculou a consola (0,1910 mm).
+
+**Próxima ação:** LAW2/LAW36, /INTER/TYPE7 e /IMPVEL para impacto real, e o módulo de otimização (scripts, otimização topológica).
 
 ## Atualização: o setup instala todos os solvers
 
