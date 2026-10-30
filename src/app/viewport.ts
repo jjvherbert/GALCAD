@@ -1178,12 +1178,47 @@ export class Viewport {
     });
   }
 
+  // --- esboço sobre o modelo -------------------------------------------------------------
+
+  private sketchBase: CamState | null = null;
+
+  /**
+   * Alinha a câmara com o editor do esboço: normal ao plano (x para a direita, y para cima, z para
+   * o observador) e com a escala e a posição do editor (px = tx + u·k, py = ty − v·k, em píxeis do
+   * canvas do esboço), para o modelo se ver por trás do esboço transparente. A primeira chamada
+   * guarda a vista anterior (para `leaveSketchView`) e, se `animated`, desliza até lá.
+   */
+  setSketchCamera(frame: { o: Vec3; x: Vec3; y: Vec3; z: Vec3 }, k: number, tx: number, ty: number, canvas: HTMLElement, animated: boolean) {
+    const base = !this.sketchBase;
+    if (base) this.sketchBase = this.save();
+    const apply = () => {
+      const r = canvas.getBoundingClientRect(), vr = this.el.getBoundingClientRect();
+      const W = this.el.clientWidth || 1, H = this.el.clientHeight || 1;
+      const uc = (W / 2 - (r.left - vr.left) - tx) / k, vc = (ty - (H / 2 - (r.top - vr.top))) / k;
+      const target = new THREE.Vector3(...frame.o).addScaledVector(new THREE.Vector3(...frame.x), uc).addScaledVector(new THREE.Vector3(...frame.y), vc);
+      this.target.copy(target);
+      this.camera.up.set(...frame.y);
+      this.camera.position.copy(target).addScaledVector(new THREE.Vector3(...frame.z).normalize(), this.size * 20);
+      this.camera.zoom = Math.min(1e4, Math.max(1e-3, (2 * k * this.size) / H));
+      this.camera.lookAt(target);
+      this.updateProj();
+      this.publish();
+    };
+    if (base && animated) this.smooth(apply, 420);
+    else { this.finishAnim(); apply(); this.camera.updateMatrixWorld(true); }
+  }
+
+  /** Sai do esboço: a vista volta (com transição) à que havia antes de o abrir. */
+  leaveSketchView() {
+    const b = this.sketchBase;
+    this.sketchBase = null;
+    if (b) this.smooth(() => this.restore(b));
+  }
+
   // --- transições da câmara (como o SolidWorks: as mudanças de vista deslizam) ---------
 
   /** Transições animadas das vistas; desligadas com prefers-reduced-motion. */
   animate = typeof matchMedia === "function" ? !matchMedia("(prefers-reduced-motion: reduce)").matches : true;
-  /** A vista foi rodada para o plano do esboço: voltar a ela ao sair do esboço. */
-  returnAfterSketch = false;
   private smoothing = false;
   private anim: { t0: number; ms: number; a: CamState; b: CamState; qa: THREE.Quaternion; qb: THREE.Quaternion } | null = null;
 

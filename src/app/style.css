@@ -127,7 +127,7 @@ table.vars input { width: 100%; }
 table.vars tr.invalid input { border-color: var(--bad); }
 
 /* editor de esboço */
-.sketch-editor { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+.sketch-editor { position: absolute; inset: 0; display: flex; flex-direction: column; background: transparent; }
 .sk-toolbar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .sk-relations { position: absolute; z-index: 5; top: 8px; left: 8px; right: 8px; width: fit-content; max-width: calc(100% - 16px); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 4px 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
 .sk-toolbar button { display: flex; gap: 4px; align-items: center; }
@@ -483,8 +483,7 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .plane-card small { color: var(--muted); font-size: 11px; }
 
 /* transição para o editor de esboço */
-.sketch-editor { animation: sketch-in .28s var(--ease) both; }
-@keyframes sketch-in { from { opacity: 0; transform: scale(1.03); } to { opacity: 1; transform: none; } }
+
 
 /* ajuda animada das features (dica na barra e cartão no painel) */
 .feature-tip { position: fixed; z-index: 50; width: 330px; display: grid; grid-template-columns: 112px 1fr; gap: 10px; padding: 10px; border-radius: 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-top: 3px solid var(--ws-accent, #018a8a); box-shadow: 0 12px 32px rgba(10, 36, 100, .22); pointer-events: none; animation: tip-in .18s var(--ease) both; }
@@ -559,3 +558,35 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .set-chips { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 0; }
 .chip { border-radius: 999px; padding: 1px 9px; font-size: 11px; border: 1px solid var(--line); background: var(--panel); }
 .chip.on { background: var(--accent-soft); border-color: var(--ws-accent, #018a8a); font-weight: 600; }
+
+/* esboço: fundo transparente sobre o modelo 3D (a câmara acompanha o editor), como no SolidWorks */
+.sk-toolbar { animation: sk-bar-in .3s var(--ease) both; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px; padding: 5px 8px; box-shadow: 0 1px 0 var(--line), 0 6px 16px rgba(10, 36, 100, .07); }
+.sk-toolbar::-webkit-scrollbar { display: none; }
+.sk-toolbar > button { min-width: 34px; justify-content: center; border-color: transparent; background: transparent; padding: 4px 7px; border-radius: 8px; }
+.sk-toolbar > button:hover:not(:disabled) { background: var(--accent-soft); }
+.sk-toolbar > button.on { background: var(--accent-soft); border-color: var(--ws-accent, var(--accent)); font-weight: 600; }
+.sk-toolbar > button .lb { display: none; }
+.sk-toolbar > button.on .lb { display: inline; }
+.sk-toolbar > button .ic { font-size: 16px; }
+.sk-toolbar > .sep { margin: 0 6px; }
+@keyframes sk-bar-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.sk-status { animation: sk-bar-in-up .3s var(--ease) both; }
+@keyframes sk-bar-in-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.sk-canvas svg { transition: opacity .3s var(--ease); }
+.sk-canvas.entering svg, .sk-canvas.entering .sk-relations { opacity: 0; }
+.sk-canvas.entered svg { opacity: 1; }
+.sk-canvas .grid line.g { stroke: rgba(15, 23, 42, .045); }
+.sk-canvas .grid line.g5 { stroke: rgba(15, 23, 42, .10); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .sk-canvas .grid line.g { stroke: rgba(255, 255, 255, .05); } :root:not([data-theme="light"]) .sk-canvas .grid line.g5 { stroke: rgba(255, 255, 255, .11); } }
+:root[data-theme="dark"] .sk-canvas .grid line.g { stroke: rgba(255, 255, 255, .05); } :root[data-theme="dark"] .sk-canvas .grid line.g5 { stroke: rgba(255, 255, 255, .11); }
+.sk-canvas .ent, .sk-canvas .pt, .sk-canvas .origin, .sk-canvas .axis { filter: drop-shadow(0 0 1.2px rgba(255, 255, 255, .95)); }
+:root[data-theme="dark"] .sk-canvas .ent, :root[data-theme="dark"] .sk-canvas .pt { filter: drop-shadow(0 0 1.2px rgba(0, 0, 0, .9)); }
+.sk-canvas .ref-in { stroke: #018a8a; opacity: .75; }
+/* canto de confirmação (✓ e ✕), como no SolidWorks */
+.sk-confirm { position: absolute; z-index: 6; top: 10px; right: 12px; display: flex; gap: 8px; animation: sk-confirm-in .35s var(--ease) .25s both; }
+@keyframes sk-confirm-in { from { opacity: 0; transform: translateY(-10px) scale(.92); } to { opacity: 1; transform: none; } }
+.sk-confirm button { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 8px; border-radius: 999px; font-weight: 600; box-shadow: 0 4px 14px rgba(10, 36, 100, .18); }
+.sk-confirm .ic { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 13px; }
+.sk-confirm .ok { background: var(--panel); border-color: #16a34a; } .sk-confirm .ok .ic { background: #16a34a; }
+.sk-confirm .no { background: var(--panel); border-color: #dc2626; } .sk-confirm .no .ic { background: #dc2626; }
+.sk-confirm button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(10, 36, 100, .26); }

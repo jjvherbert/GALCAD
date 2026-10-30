@@ -70,9 +70,11 @@ async function main() {
       check("três planos para escolher", (await p.$$(".plane-card")).length === 3);
       check("seleção no 3D ativa logo", /Modo de seleção: faces \/ planos/.test(await p.textContent("body")));
       await p.keyboard.press("2");  // tecla 2 = Frente (sem clicar)
-      check("Frente: vista normal ao plano XZ", (await ds(p, "viewDir")) === "0.000,-1.000,0.000", await ds(p, "viewDir"));
-      await p.waitForSelector(".sk-canvas", { timeout: 5000 });
-      check("o esboço abre depois da rotação", true);
+      await p.waitForFunction(() => document.querySelector(".viewport").dataset.viewDir === "0.000,-1.000,0.000", null, { timeout: 5000 }).catch(() => {});
+      check("Frente: a vista roda normal ao plano XZ", (await ds(p, "viewDir")) === "0.000,-1.000,0.000", await ds(p, "viewDir"));
+      await p.waitForSelector(".sk-canvas.entered", { timeout: 5000 });
+      check("o esboço entra depois da rotação (fundo transparente sobre o 3D)", (await p.$eval(".sketch-editor", (e) => getComputedStyle(e).backgroundColor)) === "rgba(0, 0, 0, 0)");
+      check("canto de confirmação ✓/✕", (await p.$$(".sk-confirm button")).length === 2);
       await p.click(".sketch-editor button:has-text('Cancelar')");
       await p.waitForFunction((b) => document.querySelector(".viewport").dataset.viewDir === b, before, { timeout: 3000 }).catch(() => {});
       check("sair do esboço volta à vista anterior", (await ds(p, "viewDir")) === before, `${before} → ${await ds(p, "viewDir")}`);

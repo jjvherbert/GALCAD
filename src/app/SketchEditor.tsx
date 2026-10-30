@@ -1,5 +1,5 @@
 // Editor de esboço 2D (SVG): desenho, seleção, arrasto com o solver, restrições e cotas.
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ConstraintType, SketchConstraint, SketchEntity } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
@@ -13,6 +13,7 @@ import {
 } from "../sketch/ops.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStore } from "./store.ts";
+import { commandViewport } from "./commands.ts";
 
 type Tool = "select" | "line" | "rect" | "circle" | "arc" | "spline" | "point" | "dim" | "trim" | "extend" | "skfillet" | "offset" | "convert";
 type DimMode = "auto" | "horizontal" | "vertical";
@@ -182,6 +183,17 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   }, [size, refEdges, view]);
 
   const v = view ?? { k: 2, tx: size[0] / 2, ty: size[1] / 2 };
+  // o modelo 3D vê-se por trás do esboço (fundo transparente, como no SolidWorks): a câmara fica
+  // normal ao plano e alinhada com este editor; a primeira vez desliza do ponto de vista da peça
+  const first = useRef(true);
+  const [entered, setEntered] = useState(false);
+  useLayoutEffect(() => {
+    const vp = commandViewport();
+    if (!vp || !frame || !view || !wrap.current || size[0] < 10) return;
+    vp.setSketchCamera(frame, view.k, view.tx, view.ty, wrap.current, first.current);
+    if (first.current) { first.current = false; window.setTimeout(() => setEntered(true), vp.animate ? 320 : 0); }
+  }, [frame, view?.k, view?.tx, view?.ty, size[0], size[1]]);
+  useEffect(() => () => commandViewport()?.leaveSketchView(), []);
   const S = (p: P2): [number, number] => [p[0] * v.k + v.tx, -p[1] * v.k + v.ty];
   const W = (sx: number, sy: number): P2 => [(sx - v.tx) / v.k, -(sy - v.ty) / v.k];
   const local = (e: { clientX: number; clientY: number }): [number, number] => {
@@ -658,11 +670,12 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
         <button title="Ajustar ao ecrã (F)" onClick={() => setView(null)}><span class="ic">⤢</span></button>
         <button title="Desfazer (Ctrl+Z)" disabled={!hist.current.canUndo} onClick={undo}><span class="ic">↶</span></button>
         <button title="Refazer (Ctrl+Y)" disabled={!hist.current.canRedo} onClick={redo}><span class="ic">↷</span></button>
-        <span class="grow" />
-        <button class="primary" onClick={() => store.exitSketch(true)} title="Guardar o esboço e sair">Sair do esboço</button>
-        <button onClick={() => store.exitSketch(false)}>Cancelar</button>
       </div>
-      <div ref={wrap} class="sk-canvas" onWheel={onWheel as never} onContextMenu={(e) => e.preventDefault()}>
+      <div ref={wrap} class={`sk-canvas ${entered ? "entered" : "entering"}`} onWheel={onWheel as never} onContextMenu={(e) => e.preventDefault()}>
+        <div class="sk-confirm" role="group" aria-label="Terminar o esboço">
+          <button class="ok" onClick={() => store.exitSketch(true)} title="Guardar o esboço e sair (como o ✓ do SolidWorks)"><span class="ic">✓</span><span>Sair do esboço</span></button>
+          <button class="no" onClick={() => store.exitSketch(false)} title="Descartar as alterações e sair"><span class="ic">✕</span><span>Cancelar</span></button>
+        </div>
         {entitySel.length > 0 && (
           <div class="sk-relations" aria-label="Relações">
             <span class="muted">Relações:</span>
@@ -678,7 +691,6 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
         <svg width={size[0]} height={size[1]} onPointerDown={onDown as never} onPointerMove={onMove as never} onPointerUp={onUp as never} class={`tool-${tool}`}>
           <Grid v={v} w={size[0]} h={size[1]} />
           <g class="ref-edges">
-            {refEdges.other.map(([a, b], i) => <line key={`o${i}`} class="ref-other" x1={S(a)[0]} y1={S(a)[1]} x2={S(b)[0]} y2={S(b)[1]} />)}
             {refEdges.inPlane.map(([a, b], i) => <line key={`i${i}`} class="ref-in" x1={S(a)[0]} y1={S(a)[1]} x2={S(b)[0]} y2={S(b)[1]} />)}
             {tool === "convert" && hover?.startsWith("ref:") && (() => {
               const g = refGroups[Number(hover.slice(4))];

@@ -4,7 +4,7 @@ import type { PlaneRef, Variable } from "../doc/types.ts";
 import { resolveVariables } from "../doc/variables.ts";
 import { store, useStore } from "./store.ts";
 import { PlaneSelect, usePickTarget } from "./forms.tsx";
-import { commandViewport, planeFrame } from "./commands.ts";
+import { commandViewport } from "./commands.ts";
 
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 6 });
 
@@ -66,16 +66,8 @@ const planeKey = (name: string) => `plane:${JSON.stringify({ kind: "std", name }
  */
 export function PlaneChooser() {
   const [plane, setPlane] = useState<PlaneRef>({ kind: "std", name: "XY" });
-  const begin = (p: PlaneRef) => {
-    const v = commandViewport();
-    const fr = planeFrame(p);
-    v?.setHoverKey(null);
-    if (v && fr && v.animate) {
-      v.normalTo(fr.o, fr.z, fr.y);
-      v.returnAfterSketch = true; // ao sair do esboço, a vista volta à de antes (como no SolidWorks)
-      setTimeout(() => { if (store.state.choosingPlane) store.startSketch(p); else v.returnAfterSketch = false; }, 340);
-    } else store.startSketch(p);
-  };
+  // o editor do esboço roda a vista para o plano ao abrir (como o SolidWorks)
+  const begin = (p: PlaneRef) => { commandViewport()?.setHoverKey(null); store.startSketch(p); };
   usePickTarget("sketch-start", (p) => {
     if (p.kind === "plane") begin(p.ref);
     else if (p.kind === "face") {
