@@ -1,6 +1,6 @@
 // Navegação e comandos ao estilo do SolidWorks, no Chromium. Uso: npm run build && npm run test:e2e
 const { chromium } = require("playwright");
-const { spawn } = require("node:child_process");
+const { startPreview } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -8,7 +8,7 @@ const PORT = 4180;
 const URL = `http://localhost:${PORT}`;
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   try {
     for (let i = 0; i < 60; i++) {
       try { if ((await fetch(URL)).ok) break; } catch { /* a arrancar */ }

@@ -25,6 +25,14 @@ export class KernelClient {
       if (data.ok) p.resolve(data.result as never);
       else p.reject(new Error(data.error));
     };
+    // um aborto do WASM mata o worker sem resposta: sem isto as promessas ficavam penduradas para sempre
+    const fail = (why: string) => {
+      console.error(`Núcleo: ${why}`);
+      for (const p of this.pending.values()) p.reject(new Error(`Núcleo: ${why}`));
+      this.pending.clear();
+    };
+    this.worker.onerror = (e) => { e.preventDefault(); fail(e.message || "o worker terminou com erro"); };
+    this.worker.onmessageerror = () => fail("mensagem do worker ilegível");
   }
 
   private call<T>(req: Request): Promise<T> {

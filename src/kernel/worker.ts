@@ -55,6 +55,11 @@ self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
     } else if (msg.ok && "normals" in msg.result && !("mesh" in msg.result)) {
       transfer.push(msg.result.normals.buffer);
     }
-    (self as unknown as Worker).postMessage(msg, transfer);
-  });
+    try {
+      (self as unknown as Worker).postMessage(msg, transfer);
+    } catch (e) {
+      // sem isto a promessa da fila rejeitava e nenhum pedido seguinte voltava a correr (pendurado sem erro)
+      (self as unknown as Worker).postMessage({ id: data.id, ok: false, error: `Resposta do núcleo não enviada: ${(e as Error)?.message ?? String(e)}` } satisfies Response);
+    }
+  }).catch((e) => console.error("Núcleo: falha inesperada na fila", e));
 };

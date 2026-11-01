@@ -114,6 +114,8 @@ export interface State {
   simFocus: { index: number; n: number } | null;
   result: RebuildResponse | null;
   busy: boolean;
+  /** Há uma reconstrução pedida (em espera ou a correr) que ainda não terminou. */
+  rebuildPending: boolean;
   error: string | null;
   message: string | null;
   pickTarget: PickTarget | null;
@@ -193,6 +195,7 @@ class Store {
   private histories = new Map<string, History<unknown>>();
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private gen = 0;
 
   constructor() {
     let project = newProject();
@@ -204,7 +207,7 @@ class Store {
     const doc = project.parts[0];
     this.state = {
       project, active: { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
-      edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, error: null, message: null,
+      edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, rebuildPending: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
@@ -261,6 +264,10 @@ class Store {
 
   rebuild(delay = 60, force = false) {
     clearTimeout(this.timer);
+    // só o pedido mais recente limpa `busy`/`rebuildPending`: um pedido substituído (o kernel devolve
+    // null) ou feito para outro documento não pode dar a reconstrução por terminada
+    const gen = ++this.gen;
+    if (!this.state.rebuildPending) this.set({ rebuildPending: true });
     this.timer = setTimeout(async () => {
       this.set({ busy: true });
       const active = this.state.active;
@@ -268,16 +275,18 @@ class Store {
         if (active.kind === "part") {
           const doc = this.displayDoc();
           const r = await this.kernel.rebuild(doc, force, externalParts(this.state.project, doc));
-          if (r && this.state.active === active) { this.set({ result: r, busy: false, error: null }); void this.refreshAnalysis(); }
+          if (r && this.state.active === active) { this.set({ result: r, error: null }); void this.refreshAnalysis(); }
         } else if (active.kind === "assembly") {
           const r = await this.kernel.assembly(this.displayProject(), active.id, force);
-          if (r && this.state.active === active) this.set({ asmResult: r, busy: false, error: null });
+          if (r && this.state.active === active) this.set({ asmResult: r, error: null });
         } else {
           const r = await this.kernel.drawing(this.state.project, active.id, force);
-          if (r && this.state.active === active) this.set({ drawingResult: r, busy: false, error: null });
+          if (r && this.state.active === active) this.set({ drawingResult: r, error: null });
         }
       } catch (e) {
-        this.set({ busy: false, error: (e as Error).message });
+        if (gen === this.gen) this.set({ error: (e as Error).message });
+      } finally {
+        if (gen === this.gen) this.set({ busy: false, rebuildPending: false });
       }
     }, delay);
   }

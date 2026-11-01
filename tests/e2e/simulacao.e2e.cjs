@@ -2,16 +2,16 @@
 // local real (cad-runner --serve com Gmsh + CalculiX), com o resultado a cores no 3D.
 // Uso: npm run build && node tests/e2e/simulacao.e2e.cjs  (sem Gmsh/CalculiX, o cálculo é saltado)
 const { chromium } = require("playwright");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
+const { startPreview, has } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = 4185, AGENT = 8799, TOKEN = "e2e-token-123";
 const URL = `http://localhost:${PORT}`;
-const has = (c) => spawnSync("which", [c]).status === 0;
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   const solvers = has("gmsh") && has("ccx");
   const agent = solvers ? spawn("node", [path.join(__dirname, "../../public/cad-runner.mjs"), "--serve", "--port", String(AGENT)], { stdio: "ignore", env: { ...process.env, CAD_TOKEN: TOKEN } }) : null;
   const R = [];
@@ -93,12 +93,12 @@ async function main() {
       // extrair: CSV, XLSX, JSON, SVG e relatório HTML
       const dl = async (label) => { const [d] = await Promise.all([p.waitForEvent("download"), p.click(`${P} .conv-actions button:has-text('${label}')`)]); return fs.readFileSync(await d.path()); };
       const csvMalhas = (await dl("CSV malhas")).toString("utf8");
-      check("extrair CSV das malhas (todas as grandezas)", /^\uFEFFNível;Tamanho \(mm\);Elementos;Tempo \(s\)/.test(csvMalhas) && /Deslocamento máx\./.test(csvMalhas) && csvMalhas.trim().split("\n").length === 4, csvMalhas.slice(0, 120));
+      check("extrair CSV das malhas (todas as grandezas)", csvMalhas.startsWith("\uFEFFNível;Tamanho (mm);Elementos;Tempo (s)") && /Deslocamento máx\./.test(csvMalhas) && csvMalhas.trim().split("\n").length === 4, csvMalhas.slice(0, 120));
       check("extrair CSV do GCI", /Ordem aparente p/.test((await dl("CSV GCI")).toString("utf8")));
       const xl = await dl("XLSX");
       check("extrair XLSX com folhas Malhas e GCI", xl.slice(0, 2).toString() === "PK" && xl.toString("latin1").includes('name="Malhas"') && xl.toString("latin1").includes('name="GCI"'));
       check("extrair JSON do relatório", JSON.parse((await dl("JSON")).toString("utf8")).relatorio.levels.length === 3);
-      check("extrair gráfico SVG", /^<svg /.test((await dl("Gráfico SVG")).toString("utf8")));
+      check("extrair gráfico SVG", (await dl("Gráfico SVG")).toString("utf8").startsWith("<svg "));
       const html = (await dl("Relatório HTML")).toString("utf8");
       check("extrair relatório HTML (tabelas, gráficos e limites)", html.includes("<table>") && html.includes("<svg") && /não é certificação/.test(html));
       await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-convergencia.png") });

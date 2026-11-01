@@ -3,13 +3,13 @@
 // ligação do CLα à asa finita, esboço do perfil NACA 2412 e relatório.
 // Uso: npm run build && node tests/e2e/calc.e2e.cjs
 const { chromium } = require("playwright");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
+const { startPreview, has } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = 4189, AGENT = 8798, TOKEN = "e2e-calc-token";
 const URL = `http://localhost:${PORT}`;
-const has = (c) => spawnSync("which", [c]).status === 0;
 
 /** Propriedades de um polígono (fórmulas de Green): referência independente do núcleo. */
 function polygon(p) {
@@ -25,7 +25,7 @@ function polygon(p) {
 }
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   const xfoil = has("xfoil");
   const preload = process.env.CAD_XFOIL_PRELOAD ?? (fs.existsSync("/opt/xfoil/nofpe.so") ? "/opt/xfoil/nofpe.so" : undefined);
   const agent = xfoil ? spawn("node", [path.join(__dirname, "../../public/cad-runner.mjs"), "--serve", "--port", String(AGENT)], { stdio: "ignore", env: { ...process.env, CAD_TOKEN: TOKEN, ...(preload ? { CAD_XFOIL_PRELOAD: preload } : {}) } }) : null;

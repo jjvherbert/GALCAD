@@ -2,16 +2,16 @@
 // isolamento (sem rede) e, com Gmsh + CalculiX, simulações em série pelo agente local.
 // Uso: npm run build && node tests/e2e/script.e2e.cjs
 const { chromium } = require("playwright");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
+const { startPreview, has } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = 4187, AGENT = 8798, TOKEN = "e2e-script-token";
 const URL = `http://localhost:${PORT}`;
-const has = (c) => spawnSync("which", [c]).status === 0;
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   const solvers = has("gmsh") && has("ccx");
   const agent = solvers ? spawn("node", [path.join(__dirname, "../../public/cad-runner.mjs"), "--serve", "--port", String(AGENT)], { stdio: "ignore", env: { ...process.env, CAD_TOKEN: TOKEN } }) : null;
   const R = [];

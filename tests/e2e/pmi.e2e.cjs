@@ -2,7 +2,7 @@
 // validação, vistas de modelo, atributos pesquisáveis com CSV e STEP AP242 com PMI semântico.
 // Uso: npm run build && node tests/e2e/pmi.e2e.cjs
 const { chromium } = require("playwright");
-const { spawn } = require("node:child_process");
+const { startPreview } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -10,7 +10,7 @@ const PORT = 4186;
 const URL = `http://localhost:${PORT}`;
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   const R = [];
   const check = (name, ok, extra = "") => R.push(`${ok ? "✓" : "✗"} ${name} ${extra}`);
   try {
@@ -49,6 +49,7 @@ async function main() {
     const fitTxt = (await p.textContent(".pmi-panel")).replace(/\s+/g, " ");
     check("ajustamento H7/g6 com folga", /Ajustamento H7\/g6 com folga: folga 5\.0 a 29\.0 µm/.test(fitTxt), fitTxt.match(/Ajustamento[^µ]*µm/)?.[0] ?? "");
     await p.click(".pmi-label[data-id=pmi6]");
+    await p.waitForSelector(".pmi-label[data-id=pmi6].on", { timeout: 5000 }).catch(() => {});
     check("clicar no rótulo seleciona o item", (await p.$eval(".pmi-label[data-id=pmi6]", (e) => e.className)).includes("on"));
 
     // vista de modelo: guardar, retirar PMI, aplicar
@@ -85,6 +86,7 @@ async function main() {
     const step = fs.readFileSync(await dl.path(), "utf8");
     check("STEP AP242 com PMI semântico", /DATUM\('A'/.test(step) && /POSITION_TOLERANCE\(\)/.test(step) && /LIMITS_AND_FITS\('H','hole','7'/.test(step) && /'Fornecedor','Oficina Galega'/.test(step), `${step.length} bytes`);
     await p.click(".pmi-panel button:has-text('Árvore')");
+    await p.waitForFunction(() => document.querySelectorAll(".pmi-label").length === 0, null, { timeout: 5000 }).catch(() => {});
     check("rótulos escondidos fora do painel", (await p.$$(".pmi-label")).length === 0);
     check("sem erros na página", logs.length === 0, logs.join(" | "));
     await b.close();

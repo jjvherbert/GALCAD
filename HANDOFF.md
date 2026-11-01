@@ -1,5 +1,17 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F0 da reestruturação — CI, lint e e2e sem esperas fixas (branch `chore/ci-baseline`)
+
+Pedido de Juan: reestruturar a GALCAD por fases, um branch e um PR por fase, com «muito critério na qualidade — prefiro andar devagar e ter um bom produto». Plano completo (auditoria e fases F0–F8) em `ROADMAP.md`, secção «Reestruturação».
+
+- **CI** (`.github/workflows/ci.yml`, ubuntu-24.04, Node 22): typecheck → lint → testes unitários → build → e2e (Playwright chromium), com as capturas `dist/e2e-*.png` como artefacto. O submódulo privado `vendor/galkeel-calculadora` só é inicializado se existir o segredo `GALKEEL_CALC_TOKEN`; sem ele o CI avisa e os 3 testes que dependem dele ficam ignorados (`tests/galkeel.test.ts`, `noCalc`).
+- **Lint**: oxlint (`npm run lint`, `.oxlintrc.json`, regras de correção como erro, `--deny-warnings`). Corrigidos os avisos existentes (`CalcPanel.tsx`, `DrawingEditor.tsx`, regex em `io/table.ts`).
+- **E2E**: `npm run test:e2e` → `tests/e2e/run-all.cjs` corre todas as suites (ou só uma: `node tests/e2e/run-all.cjs app`) e reporta todas as falhas, em vez da cadeia `&&` que parava na primeira. Servidor partilhado em `tests/e2e/_server.cjs`. As esperas fixas foram trocadas por esperas por condição em todas as suites (incl. `pmi`: seleção do rótulo e rótulos escondidos; 8/8 execuções verdes).
+- **Correção de UI encontrada pelo e2e**: `Viewport.setPmi` chama agora `placePmi()` no fim — os rótulos PMI novos já não aparecem uma frame no canto (0,0) antes de serem posicionados (verificado em `dist/e2e-pmi-iso.png`).
+- **Estado de reconstrução observável**: `rebuildPending` no store (contador `gen`: só o pedido mais recente limpa `busy`/`rebuildPending`, num `finally`) e `.statusbar[data-rebuild="pending"|"idle"]`. Os testes esperam por `idle` + «Reconstruído».
+- **Robustez do núcleo**: o worker já não fica pendurado se `postMessage` falhar (resposta de erro de recurso; antes a fila série rejeitava e nenhum pedido seguinte corria); o `kernel-client` rejeita todos os pedidos pendentes em `onerror`/`onmessageerror` (antes ficavam pendurados para sempre). Timeout, reinício do worker e cancelamento ficam para a F1.
+- **Problema conhecido (para F1a/F1, não mascarado):** a pré-visualização ao iniciar o Casco funde o casco com o corpo STEP importado e pode demorar até ~100 s sem se poder cancelar; o e2e `app` espera até 90 s e regista `[lento]` acima de 10 s. Outros: favicon 404; barra de ferramentas cortada a 390 e 768 px.
+
 ## Atualização: esboço transparente sobre o modelo e convergência da malha configurável
 
 Pedido de Juan: «Garante que o esboço é apresentável. Gosto da animação do esboço do SolidWorks quando passas da peça ao esboço e não gosto do fundo azul. Gosto do fundo transparente… Garante que o pré-processador consegue competir com o Abaqus e ser tão forte como o Femap, permitindo configurar internamente já estudos de convergência de malha e extrair tabelas, gráficos e resultados das mesmas». A maquinagem (R5) fica para depois.
