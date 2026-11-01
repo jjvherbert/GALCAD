@@ -10,7 +10,7 @@ import { ConvergencePanel } from "./ConvergencePanel.tsx";
 import { download } from "./fileio.ts";
 import { fmt, toCsvText, type Table } from "../sim/convreport.ts";
 import { CAPABILITIES, checkStudy, solverVerdict, usedFeatures } from "../sim/modelcheck.ts";
-import { STRUCT_LOADS, THERMAL_LOADS, activeStudy, newLoad, runActiveStudy, updateStudy } from "./sim-actions.ts";
+import { STRUCT_LOADS, THERMAL_LOADS, activeStudy, cancelActiveStudy, newLoad, runActiveStudy, updateStudy } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
 import { type RunResult, agentStatus, exportStudyCase, resultView } from "./sim-client.ts";
 import { fieldRange, layerShown, toggleLayer } from "../sim/result.ts";
@@ -154,6 +154,27 @@ function CheckPanel({ s, assembly, up }: { s: Study; assembly: boolean; up: (p: 
   );
 }
 
+/** Trabalho em curso no agente: o que está a fazer, tempo decorrido, Parar e a cauda do registo do solver. */
+function JobProgress() {
+  const st = useStore();
+  const [stopping, setStopping] = useState(false);
+  const p = st.simProgress;
+  const stop = async () => {
+    setStopping(true);
+    try { await cancelActiveStudy(); } finally { setStopping(false); }
+  };
+  return (
+    <div class="sim-job" role="status">
+      <div class="sim-progress">
+        <i />
+        <span>{st.simBusy === "mesh" ? "A gerar a malha…" : "A calcular no agente local…"}{p ? ` ${Math.round(p.elapsed)} s` : ""}</span>
+        <button class="small danger" disabled={stopping} onClick={() => void stop()}>{stopping ? "A parar…" : "Parar"}</button>
+      </div>
+      {p?.tail && <pre class="sim-tail" aria-label="Registo do solver">{p.tail.split("\n").slice(-8).join("\n")}</pre>}
+    </div>
+  );
+}
+
 /** Pré-visualizar a malha do estudo (Gmsh no agente) e a qualidade, dentro da secção Malha. */
 function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
   const st = useStore();
@@ -163,7 +184,7 @@ function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
       <div class="row">
         <button class="small primary" disabled={!!st.simBusy || !st.agent.token} onClick={() => void runActiveStudy(true)}>{st.simBusy === "mesh" ? "A gerar a malha…" : "Pré-visualizar malha"}</button>
       </div>
-      {st.simBusy === "mesh" && <div class="sim-progress" role="status"><i />A gerar a malha…</div>}
+      {st.simBusy === "mesh" && <JobProgress />}
       {res?.quality && (
         <div class="kw-item ok">
           <table class="info-table">{res.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>
@@ -602,7 +623,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
         {s.physics === "fem" && <button class="small" disabled={busy || !a.token} onClick={() => void run(true)}>Pré-visualizar malha</button>}
         <button class="small primary" disabled={busy || !a.token} onClick={() => void run()}>{st.simBusy === "run" ? "A calcular…" : "Calcular no agente local"}</button>
       </div>
-      {busy && <div class="sim-progress" role="status"><i />{st.simBusy === "mesh" ? "A gerar a malha…" : "A calcular no agente local…"}</div>}
+      {busy && <JobProgress />}
       {r && <p class="muted">Resultado disponível em «Resultados».</p>}
       </>}
       {part === "results" && !r && <p class="field-hint">Ainda sem resultados deste estudo: calcule em «Resolver» (ou F5).</p>}

@@ -5,12 +5,36 @@ import type { CfdCase, FemCase } from "./case.ts";
 
 const list = (tags: number[]) => `{${tags.join(", ")}}`;
 
-export function femGeo(c: FemCase): string {
+/** Algoritmos 3D do Gmsh usados na cascata: Delaunay, Frontal, HXT (Delaunay paralelo). */
+export type Algo3D = 1 | 4 | 10;
+
+/**
+ * Opções de uma tentativa de malha. `optimizeHO: false` desliga a otimização dos elementos de ordem 2
+ * (a causa habitual de o Gmsh não terminar); `heal` liga a reparação OCC (arestas/faces minúsculas,
+ * costura) — pode renumerar faces, por isso só como último recurso e conferido por `checkGroups`.
+ */
+export interface GeoOpts { algorithm3D?: Algo3D; optimizeHO?: boolean; heal?: boolean }
+
+/**
+ * Piso do tamanho mínimo: 1e-4 da diagonal (com MeshSizeMin ≈ 0 a curvatura refina sem limite em
+ * arestas minúsculas), mas nunca acima do tamanho global nem dos tamanhos locais pedidos.
+ */
+export function minSizeFloor(c: FemCase): number {
+  const d = Math.hypot(...c.bbox.max.map((x, i) => x - c.bbox.min[i]));
+  const cap = Math.min(c.mesh.size, ...c.mesh.local.map((l) => l.size));
+  return Math.min(cap, Math.max(c.mesh.minSize, 1e-4 * d));
+}
+
+const healLines = [`Geometry.Tolerance = 1e-6;`, `Geometry.OCCFixDegenerated = 1;`, `Geometry.OCCFixSmallEdges = 1;`, `Geometry.OCCFixSmallFaces = 1;`, `Geometry.OCCSewFaces = 1;`];
+
+export function femGeo(c: FemCase, o: GeoOpts = {}): string {
   const hex = c.mesh.element === "hex";
   const out = [
     `// Gerado pelo CAD protótipo — ${c.title}`,
     `// Unidades: mm. Elementos ${hex ? (c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados") : "tetraédricos"} de ordem ${c.mesh.order}.`,
     `SetFactory("OpenCASCADE");`,
+    // a reparação OCC tem de estar ligada antes de importar o BREP
+    ...(o.heal ? healLines : []),
     `Merge "model.brep";`,
   ];
   // um corpo: grupo SOLID; montagem: um grupo por volume (B1, B2, … pela ordem do composto)
@@ -19,14 +43,14 @@ export function femGeo(c: FemCase): string {
   for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
   out.push(
     `Mesh.MeshSizeMax = ${c.mesh.size};`,
-    `Mesh.MeshSizeMin = ${c.mesh.minSize};`,
+    `Mesh.MeshSizeMin = ${minSizeFloor(c)};`,
     `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`,
     `Mesh.ElementOrder = ${c.mesh.order};`,
     // elementos quadráticos com os nós intermédios na geometria; otimização leve da qualidade (só nos
     // tetraedros: nos hexaedros de 20 nós a otimização do Gmsh pode não terminar)
-    `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex ? 1 : 0};`,
+    `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`,
     `Mesh.Optimize = 1;`,
-    `Mesh.Algorithm3D = 1;`,
+    `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`,
     `Mesh.MshFileVersion = 4.1;`,
     `Mesh.Binary = 0;`,
     `Mesh.SaveAll = 0;`,
@@ -66,7 +90,7 @@ export function meshControls(c: FemCase): string[] {
  * Malha de volume de fluido para o SU2. Interno: o próprio corpo. Externo: caixa do domínio menos o
  * corpo; as faces da caixa ficam "farfield" e as do corpo "body" (identificadas pela caixa envolvente).
  */
-export function su2Geo(c: CfdCase): string {
+export function su2Geo(c: CfdCase, o: GeoOpts = {}): string {
   const out = [`// Gerado pelo CAD protótipo — ${c.title} (SU2)`, `SetFactory("OpenCASCADE");`, `Merge "model.brep";`];
   const s = c.mesh.size;
   if (c.regime === "internal") {
@@ -88,6 +112,6 @@ export function su2Geo(c: CfdCase): string {
     );
   }
   // SU2 em unidades SI: a malha sai em metros
-  out.push(`Mesh.ScalingFactor = 0.001;`, `Mesh.MeshSizeMax = ${s};`, `Mesh.MeshSizeMin = ${s / 10};`, `Mesh.MeshSizeFromCurvature = 12;`, `Mesh.Algorithm3D = 1;`, `Mesh.ElementOrder = 1;`, `Mesh.SaveAll = 0;`);
+  out.push(`Mesh.ScalingFactor = 0.001;`, `Mesh.MeshSizeMax = ${s};`, `Mesh.MeshSizeMin = ${s / 10};`, `Mesh.MeshSizeFromCurvature = 12;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.ElementOrder = 1;`, `Mesh.SaveAll = 0;`);
   return out.join("\n") + "\n";
 }
