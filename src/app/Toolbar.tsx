@@ -76,8 +76,9 @@ export function Toolbar() {
         <button title={`Desfazer ${store.history.undoLabel ?? ""} (Ctrl+Z)`} aria-label="Desfazer" disabled={busy || !store.history.canUndo} onClick={() => runCommand("edit.undo")}>↶</button>
         <button title={`Refazer ${store.history.redoLabel ?? ""} (Ctrl+Y)`} aria-label="Refazer" disabled={busy || !store.history.canRedo} onClick={() => runCommand("edit.redo")}>↷</button>
         <button title="Reconstruir (Ctrl+B)" aria-label="Reconstruir" onClick={() => runCommand("edit.rebuild")}>🚦</button>
-        <button title="Variáveis globais e equações" disabled={!!st.sketch} onClick={() => runCommand("edit.variables")}>𝑥 = Variáveis</button>
-        <button title="Barra de atalhos (S)" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); store.set({ shortcutBar: { at: [r.left, r.bottom + 4] } }); }}>🔍 Comandos <kbd>S</kbd></button>
+        <button title="Variáveis globais e equações" aria-label="Variáveis" disabled={!!st.sketch} onClick={() => runCommand("edit.variables")}>𝑥<span class="tb-lb"> = Variáveis</span></button>
+        <button title="Definições (Ctrl+,)" aria-label="Definições" onClick={() => runCommand("edit.settings")}>⚙</button>
+        <button title="Barra de atalhos (S)" onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); store.set({ shortcutBar: { at: [r.left, r.bottom + 4] } }); }} aria-label="Comandos">🔍<span class="tb-lb"> Comandos <kbd>S</kbd></span></button>
         <nav class="tabs" role="tablist" aria-label="CommandManager">
           {tabs.map((t) => <button key={t.id} role="tab" aria-selected={current.id === t.id} class={current.id === t.id ? "on" : ""} onClick={() => { setTab({ ...tabs0, [key]: t.id }); const sec = TAB_SECTION[t.id]; if ((st.workspace === "fem" || st.workspace === "cfd") && sec) openSimSection(sec); }}>{t.label}</button>)}
         </nav>

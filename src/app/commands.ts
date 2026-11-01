@@ -134,6 +134,7 @@ export const COMMANDS: Command[] = [
   { id: "edit.forceRebuild", label: "Forçar reconstrução completa", group: "Editar", keys: ["Ctrl+Q"], run: () => store.rebuild(0, true) },
   { id: "edit.repeat", label: "Repetir último comando", group: "Editar", keys: ["Enter"], run: repeatLast },
   { id: "edit.variables", label: "Variáveis globais e equações", group: "Editar", icon: "𝑥", run: () => { if (!store.state.sketch) store.set({ showVariables: true }); } },
+  { id: "edit.settings", label: "Definições…", group: "Editar", keys: ["Ctrl+,"], icon: "⚙", run: () => store.set({ showSettings: true }) },
   { id: "ui.shortcutBar", label: "Barra de atalhos", group: "Editar", keys: ["S"], run: () => store.set({ shortcutBar: { at: lastPointer } }) },
   { id: "edit.escape", label: "Cancelar / limpar seleção", group: "Editar", keys: ["Escape"], run: escape },
   // features

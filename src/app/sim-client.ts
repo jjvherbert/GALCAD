@@ -66,8 +66,8 @@ export async function previewStudyMesh(studyId: string, url: string, token: stri
   return postCase(await caseFiles(studyId), url, token, undefined, "/mesh", opts);
 }
 
-/** Opções de um pedido longo ao agente: `signal` para o Parar; `meshTimeout` (s) por tentativa do Gmsh. */
-export interface JobOpts { signal?: AbortSignal; meshTimeout?: number }
+/** Opções de um pedido longo ao agente: `signal` para o Parar; `meshTimeout` (s) por tentativa do Gmsh; `solveTimeout` (s) por passo do solver. */
+export interface JobOpts { signal?: AbortSignal; meshTimeout?: number; solveTimeout?: number }
 
 /** Pedido parado pelo utilizador (Parar, ou o agente respondeu 499). Não é uma falha do cálculo. */
 export class CancelledError extends Error {
@@ -127,7 +127,7 @@ async function postCase(r: Awaited<ReturnType<typeof caseFiles>>, url: string, t
   const res = await agentFetch(`${url}${path}`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-cad-token": token },
-    body: JSON.stringify({ case: r.case, brep: r.files["model.brep"], stl: Object.keys(stl).length ? stl : undefined, convergence, meshTimeout: opts.meshTimeout }),
+    body: JSON.stringify({ case: r.case, brep: r.files["model.brep"], stl: Object.keys(stl).length ? stl : undefined, convergence, meshTimeout: opts.meshTimeout, solveTimeout: opts.solveTimeout }),
     signal: opts.signal,
   });
   return { case: r.case, result: (await agentJson(res, opts.signal)) as RunResult };

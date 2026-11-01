@@ -689,7 +689,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           </div>
         )}
         <svg width={size[0]} height={size[1]} onPointerDown={onDown as never} onPointerMove={onMove as never} onPointerUp={onUp as never} class={`tool-${tool}`}>
-          <Grid v={v} w={size[0]} h={size[1]} />
+          {store.state.settings.sketchGrid && <Grid v={v} w={size[0]} h={size[1]} />}
           <g class="ref-edges">
             {refEdges.inPlane.map(([a, b], i) => <line key={`i${i}`} class="ref-in" x1={S(a)[0]} y1={S(a)[1]} x2={S(b)[0]} y2={S(b)[1]} />)}
             {tool === "convert" && hover?.startsWith("ref:") && (() => {

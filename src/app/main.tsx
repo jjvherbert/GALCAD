@@ -11,6 +11,7 @@ import { FeatureTree } from "./FeatureTree.tsx";
 import { PropertyPanel } from "./PropertyPanel.tsx";
 import { SketchEditor } from "./SketchEditor.tsx";
 import { PlaneChooser, VariablesDialog } from "./Dialogs.tsx";
+import { SettingsDialog } from "./SettingsDialog.tsx";
 import { MassBlock, SheetsBlock, StatusBlock } from "./InfoPanel.tsx";
 import { describeName } from "./forms.tsx";
 import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
@@ -163,8 +164,8 @@ function App() {
       const t = e.target as HTMLElement;
       if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.tagName === "SELECT") return;
       // no esboço, o editor trata as suas teclas; aqui só as de ficheiro
-      if (store.state.sketch && !((e.ctrlKey || e.metaKey) && ["s", "o", "n"].includes(e.key.toLowerCase()))) return;
-      if (store.state.showVariables) return;
+      if (store.state.sketch && !((e.ctrlKey || e.metaKey) && ["s", "o", "n", ","].includes(e.key.toLowerCase()))) return;
+      if (store.state.showVariables || store.state.showSettings) return;
       handleKey(e);
     };
     addEventListener("keydown", onKey);
@@ -255,6 +256,7 @@ function App() {
         <span class="muted">{st.project.name} · {docName(st.project, st.active)}{st.dirty ? " •" : ""} · mm</span>
       </footer>
       {st.showVariables && <VariablesDialog />}
+      {st.showSettings && <SettingsDialog />}
       {showProps && <PartPropertiesDialog onClose={() => setShowProps(false)} />}
       {(st.contextMenu || st.shortcutBar || st.orientationMenu) && <div class="overlay-catcher" onPointerDown={() => store.closeOverlays()} onContextMenu={(e) => { e.preventDefault(); store.closeOverlays(); }} />}
       {st.contextMenu && <ContextMenu />}

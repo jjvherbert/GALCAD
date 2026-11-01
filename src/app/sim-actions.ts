@@ -82,8 +82,8 @@ export async function runActiveStudy(meshOnly = false) {
     store.set({ simProgress: { elapsed: j?.elapsed ?? (Date.now() - t0) / 1000, tail: j?.tail ?? store.state.simProgress?.tail ?? "" } });
   }, 1000);
   try {
-    // timeout da malha: o do agente por defeito (fica configurável nas Definições, F1b)
-    const opts = { signal: ac.signal };
+    // limites da malha e de cada passo do solver: os das Definições
+    const opts = { signal: ac.signal, meshTimeout: st.settings.meshTimeout, solveTimeout: st.settings.solveTimeout };
     const { result } = meshOnly ? await previewStudyMesh(s.id, st.agent.url, st.agent.token, opts) : await runStudy(s.id, st.agent.url, st.agent.token, conv, opts);
     store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
     // o estudo de convergência fica guardado no estudo (últimos 6) para consultar, comparar e exportar

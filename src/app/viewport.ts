@@ -14,6 +14,7 @@ import type { CadDocument, PlaneRef, StdPlane, Vec3 } from "../doc/types.ts";
 import { sampleEntity, allEntities } from "../sketch/geometry.ts";
 import type { Analysis, Pick, PickKind } from "./store.ts";
 import type { GestureDir, Settings } from "./settings.ts";
+import { onThemeChange, resolvedTheme } from "./theme.ts";
 
 const STD: Record<StdPlane, Frame> = {
   XY: { o: [0, 0, 0], x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] },
@@ -217,9 +218,8 @@ export class Viewport {
     this.gestureEl = Object.assign(document.createElement("div"), { className: "gesture-trail" });
     el.append(this.boxEl, this.gestureEl);
     new ResizeObserver(() => this.resize()).observe(el);
-    const dark = matchMedia("(prefers-color-scheme: dark)");
-    const setTheme = () => { this.theme = themes[dark.matches ? "dark" : "light"]; this.scene.background = new THREE.Color(this.theme.bg); this.recolor(); };
-    dark.addEventListener("change", setTheme);
+    const setTheme = () => { this.theme = themes[resolvedTheme()]; this.scene.background = new THREE.Color(this.theme.bg); this.recolor(); };
+    onThemeChange(setTheme);
     setTheme();
     this.resize();
     const cv = this.renderer.domElement;

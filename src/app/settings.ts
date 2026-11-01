@@ -11,6 +11,16 @@ export interface Settings {
   /** Estilo de visualização. */
   displayStyle: "shadedEdges" | "shaded" | "wireframe";
   showPlanes: boolean;
+  /** Tema da interface; «system» segue o sistema operativo. */
+  theme: "light" | "dark" | "system";
+  /** Quadrícula de fundo no esboço. */
+  sketchGrid: boolean;
+  /** Limite por tentativa de malha (s). */
+  meshTimeout: number;
+  /** Limite de cada passo do solver (s). */
+  solveTimeout: number;
+  /** Endereço do agente de solvers (só no browser; o token nunca é guardado). */
+  agentUrl: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,17 +32,51 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   displayStyle: "shadedEdges",
   showPlanes: false,
+  theme: "system",
+  sketchGrid: false,
+  meshTimeout: 120,
+  solveTimeout: 3600,
+  agentUrl: "http://127.0.0.1:8765",
 };
 
 const KEY = "cad-prototipo:settings";
 
+/** Limites aceites para os campos numéricos (os mesmos do diálogo). */
+export const LIMITS = {
+  arrowStep: [1, 90],
+  meshTimeout: [10, 7200],
+  solveTimeout: [60, 7 * 24 * 3600],
+} as const;
+
+const clamp = (v: unknown, [lo, hi]: readonly [number, number], dflt: number) =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;
+
+/** Junta o que veio do armazenamento com os valores por defeito, descartando valores inválidos. */
+export function sanitizeSettings(s: Partial<Settings>): Settings {
+  const d = DEFAULT_SETTINGS;
+  const pick = <T,>(v: unknown, ok: readonly T[], dflt: T): T => (ok.includes(v as T) ? (v as T) : dflt);
+  const bool = (v: unknown, dflt: boolean) => (typeof v === "boolean" ? v : dflt);
+  const gestures = { ...d.gestures };
+  if (s.gestures && typeof s.gestures === "object")
+    for (const k of Object.keys(gestures) as GestureDir[]) if (typeof s.gestures[k] === "string") gestures[k] = s.gestures[k];
+  return {
+    reverseWheel: bool(s.reverseWheel, d.reverseWheel),
+    arrowStep: clamp(s.arrowStep, LIMITS.arrowStep, d.arrowStep),
+    gestures,
+    displayStyle: pick(s.displayStyle, ["shadedEdges", "shaded", "wireframe"] as const, d.displayStyle),
+    showPlanes: bool(s.showPlanes, d.showPlanes),
+    theme: pick(s.theme, ["light", "dark", "system"] as const, d.theme),
+    sketchGrid: bool(s.sketchGrid, d.sketchGrid),
+    meshTimeout: clamp(s.meshTimeout, LIMITS.meshTimeout, d.meshTimeout),
+    solveTimeout: clamp(s.solveTimeout, LIMITS.solveTimeout, d.solveTimeout),
+    agentUrl: typeof s.agentUrl === "string" && /^https?:\/\/\S+$/.test(s.agentUrl) ? s.agentUrl : d.agentUrl,
+  };
+}
+
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const s = JSON.parse(raw) as Partial<Settings>;
-      return { ...DEFAULT_SETTINGS, ...s, gestures: { ...DEFAULT_SETTINGS.gestures, ...s.gestures } };
-    }
+    if (raw) return sanitizeSettings(JSON.parse(raw) as Partial<Settings>);
   } catch { /* sem armazenamento */ }
   return structuredClone(DEFAULT_SETTINGS);
 }
