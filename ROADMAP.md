@@ -269,6 +269,23 @@ Depois da malha e da dinâmica: módulo de otimização sobre o mesmo estudo —
 
 Onde já é diferenciador: CAD + FEM/CFD + scripts + IA no mesmo documento, solvers abertos sem custo de licença, rastreabilidade (hipóteses, edição da norma, versão da ferramenta) em cada resultado, e a ligação direta ao caso da Galkeel.
 
+## Reestruturação (out. 2026): F0 → F8
+
+Auditoria de 2026-10-31 (base, esboço, FEM, desenho): nada se pode cancelar (worker, cliente, agente de solvers), store único com ~50 campos, trocar de workspace perde resultados, registo de features fechado, sem CI. Plano: uma fase por branch e por PR, `main` só por PR com CI verde.
+
+| Fase | Branch | Conteúdo | Estado |
+|---|---|---|---|
+| F0 | `chore/ci-baseline` | CI (typecheck, lint, unit, e2e), runner e2e que reporta todas as falhas, esperas por condição | em PR |
+| F1a | `fix/mesh-robust` | Malha que funciona e se pode **Parar**: jobs no `cad-runner`, `taskkill /T /F`, timeout, cascata Delaunay → HXT → Frontal, diagnóstico legível do `log.gmsh` | seguinte |
+| F1b | `feat/settings-theme` | Diálogo «Definições» e tema claro/escuro/sistema | — |
+| F1 | `refactor/*` | Jobs canceláveis ponta a ponta (kernel com timeout e reinício), store partido, registo de features, ficheiros < ~400 linhas | — |
+| F2 | `feat/sketch-*` | Features dentro do esboço, cota inteligente, fundo sem quadrícula | — |
+| F3 | `fix/fem-*`, `feat/fem-*` | FS por corpo, biblioteca de materiais, plasticidade multilinear, diálogos, resto do R4 | — |
+| F4 | `feat/laminates` | Cascas compósitas, editor de laminado, CLT/ABD, critérios por camada | — |
+| F5 | `feat/drawing-window` | «Criar desenho 2D» com vistas e escala automáticas, em janela própria | — |
+| F8 | `feat/sheet-metal` | Chapa metálica (R6) e planificação | — |
+| F7, F6 | — | CAM (R5) e casco Galkeel: adiados | adiado |
+
 ## API de plugins (evolução)
 - Hoje: features de plugin que geram um sólido e um painel de resultados.
 - A seguir: registar features novas com parâmetros e referências, comandos e painéis, importadores e exportadores, análises.

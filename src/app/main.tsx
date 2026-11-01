@@ -239,7 +239,7 @@ function App() {
         </section>
         {simWs && kind !== "drawing" && <aside class="side side-right ws-side" key={`ws-r-${st.workspace}`}><SimPanel /></aside>}
       </div>
-      <footer class="statusbar">
+      <footer class="statusbar" data-rebuild={st.rebuildPending ? "pending" : "idle"}>
         <span class={st.busy ? "busy" : ""}>{st.busy ? "A reconstruir…" : r ? `Reconstruído em ${r.ms} ms (${r.reused} da cache)` : "A carregar o núcleo geométrico…"}</span>
         {errors > 0 && <span class="err">{errors} feature(s) com erro</span>}
         {st.error && <span class="err" role="alert">{st.error}</span>}

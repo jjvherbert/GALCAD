@@ -273,6 +273,8 @@ export class Viewport {
       this.pmiSvg.append(line);
       this.pmiLabels.push({ anchor, at, el, line, stack: k });
     }
+    // posicionar já: sem isto os rótulos novos ficam uma imagem no canto (0,0) até à próxima frame
+    this.placePmi();
   }
 
   private placePmi() {

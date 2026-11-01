@@ -3,7 +3,8 @@
 // e o envelope de resultados da galkeel-app.
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { execFileSync } from "node:child_process";
 import { SketchBuilder, initKernel } from "./helpers.ts";
@@ -16,17 +17,20 @@ import { type Laminate, type VesselRecord, EDITION, analysePanel, autoTarget, fe
 
 before(initKernel);
 const dir = new URL("../vendor/galkeel-calculadora/assets/", import.meta.url);
+// submódulo privado: sem acesso (CI sem token, clone sem --recurse-submodules) os testes que usam a
+// calculadora são saltados com o motivo; os de geometria correm sempre
+const noCalc = !existsSync(new URL("iso12215-5-pressure.js", dir)) && "submódulo privado galkeel-calculadora não inicializado";
 const src = (f: string) => readFileSync(new URL(f, dir), "utf8");
-const calc = galkeelCalc({ pressure: src("iso12215-5-pressure.js"), frp: src("iso12215-5-frp-scantling.js"), version: execFileSync("git", ["-C", new URL("../vendor/galkeel-calculadora", import.meta.url).pathname, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim() });
+const calc = noCalc ? (undefined as never) : galkeelCalc({ pressure: src("iso12215-5-pressure.js"), frp: src("iso12215-5-frp-scantling.js"), version: execFileSync("git", ["-C", fileURLToPath(new URL("../vendor/galkeel-calculadora", import.meta.url)), "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim() });
 // a mesma calculadora carregada por outra via (node:vm, contexto isolado): o carregador não pode mudar nada
 const viaVm = (f: string) => { const m = { exports: {} as Record<string, never> }; vm.runInNewContext(src(f), { module: m, exports: m.exports, Math }); return m.exports as Record<string, (...a: unknown[]) => never>; };
-const refP = viaVm("iso12215-5-pressure.js");
-const refF = viaVm("iso12215-5-frp-scantling.js");
+const refP = noCalc ? (undefined as never) : viaVm("iso12215-5-pressure.js");
+const refF = noCalc ? (undefined as never) : viaVm("iso12215-5-frp-scantling.js");
 
 const vessel: VesselRecord = { craft: "motor", category: "C", LH: 7.5, LWL: 6.5, Bc: 2.2, beta04: 18, V: 30, mLDC: 2200, xAft: 0, forward: 1, zWL: 0, Zside: 0.9 };
 const lam: Laminate = { layup: "mat_roving_wr_cp", psi: 0.33, k5: 1, name: "CSM/WR" };
 
-test("calculadora: carregada sem cópia, com as mesmas funções que o require do Node", () => {
+test("calculadora: carregada sem cópia, com as mesmas funções que o require do Node", { skip: noCalc }, () => {
   assert.equal(typeof calc.pressure.calculateMotorCraftPressures, "function");
   assert.ok(/^[0-9a-f]{7,}$/.test(calc.version));
   const i = { LWL: 6.5, Bc: 2.2, beta04: 18, V: 30, mLDC: 2200, category: "C", componentType: "panel", x: 3, sandwich: false, b: 400, l: 600, target: "bottom" };
@@ -71,7 +75,7 @@ test("painéis: placa plana 600 × 400 e painel cilíndrico com flecha conhecida
   assert.ok(h.normal[1] > 0.99, "normal para fora (para cima da corda)");
 });
 
-test("análise por painel: zona, posição, pressão e espessuras iguais às da calculadora; FEM e relatório", () => {
+test("análise por painel: zona, posição, pressão e espessuras iguais às da calculadora; FEM e relatório", { skip: noCalc }, () => {
   assert.equal(autoTarget([0, 0, -1], -0.2), "bottom");
   assert.equal(autoTarget([0, 1, 0], 0.3), "side");
   assert.equal(autoTarget([0, 0, 1], 0.9), "deck");
@@ -119,7 +123,7 @@ import { femStudyForPanels } from "../src/galkeel/scantling.ts";
 import { runCase, tools } from "../tools/cad-runner.ts";
 
 const T = tools();
-test("análise integrada com FEM: painel 600 × 400 × 7 encastrado sob a pressão ISO contra Roark", { skip: !(T.gmsh && T.calculix) && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
+test("análise integrada com FEM: painel 600 × 400 × 7 encastrado sob a pressão ISO contra Roark", { skip: noCalc || (!(T.gmsh && T.calculix) && "Gmsh/CalculiX não instalados"), timeout: 900000 }, async () => {
   // placa de fundo (z de −207 a −200, abaixo da LA), x de 2700 a 3300 mm a partir da ré da LWL
   const s = new SketchBuilder();
   s.rect(2700, -200, 600, 400, 600, 400);

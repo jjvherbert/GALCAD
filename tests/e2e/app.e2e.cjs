@@ -1,7 +1,7 @@
 // Teste de ponta a ponta no browser (Playwright + Chromium). Uso: npm run build && npm run test:e2e
 // Arranca o "vite preview", percorre os fluxos principais e verifica volumes e estados.
 const { chromium } = require("playwright");
-const { spawn } = require("node:child_process");
+const { startPreview } = require("./_server.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -13,7 +13,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cad-e2e-"));
 const num = (s) => Number(String(s).replace(/\s/g, "").replace(",", "."));
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   try {
     for (let i = 0; i < 60; i++) {
       try { if ((await fetch(URL)).ok) break; } catch { /* ainda a arrancar */ }
@@ -25,12 +25,38 @@ async function main() {
     p.on("pageerror", (e) => errors.push(e.message));
     p.on("dialog", (d) => d.accept()); // confirmações (descartar alterações, apagar dependentes)
     p.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+    // o console/erros dos Web Workers não passam pelos eventos da página
+    const workerLog = [];
+    p.on("worker", (w) => {
+      w.on("console", (m) => workerLog.push(`[${m.type()}] ${m.text()}`));
+      w.on("close", () => workerLog.push(`[close] ${w.url()}`));
+    });
 
+    // espera por condição, não por tempo: o store marca `data-rebuild="pending"` de forma síncrona quando
+    // a ação pede uma reconstrução; dois frames garantem que o Preact já pintou esse estado
+    const frames = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
     const settle = async () => {
-      await p.waitForTimeout(250);
-      await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 });
-      await p.waitForTimeout(100);
+      await frames();
+      const s0 = Date.now();
+      try {
+        await p.waitForSelector('.statusbar[data-rebuild="idle"]', { timeout: 90000 });
+        await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 });
+        // reconstruções lentas ficam visíveis no log para se medir a tendência (não falham o teste)
+        const dt = Date.now() - s0;
+        if (dt > 10000) console.log(`  [lento] reconstrução ${Math.round(dt / 1000)} s — ${new Error().stack.split("\n")[2].trim()}`);
+      } catch (e) {
+        // sem isto um timeout não diz se o kernel ficou pendurado, rebentou ou só demorou
+        const bar = await p.textContent(".statusbar").catch(() => "?");
+        const t0 = Date.now();
+        const late = await p.waitForSelector('.statusbar[data-rebuild="idle"]', { timeout: 180000 }).then(() => `acabou ${Math.round((Date.now() - t0) / 1000)} s depois`, () => "não acabou em mais 180 s");
+        throw new Error(`${e.message}\n  depois do timeout: ${late}\n  barra de estado: ${bar}\n  erros: ${errors.join(" | ") || "(nenhum)"}\n  worker: ${workerLog.slice(-20).join(" | ") || "(nada)"}`);
+      }
     };
+    // cota aplicada: a caixa de valor fecha e o esboço já foi resolvido e redesenhado
+    const dimDone = async () => { await p.waitForSelector(".dim-input", { state: "detached" }); await frames(); };
+    const skStatus = (text) => p.waitForFunction((t) => document.querySelector(".sk-status span")?.textContent === t, text, { timeout: 5000 });
+    // a câmara do esboço acabou a animação de entrada (as coordenadas do canvas já são as finais)
+    const sketchReady = () => p.waitForSelector(".sk-canvas.entered");
     const volume = async () => num((await p.textContent(".side-info")).match(/Volume\s*([\d\s,.]+)\s*cm³/)[1]);
     const states = () => p.$$eval(".feat:not(.origin)", (els) => els.map((e) => e.className.replace("feat", "").replace("selected", "").trim()));
     const step = (name) => console.log(`✓ ${name}`);
@@ -69,14 +95,14 @@ async function main() {
     await p.mouse.click(box.x + (Math.min(...xs) + Math.max(...xs)) / 2, box.y + Math.max(...ys) + 40);
     await p.fill(".dim-input input", "W");
     await p.keyboard.press("Enter");
-    await p.waitForTimeout(200);
+    await dimDone();
     P = await pts(); xs = P.map((q) => q[0]); ys = P.map((q) => q[1]);
     await p.mouse.click(box.x + Math.max(...xs), box.y + (Math.min(...ys) + Math.max(...ys)) / 2);
     await p.mouse.click(box.x + Math.max(...xs) + 50, box.y + (Math.min(...ys) + Math.max(...ys)) / 2);
     await p.fill(".dim-input input", "H");
     await p.keyboard.press("Enter");
-    await p.waitForTimeout(400);
-    assert.equal(await p.textContent(".sk-status span"), "Totalmente definido");
+    await dimDone();
+    await skStatus("Totalmente definido");
     await p.click("button:has-text('Sair do esboço')");
     await settle();
     step("esboço totalmente definido por variáveis");
@@ -95,7 +121,7 @@ async function main() {
     await p.mouse.click(vb.x + vb.width / 2, vb.y + vb.height / 2 - 40);
     await p.click("button.cmd:has-text('Esboço')");
     await p.waitForSelector(".sketch-editor");
-    await p.waitForTimeout(400);
+    await sketchReady();
     const b2 = await p.locator(".sk-canvas").boundingBox();
     const ref = await p.$$eval(".ref-in", (els) => els.map((e) => [Number(e.getAttribute("x1")), Number(e.getAttribute("y1"))]));
     assert.equal(ref.length, 4, "o contorno da face aparece como referência");
@@ -174,6 +200,8 @@ async function main() {
     await p.click("button:has-text('Ficheiro')");
     const [fc2] = await Promise.all([p.waitForEvent("filechooser"), p.click(".menu button:has-text('Importar STEP')")]);
     await fc2.setFiles(stepFile);
+    // o ficheiro é lido de forma assíncrona: só depois disso a feature aparece e a reconstrução é pedida
+    await p.waitForSelector(".feat:not(.origin)");
     await settle();
     assert.ok(Math.abs((await volume()) - v160) < 0.01);
     await p.click(".tabs button:has-text('Módulos')");
@@ -221,13 +249,13 @@ async function main() {
     await p.mouse.click(b3.x + (Math.min(...xs) + Math.max(...xs)) / 2, b3.y + Math.max(...ys) + 40);
     await p.fill(".dim-input input", "W");
     await p.keyboard.press("Enter");
-    await p.waitForTimeout(200);
+    await dimDone();
     P = await pts(); xs = P.map((q) => q[0]); ys = P.map((q) => q[1]);
     await p.mouse.click(b3.x + Math.max(...xs), b3.y + (Math.min(...ys) + Math.max(...ys)) / 2);
     await p.mouse.click(b3.x + Math.max(...xs) + 50, b3.y + (Math.min(...ys) + Math.max(...ys)) / 2);
     await p.fill(".dim-input input", "60");
     await p.keyboard.press("Enter");
-    await p.waitForTimeout(300);
+    await dimDone();
     await p.click("button:has-text('Sair do esboço')");
     await settle();
     await p.click("button.cmd:has-text('Extrusão')");
@@ -238,18 +266,17 @@ async function main() {
     await p.mouse.click(vb.x + vb.width / 2, vb.y + vb.height / 2 - 40);
     await p.click("button.cmd:has-text('Esboço')");
     await p.waitForSelector(".sketch-editor");
-    await p.waitForTimeout(400);
+    await sketchReady();
     await p.keyboard.press("k");
     await p.click("button:has-text('Contorno no plano')");
-    await p.waitForTimeout(300);
-    assert.equal(await p.locator(".sk-canvas path.ent.ext").count(), 4);
+    await p.waitForFunction(() => document.querySelectorAll(".sk-canvas path.ent.ext").length === 4, null, { timeout: 5000 });
     await p.keyboard.press("o");
     const extc = await p.$$eval(".sk-canvas path.ent.ext", (els) => els.map((e) => e.getBBox()).map((r) => [r.x + r.width / 2, r.y + r.height / 2]));
     await p.mouse.click(b3.x + extc[0][0], b3.y + extc[0][1]);
     await p.fill(".dim-input input", "-5");
     await p.keyboard.press("Enter");
-    await p.waitForTimeout(400);
-    assert.equal(await p.textContent(".sk-status span"), "Totalmente definido");
+    await dimDone();
+    await skStatus("Totalmente definido");
     await p.click("button:has-text('Sair do esboço')");
     await settle();
     await p.click("button.cmd:has-text('Extrusão')");

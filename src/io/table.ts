@@ -27,7 +27,7 @@ export function toXLSXSheets(sheets: Sheet[]): Uint8Array {
     return `<c r="${ref}" t="inlineStr"${bold ? ' s="1"' : ""}><is><t>${xml(v)}</t></is></c>`;
   };
   const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
-  const names = sheets.map((sh, i) => (sh.name.replace(/[\\/?*\[\]:]/g, " ").slice(0, 31) || `Folha${i + 1}`));
+  const names = sheets.map((sh, i) => (sh.name.replace(/[\\/?*[\]:]/g, " ").slice(0, 31) || `Folha${i + 1}`));
   const files = [
     { name: "[Content_Types].xml", text: `${head}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>` },
     { name: "_rels/.rels", text: `${head}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>` },

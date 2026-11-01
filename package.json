@@ -8,12 +8,13 @@
     "preview": "vite preview",
     "typecheck": "tsc -p .",
     "test": "node --test tests/*.test.ts",
-    "test:e2e": "node tests/e2e/app.e2e.cjs && node tests/e2e/navigation.e2e.cjs && node tests/e2e/interacao.e2e.cjs && node tests/e2e/surfaces.e2e.cjs && node tests/e2e/assembly.e2e.cjs && node tests/e2e/drawing.e2e.cjs && node tests/e2e/fase4.e2e.cjs && node tests/e2e/simulacao.e2e.cjs && node tests/e2e/pmi.e2e.cjs && node tests/e2e/script.e2e.cjs && node tests/e2e/galkeel.e2e.cjs && node tests/e2e/calc.e2e.cjs",
+    "test:e2e": "node tests/e2e/run-all.cjs",
     "build:runner": "rolldown tools/cad-runner.ts --file public/cad-runner.mjs --platform node --format esm",
     "desktop": "npm run build && electron .",
     "solvers:win": "python3 desktop/build-solvers.py",
     "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never",
-    "test:e2e:desktop": "node tests/e2e/desktop.e2e.cjs"
+    "test:e2e:desktop": "node tests/e2e/desktop.e2e.cjs",
+    "lint": "oxlint src tools tests desktop --deny-warnings"
   },
   "author": "Galkeel",
   "license": "UNLICENSED",
@@ -33,6 +34,8 @@
     "@types/three": "^0.186.0",
     "electron": "^45.1.0",
     "electron-builder": "^26.18.0",
+    "oxlint": "1.90.0",
+    "playwright": "1.63.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
   },

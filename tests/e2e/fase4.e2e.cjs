@@ -3,7 +3,7 @@
 // exportação STEP AP242.
 // Uso: npm run build && node tests/e2e/fase4.e2e.cjs
 const { chromium } = require("playwright");
-const { spawn } = require("node:child_process");
+const { startPreview } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -11,7 +11,7 @@ const PORT = 4184;
 const URL = `http://localhost:${PORT}`;
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   const R = [];
   const check = (name, ok, extra = "") => R.push(`${ok ? "✓" : "✗"} ${name} ${extra}`);
   try {

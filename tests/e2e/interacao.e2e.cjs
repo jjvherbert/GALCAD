@@ -2,7 +2,7 @@
 // com rotação para o plano, dicas animadas na barra, cartão «O que faz» no painel e pré-visualização da
 // feature em edição. Uso: npm run build && node tests/e2e/interacao.e2e.cjs
 const { chromium } = require("playwright");
-const { spawn } = require("node:child_process");
+const { startPreview } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -10,7 +10,7 @@ const PORT = 4186;
 const URL = `http://localhost:${PORT}`;
 
 async function main() {
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   const R = [];
   const check = (name, ok, extra = "") => R.push(`${ok ? "✓" : "✗"} ${name} ${extra}`);
   try {
@@ -27,11 +27,19 @@ async function main() {
       await p.goto(URL);
       await p.evaluate((t) => { localStorage.clear(); localStorage.setItem("cad-prototipo:autosave", t); }, fixture);
       await p.reload();
-      await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 });
-      await p.waitForTimeout(500);
+      await settle(p);
       return { p, logs, ctx };
     };
     const ds = (p, k) => p.$eval(".viewport", (e, key) => e.dataset[key], k);
+    // esperas por condição (nada de pausas fixas): o Preact pinta de forma assíncrona, daí os 2 frames
+    const frames = (p) => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const settle = async (p) => {
+      await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 });
+      await p.waitForSelector('.statusbar[data-rebuild="idle"]', { timeout: 90000 });
+      await frames(p);
+    };
+    const camIdle = async (p) => { await p.waitForFunction(() => document.querySelector(".viewport").dataset.animating === "", null, { timeout: 5000 }); await frames(p); };
+    const until = (p, fn, arg) => p.waitForFunction(fn, arg, { timeout: 5000 }).catch(() => {}); // a falha fica no check seguinte
 
     // 1. transição da câmara: o estado final fica logo publicado e a animação termina sozinha
     {
@@ -78,7 +86,8 @@ async function main() {
       await p.click(".sketch-editor button:has-text('Cancelar')");
       await p.waitForFunction((b) => document.querySelector(".viewport").dataset.viewDir === b, before, { timeout: 3000 }).catch(() => {});
       check("sair do esboço volta à vista anterior", (await ds(p, "viewDir")) === before, `${before} → ${await ds(p, "viewDir")}`);
-      await p.waitForTimeout(500);
+      await p.waitForSelector(".sketch-editor", { state: "detached" });
+      await camIdle(p);
 
       // 4. cartão «O que faz» e pré-visualização amarela
       await p.click("button.cmd:has-text('Extrusão')");
@@ -90,9 +99,10 @@ async function main() {
       await p.waitForFunction(() => Number(document.querySelector(".viewport").dataset.previewFaces) > 0, null, { timeout: 15000 }).catch(() => {});
       check("pré-visualização: faces da feature em edição", Number(await ds(p, "previewFaces")) > 0, await ds(p, "previewFaces"));
       await p.click(".help-card summary");
+      await until(p, () => localStorage.getItem("galcad:help-open") === "0");
       check("a escolha de recolher fica guardada", (await p.evaluate(() => localStorage.getItem("galcad:help-open"))) === "0");
       await p.click(".property-panel button[title^='Cancelar']");
-      await p.waitForTimeout(300);
+      await until(p, () => Number(document.querySelector(".viewport").dataset.previewFaces) === 0);
       check("sem pré-visualização fora da edição", Number(await ds(p, "previewFaces")) === 0);
       check("sem erros na página", logs.length === 0, logs.join(" | "));
       await ctx.close();
@@ -106,23 +116,22 @@ async function main() {
       await p.goto(URL);
       await p.evaluate((t) => { localStorage.clear(); localStorage.setItem("cad-prototipo:autosave", t); }, fs.readFileSync(path.join(__dirname, "fixtures/simulacao.cadp.json"), "utf8"));
       await p.reload();
-      await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 });
-      await p.waitForTimeout(500);
+      await settle(p);
       await p.keyboard.press("Control+Alt+2");
       await p.waitForSelector(".sim-browser");
       const vb = await p.locator(".viewport canvas").first().boundingBox(); const cx = vb.x + vb.width / 2, cy = vb.y + vb.height / 2; // o canvas, não a área com os painéis
       await p.mouse.move(cx, cy);
       check("FEM abre no separador «Cargas e apoios» (sem clicar)", /Cargas e apoios/.test(await p.textContent(".tabs button.on")) && /Encastrar/.test(await p.textContent(".tb-row.commands")) && /Cargas e apoios/.test(await p.textContent(".sim-panel .pm-title")));
       // duplo clique na face com a força (vista da direita) → abre a condição e destaca-a
-      await p.keyboard.press("Control+4"); await p.waitForTimeout(600);
+      await p.keyboard.press("Control+4"); await camIdle(p);
       const d4 = await ds(p, "viewDir");
-      await p.mouse.dblclick(cx, cy); await p.waitForTimeout(400);
+      await p.mouse.dblclick(cx, cy); await until(p, () => document.querySelectorAll(".sim-panel .kw-item.focus").length === 1);
       const foc = d4 === "1.000,0.000,0.000" ? "Força" : "Encastramento";
       check("duplo clique numa face com condição abre-a e destaca-a", /Cargas e apoios/.test(await p.textContent(".sim-panel .pm-title")) && (await p.$$(".sim-panel .kw-item.focus")).length === 1 && new RegExp(foc).test(await p.textContent(".sim-panel .kw-item.focus")), `${d4} ${await p.textContent(".sim-panel .kw-item.focus").catch(() => "—")}`.slice(0, 80));
       check("duplo clique não deixa features em edição às escuras", (await p.$$(".toolbar .cmd:disabled")).length === 0);
       // face sem condição: mensagem, sem efeitos
-      await p.keyboard.press("Control+5"); await p.waitForTimeout(600);
-      await p.mouse.dblclick(cx, cy); await p.waitForTimeout(300);
+      await p.keyboard.press("Control+5"); await camIdle(p);
+      await p.mouse.dblclick(cx, cy); await until(p, () => /não tem condições/.test(document.querySelector(".statusbar")?.textContent ?? ""));
       check("duplo clique numa face sem condição avisa", /não tem condições/.test(await p.textContent(".statusbar")) && (await p.$$(".toolbar .cmd:disabled")).length === 0);
       // folha da árvore: duplo clique escolhe as faces da condição
       await p.dblclick(".sim-leaves li:has-text('Força')");
@@ -136,7 +145,7 @@ async function main() {
       // um clique + uma face = uma condição nova (sem passar por menus)
       const n0 = (await p.$$(".sim-panel .kw-item")).length;
       await p.click(".cmd:has-text('Pressão')");
-      await p.keyboard.press("Control+4"); await p.waitForTimeout(500);
+      await p.keyboard.press("Control+4"); await camIdle(p);
       await p.mouse.click(cx, cy);
       await p.keyboard.press("Enter");
       check("Pressão: 1 clique na barra + 1 na face", (await p.$$(".sim-panel .kw-item")).length === n0 + 1 && /1 face/.test(await p.textContent(".sim-node:has-text('Cargas e apoios')") + await p.textContent(".sim-leaves")));
@@ -153,7 +162,7 @@ async function main() {
       check("verificação: simetria sem faces é erro", (await p.$$(".sim-panel .chk-erro")).length >= 1 && /sem faces/.test(await p.textContent(".sim-panel .chk-erro")));
       check("verificação: matriz com os 3 solvers", (await p.$$(".sim-panel .verdict")).length === 3 && (await p.$$(".sim-panel table.matrix tr.used")).length >= 4);
       await p.keyboard.press("F5");
-      await p.waitForTimeout(300);
+      await until(p, () => /sem faces/.test(document.querySelector(".statusbar")?.textContent ?? ""));
       check("F5 com erros no modelo: bloqueia e explica", /sem faces/.test(await p.textContent(".statusbar")) && /Verificação do modelo/.test(await p.textContent(".sim-panel .pm-title")));
       await p.click(".sim-panel .verdict:has-text('OpenRadioss')");
       check("matriz: escolher outro solver recalcula a verificação", /Estática linear: não suportado/.test(await p.textContent(".sim-panel .check-list")));

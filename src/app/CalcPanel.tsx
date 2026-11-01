@@ -78,9 +78,9 @@ export function CalcPanel() {
   const [section, setSection] = useState(memo.section);
   const [busy, setBusy] = useState(false);
   const def: CalcDef = CALCS.find((c) => c.id === id) ?? CALCS[0];
-  const vals = { ...Object.fromEntries(def.inputs.map((i) => [i.key, i.default])), ...(values[def.id] ?? {}) };
+  const vals = { ...Object.fromEntries(def.inputs.map((i) => [i.key, i.default])), ...values[def.id] };
   const choose = (next: string) => { memo.id = next; setId(next); };
-  const setVals = (p: Record<string, number>, calc = def.id) => { const v = { ...values, [calc]: { ...(values[calc] ?? {}), ...p } }; memo.values = v; setValues(v); };
+  const setVals = (p: Record<string, number>, calc = def.id) => { const v = { ...values, [calc]: { ...values[calc], ...p } }; memo.values = v; setValues(v); };
   const setX = (p: Partial<XfoilForm>) => { const v = { ...xf, ...p }; memo.xf = v; setXf(v); };
   let result: ReturnType<typeof runCalc> | null = null, error = "";
   try { result = runCalc(def.id, vals); } catch (e) { error = (e as Error).message; }

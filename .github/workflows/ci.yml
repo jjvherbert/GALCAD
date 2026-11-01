@@ -1,0 +1,65 @@
+# Rede de segurança de cada PR e de cada push ao main: tipos, lint, testes unitários, build e as
+# suites e2e no browser. Os solvers (Gmsh, CalculiX, …) não estão instalados aqui: os testes que
+# precisam deles são saltados e correm localmente ou no workflow do instalador Windows.
+#
+# A análise Galkeel precisa do submódulo privado galkeel-calculadora (secret GALKEEL_CALC_TOKEN,
+# token só de leitura desse repositório). Sem ele, os testes que dependem dela são saltados.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: galkeel-calculadora (submódulo privado)
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GALKEEL_CALC_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config submodule.vendor/galkeel-calculadora.url "https://x-access-token:${TOKEN}@github.com/jjvherbert/galkeel-calculadora"
+            git submodule update --init --depth 1 vendor/galkeel-calculadora
+          else
+            echo "::warning::Sem o secret GALKEEL_CALC_TOKEN: os testes da análise Galkeel são saltados"
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tipos
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Testes unitários
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Chromium para os e2e
+        run: npx playwright install --with-deps chromium
+      - name: Testes e2e (todas as suites, reporta todas as falhas)
+        run: npm run test:e2e
+      - name: Capturas dos e2e
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-capturas
+          path: dist/e2e-*.png
+          if-no-files-found: ignore
+          retention-days: 7

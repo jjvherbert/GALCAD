@@ -3,20 +3,24 @@
 // relatório e envio dos resultados à página-mãe no contrato `galkeel:calculator-result`.
 // Uso: npm run build && node tests/e2e/galkeel.e2e.cjs
 const { chromium } = require("playwright");
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
+const { startPreview, has } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = 4188, AGENT = 8797, TOKEN = "e2e-galkeel-token";
 const URL = `http://localhost:${PORT}`;
-const has = (c) => spawnSync("which", [c]).status === 0;
 
 async function main() {
+  if (!fs.existsSync(path.join(__dirname, "../../vendor/galkeel-calculadora/assets/iso12215-5-pressure.js"))) {
+    console.log("— galkeel: submódulo vendor/galkeel-calculadora ausente, suite saltada");
+    return;
+  }
   // página-mãe de teste (faz de galkeel-app): recolhe as mensagens do iframe
   fs.writeFileSync(path.join(__dirname, "../../dist/host-e2e.html"), `<!doctype html><meta charset="utf-8"><title>host</title>
 <iframe id="cad" src="/" style="width:1380px;height:860px;border:0"></iframe>
 <script>window.got=[];addEventListener("message",(e)=>{if(e.origin===location.origin&&e.data&&e.data.type==="galkeel:calculator-result")window.got.push(e.data)});</script>`);
-  const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+  const server = startPreview(PORT);
   const solvers = has("gmsh") && has("ccx");
   const agent = solvers ? spawn("node", [path.join(__dirname, "../../public/cad-runner.mjs"), "--serve", "--port", String(AGENT)], { stdio: "ignore", env: { ...process.env, CAD_TOKEN: TOKEN } }) : null;
   const R = [];

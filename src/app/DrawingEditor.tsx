@@ -29,7 +29,7 @@ const TOOL_HINT: Record<string, string> = {
 };
 
 export function DrawingEditor() {
-  const st = useStore();
+  useStore(); // subscreve o store: re-renderiza quando o desenho ativo muda
   const d = store.activeDrawing();
   if (!d) return null;
   return (
@@ -38,7 +38,6 @@ export function DrawingEditor() {
       <SheetCanvas d={d} />
     </div>
   );
-  void st;
 }
 
 function SheetCanvas({ d }: { d: DrawingDoc }) {
