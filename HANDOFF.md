@@ -1,5 +1,16 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 1 — núcleo cancelável (PR #5, branch `fix/cancel-jobs`)
+
+Antes, um crash do WASM ou uma operação OCC em loop deixava promessas penduradas para sempre e não havia forma de parar.
+
+- **`KernelClient`** (`src/app/kernel-client.ts`): vigia com limite configurável (Definições → limite do núcleo, 300 s por defeito), reiniciada a cada resposta; `onerror`/`onmessageerror` rejeitam os pedidos pendentes com `KernelRestartError` e criam um worker novo; respostas tardias do worker antigo são ignoradas.
+- **Parar** na barra de estado enquanto o núcleo está ocupado (`cancelKernel()` → `abort()`); o cancelamento não aparece como erro; o modelo fica marcado como desatualizado (`kernelStale`; Ctrl+Q reconstrói, exportar reconstrói sozinho). O indicador só aparece após ~300 ms.
+- **Reconstruções coalescidas**: as ultrapassadas resolvem `null`, o `force` passa para a seguinte, a que está em espera corre no worker novo depois de um cancelamento.
+- **Regressão corrigida (câmara)**: a barra de estado mudava de altura a meio da animação de «sair do esboço» e o `resize()` publicava a vista interpolada. Agora `resize()` não publica durante animações, `finishAnim()` publica no fim e a barra tem altura fixa (27 px).
+- **Verificado**: tsc, lint, 170 testes unitários (10 novos em `tests/kernel-client.test.ts`), 12 suites e2e, ui-check 390/1440 claro e escuro, CI verde (3m29s). **Não verificado visualmente**: o estado «ocupado» com o botão Parar (só aparece numa operação longa).
+- **Falta do passo 1**: `AbortController` restante em `sim-client`; agente de solvers para `utilityProcess` (A7). Depois: passo 2 (partir o store).
+
 ## Atualização: F1b — Definições e tema claro/escuro/sistema (branch `feat/settings-theme`)
 
 Feedback de Juan: «falta uma aba de definições e quero poder escolher black ou white mode».
