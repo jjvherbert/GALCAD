@@ -2,6 +2,7 @@
 import { FILE_EXTENSION } from "../doc/io.ts";
 import type { ExportFormat } from "../kernel/protocol.ts";
 import { store } from "./store.ts";
+import { KernelRestartError } from "./kernel-client.ts";
 import { renderDrawing } from "../drawing/render.ts";
 import { toPDF } from "../drawing/pdf.ts";
 import { toDXF } from "../drawing/dxf.ts";
@@ -53,12 +54,13 @@ export async function importStep() {
 export async function exportAs(format: ExportFormat) {
   const st = store.state;
   try {
-    const r = await store.kernel.export(format, st.doc.name);
+    const r = await store.exportModel(format, st.doc.name);
     const name = st.active.kind === "part" ? st.doc.name : store.activeAssembly()?.name ?? st.fileName;
     download(`${name}.${r.ext}`, r.data as BlobPart, r.mime);
     store.set({ message: `Exportado ${r.ext.toUpperCase()} (${Math.round(r.data.length / 1024)} kB, mm)` });
   } catch (e) {
-    store.set({ error: (e as Error).message });
+    // um reinício do núcleo já foi anunciado na barra de estado
+    if (!(e instanceof KernelRestartError)) store.set({ error: (e as Error).message });
   }
 }
 

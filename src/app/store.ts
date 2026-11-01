@@ -38,7 +38,7 @@ function relativeMatrix(B: ArrayLike<number>, A: ArrayLike<number>): number[] {
   for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += inv[k * 4 + r] * A[c * 4 + k]; out[c * 4 + r] = s; }
   return out;
 }
-import type { AssemblyResponse, InterferenceResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, RebuildResponse } from "../kernel/protocol.ts";
+import type { AssemblyResponse, InterferenceResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, RebuildResponse } from "../kernel/protocol.ts";
 
 /** Análise de superfície ativa no 3D (separador Avaliar). */
 export type Analysis =
@@ -51,7 +51,7 @@ export type Analysis =
   | { kind: "highlight"; axis: StdAxis; spacing: number; normals?: Float32Array }
   /** Pentes de curvatura das arestas selecionadas (ou de todas as curvas). */
   | { kind: "combs"; edges?: string[]; gain: number; data?: CombsResponse };
-import { KernelClient } from "./kernel-client.ts";
+import { KernelClient, KernelRestartError } from "./kernel-client.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
@@ -115,6 +115,8 @@ export interface State {
   simFocus: { index: number; n: number } | null;
   result: RebuildResponse | null;
   busy: boolean;
+  /** O worker do núcleo tem pedidos por responder (reconstrução, exportação, análise…): mostra «Parar». */
+  kernelBusy: boolean;
   /** Há uma reconstrução pedida (em espera ou a correr) que ainda não terminou. */
   rebuildPending: boolean;
   error: string | null;
@@ -194,7 +196,22 @@ function drawingKernelKey(d: DrawingDoc): string {
 }
 
 class Store {
-  kernel = new KernelClient();
+  kernel = new KernelClient({
+    timeoutMs: () => this.state.settings.kernelTimeout * 1000,
+    // sem reconstrução automática: repetiria o que o utilizador acabou de cancelar (ou entraria em ciclo
+    // com um limite de tempo); o worker novo está vazio até à próxima reconstrução
+    onRestart: (i) => {
+      this.kernelStale = true;
+      if (i.aborted) this.set({ message: "Operação do núcleo cancelada (Ctrl+Q reconstrói)", error: null });
+      else this.set({ error: `${i.why} — Ctrl+Q reconstrói` });
+    },
+    // só é chamado a partir de pedidos, nunca durante a construção (this.state já existe)
+    onBusy: (b) => this.set({ kernelBusy: b }),
+  });
+  /** true depois de o worker ser reiniciado: o modelo do núcleo perdeu-se até à próxima reconstrução. */
+  private kernelStale = false;
+  /** Resolve a promessa da reconstrução agendada que ainda não arrancou. */
+  private settleRebuild: (() => void) | null = null;
   state: State;
   private histories = new Map<string, History<unknown>>();
   private listeners = new Set<() => void>();
@@ -213,7 +230,7 @@ class Store {
     applyTheme(settings.theme);
     this.state = {
       project, active: { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
-      edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, rebuildPending: false, error: null, message: null,
+      edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, kernelBusy: false, rebuildPending: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, showSettings: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings, lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
@@ -268,33 +285,67 @@ class Store {
     return doc;
   }
 
-  rebuild(delay = 60, force = false) {
+  /**
+   * Agenda uma reconstrução. A promessa resolve quando ela termina (com ou sem erro); se for
+   * substituída antes de arrancar, resolve quando terminar a que a substituiu.
+   */
+  rebuild(delay = 60, force = false): Promise<void> {
     clearTimeout(this.timer);
     // só o pedido mais recente limpa `busy`/`rebuildPending`: um pedido substituído (o kernel devolve
     // null) ou feito para outro documento não pode dar a reconstrução por terminada
     const gen = ++this.gen;
     if (!this.state.rebuildPending) this.set({ rebuildPending: true });
+    const superseded = this.settleRebuild;
+    let settle!: () => void;
+    const done = new Promise<void>((r) => { settle = r; });
+    this.settleRebuild = settle;
+    if (superseded) void done.then(superseded);
     this.timer = setTimeout(async () => {
+      if (this.settleRebuild === settle) this.settleRebuild = null;
       this.set({ busy: true });
       const active = this.state.active;
       try {
         if (active.kind === "part") {
           const doc = this.displayDoc();
           const r = await this.kernel.rebuild(doc, force, externalParts(this.state.project, doc));
+          if (r) this.kernelStale = false;
           if (r && this.state.active === active) { this.set({ result: r, error: null }); void this.refreshAnalysis(); }
         } else if (active.kind === "assembly") {
           const r = await this.kernel.assembly(this.displayProject(), active.id, force);
+          if (r) this.kernelStale = false;
           if (r && this.state.active === active) this.set({ asmResult: r, error: null });
         } else {
           const r = await this.kernel.drawing(this.state.project, active.id, force);
+          if (r) this.kernelStale = false;
           if (r && this.state.active === active) this.set({ drawingResult: r, error: null });
         }
       } catch (e) {
-        if (gen === this.gen) this.set({ error: (e as Error).message });
+        // um reinício do núcleo já é comunicado por onRestart
+        if (gen === this.gen && !(e instanceof KernelRestartError)) this.set({ error: (e as Error).message });
       } finally {
         if (gen === this.gen) this.set({ busy: false, rebuildPending: false });
+        settle();
       }
     }, delay);
+    return done;
+  }
+
+  /** Depois de um reinício o worker não tem o modelo: reconstrói antes de pedir algo que dependa dele. */
+  private async ensureBuilt() {
+    if (!this.kernelStale) return;
+    await this.rebuild(0, true);
+    if (this.kernelStale) throw new Error("O núcleo não tem o modelo carregado; reconstrói com Ctrl+Q");
+  }
+
+  /** Botão «Parar»: cancela a operação do núcleo em curso (o worker é reiniciado). */
+  cancelKernel() {
+    if (!this.kernel.abort()) this.set({ message: "Nada para cancelar no núcleo" });
+  }
+
+  /** Exportação do modelo ativo (o worker tem de ter o modelo carregado). */
+  async exportModel(format: ExportFormat, name: string) {
+    await this.ensureBuilt();
+    return this.kernel.export(format, name);
   }
 
   /** Projeto com o mate em edição aplicado (pré-visualização na montagem). */
@@ -393,11 +444,13 @@ class Store {
   /** Aplica a posição resolvida pelos mates às posições iniciais (o solver parte daí da próxima vez). */
   async checkInterference() {
     try {
+      await this.ensureBuilt();
       this.set({ busy: true });
       const r = await this.kernel.interference();
       this.set({ interference: r, busy: false, message: r.pairs.length ? `${r.pairs.length} interferência(s)` : "Sem interferências" });
     } catch (e) {
-      this.set({ busy: false, error: (e as Error).message });
+      // um reinício do núcleo já foi anunciado em onRestart
+      this.set(e instanceof KernelRestartError ? { busy: false } : { busy: false, error: (e as Error).message });
     }
   }
 
@@ -487,22 +540,24 @@ class Store {
     const a = this.state.analysis;
     if (a?.kind === "highlight" && this.state.result?.mesh && (!a.normals || this.normalsFor !== this.state.result)) {
       try {
+        await this.ensureBuilt();
         const res = this.state.result;
         const { normals } = await this.kernel.normals();
         this.normalsFor = res;
         if (this.state.analysis === a) this.set({ analysis: { ...a, normals } });
-      } catch (e) { this.set({ error: (e as Error).message }); }
+      } catch (e) { if (!(e instanceof KernelRestartError)) this.set({ error: (e as Error).message }); }
       return;
     }
     if ((a?.kind !== "curvature" && a?.kind !== "deviation" && a?.kind !== "continuity" && a?.kind !== "combs") || !this.state.result?.mesh) return;
     try {
+      await this.ensureBuilt();
       const data = a.kind === "curvature" ? await this.kernel.curvature(a.mode)
         : a.kind === "continuity" ? await this.kernel.continuity()
         : a.kind === "combs" ? await this.kernel.combs(a.edges)
         : await this.kernel.deviation();
       if (this.state.analysis === a) this.set({ analysis: { ...a, data } as Analysis });
     } catch (e) {
-      this.set({ error: (e as Error).message });
+      if (!(e instanceof KernelRestartError)) this.set({ error: (e as Error).message });
     }
   }
 

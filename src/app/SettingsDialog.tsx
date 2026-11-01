@@ -97,6 +97,7 @@ export function SettingsDialog() {
           </label>
           <label class="row"><span>Limite por tentativa de malha (s)</span><NumberField label="Limite da malha em segundos" value={s.meshTimeout} limits={LIMITS.meshTimeout} onCommit={(v) => set({ meshTimeout: v })} /></label>
           <label class="row"><span>Limite de cada solve (min)</span><NumberField label="Limite do solve em minutos" value={s.solveTimeout} limits={LIMITS.solveTimeout} scale={60} onCommit={(v) => set({ solveTimeout: v })} /></label>
+          <label class="row"><span>Limite do núcleo geométrico (s)</span><NumberField label="Limite do núcleo em segundos" value={s.kernelTimeout} limits={LIMITS.kernelTimeout} onCommit={(v) => set({ kernelTimeout: v })} /></label>
           <p class="muted">O token do agente nunca é guardado; fica só em memória durante a sessão.</p>
         </section>
 

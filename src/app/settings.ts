@@ -19,6 +19,8 @@ export interface Settings {
   meshTimeout: number;
   /** Limite de cada passo do solver (s). */
   solveTimeout: number;
+  /** Limite sem resposta do núcleo geométrico (s); passado esse tempo, o núcleo é reiniciado. */
+  kernelTimeout: number;
   /** Endereço do agente de solvers (só no browser; o token nunca é guardado). */
   agentUrl: string;
 }
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sketchGrid: false,
   meshTimeout: 120,
   solveTimeout: 3600,
+  kernelTimeout: 300,
   agentUrl: "http://127.0.0.1:8765",
 };
 
@@ -46,6 +49,7 @@ export const LIMITS = {
   arrowStep: [1, 90],
   meshTimeout: [10, 7200],
   solveTimeout: [60, 7 * 24 * 3600],
+  kernelTimeout: [30, 3600],
 } as const;
 
 const clamp = (v: unknown, [lo, hi]: readonly [number, number], dflt: number) =>
@@ -69,6 +73,7 @@ export function sanitizeSettings(s: Partial<Settings>): Settings {
     sketchGrid: bool(s.sketchGrid, d.sketchGrid),
     meshTimeout: clamp(s.meshTimeout, LIMITS.meshTimeout, d.meshTimeout),
     solveTimeout: clamp(s.solveTimeout, LIMITS.solveTimeout, d.solveTimeout),
+    kernelTimeout: clamp(s.kernelTimeout, LIMITS.kernelTimeout, d.kernelTimeout),
     agentUrl: typeof s.agentUrl === "string" && /^https?:\/\/\S+$/.test(s.agentUrl) ? s.agentUrl : d.agentUrl,
   };
 }
