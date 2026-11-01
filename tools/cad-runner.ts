@@ -14,10 +14,10 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { CfdCase, FemCase, SimCase } from "../src/sim/case.ts";
-import { femGeo, su2Geo } from "../src/sim/gmsh.ts";
+import { type Algo3D, femGeo, type GeoOpts, su2Geo } from "../src/sim/gmsh.ts";
 import { elementsOf, faceBlocks, parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
 import { faceIntegrals } from "../src/sim/elements.ts";
 import { meshPreview } from "../src/sim/meshview.ts";
@@ -87,8 +87,13 @@ export function tools() {
   const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
   const version = (cmd: string | null, args: string[]) => {
     if (!cmd) return null;
-    const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 10000 });
-    return (r.stdout + r.stderr).trim().split(/\r?\n/)[0]?.slice(0, 80) ?? "";
+    // lançadores .cmd/.bat só correm pelo cmd.exe (o Node recusa-os sem shell: EINVAL, stdout null);
+    // um executável que não arranca não pode derrubar o agente — fica sem versão
+    const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
+    const r = script
+      ? spawnSync(`"${cmd}"`, args, { encoding: "utf8", timeout: 10000, shell: true })
+      : spawnSync(cmd, args, { encoding: "utf8", timeout: 10000 });
+    return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split(/\r?\n/)[0]?.slice(0, 80) ?? "";
   };
   return {
     gmsh: gmsh ? { path: gmsh, version: version(gmsh, ["--version"]) } : null,
@@ -124,8 +129,34 @@ function withEnv(extra?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }): NodeJS.
   return env;
 }
 
-function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log, env?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }): Promise<void> {
+/**
+ * Job em curso (o agente corre um de cada vez): processo filho atual, cauda da saída para o progresso
+ * ao vivo e motivo de cancelamento. `run()` regista aqui o processo para o poder matar.
+ */
+interface Job { start: number; tail: string; child?: ReturnType<typeof spawn>; cancelled?: string; meshTimeout?: number }
+let currentJob: Job | null = null;
+
+/** Mata o processo e os filhos: no Windows o `shell:true` mete um cmd.exe pelo meio, daí `taskkill /T`. */
+function killTree(p: ReturnType<typeof spawn>): void {
+  if (p.exitCode !== null || p.pid === undefined) return;
+  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(p.pid), "/T", "/F"], { stdio: "ignore" });
+  else p.kill("SIGKILL");
+}
+
+/** Cancela o job em curso (Parar no browser ou pedido fechado); devolve se havia algo a cancelar. */
+function cancelJob(reason: string): boolean {
+  if (!currentJob) return false;
+  currentJob.cancelled ??= reason;
+  if (currentJob.child) killTree(currentJob.child);
+  return true;
+}
+
+class CancelledError extends Error {}
+class TimeoutError extends Error {}
+
+function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log, env?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }, opts: { timeoutSec?: number } = {}): Promise<void> {
   return new Promise((ok, fail) => {
+    if (currentJob?.cancelled) { fail(new CancelledError(currentJob.cancelled)); return; }
     log(`$ ${[cmd, ...args].join(" ")}`);
     const out: string[] = [];
     // lançadores .cmd/.bat (code_aster no Windows) só correm através do cmd.exe; os argumentos são
@@ -135,13 +166,26 @@ function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log
     const p = script
       ? spawn(`"${cmd}"`, args.map((a) => `"${a}"`), { cwd, env: withEnv(env), shell: true })
       : spawn(cmd, args, { cwd, env: withEnv(env) });
-    const take = (b: Buffer) => { out.push(b.toString()); };
+    const job = currentJob;
+    if (job) job.child = p;
+    const take = (b: Buffer) => {
+      const s = b.toString();
+      out.push(s);
+      if (job) job.tail = (job.tail + s).slice(-20000);
+    };
     p.stdout.on("data", take);
     p.stderr.on("data", take);
-    p.on("error", (e) => fail(new Error(`${cmd}: ${e.message}`)));
+    // limite de tempo: mata a árvore de processos e diz porquê
+    let timedOut = false;
+    const timer = opts.timeoutSec ? setTimeout(() => { timedOut = true; killTree(p); }, opts.timeoutSec * 1000) : undefined;
+    p.on("error", (e) => { clearTimeout(timer); fail(new Error(`${cmd}: ${e.message}`)); });
     p.on("close", (code) => {
+      clearTimeout(timer);
+      if (job?.child === p) job.child = undefined;
       writeFileSync(join(cwd, logFile), out.join(""));
-      if (code === 0) ok();
+      if (job?.cancelled) fail(new CancelledError(job.cancelled));
+      else if (timedOut) fail(new TimeoutError(`${cmd.split(/[\\/]/).pop()} não terminou em ${opts.timeoutSec} s`));
+      else if (code === 0) ok();
       else fail(new Error(`${cmd} terminou com o código ${code}:\n${out.join("").split(/\r?\n/).slice(-15).join("\n")}`));
     });
   });
@@ -205,6 +249,79 @@ function checkGroups(c: FemCase, m: Msh): string[] {
   return out;
 }
 
+/**
+ * Traduz os erros habituais do `log.gmsh` para uma mensagem legível (com as superfícies em causa);
+ * `null` se não reconhecer nada. As faces do Gmsh têm a numeração do núcleo (o BREP é o mesmo).
+ */
+export function gmshError(logText: string): string | null {
+  const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim());
+  if (!errs.length) return null;
+  const all = errs.join("\n");
+  const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
+  const where = faces.length ? ` (faces ${faces.join(", ")})` : "";
+  if (/self[- ]?intersect|intersecting facets|overlapping facets|PLC Error|invalid PLC/i.test(all))
+    return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
+  if (/boundary recovery|could not recover/i.test(all))
+    return `O gerador 3D não conseguiu respeitar a malha das faces${where}. Normalmente é uma face muito fina ou um ângulo muito agudo; tente um tamanho de elemento menor nessa zona.`;
+  if (/no (volume|elements) in|not closed|unable to recover the volume|no tetrahedra/i.test(all))
+    return `A geometria não forma um volume fechado${where}. Verifique se o sólido é estanque (sem faces em falta).`;
+  if (/degenerat|small edge|too small|zero length/i.test(all))
+    return `Há arestas ou faces degeneradas/minúsculas${where}. Remova detalhes muito pequenos ou aumente o tamanho mínimo.`;
+  return `O Gmsh falhou: ${errs[errs.length - 1]}`;
+}
+
+const ALGO_NAMES: Record<Algo3D, string> = { 1: "Delaunay", 4: "Frontal", 10: "HXT" };
+
+/**
+ * Gera a malha com o Gmsh. Ao regenerar tenta em cascata Delaunay → HXT (paralelo) → Frontal sem
+ * otimização de ordem 2 → (FEM) com reparação OCC, cada tentativa com limite de tempo; a reparação só
+ * é aceite se os grupos continuarem a bater certo. Devolve a malha lida (FEM) ou `undefined` (SU2).
+ */
+async function gmshMesh(c: SimCase, dir: string, log: Log, o: { kind: "fem" | "su2"; regenerate: boolean; preview?: boolean }): Promise<Msh | undefined> {
+  const t = tools();
+  if (!t.gmsh) throw new Error("Gmsh não encontrado (instale o Gmsh ou defina CAD_GMSH)");
+  const geo = join(dir, "mesh.geo");
+  const nt = String(Math.max(1, cpus().length));
+  const args = (n: string) => o.kind === "fem" ? ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", n] : ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", n];
+  const write = (g: GeoOpts) => writeFileSync(geo, o.kind === "fem" ? femGeo(c as FemCase, g) : su2Geo(c as CfdCase, g));
+  const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : undefined;
+  const timeoutSec = currentJob?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
+  // geo já existente e sem regenerar: corre-o tal como está (pode ter sido editado à mão)
+  if (!o.regenerate && existsSync(geo)) {
+    try { await run(t.gmsh.path, args(nt), dir, "log.gmsh", log, undefined, { timeoutSec }); }
+    catch (e) { throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? (e as Error).message); }
+    return read();
+  }
+  const attempts: GeoOpts[] = [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
+  if (o.kind === "fem") attempts.push({ algorithm3D: 4, optimizeHO: false, heal: true });
+  const start = Date.now();
+  let last: Error | undefined, diag: string | null = null;
+  for (const [k, g] of attempts.entries()) {
+    if (k > 0 && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
+    write(g);
+    log(`Malha: tentativa ${k + 1}/${attempts.length} — ${ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
+    try {
+      // só o HXT é paralelo; os outros com -nt 1 (resultado reprodutível)
+      await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec });
+      const msh = read();
+      if (g.heal && msh) {
+        const w = checkGroups(c as FemCase, msh);
+        if (w.length) { last = new Error(`A reparação da geometria alterou as faces das condições:\n${w.join("\n")}`); continue; }
+      }
+      if (k > 0) log(`Malha: obtida na tentativa ${k + 1} (${ALGO_NAMES[g.algorithm3D ?? 1]}).`);
+      return msh;
+    } catch (e) {
+      if (e instanceof CancelledError) throw e;
+      last = e as Error;
+      diag ??= gmshError(logOf(dir));
+      log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
+    }
+  }
+  throw new Error(diag ?? last?.message ?? "A malha falhou");
+}
+
+const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh"), "utf8"); } catch { return ""; } };
+
 /** Descrição curta dos elementos da malha (resumo). */
 const meshKind = (c: FemCase) => (c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`);
 
@@ -213,9 +330,7 @@ async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean):
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
   if (!t.code_aster) throw new Error("code_aster (run_aster) não encontrado (https://code-aster.org, ou defina CAD_ASTER)");
-  if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-  await run(t.gmsh.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], dir, "log.gmsh", log);
-  const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const msh = (await gmshMesh(c, dir, log, { kind: "fem", regenerate }))!;
   const warnings = checkGroups(c, msh);
   if (warnings.length) throw new Error(warnings.join("\n"));
   const ac = asterCase(c, msh);
@@ -240,9 +355,7 @@ async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean
   if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
   const r = t.openradioss;
   if (!r) throw new Error("OpenRadioss/OpenCourant não encontrado (https://github.com/OpenCourant/OpenCourant/releases: descompacte e defina CAD_RADIOSS_DIR)");
-  if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-  await run(t.gmsh.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], dir, "log.gmsh", log);
-  const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const msh = (await gmshMesh(c, dir, log, { kind: "fem", regenerate }))!;
   const warnings = checkGroups(c, msh);
   if (warnings.length) throw new Error(warnings.join("\n"));
   const deck = radiossDeck(c, msh);
@@ -284,9 +397,7 @@ async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): P
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
   if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
-  if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-  await run(t.gmsh.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], dir, "log.gmsh", log);
-  const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const msh = (await gmshMesh(c, dir, log, { kind: "fem", regenerate }))!;
   const warnings = checkGroups(c, msh);
   if (warnings.length) throw new Error(warnings.join("\n"));
   const deck = calculixDeck(c, msh);
@@ -420,8 +531,8 @@ async function runSu2(c: CfdCase, dir: string, log: Log, regenerate: boolean): P
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado");
   if (!t.su2) throw new Error("SU2 não encontrado (https://su2code.github.io, ou defina CAD_SU2)");
-  if (regenerate) { writeFileSync(join(dir, "mesh.geo"), su2Geo(c)); writeFileSync(join(dir, "case.cfg"), su2Config(c)); }
-  await run(t.gmsh.path, ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2"], dir, "log.gmsh", log);
+  if (regenerate) writeFileSync(join(dir, "case.cfg"), su2Config(c));
+  await gmshMesh(c, dir, log, { kind: "su2", regenerate });
   await run(t.su2.path, ["case.cfg"], dir, "log.su2", log);
   const hist = existsSync(join(dir, "history.csv")) ? readFileSync(join(dir, "history.csv"), "utf8").trim().split(/\r?\n/) : [];
   const summary: [string, string][] = [["Iterações", String(Math.max(0, hist.length - 1))], ["Re", c.reynolds.toExponential(2)]];
@@ -487,9 +598,7 @@ export async function previewMesh(dir: string, log: Log = () => {}): Promise<Run
   if (c.format !== "cadp-sim-case" || c.physics !== "fem") throw new Error("A pré-visualização da malha é para estudos FEM");
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-  writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-  await run(t.gmsh.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], dir, "log.gmsh", log);
-  const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const msh = (await gmshMesh(c, dir, log, { kind: "fem", regenerate: true, preview: true }))!;
   const warnings = checkGroups(c, msh);
   const p = meshPreview(c, msh);
   warnings.push(...p.quality.notes);
@@ -683,7 +792,7 @@ export async function runXfoil(req: XfoilRequest, log: Log = () => {}): Promise<
 // ---------------------------------------------------------------------------
 
 /** Pedido da aplicação: o caso, a geometria e (CFD/OpenFOAM) as superfícies STL de cada patch. */
-export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string>; convergence?: RunOptions["convergence"] }
+export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string>; convergence?: RunOptions["convergence"]; /** limite por tentativa de malha, s */ meshTimeout?: number }
 
 export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
   let busy = false;
@@ -697,21 +806,34 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     const send = (code: number, body: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     if (req.headers["x-cad-token"] !== token) { send(401, { error: "Token do agente em falta ou errado" }); return; }
     if (req.method === "GET" && req.url === "/status") { send(200, { ok: true, tools: tools(), busy }); return; }
+    // progresso ao vivo do job em curso (tempo decorrido e cauda da saída do solver)
+    if (req.method === "GET" && req.url === "/job") { send(200, currentJob ? { busy: true, elapsed: (Date.now() - currentJob.start) / 1000, tail: currentJob.tail.slice(-4000), cancelled: currentJob.cancelled } : { busy: false }); return; }
+    if (req.method === "POST" && req.url === "/cancel") { send(200, { ok: true, cancelled: cancelJob("Parado pelo utilizador") }); return; }
     if (req.method !== "POST" || (req.url !== "/run" && req.url !== "/xfoil" && req.url !== "/mesh")) { send(404, { error: "Pedido desconhecido" }); return; }
     if (busy) { send(409, { error: "O agente está ocupado com outro cálculo" }); return; }
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const ch of req) { size += (ch as Buffer).length; if (size > 200e6) { send(413, { error: "Pedido demasiado grande" }); return; } chunks.push(ch as Buffer); }
     busy = true;
+    const job: Job = { start: Date.now(), tail: "" };
+    currentJob = job;
+    // o browser fechou o pedido (separador fechado, fetch abortado) antes da resposta: mata o solver
+    res.on("close", () => { if (!res.writableFinished && currentJob === job) cancelJob("Pedido fechado pelo cliente"); });
+    // as mensagens do agente também entram na cauda do progresso
+    const log = (s: string) => { console.log(s); job.tail = (job.tail + s + "\n").slice(-20000); };
+    // cancelado: 499 (convenção do nginx para «o cliente fechou o pedido»)
+    const fail = (e: unknown, extra: object = {}) => e instanceof CancelledError ? send(499, { error: `Cancelado: ${e.message}`, cancelled: true }) : send(500, { error: (e as Error).message, ...extra });
     if (req.url === "/xfoil") {
-      try { send(200, await runXfoil(JSON.parse(Buffer.concat(chunks).toString("utf8")) as XfoilRequest, (s) => console.log(s))); }
-      catch (e) { send(500, { error: (e as Error).message }); }
-      finally { busy = false; }
+      try { send(200, await runXfoil(JSON.parse(Buffer.concat(chunks).toString("utf8")) as XfoilRequest, log)); }
+      catch (e) { fail(e); }
+      finally { busy = false; currentJob = null; }
       return;
     }
     const dir = mkdtempSync(join(tmpdir(), "cad-run-"));
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as RunRequest;
+      const mt = Number(body.meshTimeout);
+      if (Number.isFinite(mt) && mt > 0) job.meshTimeout = Math.min(mt, 7200);
       if (body.case?.format !== "cadp-sim-case" || typeof body.brep !== "string") throw new Error("Pedido inválido");
       writeFileSync(join(dir, "case.json"), JSON.stringify(body.case));
       writeFileSync(join(dir, "model.brep"), body.brep);
@@ -725,12 +847,13 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
       const cv = body.convergence;
       const fin = (x: unknown) => (x === undefined || x === null ? undefined : Number.isFinite(Number(x)) ? Number(x) : undefined);
       const conv = cv && Number.isFinite(Number(cv.ratio)) ? { ratio: Number(cv.ratio), target: fin(cv.target), metric: typeof cv.metric === "string" ? cv.metric : undefined, maxLevels: fin(cv.maxLevels), maxCells: fin(cv.maxCells), sweep: fin(cv.sweep) } : undefined;
-      const r = req.url === "/mesh" ? await previewMesh(dir, (s) => console.log(s)) : await runCase(dir, (s) => console.log(s), true, { convergence: conv });
+      const r = req.url === "/mesh" ? await previewMesh(dir, log) : await runCase(dir, log, true, { convergence: conv });
       send(200, r);
     } catch (e) {
-      send(500, { error: (e as Error).message, log: tail(join(dir, "log.ccx")) || tail(join(dir, "log.gmsh")) });
+      fail(e, { log: tail(join(dir, "log.ccx")) || tail(join(dir, "log.gmsh")) });
     } finally {
       busy = false;
+      currentJob = null;
       if (!process.env.CAD_KEEP) rmSync(dir, { recursive: true, force: true });
     }
   });

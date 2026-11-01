@@ -167,6 +167,8 @@ export interface State {
   simSection: SimSection;
   /** Cálculo em curso no agente e opções do estudo de convergência (partilhadas pela barra e pelo painel). */
   simBusy: "run" | "mesh" | null;
+  /** Progresso do trabalho em curso no agente: segundos decorridos e cauda do registo do solver. */
+  simProgress: { elapsed: number; tail: string } | null;
   /** Ferramenta ativa no editor de desenhos. */
   drawingTool: DrawingTool | null;
   /** Seleção no desenho (vista ou anotação). */
@@ -211,7 +213,7 @@ class Store {
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
-      workspace: "design", simStudy: null, simSection: "study", simBusy: null,
+      workspace: "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: "http://127.0.0.1:8765", token: "" },
     };
     this.rebuild(0);

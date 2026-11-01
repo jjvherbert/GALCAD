@@ -4,7 +4,7 @@ import { loadFaces } from "../doc/study.ts";
 import { type ConvergenceConfig, DEFAULT_CONVERGENCE, type StoredConvergence, type FemLoad, type FemStudy, type SimMesh, type Study, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
-import { previewStudyMesh, runStudy } from "./sim-client.ts";
+import { CancelledError, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
 
 /** Estudos do documento ativo (peça ou montagem), opcionalmente só de uma física. */
 export function activeStudies(physics?: "fem" | "cfd"): Study[] {
@@ -71,9 +71,20 @@ export async function runActiveStudy(meshOnly = false) {
   const doc = store.activeAssembly()?.id ?? st.doc.id;
   const cc = s.convergence;
   const conv = !meshOnly && cc?.enabled ? convOptions(cc) : undefined;
-  store.set({ simBusy: meshOnly ? "mesh" : "run", error: null });
+  const ac = new AbortController();
+  job = ac;
+  store.set({ simBusy: meshOnly ? "mesh" : "run", simProgress: { elapsed: 0, tail: "" }, error: null });
+  // progresso ao vivo: tempo decorrido e cauda do registo do solver (o agente responde só no fim)
+  const t0 = Date.now();
+  const poll = setInterval(async () => {
+    const j = await agentJob(st.agent.url, st.agent.token);
+    if (job !== ac) return;
+    store.set({ simProgress: { elapsed: j?.elapsed ?? (Date.now() - t0) / 1000, tail: j?.tail ?? store.state.simProgress?.tail ?? "" } });
+  }, 1000);
   try {
-    const { result } = meshOnly ? await previewStudyMesh(s.id, st.agent.url, st.agent.token) : await runStudy(s.id, st.agent.url, st.agent.token, conv);
+    // timeout da malha: o do agente por defeito (fica configurável nas Definições, F1b)
+    const opts = { signal: ac.signal };
+    const { result } = meshOnly ? await previewStudyMesh(s.id, st.agent.url, st.agent.token, opts) : await runStudy(s.id, st.agent.url, st.agent.token, conv, opts);
     store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
     // o estudo de convergência fica guardado no estudo (últimos 6) para consultar, comparar e exportar
     if (result.convergence) {
@@ -82,10 +93,27 @@ export async function runActiveStudy(meshOnly = false) {
       if (cur) updateStudy(s.id, { convergenceRuns: [run, ...(cur.convergenceRuns ?? [])].slice(0, 6) });
     }
   } catch (e) {
-    store.set({ error: (e as Error).message });
+    // parar não é uma falha: mensagem neutra, sem o estado de erro
+    if (e instanceof CancelledError) store.set({ message: `${meshOnly ? "Malha parada" : "Cálculo parado"} —${e.message}` });
+    else store.set({ error: (e as Error).message });
   } finally {
-    store.set({ simBusy: null });
+    clearInterval(poll);
+    if (job === ac) job = null;
+    store.set({ simBusy: null, simProgress: null });
   }
+}
+
+/** Pedido em curso ao agente (malha ou cálculo), para o Parar. */
+let job: AbortController | null = null;
+
+/** Pára a malha/cálculo em curso: pede ao agente que mate o solver e aborta o pedido. */
+export async function cancelActiveStudy() {
+  const ac = job;
+  if (!ac) return;
+  const { url, token } = store.state.agent;
+  // primeiro o agente (mata a árvore de processos); o abort fecha o pedido, o que também o mata
+  await cancelAgentJob(url, token);
+  ac.abort();
 }
 
 /** Opções do agente para o estudo de convergência configurado. */

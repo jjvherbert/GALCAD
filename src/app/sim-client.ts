@@ -51,8 +51,8 @@ export async function agentStatus(url: string, token: string): Promise<{ ok: boo
  * Gera o caso e calcula-o no agente local; devolve os resultados. `convergence`: corre também em duas
  * malhas mais grossas (tamanhos × r e × r²) e devolve o GCI de cada grandeza.
  */
-export async function runStudy(studyId: string, url: string, token: string, convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number; sweep?: number }): Promise<{ case: SimCase; result: RunResult }> {
-  return postCase(await caseFiles(studyId), url, token, convergence);
+export async function runStudy(studyId: string, url: string, token: string, convergence?: { ratio: number; target?: number; metric?: string; maxLevels?: number; sweep?: number }, opts?: JobOpts): Promise<{ case: SimCase; result: RunResult }> {
+  return postCase(await caseFiles(studyId), url, token, convergence, "/run", opts);
 }
 
 /** Como `runStudy`, mas para um documento de peça dado (ex.: a cópia em que um script trabalha). */
@@ -62,38 +62,80 @@ export async function runStudyFor(doc: PartDoc, studyId: string, url: string, to
 }
 
 /** Só a malha do estudo (Gmsh no agente local): qualidade e superfície com as arestas dos elementos. */
-export async function previewStudyMesh(studyId: string, url: string, token: string): Promise<{ case: SimCase; result: RunResult }> {
-  return postCase(await caseFiles(studyId), url, token, undefined, "/mesh");
+export async function previewStudyMesh(studyId: string, url: string, token: string, opts?: JobOpts): Promise<{ case: SimCase; result: RunResult }> {
+  return postCase(await caseFiles(studyId), url, token, undefined, "/mesh", opts);
 }
 
-async function postCase(r: Awaited<ReturnType<typeof caseFiles>>, url: string, token: string, convergence?: Parameters<typeof runStudy>[3], path = "/run"): Promise<{ case: SimCase; result: RunResult }> {
-  if (!token) throw new Error("Ligue o agente local (Simulação → Agente local: endereço e token)");
-  const stl = Object.fromEntries(Object.entries(r.files).filter(([p]) => p.startsWith("constant/triSurface/")).map(([p, t]) => [p.slice("constant/triSurface/".length, -4), t]));
-  let res: Response;
+/** Opções de um pedido longo ao agente: `signal` para o Parar; `meshTimeout` (s) por tentativa do Gmsh. */
+export interface JobOpts { signal?: AbortSignal; meshTimeout?: number }
+
+/** Pedido parado pelo utilizador (Parar, ou o agente respondeu 499). Não é uma falha do cálculo. */
+export class CancelledError extends Error {
+  constructor(message = "Cancelado pelo utilizador") {
+    super(message);
+    this.name = "CancelledError";
+  }
+}
+
+/** `fetch` ao agente: abortado → CancelledError; sem ligação → mensagem a dizer como arrancar o agente. */
+async function agentFetch(input: string, init: RequestInit): Promise<Response> {
   try {
-    res = await fetch(`${url}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-cad-token": token },
-      body: JSON.stringify({ case: r.case, brep: r.files["model.brep"], stl: Object.keys(stl).length ? stl : undefined, convergence }),
-    });
-  } catch {
+    return await fetch(input, init);
+  } catch (e) {
+    if (init.signal?.aborted || (e as Error).name === "AbortError") throw new CancelledError();
     throw new Error("Agente local não responde (corra: node cad-runner.mjs --serve)");
   }
-  const j = await res.json();
-  if (!res.ok) throw new Error(`${j.error ?? "Erro do agente"}${j.log ? `\n${j.log}` : ""}`);
-  return { case: r.case, result: j as RunResult };
+}
+
+/** Corpo JSON da resposta; 499 → CancelledError; outro erro → mensagem do agente (+ cauda do log). */
+async function agentJson(res: Response, signal?: AbortSignal): Promise<any> {
+  let j: any;
+  try {
+    j = await res.json();
+  } catch (e) {
+    if (signal?.aborted) throw new CancelledError();
+    throw new Error(`Resposta inválida do agente (HTTP ${res.status}): ${(e as Error).message}`);
+  }
+  if (res.status === 499) throw new CancelledError(j?.error);
+  if (!res.ok) throw new Error(`${j?.error ?? "Erro do agente"}${j?.log ? `\n${j.log}` : ""}`);
+  return j;
+}
+
+/** Pede ao agente que pare o trabalho em curso (mata a árvore de processos do solver). */
+export async function cancelAgentJob(url: string, token: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${url}/cancel`, { method: "POST", headers: { "x-cad-token": token } });
+    return r.ok && (await r.json()).cancelled === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Progresso do trabalho em curso no agente: tempo decorrido (s) e cauda do registo; null se não responde. */
+export async function agentJob(url: string, token: string): Promise<{ busy: boolean; elapsed?: number; tail?: string; cancelled?: string } | null> {
+  try {
+    const r = await fetch(`${url}/job`, { headers: { "x-cad-token": token } });
+    return r.ok ? await r.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function postCase(r: Awaited<ReturnType<typeof caseFiles>>, url: string, token: string, convergence?: Parameters<typeof runStudy>[3], path = "/run", opts: JobOpts = {}): Promise<{ case: SimCase; result: RunResult }> {
+  if (!token) throw new Error("Ligue o agente local (Simulação → Agente local: endereço e token)");
+  const stl = Object.fromEntries(Object.entries(r.files).filter(([p]) => p.startsWith("constant/triSurface/")).map(([p, t]) => [p.slice("constant/triSurface/".length, -4), t]));
+  const res = await agentFetch(`${url}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-cad-token": token },
+    body: JSON.stringify({ case: r.case, brep: r.files["model.brep"], stl: Object.keys(stl).length ? stl : undefined, convergence, meshTimeout: opts.meshTimeout }),
+    signal: opts.signal,
+  });
+  return { case: r.case, result: (await agentJson(res, opts.signal)) as RunResult };
 }
 
 /** Polar de um perfil no XFOIL do agente local. */
-export async function runXfoilAgent(req: XfoilRequest, url: string, token: string): Promise<XfoilResult> {
+export async function runXfoilAgent(req: XfoilRequest, url: string, token: string, signal?: AbortSignal): Promise<XfoilResult> {
   if (!token) throw new Error("Ligue o agente local (Simulação → Agente local: endereço e token)");
-  let res: Response;
-  try {
-    res = await fetch(`${url}/xfoil`, { method: "POST", headers: { "content-type": "application/json", "x-cad-token": token }, body: JSON.stringify(req) });
-  } catch {
-    throw new Error("Agente local não responde (corra: node cad-runner.mjs --serve)");
-  }
-  const j = await res.json();
-  if (!res.ok) throw new Error(j.error ?? "Erro do agente");
-  return j as XfoilResult;
+  const res = await agentFetch(`${url}/xfoil`, { method: "POST", headers: { "content-type": "application/json", "x-cad-token": token }, body: JSON.stringify(req), signal });
+  return (await agentJson(res, signal)) as XfoilResult;
 }
