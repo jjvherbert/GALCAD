@@ -1,5 +1,16 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1b — Definições e tema claro/escuro/sistema (branch `feat/settings-theme`)
+
+Feedback de Juan: «falta uma aba de definições e quero poder escolher black ou white mode».
+
+- **Diálogo «Definições»** (`src/app/SettingsDialog.tsx`, comando `edit.settings`, ⚙ na barra e `Ctrl+,`; fecha com Esc/Fechar): Aparência (Claro / Escuro / Sistema), Rato e vista (zoom invertido, passo das setas, estilo, planos, gestos), Esboço (quadrícula de fundo on/off), Solvers (URL do agente, limite por tentativa de malha em s — 120 por defeito — e limite do solve em min — 60 por defeito). O token do agente **nunca** é guardado.
+- **Tema** (`src/app/theme.ts`): sem `data-theme` = segue o SO; `data-theme="light"|"dark"` força. Script cedo no `index.html` lê `cad-prototipo:settings` para evitar flash. Viewport three.js e esboço leem os tokens (`onThemeChange`).
+- **Timeouts** passam do código para as definições (`sim-client` → `cad-runner`, limitados no agente).
+- **Barra de ferramentas** sem corte a 390/768 px (`flex-wrap: nowrap` na coluna); ícones dos comandos legíveis no escuro (`color-mix` com `--ws-accent`); **favicon** (`public/favicon.png`) — fim do 404.
+- **Verificado**: typecheck, lint, 160 testes unitários (novos em `tests/settings.test.ts`), 12 suites e2e; ui-check em claro e escuro a 390/768/1440 (sem overflow nem erros de consola; clicar Claro aplica `data-theme=light`; Esc fecha).
+- **Em aberto**: cascata Gmsh com Gmsh real ainda não testada; em Linux os netos de `shell:true` podem sobreviver ao kill.
+
 ## Atualização: F1a — malha robusta e cancelável (PR #2, branch `fix/mesh-robust`)
 
 Feedback de Juan: «gerar malha está a falhar muito e não dá para cancelar quando fica em loop».

@@ -55,6 +55,7 @@ import { KernelClient } from "./kernel-client.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
+import { applyTheme } from "./theme.ts";
 
 /** App de ambiente de trabalho (GALCAD para Windows): agente embutido, com endereço e token próprios. */
 export const desktopAgent = (): { url: string; token: string } | null => (globalThis as { cadDesktop?: { agent: { url: string; token: string } | null } }).cadDesktop?.agent ?? null;
@@ -123,6 +124,7 @@ export interface State {
   selection: Pick[];
   selectedFeature: string | null;
   showVariables: boolean;
+  showSettings: boolean;
   fileName: string;
   dirty: boolean;
   /** Sobreposições da interface (posições em coordenadas do ecrã). */
@@ -207,14 +209,16 @@ class Store {
     } catch { /* sem armazenamento local ou autosave inválido */ }
     if (!project.parts.length) project = { ...project, parts: [newPart(project)] };
     const doc = project.parts[0];
+    const settings = loadSettings();
+    applyTheme(settings.theme);
     this.state = {
       project, active: { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
       edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, rebuildPending: false, error: null, message: null,
-      pickTarget: null, selection: [], selectedFeature: null, showVariables: false, fileName: project.name, dirty: false,
+      pickTarget: null, selection: [], selectedFeature: null, showVariables: false, showSettings: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings: loadSettings(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
+      settings, lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
       workspace: "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
-      simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: "http://127.0.0.1:8765", token: "" },
+      simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: settings.agentUrl, token: "" },
     };
     this.rebuild(0);
   }
@@ -854,7 +858,15 @@ class Store {
   updateSettings(patch: Partial<Settings>) {
     const settings = { ...this.state.settings, ...patch };
     saveSettings(settings);
+    applyTheme(settings.theme);
     this.set({ settings });
+  }
+
+  /** Endereço do agente (browser): usa-o já e guarda-o nas Definições se for válido; o token fica só em memória. */
+  setAgentUrl(url: string) {
+    const clean = url.trim().replace(/\/+$/, "");
+    this.set({ agent: { ...this.state.agent, url: clean } });
+    if (/^https?:\/\/\S+$/.test(clean) && clean !== this.state.settings.agentUrl) this.updateSettings({ agentUrl: clean });
   }
 
   /** Fecha as sobreposições temporárias (menus, barra de atalhos, barra de contexto). */

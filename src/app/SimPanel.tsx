@@ -213,7 +213,7 @@ export function AgentBox() {
     <details class="claude-box">
         <summary>Agente local {status && <span class="muted">· {status}</span>}</summary>
         <p class="field-hint">Corre na sua máquina com Node.js: <code>node cad-runner.mjs --serve</code>. Usa o Gmsh, o CalculiX, o code_aster, o OpenFOAM, o SU2 e o XFOIL instalados (processos separados) e mostra um token para colar aqui.</p>
-        <Field label="Endereço"><input value={a.url} onChange={(e) => store.set({ agent: { ...a, url: (e.target as HTMLInputElement).value.replace(/\/$/, "") } })} /></Field>
+        <Field label="Endereço"><input value={a.url} onChange={(e) => store.setAgentUrl((e.target as HTMLInputElement).value)} /></Field>
         <Field label="Token"><input type="password" autocomplete="off" value={a.token} onInput={(e) => store.set({ agent: { ...a, token: (e.target as HTMLInputElement).value.trim() } })} /></Field>
         <button class="small" onClick={async () => { const x = await agentStatus(a.url, a.token); setStatus(x.ok ? Object.entries(x.tools ?? {}).map(([k, t]) => `${k} ${t ? "✓" : "✗"}`).join(" · ") : x.error ?? "erro"); }}>Testar ligação</button>
       </details>

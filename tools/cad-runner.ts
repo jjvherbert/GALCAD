@@ -133,7 +133,7 @@ function withEnv(extra?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }): NodeJS.
  * Job em curso (o agente corre um de cada vez): processo filho atual, cauda da saída para o progresso
  * ao vivo e motivo de cancelamento. `run()` regista aqui o processo para o poder matar.
  */
-interface Job { start: number; tail: string; child?: ReturnType<typeof spawn>; cancelled?: string; meshTimeout?: number }
+interface Job { start: number; tail: string; child?: ReturnType<typeof spawn>; cancelled?: string; meshTimeout?: number; solveTimeout?: number }
 let currentJob: Job | null = null;
 
 /** Mata o processo e os filhos: no Windows o `shell:true` mete um cmd.exe pelo meio, daí `taskkill /T`. */
@@ -176,15 +176,17 @@ function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log
     p.stdout.on("data", take);
     p.stderr.on("data", take);
     // limite de tempo: mata a árvore de processos e diz porquê
+    // (sem limite explícito, os solvers usam o limite de cálculo do pedido)
     let timedOut = false;
-    const timer = opts.timeoutSec ? setTimeout(() => { timedOut = true; killTree(p); }, opts.timeoutSec * 1000) : undefined;
+    const limit = opts.timeoutSec ?? job?.solveTimeout;
+    const timer = limit ? setTimeout(() => { timedOut = true; killTree(p); }, limit * 1000) : undefined;
     p.on("error", (e) => { clearTimeout(timer); fail(new Error(`${cmd}: ${e.message}`)); });
     p.on("close", (code) => {
       clearTimeout(timer);
       if (job?.child === p) job.child = undefined;
       writeFileSync(join(cwd, logFile), out.join(""));
       if (job?.cancelled) fail(new CancelledError(job.cancelled));
-      else if (timedOut) fail(new TimeoutError(`${cmd.split(/[\\/]/).pop()} não terminou em ${opts.timeoutSec} s`));
+      else if (timedOut) fail(new TimeoutError(`${cmd.split(/[\\/]/).pop()} não terminou em ${limit} s`));
       else if (code === 0) ok();
       else fail(new Error(`${cmd} terminou com o código ${code}:\n${out.join("").split(/\r?\n/).slice(-15).join("\n")}`));
     });
@@ -792,7 +794,17 @@ export async function runXfoil(req: XfoilRequest, log: Log = () => {}): Promise<
 // ---------------------------------------------------------------------------
 
 /** Pedido da aplicação: o caso, a geometria e (CFD/OpenFOAM) as superfícies STL de cada patch. */
-export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string>; convergence?: RunOptions["convergence"]; /** limite por tentativa de malha, s */ meshTimeout?: number }
+/** Limites pedidos pelo browser (s): ignora valores inválidos e corta nos máximos (malha 2 h, solve 7 dias). */
+export function jobLimits(body: { meshTimeout?: unknown; solveTimeout?: unknown }): { meshTimeout?: number; solveTimeout?: number } {
+  const lim = (v: unknown, max: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.min(n, max) : undefined; };
+  const out: { meshTimeout?: number; solveTimeout?: number } = {};
+  const mt = lim(body.meshTimeout, 7200), st = lim(body.solveTimeout, 7 * 24 * 3600);
+  if (mt !== undefined) out.meshTimeout = mt;
+  if (st !== undefined) out.solveTimeout = st;
+  return out;
+}
+
+export interface RunRequest { case: SimCase; brep: string; stl?: Record<string, string>; convergence?: RunOptions["convergence"]; /** limite por tentativa de malha, s */ meshTimeout?: number; /** limite de cada passo do solver, s */ solveTimeout?: number }
 
 export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
   let busy = false;
@@ -832,8 +844,7 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     const dir = mkdtempSync(join(tmpdir(), "cad-run-"));
     try {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as RunRequest;
-      const mt = Number(body.meshTimeout);
-      if (Number.isFinite(mt) && mt > 0) job.meshTimeout = Math.min(mt, 7200);
+      Object.assign(job, jobLimits(body));
       if (body.case?.format !== "cadp-sim-case" || typeof body.brep !== "string") throw new Error("Pedido inválido");
       writeFileSync(join(dir, "case.json"), JSON.stringify(body.case));
       writeFileSync(join(dir, "model.brep"), body.brep);
