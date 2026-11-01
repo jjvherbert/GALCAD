@@ -275,9 +275,9 @@ Auditoria de 2026-10-31 (base, esboço, FEM, desenho): nada se pode cancelar (wo
 
 | Fase | Branch | Conteúdo | Estado |
 |---|---|---|---|
-| F0 | `chore/ci-baseline` | CI (typecheck, lint, unit, e2e), runner e2e que reporta todas as falhas, esperas por condição | em PR |
-| F1a | `fix/mesh-robust` | Malha que funciona e se pode **Parar**: jobs no `cad-runner`, `taskkill /T /F`, timeout, cascata Delaunay → HXT → Frontal, diagnóstico legível do `log.gmsh` | seguinte |
-| F1b | `feat/settings-theme` | Diálogo «Definições» e tema claro/escuro/sistema | — |
+| F0 | `chore/ci-baseline` | CI (typecheck, lint, unit, e2e), runner e2e que reporta todas as falhas, esperas por condição | feito (#1) |
+| F1a | `fix/mesh-robust` | Malha que funciona e se pode **Parar**: jobs no `cad-runner`, `taskkill /T /F`, timeout, cascata Delaunay → HXT → Frontal, diagnóstico legível do `log.gmsh` | feito (#2) |
+| F1b | `feat/settings-theme` | Diálogo «Definições» e tema claro/escuro/sistema; timeouts da malha/solve nas definições; barra de ferramentas responsiva (≤ 768 px) e favicon | seguinte |
 | F1 | `refactor/*` | Jobs canceláveis ponta a ponta (kernel com timeout e reinício), store partido, registo de features, ficheiros < ~400 linhas | — |
 | F2 | `feat/sketch-*` | Features dentro do esboço, cota inteligente, fundo sem quadrícula | — |
 | F3 | `fix/fem-*`, `feat/fem-*` | FS por corpo, biblioteca de materiais, plasticidade multilinear, diálogos, resto do R4 | — |

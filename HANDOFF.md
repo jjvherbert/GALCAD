@@ -1,5 +1,16 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1a — malha robusta e cancelável (PR #2, branch `fix/mesh-robust`)
+
+Feedback de Juan: «gerar malha está a falhar muito e não dá para cancelar quando fica em loop».
+
+- **Agente** (`tools/cad-runner.ts`): job ativo único (`GET /job` → ocupado, tempo decorrido, cauda do log; `POST /cancel` mata-o), kill da árvore de processos (`taskkill /PID /T /F` em Windows, `SIGKILL` noutros), timeout por tentativa, cancelado → HTTP 499. `version()` usa `shell:true` para Gmsh instalado como `.cmd`.
+- **Cascata** Delaunay(1) → HXT(10) → Frontal(4) → reparação OCC (`OCCFixSmallEdges/Faces`, `OCCSewFaces` antes do `Merge`); `MeshSizeMin` com piso de 1e-4 × diagonal, limitado pelo tamanho global e locais (`src/sim/gmsh.ts`: `femGeo`, `minSizeFloor`). Hexaedros nunca otimizam a ordem 2.
+- **Erros legíveis**: `gmshError` traduz PLC/intersecção, aresta de fronteira não recuperada, superfície não fechada e curvas degeneradas, com as faces envolvidas.
+- **UI**: `JobProgress` (separadores Malha e Resolver) com tempo, barra indeterminada, cauda do log e **Parar**; `cancelActiveStudy()` + `AbortController` em `sim-client`/`sim-actions`; estado `simProgress` no store.
+- **Verificado**: 5 testes novos (`tests/gmsh.test.ts`), 12 suites e2e, Parar com Gmsh falso mata o processo (tasklist 1 → 0). **Não verificado**: cascata com Gmsh real e geometria má (Gmsh não instalado nesta máquina).
+- **Em aberto**: timeouts ainda fixos no código (passam para as Definições na F1b); em Linux, netos lançados por `shell:true` podem sobreviver; barra de ferramentas cortada a ≤ 768 px e favicon 404 (pré-existentes, F1b).
+
 ## Atualização: F0 da reestruturação — CI, lint e e2e sem esperas fixas (branch `chore/ci-baseline`)
 
 Pedido de Juan: reestruturar a GALCAD por fases, um branch e um PR por fase, com «muito critério na qualidade — prefiro andar devagar e ter um bom produto». Plano completo (auditoria e fases F0–F8) em `ROADMAP.md`, secção «Reestruturação».
