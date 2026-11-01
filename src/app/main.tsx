@@ -241,7 +241,8 @@ function App() {
         {simWs && kind !== "drawing" && <aside class="side side-right ws-side" key={`ws-r-${st.workspace}`}><SimPanel /></aside>}
       </div>
       <footer class="statusbar" data-rebuild={st.rebuildPending ? "pending" : "idle"}>
-        <span class={st.busy ? "busy" : ""}>{st.busy ? "A reconstruir…" : r ? `Reconstruído em ${r.ms} ms (${r.reused} da cache)` : "A carregar o núcleo geométrico…"}</span>
+        <span class={st.busy || st.kernelBusy ? "busy" : ""}>{st.busy ? "A reconstruir…" : st.kernelBusy ? "Núcleo ocupado…" : r ? `Reconstruído em ${r.ms} ms (${r.reused} da cache)` : "A carregar o núcleo geométrico…"}</span>
+        {st.kernelBusy && <button class="stop" data-role="kernel-stop" title="Cancelar a operação do núcleo (reinicia o núcleo)" onClick={() => store.cancelKernel()}>Parar</button>}
         {errors > 0 && <span class="err">{errors} feature(s) com erro</span>}
         {st.error && <span class="err" role="alert">{st.error}</span>}
         {st.message && <span class="msg">{st.message}</span>}

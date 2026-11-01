@@ -311,7 +311,8 @@ export class Viewport {
     const w = this.el.clientWidth || 1, h = this.el.clientHeight || 1;
     this.renderer.setSize(w, h);
     this.updateProj();
-    this.publish();
+    // a meio de uma transição a câmara está num estado intermédio; os atributos já têm o final
+    if (!this.anim) this.publish();
   }
 
   private updateProj() {
@@ -1290,6 +1291,7 @@ export class Viewport {
     this.camera.lookAt(this.target);
     this.updateProj();
     this.camera.updateMatrixWorld(true); // a seleção por raio usa já a câmara final
+    this.publish();
   }
 
 
