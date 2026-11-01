@@ -206,8 +206,14 @@ class Store {
       else this.set({ error: `${i.why} — Ctrl+Q reconstrói` });
     },
     // só é chamado a partir de pedidos, nunca durante a construção (this.state já existe)
-    onBusy: (b) => this.set({ kernelBusy: b }),
+    // «Núcleo ocupado»/Parar só aparece se a operação passar de ~300 ms: as rápidas não piscam
+    onBusy: (b) => {
+      if (this.busyTimer) { clearTimeout(this.busyTimer); this.busyTimer = null; }
+      if (b) this.busyTimer = setTimeout(() => { this.busyTimer = null; this.set({ kernelBusy: true }); }, 300);
+      else if (this.state.kernelBusy) this.set({ kernelBusy: false });
+    },
   });
+  private busyTimer: ReturnType<typeof setTimeout> | null = null;
   /** true depois de o worker ser reiniciado: o modelo do núcleo perdeu-se até à próxima reconstrução. */
   private kernelStale = false;
   /** Resolve a promessa da reconstrução agendada que ainda não arrancou. */
