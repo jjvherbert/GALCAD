@@ -1,5 +1,15 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 2 (fatia 4) — três stores reais e fim da fachada (PR #11)
+
+- **`SubStore` por grupo** em `src/app/store.ts`: `store.docStore`, `store.sessionStore` e `store.uiStore`, cada um com o seu slice (`pickState`) e os seus listeners. `store.state` continua a ser a vista unida (as ações leem-na).
+- **`Store.set`** compara cada chave com `Object.is`, sincroniza só os slices dos grupos alterados e chama uma vez cada listener (união deduplicada). Um grupo inalterado mantém a identidade do slice.
+- **`useStoreKeys(...)`** subscreve só os substores dos grupos das chaves que lê. Ficam `useDocState`/`useSessionState`/`useUiState`.
+- **Retirados**: a fachada `useStore()` e o `subscribe` global. As notas das fatias 1–3 abaixo que falam de `useStore()` são históricas.
+- **Testes novos** em `tests/store.test.ts` (4): grupos disjuntos e completos; slices iguais ao estado unido; notificação só dos grupos alterados; listener em dois grupos chamado uma vez.
+- **Verificado**: tsc, lint, 182 unitários, build, e2e 12/12, ui-check 390/768/1440, CI verde.
+- **A seguir**: F1 passo 3, registo de features `{schema, build, ui, help}` (A4, A6).
+
 ## Atualização: F1 passo 2 (fatia 3) — todos os componentes com selectors (PR #10)
 
 - **Migrados para `useStoreKeys`**: AssemblyUI, BomPanel, CalcPanel, ConvergencePanel, Dialogs, DrawingEditor, forms, GalkeelPanel, InfoPanel, KnowledgePanel, Overlays, PmiPanel, PropertiesDialog, PropertyPanel, ScriptPanel e SettingsDialog. Já nenhum componente chama `useStore()` sem seletor; a assinatura continua disponível como fachada.
