@@ -14,7 +14,7 @@ g.document = { documentElement: { dataset: {}, style: { setProperty() {} }, setA
 g.window = { addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; } };
 g.Worker = class { onmessage = null; onerror = null; postMessage() {} terminate() {} addEventListener() {} removeEventListener() {} };
 
-const { store, shallowEqual } = await import("../src/app/store.ts");
+const { store, shallowEqual, pickState, DOC_KEYS, SESSION_KEYS, UI_KEYS } = await import("../src/app/store.ts");
 const { setWorkspace } = await import("../src/app/workspaces.ts");
 clearTimeout((store as unknown as { timer: ReturnType<typeof setTimeout> }).timer);
 store.rebuild = () => Promise.resolve();
@@ -125,4 +125,50 @@ test("shallowEqual compara objetos e arrays um nível", () => {
   assert.ok(!shallowEqual([1], [1, 2]));
   assert.ok(shallowEqual(3, 3));
   assert.ok(!shallowEqual(null, {}));
+});
+
+test("substores: os grupos são disjuntos e cobrem todas as chaves do estado", () => {
+  const all = [...DOC_KEYS, ...SESSION_KEYS, ...UI_KEYS];
+  assert.equal(new Set(all).size, all.length);
+  assert.deepEqual([...all].sort(), Object.keys(store.state).sort());
+});
+
+test("substores: cada slice coincide com o estado unido depois de set", () => {
+  fresh();
+  store.set({ message: "olá", selection: [], dirty: true });
+  assert.ok(shallowEqual(store.docStore.state, pickState(store.state, DOC_KEYS)));
+  assert.ok(shallowEqual(store.sessionStore.state, pickState(store.state, SESSION_KEYS)));
+  assert.ok(shallowEqual(store.uiStore.state, pickState(store.state, UI_KEYS)));
+});
+
+test("substores: set só notifica os grupos que mudaram", () => {
+  fresh();
+  const calls = { doc: 0, session: 0, ui: 0 };
+  const offs = [
+    store.docStore.subscribe(() => calls.doc++),
+    store.sessionStore.subscribe(() => calls.session++),
+    store.uiStore.subscribe(() => calls.ui++),
+  ];
+  store.set({ message: "m1" });
+  assert.deepEqual(calls, { doc: 0, session: 0, ui: 1 });
+  store.set({ dirty: !store.state.dirty });
+  assert.deepEqual(calls, { doc: 1, session: 0, ui: 1 });
+  store.set({ message: store.state.message, dirty: store.state.dirty });
+  assert.deepEqual(calls, { doc: 1, session: 0, ui: 1 }, "valores iguais não notificam");
+  const docBefore = store.docStore.state;
+  store.set({ message: "m2" });
+  assert.equal(store.docStore.state, docBefore, "slice de um grupo inalterado mantém a identidade");
+  for (const off of offs) off();
+  store.set({ message: "m3", dirty: !store.state.dirty });
+  assert.deepEqual(calls, { doc: 1, session: 0, ui: 2 }, "depois de cancelar a subscrição não há notificações");
+});
+
+test("substores: um listener em dois grupos é chamado uma só vez por set", () => {
+  fresh();
+  let n = 0;
+  const fn = () => n++;
+  const offs = [store.docStore.subscribe(fn), store.uiStore.subscribe(fn)];
+  store.set({ message: "x", dirty: !store.state.dirty });
+  assert.equal(n, 1);
+  for (const off of offs) off();
 });
