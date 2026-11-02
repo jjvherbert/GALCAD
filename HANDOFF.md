@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 2 (fatia 1) — selectors e resultados por documento (branch `refactor/store-split`)
+
+- **`useStore(selector?, eq)`**: um componente pode subscrever só a parte do estado que usa e só re-renderiza quando essa parte muda (`Object.is` por defeito, `shallowEqual` exportado para objetos/arrays). Sem seletor, comporta-se como antes. O tipo `State` passa a ser exportado.
+- **Resultados por documento (A3)**: `simResult` e `drawingResult` ficam guardados por documento; trocar de documento e voltar repõe-nos em vez de os perder. Apagar um documento descarta os resultados dele; novo projeto/abrir limpa tudo.
+- **Sair do Desenho** volta à última peça/montagem aberta (`lastModelDoc`) se ainda existir e servir no espaço de destino (a CFD só aceita peças); senão cai na primeira peça.
+- **Testes**: `tests/store.test.ts` (8 testes, com os globais do navegador simulados). 178 unitários, e2e 12/12, ui-check 390/1440 sem problemas.
+- **A seguir**: fachada `docStore`/`sessionStore`/`uiStore` e migrar os componentes pesados para selectors.
+
 ## Atualização: F1 passo 1 concluído — Parar em todo o lado e agente em `utilityProcess` (branch `fix/cancel-jobs-rest`)
 
 - **Parar nos restantes pedidos ao agente**: `sim-client` passa a ter `cancelAgentJob(url, token)` (`POST /cancel`) e `CancelledError`, e todos os pedidos (`/job`, `/xfoil`, `/run`, estudos) aceitam `signal`. O padrão é `await cancelAgentJob(); ac.abort()`: o agente mata o processo e o browser larga o pedido.

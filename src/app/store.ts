@@ -1,5 +1,5 @@
 // Estado da aplicação: documento, histórico, edição de features/esboços e resultado da reconstrução.
-import { useEffect, useReducer } from "preact/hooks";
+import { useEffect, useReducer, useRef } from "preact/hooks";
 import type { AxisRef, CadDocument, Feature, FeatureData, FeatureType, GeoHint, PlaneRef, Publication, SketchFeature, StdAxis, Variable, Vec3 } from "../doc/types.ts";
 import { History } from "../doc/history.ts";
 import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "../doc/io.ts";
@@ -220,6 +220,11 @@ class Store {
   private settleRebuild: (() => void) | null = null;
   state: State;
   private histories = new Map<string, History<unknown>>();
+  /** Último resultado de simulação/desenho de cada documento: trocar de documento não os perde (A3). */
+  private simResults = new Map<string, NonNullable<State["simResult"]>>();
+  private drawingResults = new Map<string, DrawingResponse>();
+  /** Última peça/montagem ativa: ao sair do Desenho volta-se a ela, não à primeira peça. */
+  lastModelDoc: DocRef | null = null;
   private listeners = new Set<() => void>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private gen = 0;
@@ -264,6 +269,16 @@ class Store {
 
   subscribe(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   set(patch: Partial<State>) {
+    // os resultados ficam também guardados por documento (o do documento ativo depois do patch)
+    const id = (patch.active ?? this.state.active).id;
+    if ("simResult" in patch) {
+      const r = patch.simResult;
+      if (r) this.simResults.set(r.doc, r); else this.simResults.delete(id);
+    }
+    if ("drawingResult" in patch) {
+      const r = patch.drawingResult;
+      if (r) this.drawingResults.set(id, r); else this.drawingResults.delete(id);
+    }
     this.state = { ...this.state, ...patch };
     for (const l of this.listeners) l();
   }
@@ -487,9 +502,13 @@ class Store {
       active: ref, ...(doc ? { doc, result: null } : {}), selection: [], selectedFeature: null, pickTarget: null, analysis: null,
       // o espaço de trabalho segue o documento: desenhos no Desenho; peças e montagens fora dele (CFD só em peças)
       workspace: ref.kind === "drawing" ? "drawing" : this.state.workspace === "drawing" || (ref.kind === "assembly" && this.state.workspace === "cfd") ? "design" : this.state.workspace,
-      asmResult: ref.kind === "assembly" ? this.state.asmResult : null, drawingResult: null, contextToolbar: null,
-      mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null, simResult: null,
+      asmResult: ref.kind === "assembly" ? this.state.asmResult : null, contextToolbar: null,
+      mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null,
+      // os resultados do documento novo voltam (A3); o rebuild a seguir atualiza o desenho se o modelo mudou
+      simResult: this.simResults.get(ref.id) ?? null,
+      drawingResult: ref.kind === "drawing" ? this.drawingResults.get(ref.id) ?? null : null,
     });
+    if (ref.kind !== "drawing") this.lastModelDoc = ref;
     this.rebuild(0);
   }
 
@@ -516,6 +535,9 @@ class Store {
       drawings: p.drawings.filter((x) => x.id !== ref.id),
     };
     this.histories.delete(ref.id);
+    this.simResults.delete(ref.id);
+    this.drawingResults.delete(ref.id);
+    if (this.lastModelDoc?.id === ref.id) this.lastModelDoc = null;
     this.set({ project, dirty: true });
     this.autosave();
     if (this.state.active.id === ref.id) this.setActive({ kind: "part", id: project.parts[0].id });
@@ -604,7 +626,10 @@ class Store {
   newDoc() {
     const project = newProject();
     this.histories.clear();
-    this.set({ project, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: project.name, dirty: false, pickTarget: null });
+    this.simResults.clear();
+    this.drawingResults.clear();
+    this.lastModelDoc = null;
+    this.set({ project, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, simResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: project.name, dirty: false, pickTarget: null });
     this.autosave();
     this.rebuild(0);
   }
@@ -613,8 +638,11 @@ class Store {
     const project = parseProject(text);
     if (!project.parts.length) project.parts.push(newPart(project));
     this.histories.clear();
+    this.simResults.clear();
+    this.drawingResults.clear();
+    this.lastModelDoc = null;
     const name = fileName.replace(/\.cadp\.json$|\.json$/i, "");
-    this.set({ project: { ...project, name: project.name || name }, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: name, dirty: false });
+    this.set({ project: { ...project, name: project.name || name }, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, simResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: name, dirty: false });
     this.autosave();
     this.rebuild(0);
   }
@@ -940,10 +968,34 @@ class Store {
 
 export const store = new Store();
 
-export function useStore(): State {
+/** Compara dois valores e, se forem objetos/arrays, os seus campos de primeiro nível com `Object.is`. */
+export function shallowEqual<T>(a: T, b: T): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && Object.is((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+}
+
+/**
+ * Sem argumentos devolve o estado todo e re-renderiza a cada alteração (comportamento antigo).
+ * Com `selector`, só re-renderiza quando o valor selecionado muda segundo `eq` (por defeito `Object.is`;
+ * use `shallowEqual` para seletores que montam objetos ou arrays novos).
+ */
+export function useStore(): State;
+export function useStore<T>(selector: (s: State) => T, eq?: (a: T, b: T) => boolean): T;
+export function useStore<T>(selector?: (s: State) => T, eq: (a: T, b: T) => boolean = Object.is): State | T {
   const [, force] = useReducer((x: number) => x + 1, 0);
-  useEffect(() => store.subscribe(() => force(undefined as never)), []);
-  return store.state;
+  const value = selector ? selector(store.state) : store.state;
+  // o seletor, a comparação e o último valor ficam em refs: a subscrição usa sempre os do último render
+  const latest = useRef({ selector, eq, value });
+  latest.current = { selector, eq, value };
+  useEffect(() => store.subscribe(() => {
+    const { selector: sel, eq: same, value: prev } = latest.current;
+    if (!sel || !same(prev as T, sel(store.state))) force(undefined as never);
+  }), []);
+  return value;
 }
 
 export const featureLabelOf = (t: FeatureType) => FEATURE_LABELS[t];

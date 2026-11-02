@@ -125,7 +125,7 @@ export const workspaceDef = (ws: Workspace) => WORKSPACES.find((w) => w.id === w
 
 /**
  * Muda de espaço de trabalho. O Desenho abre (ou cria) um desenho; a partir de um desenho, os outros
- * voltam à primeira peça. A CFD só existe nas peças.
+ * voltam à última peça/montagem aberta (ou à primeira peça). A CFD só existe nas peças.
  */
 export function setWorkspace(ws: Workspace) {
   const st = store.state;
@@ -137,7 +137,13 @@ export function setWorkspace(ws: Workspace) {
     }
     return;
   }
-  if (st.active.kind === "drawing" || (ws === "cfd" && st.active.kind === "assembly")) store.setActive({ kind: "part", id: st.project.parts[0].id });
+  if (st.active.kind === "drawing" || (ws === "cfd" && st.active.kind === "assembly")) {
+    // volta à última peça/montagem aberta (A3), se ainda existir e servir neste espaço
+    const last = store.lastModelDoc;
+    const exists = last && (last.kind === "part" ? st.project.parts : st.project.assemblies).some((d) => d.id === last.id);
+    const fits = last && (ws !== "cfd" || last.kind === "part");
+    store.setActive(last && exists && fits ? last : { kind: "part", id: st.project.parts[0].id });
+  }
   const studies = (store.activeAssembly()?.studies ?? store.state.doc.studies ?? []).filter((x) => (ws === "cfd" ? x.physics === "cfd" : x.physics === "fem"));
   const keep = studies.some((x) => x.id === st.simStudy);
   store.set({
