@@ -1,5 +1,15 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 2 (fatia 2) — grupos de estado e componentes principais com selectors (PR #9)
+
+- **Grupos de estado** em `store.ts`: `DOC_KEYS` (projeto/modelo), `SESSION_KEYS` (edição, seleção, resultados) e `UI_KEYS` (painéis, overlays, definições). Uma verificação em tempo de compilação garante que todas as chaves de `State` pertencem a um grupo. É a fachada para partir o store em `docStore`/`sessionStore`/`uiStore`.
+- **`useStoreKeys(...keys)`** (comparação rasa) e os atalhos `useDocState`/`useSessionState`/`useUiState`. Atenção: `activeAssembly`/`activeStudy`/`activeStudies` leem `project`, `active` e `simStudy`, por isso essas chaves têm de estar na lista.
+- **Migrados**: `main.tsx` (App), DocTabs, FeatureTree, SimBrowser, SimPanel, SketchEditor e Toolbar.
+- **Definições → viewport**: `Viewport.setSettings()` é chamado pela App num `useEffect`; `commands.setStyle` só atualiza o store.
+- **Verificado**: tsc, 178 unitários, e2e 12/12, ui-check 390/1440, CI verde.
+- **Ainda em `useStore()` sem seletor**: CalcPanel, BomPanel, AssemblyUI, ConvergencePanel, Dialogs, DrawingEditor, forms, InfoPanel, GalkeelPanel, KnowledgePanel, PmiPanel, Overlays, PropertyPanel, PropertiesDialog, SettingsDialog, ScriptPanel.
+- **A seguir**: migrar estes componentes (fatia 3) e depois partir o store a sério nos três stores.
+
 ## Atualização: F1 passo 2 (fatia 1) — selectors e resultados por documento (branch `refactor/store-split`)
 
 - **`useStore(selector?, eq)`**: um componente pode subscrever só a parte do estado que usa e só re-renderiza quando essa parte muda (`Object.is` por defeito, `shallowEqual` exportado para objetos/arrays). Sem seletor, comporta-se como antes. O tipo `State` passa a ser exportado.
