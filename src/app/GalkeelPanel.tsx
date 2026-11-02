@@ -3,7 +3,7 @@
 // edição 2008, legada) e, se pedido, um estudo FEM verifica a tensão com a mesma pressão. Sai um
 // relatório (HTML/JSON) e, com a aplicação aberta dentro da galkeel-app, os resultados vão para o caso
 // pelo mesmo contrato das calculadoras (sempre com veredito indeterminado).
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { TopoRef } from "../doc/types.ts";
 import type { FemStudy } from "../doc/study.ts";
 import { type Laminate, type PanelInput, type PanelResult, type VesselRecord, EDITION, HYPOTHESES, analysePanel, femCheck, femStudyForPanels, galkeelPayloads, scantlingReport } from "../galkeel/scantling.ts";
@@ -11,7 +11,7 @@ import { browserCalc, calcAvailable } from "../galkeel/calc-browser.ts";
 import { externalParts, store, useStore } from "./store.ts";
 import { Field, RefList, Select } from "./forms.tsx";
 import { download } from "./fileio.ts";
-import { runStudyFor } from "./sim-client.ts";
+import { CancelledError, cancelAgentJob, runStudyFor } from "./sim-client.ts";
 
 const VESSEL: VesselRecord = { craft: "motor", category: "C", LH: 7.5, LWL: 6.5, Bc: 2.2, beta04: 18, V: 25, mLDC: 2000, xAft: 0, forward: 1, zWL: 0, Zside: 0.8 };
 const LAMINATE: Laminate = { layup: "mat_roving_wr_cp", psi: 0.33, k5: 1, name: "PRFV mat/roving" };
@@ -41,6 +41,7 @@ function GalkeelPanelInner() {
   const [results, setResults] = useState<PanelResult[] | null>(null);
   const [busy, setBusy] = useState("");
   const [sent, setSent] = useState("");
+  const job = useRef<AbortController | null>(null);
   const studies = (st.doc.studies ?? []).filter((s): s is FemStudy => s.physics === "fem" && s.analysis === "static");
   const embedded = typeof window !== "undefined" && window.parent !== window;
   const calc = browserCalc();
@@ -58,17 +59,29 @@ function GalkeelPanelInner() {
         const derived = femStudyForPanels(base, res);
         const doc = { ...st.doc, studies: [...(st.doc.studies ?? []), derived] } as typeof st.doc & { id: string };
         const a = st.agent;
-        const { result } = await runStudyFor(doc as never, derived.id, a.url, a.token);
+        const ac = new AbortController();
+        job.current = ac;
+        const { result } = await runStudyFor(doc as never, derived.id, a.url, a.token, undefined, { signal: ac.signal, meshTimeout: st.settings.meshTimeout, solveTimeout: st.settings.solveTimeout });
         const m = Object.fromEntries(result.metrics.map((x) => [x.key, x.value]));
         res = res.map((r, i) => (m[`probe${i + 1}`] !== undefined ? femCheck(r, m[`probe${i + 1}`], `probe${i + 1}`) : r));
         store.set({ message: `FEM: ${result.solver}, ${result.cells} elementos` });
       }
       setResults(res);
     } catch (e) {
-      store.set({ error: (e as Error).message });
+      // parar não é uma falha: mensagem neutra, sem o estado de erro
+      if (e instanceof CancelledError) store.set({ message: `Cálculo parado — ${e.message}` });
+      else store.set({ error: (e as Error).message });
     } finally {
+      job.current = null;
       setBusy("");
     }
+  };
+  /** Pára a verificação FEM: o agente mata o solver e o pedido é abortado. */
+  const stop = async () => {
+    const ac = job.current;
+    if (!ac) return;
+    await cancelAgentJob(st.agent.url, st.agent.token);
+    ac.abort();
   };
   const send = () => {
     if (!results) return;
@@ -140,6 +153,7 @@ function GalkeelPanelInner() {
           {studies.length ? studies.map((s) => <option key={s.id} value={s.id}>{s.name}</option>) : <option value="">— sem estudo FEM estático —</option>}
         </select>
         <button class="small" disabled={!!busy || !studies.length || !st.agent.token} title={st.agent.token ? "" : "Ligue o agente local no painel Simulação"} onClick={() => void analyse(true)}>{busy === "fem" ? "A calcular FEM…" : "+ Verificar com FEM"}</button>
+        {busy === "fem" && <button class="small" onClick={() => void stop()}>Parar</button>}
       </div>
       {results && (
         <div class="kw-item ok">

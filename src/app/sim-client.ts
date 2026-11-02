@@ -36,10 +36,13 @@ export async function exportStudyCase(studyId: string) {
   }
 }
 
+/** Limite dos pedidos curtos ao agente (estado, progresso, cancelar): não ficam pendurados se o agente encravar. */
+const QUICK_MS = 5000;
+
 /** Estado do agente local (solvers encontrados) ou erro de ligação. */
 export async function agentStatus(url: string, token: string): Promise<{ ok: boolean; tools?: Record<string, { path: string; version: string | null } | null>; error?: string }> {
   try {
-    const r = await fetch(`${url}/status`, { headers: { "x-cad-token": token } });
+    const r = await fetch(`${url}/status`, { headers: { "x-cad-token": token }, signal: AbortSignal.timeout(QUICK_MS) });
     const j = await r.json();
     return r.ok ? j : { ok: false, error: j.error };
   } catch {
@@ -56,9 +59,9 @@ export async function runStudy(studyId: string, url: string, token: string, conv
 }
 
 /** Como `runStudy`, mas para um documento de peça dado (ex.: a cópia em que um script trabalha). */
-export async function runStudyFor(doc: PartDoc, studyId: string, url: string, token: string, convergence?: Parameters<typeof runStudy>[3]) {
+export async function runStudyFor(doc: PartDoc, studyId: string, url: string, token: string, convergence?: Parameters<typeof runStudy>[3], opts?: JobOpts) {
   const st = store.state;
-  return postCase(await store.kernel.studyCase(doc, externalParts(st.project, doc), studyId), url, token, convergence);
+  return postCase(await store.kernel.studyCase(doc, externalParts(st.project, doc), studyId), url, token, convergence, "/run", opts);
 }
 
 /** Só a malha do estudo (Gmsh no agente local): qualidade e superfície com as arestas dos elementos. */
@@ -104,7 +107,7 @@ async function agentJson(res: Response, signal?: AbortSignal): Promise<any> {
 /** Pede ao agente que pare o trabalho em curso (mata a árvore de processos do solver). */
 export async function cancelAgentJob(url: string, token: string): Promise<boolean> {
   try {
-    const r = await fetch(`${url}/cancel`, { method: "POST", headers: { "x-cad-token": token } });
+    const r = await fetch(`${url}/cancel`, { method: "POST", headers: { "x-cad-token": token }, signal: AbortSignal.timeout(QUICK_MS) });
     return r.ok && (await r.json()).cancelled === true;
   } catch {
     return false;
@@ -114,7 +117,7 @@ export async function cancelAgentJob(url: string, token: string): Promise<boolea
 /** Progresso do trabalho em curso no agente: tempo decorrido (s) e cauda do registo; null se não responde. */
 export async function agentJob(url: string, token: string): Promise<{ busy: boolean; elapsed?: number; tail?: string; cancelled?: string } | null> {
   try {
-    const r = await fetch(`${url}/job`, { headers: { "x-cad-token": token } });
+    const r = await fetch(`${url}/job`, { headers: { "x-cad-token": token }, signal: AbortSignal.timeout(QUICK_MS) });
     return r.ok ? await r.json() : null;
   } catch {
     return null;
