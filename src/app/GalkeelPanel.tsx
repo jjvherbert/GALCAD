@@ -8,7 +8,7 @@ import type { TopoRef } from "../doc/types.ts";
 import type { FemStudy } from "../doc/study.ts";
 import { type Laminate, type PanelInput, type PanelResult, type VesselRecord, EDITION, HYPOTHESES, analysePanel, femCheck, femStudyForPanels, galkeelPayloads, scantlingReport } from "../galkeel/scantling.ts";
 import { browserCalc, calcAvailable } from "../galkeel/calc-browser.ts";
-import { externalParts, store, useStore } from "./store.ts";
+import { externalParts, store, useStoreKeys } from "./store.ts";
 import { Field, RefList, Select } from "./forms.tsx";
 import { download } from "./fileio.ts";
 import { CancelledError, cancelAgentJob, runStudyFor } from "./sim-client.ts";
@@ -32,7 +32,7 @@ export function GalkeelPanel() {
 }
 
 function GalkeelPanelInner() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "project", "agent", "settings");
   const g = st.doc.galkeel ?? { vessel: VESSEL, laminate: LAMINATE, panels: [] };
   const v = g.vessel, lam = g.laminate;
   const save = (patch: Partial<typeof g>, label = "Análise Galkeel") => store.commitDoc("part", { ...st.doc, galkeel: { ...g, ...patch } }, label, true);

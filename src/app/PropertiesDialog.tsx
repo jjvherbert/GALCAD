@@ -2,7 +2,7 @@
 import { useState } from "preact/hooks";
 import type { PartProperties } from "../doc/project.ts";
 import { DEFAULT_DENSITY } from "../doc/project.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 
 /** Materiais comuns com a massa volúmica típica (g/cm³), como sugestão; o utilizador pode escrever outro. */
 export const MATERIALS: [string, number][] = [
@@ -12,7 +12,7 @@ export const MATERIALS: [string, number][] = [
 ];
 
 export function PartPropertiesDialog({ onClose }: { onClose: () => void }) {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const [p, setP] = useState<PartProperties>(() => ({ density: DEFAULT_DENSITY, ...st.doc.properties }));
   const [custom, setCustom] = useState<[string, string][]>(() => Object.entries(st.doc.properties?.custom ?? {}));
   const field = (key: keyof Omit<PartProperties, "custom" | "density">, label: string) => (

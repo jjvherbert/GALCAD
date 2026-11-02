@@ -8,7 +8,7 @@ import { addFeature } from "../doc/io.ts";
 import { CALCS, type CalcDef, calcReport, formatOutput, runCalc } from "../calc/library.ts";
 import { type XfoilRequest, type XfoilResult, nacaCoords } from "../sim/xfoil.ts";
 import type { SectionProps } from "../kernel/panels.ts";
-import { externalParts, store, useStore } from "./store.ts";
+import { externalParts, store, useStoreKeys } from "./store.ts";
 import { Field, RefList } from "./forms.tsx";
 import { download } from "./fileio.ts";
 import { CancelledError, cancelAgentJob, runXfoilAgent } from "./sim-client.ts";
@@ -70,7 +70,7 @@ function PolarPlot({ r }: { r: XfoilResult }) {
 }
 
 export function CalcPanel() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "project", "agent");
   const [id, setId] = useState(memo.id);
   const [values, setValues] = useState(memo.values);
   const [xf, setXf] = useState(memo.xf);

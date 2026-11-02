@@ -5,7 +5,7 @@ import { FEATURE_LABELS, SHEET_SOURCES, TOOL_FEATURES, featureLabel } from "../d
 import type { CadProject } from "../doc/project.ts";
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
 import { PLUGINS } from "../plugins/meta.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { HelpCard, helpForFeature } from "./featurehelp.tsx";
 import { AxisSelect, Check, CurveList, EndEditor, ExprInput, FeatureChecklist, Field, PathSelect, PlaneSelect, PointList, PointsEditor, RefList, RegionList, Select, SheetList, SketchSelect, SweepOptionsEditor, TargetEditor } from "./forms.tsx";
 import { StatusBlock } from "./InfoPanel.tsx";
@@ -85,7 +85,7 @@ function newCurveDef(kind: CurveDef["kind"]): CurveDef {
 }
 
 export function PropertyPanel() {
-  const st = useStore();
+  const st = useStoreKeys("edit", "result", "poleSel", "poleAxis", "project", "doc", "busy");
   const e = st.edit!;
   const f = e.draft;
   const up = (patch: Partial<Feature>) => store.updateDraft(patch);

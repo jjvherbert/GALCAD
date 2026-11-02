@@ -1,6 +1,6 @@
 // Diálogo «Definições»: as alterações aplicam-se logo (e ficam guardadas no browser).
 import { useEffect } from "preact/hooks";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { commandById } from "./commands.ts";
 import { LIMITS, type GestureDir, type Settings } from "./settings.ts";
 
@@ -32,7 +32,7 @@ function NumberField(p: { value: number; limits: readonly [number, number]; scal
 }
 
 export function SettingsDialog() {
-  const st = useStore();
+  const st = useStoreKeys("settings");
   const s = st.settings;
   const close = () => store.set({ showSettings: false });
   const set = (patch: Partial<Settings>) => store.updateSettings(patch);

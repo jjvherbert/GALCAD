@@ -5,14 +5,14 @@ import type { Check as CheckDef, ConfigTable, Publication, PublishedRef, Rule } 
 import type { FeatureTemplate } from "../doc/project.ts";
 import { MEASURE_NAMES, PROP_COL, SUPPRESS_COL, columnLabel, tableFromCSV, tableToCSV } from "../doc/knowledge.ts";
 import { FEATURE_LABELS } from "../doc/features.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { download } from "./fileio.ts";
 import { Field, RefList, describeName } from "./forms.tsx";
 
 type Tab = "rules" | "checks" | "configs" | "templates" | "pubs";
 
 export function KnowledgePanel() {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const [tab, setTab] = useState<Tab>("rules");
   return (
     <div class="knowledge-panel">
@@ -35,7 +35,7 @@ export function KnowledgePanel() {
 }
 
 function RulesTab() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "result");
   const rules = st.doc.rules ?? [];
   const status = st.result?.rules ?? [];
   const vars = st.doc.variables.map((v) => v.name);
@@ -86,7 +86,7 @@ function RulesTab() {
 }
 
 function ChecksTab() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "result");
   const checks = st.doc.checks ?? [];
   const res = st.result?.checks ?? [];
   const set = (next: CheckDef[], label = "Verificações") => store.commitDoc("part", { ...st.doc, checks: next }, label, true);
@@ -118,7 +118,7 @@ function ChecksTab() {
 }
 
 function ConfigsTab() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "result");
   const t: ConfigTable = st.doc.configurations ?? { columns: [], rows: [] };
   const set = (next: ConfigTable | undefined, label = "Configurações") => store.commitDoc("part", { ...st.doc, configurations: next }, label, true);
   const [col, setCol] = useState("");
@@ -183,7 +183,7 @@ function ConfigsTab() {
 }
 
 function TemplatesTab() {
-  const st = useStore();
+  const st = useStoreKeys("project", "doc");
   const [sel, setSel] = useState<string[]>([]);
   const [name, setName] = useState("Template1");
   const [inst, setInst] = useState<FeatureTemplate | null>(null);
@@ -235,7 +235,7 @@ function TemplatesTab() {
 }
 
 function InstantiateForm({ tpl, onClose }: { tpl: FeatureTemplate; onClose: () => void }) {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const [bind, setBind] = useState<Record<string, string>>({});
   const [vals, setVals] = useState<Record<string, string>>(Object.fromEntries(tpl.parameters.map((p) => [p.name, p.expr])));
   return (
@@ -271,7 +271,7 @@ function InstantiateForm({ tpl, onClose }: { tpl: FeatureTemplate; onClose: () =
 const PUB_FEATURES = new Set(["plane", "axis", "csys", "sketch", "curve", "surfaceExtrude", "surfaceRevolve", "surfaceSweep", "surfaceLoft", "boundary", "fill", "ruled", "offsetSurface", "knit", "multiSection", "blend", "circleSweep", "freeform"]);
 
 function PublicationsTab() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "project");
   const pubs = st.doc.publications ?? [];
   const [name, setName] = useState("");
   const [feat, setFeat] = useState("");

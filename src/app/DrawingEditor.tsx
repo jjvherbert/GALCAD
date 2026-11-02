@@ -7,7 +7,7 @@ import { primToSvg } from "../drawing/svg.ts";
 import { GDT_LABELS, gdtSymbol } from "../drawing/prims.ts";
 import { addAnnotation, addView, autoBalloons, deleteView, importModelDims, importPmi, moveAnnotation, moveView, nextLetter, sideOf, smartDimension } from "../drawing/edit.ts";
 import { curvePoints } from "../drawing/geom2d.ts";
-import { type DrawingTool, store, useStore } from "./store.ts";
+import { type DrawingTool, store, useStoreKeys } from "./store.ts";
 import { Check, Field, Select } from "./forms.tsx";
 
 type P = [number, number];
@@ -29,7 +29,7 @@ const TOOL_HINT: Record<string, string> = {
 };
 
 export function DrawingEditor() {
-  useStore(); // subscreve o store: re-renderiza quando o desenho ativo muda
+  useStoreKeys("active", "project"); // subscreve o store: re-renderiza quando o desenho ativo muda
   const d = store.activeDrawing();
   if (!d) return null;
   return (
@@ -41,7 +41,7 @@ export function DrawingEditor() {
 }
 
 function SheetCanvas({ d }: { d: DrawingDoc }) {
-  const st = useStore();
+  const st = useStoreKeys("drawingResult", "project", "drawingTool", "drawingSel", "active");
   const res = st.drawingResult;
   const layout = useMemo<Layout>(() => renderDrawing(d, st.project, res), [d, st.project, res]);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -294,7 +294,7 @@ const SCALES: [string, string][] = [["5:1", "5:1"], ["2:1", "2:1"], ["1:1", "1:1
 const ORIENT: [StdView, string][] = [["front", "Frente"], ["back", "Trás"], ["top", "Cima"], ["bottom", "Baixo"], ["left", "Esquerda"], ["right", "Direita"], ["iso", "Isométrica"]];
 
 function DrawingPanel({ d }: { d: DrawingDoc }) {
-  const st = useStore();
+  const st = useStoreKeys("drawingSel", "project", "drawingTool", "drawingResult");
   const [tab, setTab] = useState<"sheet" | "title">("sheet");
   const up = (patch: Partial<DrawingDoc>, label = "Desenho") => store.commitDrawing({ ...d, ...patch }, label);
   const sel = st.drawingSel;
@@ -367,7 +367,7 @@ function DrawingPanel({ d }: { d: DrawingDoc }) {
 }
 
 function ViewProps({ d, v }: { d: DrawingDoc; v: DrawingView }) {
-  const st = useStore();
+  const st = useStoreKeys("drawingResult", "project");
   const set = (patch: Partial<DrawingView>, label = "Vista") => store.commitDrawing({ ...d, views: d.views.map((x) => (x.id === v.id ? ({ ...x, ...patch } as DrawingView) : x)) }, label);
   const r = st.drawingResult?.views[v.id];
   return (
@@ -461,7 +461,7 @@ function AnnProps({ d, a }: { d: DrawingDoc; a: Annotation }) {
 }
 
 function BomProps({ a, set }: { a: Extract<Annotation, { kind: "bom" }>; set: (p: Partial<Annotation>) => void }) {
-  const st = useStore();
+  const st = useStoreKeys("project");
   return (
     <>
       <Select label="Montagem" value={a.source} options={st.project.assemblies.map((x) => [x.id, x.name])} onChange={(source) => set({ source })} />

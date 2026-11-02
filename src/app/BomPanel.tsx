@@ -4,7 +4,7 @@ import { useMemo, useState } from "preact/hooks";
 import { BOM_COLUMNS, type BomMode, bomCell, computeBom, customColumns } from "../assembly/bom.ts";
 import { type CostRates, DEFAULT_RATES, type Suggestion, localSuggestions } from "../ai/bom-assistant.ts";
 import { toCSV, toXLSX } from "../io/table.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { download } from "./fileio.ts";
 
 const KIND_LABEL: Record<Suggestion["kind"], string> = {
@@ -13,7 +13,7 @@ const KIND_LABEL: Record<Suggestion["kind"], string> = {
 };
 
 export function BomPanel() {
-  const st = useStore();
+  const st = useStoreKeys("asmResult", "project", "active");
   const a = store.activeAssembly();
   const [mode, setMode] = useState<BomMode>("top");
   const [sugs, setSugs] = useState<Suggestion[]>([]);
