@@ -1,5 +1,15 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 1 concluído — Parar em todo o lado e agente em `utilityProcess` (branch `fix/cancel-jobs-rest`)
+
+- **Parar nos restantes pedidos ao agente**: `sim-client` passa a ter `cancelAgentJob(url, token)` (`POST /cancel`) e `CancelledError`, e todos os pedidos (`/job`, `/xfoil`, `/run`, estudos) aceitam `signal`. O padrão é `await cancelAgentJob(); ac.abort()`: o agente mata o processo e o browser larga o pedido.
+- **Galkeel** (análise integrada) e **Cálculos** (polar XFOIL): botão **Parar** enquanto calculam. A mensagem é neutra («Cálculo parado — …», «Polar parada — …»), não aparece como erro.
+- **Scripts**: cada execução tem o seu `AbortController`. `end()` termina o worker do script e cancela no agente os pedidos que estejam em curso.
+- **Agente fora do processo principal (A7)**: `desktop/agent-host.cjs` corre num `utilityProcess` («GALCAD agente») e devolve `{port, tools}` por `parentPort`. Tem um limite de 30 s para arrancar e é morto em `before-quit`. Um solver pendurado já não bloqueia a janela.
+- **Corrigido de passagem**: a tabela de resultados dos Cálculos não tinha `<tbody>` (60 erros de aninhamento na consola). O espaço depois do «—» nas mensagens de malha/cálculo parado também estava em falta.
+- **Verificado**: tsc, lint e 170 testes unitários; build e 12 suites e2e. **E2e desktop: não passou aqui.** A janela arranca, o agente no `utilityProcess` arranca, injeta o endereço e responde a `/status`, mas esta máquina Windows não tem `desktop/solvers/win` (falta correr `npm run solvers:win`) nem Gmsh/CalculiX no PATH. O painel mostra todos os solvers ✗ e o cálculo devolve 500. O passo final (flecha ≈ 0,192 mm) fica por confirmar com os solvers instalados. No ui-check do estado «a calcular», com um agente falso que nunca responde: Parar visível, estado parado correto a 390 e 1440, sem overflow e com consola/rede limpas. Nota: o e2e desktop falha com «Process failed to launch!» se o terminal tiver `ELECTRON_RUN_AS_NODE=1` (o terminal do VS Code tem); corre-se com `env -u ELECTRON_RUN_AS_NODE`.
+- **Não verificado**: carregar o módulo do agente de dentro do asar no instalador empacotado; a cascata com Gmsh real cancelada a meio; processos netos em Linux.
+
 ## Atualização: F1 passo 1 — núcleo cancelável (PR #5, branch `fix/cancel-jobs`)
 
 Antes, um crash do WASM ou uma operação OCC em loop deixava promessas penduradas para sempre e não havia forma de parar.

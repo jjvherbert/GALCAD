@@ -54,6 +54,7 @@
     "files": [
       "dist/**/*",
       "desktop/main.cjs",
+      "desktop/agent-host.cjs",
       "desktop/preload.cjs",
       "desktop/relocate.cjs",
       "package.json",

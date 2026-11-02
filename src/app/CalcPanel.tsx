@@ -2,7 +2,7 @@
 // placas) com referência, hipóteses e caso de verificação; propriedades de secção lidas de uma face plana
 // do modelo; e polares de perfis no XFOIL do agente local, com gráficos, ligação à asa finita e esboço
 // do perfil no CAD. Tudo apoio ao projeto — não substitui ensaios, regulamentos nem certificação.
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { SketchEntity, TopoRef } from "../doc/types.ts";
 import { addFeature } from "../doc/io.ts";
 import { CALCS, type CalcDef, calcReport, formatOutput, runCalc } from "../calc/library.ts";
@@ -11,7 +11,7 @@ import type { SectionProps } from "../kernel/panels.ts";
 import { externalParts, store, useStore } from "./store.ts";
 import { Field, RefList } from "./forms.tsx";
 import { download } from "./fileio.ts";
-import { runXfoilAgent } from "./sim-client.ts";
+import { CancelledError, cancelAgentJob, runXfoilAgent } from "./sim-client.ts";
 import { AgentBox } from "./SimPanel.tsx";
 
 // valores escolhidos ficam enquanto a aplicação está aberta (o painel pode fechar e reabrir)
@@ -77,6 +77,7 @@ export function CalcPanel() {
   const [polar, setPolar] = useState<XfoilResult | null>(memo.polar);
   const [section, setSection] = useState(memo.section);
   const [busy, setBusy] = useState(false);
+  const job = useRef<AbortController | null>(null);
   const def: CalcDef = CALCS.find((c) => c.id === id) ?? CALCS[0];
   const vals = { ...Object.fromEntries(def.inputs.map((i) => [i.key, i.default])), ...values[def.id] };
   const choose = (next: string) => { memo.id = next; setId(next); };
@@ -107,16 +108,28 @@ export function CalcPanel() {
     return { airfoil: { name: d.name, coords: d.coords }, re: xf.re, mach: xf.mach, ncrit: xf.ncrit, alpha };
   };
   const runPolar = async () => {
+    const ac = new AbortController();
+    job.current = ac;
     setBusy(true);
     try {
-      const r = await runXfoilAgent(request(), st.agent.url, st.agent.token);
+      const r = await runXfoilAgent(request(), st.agent.url, st.agent.token, ac.signal);
       memo.polar = r; setPolar(r);
       store.set({ message: `XFOIL: ${r.polar.length} pontos em ${r.seconds.toFixed(1)} s` });
     } catch (e) {
-      store.set({ error: (e as Error).message });
+      // parar não é uma falha: mensagem neutra, sem o estado de erro
+      if (e instanceof CancelledError) store.set({ message: `Polar parada — ${e.message}` });
+      else store.set({ error: (e as Error).message });
     } finally {
+      job.current = null;
       setBusy(false);
     }
+  };
+  /** Pára a polar: o agente mata o XFOIL e o pedido é abortado. */
+  const stopPolar = async () => {
+    const ac = job.current;
+    if (!ac) return;
+    await cancelAgentJob(st.agent.url, st.agent.token);
+    ac.abort();
   };
   const coordsNow = () => (xf.source === "naca" ? (/^\d{4}$/.test(xf.naca.trim()) ? nacaCoords(xf.naca.trim(), 60) : null) : parseDat(xf.coords).coords);
   const makeSketch = () => {
@@ -165,7 +178,7 @@ export function CalcPanel() {
       {result && (
         <div class="kw-item ok">
           <table class="info-table data calc-results">
-            {result.outputs.map((o) => <tr key={o.key}><td>{o.label}</td><td style="text-align:right"><b>{String(formatOutput(o))}</b></td><td>{o.unit}</td></tr>)}
+            <tbody>{result.outputs.map((o) => <tr key={o.key}><td>{o.label}</td><td style="text-align:right"><b>{String(formatOutput(o))}</b></td><td>{o.unit}</td></tr>)}</tbody>
           </table>
           {result.warnings.map((w) => <p key={w} class="error-text">⚠ {w}</p>)}
           <details><summary>Hipóteses e limites</summary><ul>{def.hypotheses.map((h) => <li key={h}>{h}</li>)}</ul><p class="muted">Verificação: {def.verify.note}</p></details>
@@ -194,6 +207,7 @@ export function CalcPanel() {
       <div class="row">
         <button class="small" onClick={isaRe} title="Reynolds e Mach do cálculo «Atmosfera padrão» (velocidade e corda)">Re e Mach da ISA</button>
         <button class="small primary" disabled={busy || !st.agent.token} title={st.agent.token ? "" : "Ligue o agente local no painel Simulação"} onClick={() => void runPolar()}>{busy ? "A calcular…" : "Calcular polar (XFOIL)"}</button>
+        {busy && <button class="small" onClick={() => void stopPolar()}>Parar</button>}
       </div>
       <div class="row">
         <Num label="Corda do esboço (mm)" value={xf.chord} onChange={(chord) => setX({ chord })} />

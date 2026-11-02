@@ -6,7 +6,7 @@ import { DEFAULT_DENSITY } from "../doc/project.ts";
 import type { ScriptOutput } from "../script/api.ts";
 import { polarForScript, rebuildSummary, simulationSummary } from "../script/summary.ts";
 import { externalParts, store } from "./store.ts";
-import { runStudyFor, runXfoilAgent } from "./sim-client.ts";
+import { cancelAgentJob, runStudyFor, runXfoilAgent } from "./sim-client.ts";
 
 export interface ScriptRun { promise: Promise<ScriptOutput>; stop: () => void }
 
@@ -17,9 +17,17 @@ export function runScriptInWorker(code: string, onLog: (line: string) => void, t
   const asPart = (doc: CadDocument) => ({ ...base, ...doc, id: base.id }) as PartDoc;
   let finish: (o: ScriptOutput) => void, failRun: (e: Error) => void;
   const promise = new Promise<ScriptOutput>((ok, fail) => { finish = ok; failRun = fail; });
+  // pedidos ao agente em curso: quando o script acaba (fim, timeout, erro ou Parar) o agente pára também
+  const ac = new AbortController();
+  let agentCalls = 0;
+  const end = () => {
+    worker.terminate();
+    if (agentCalls > 0) { const a = store.state.agent; void cancelAgentJob(a.url, a.token); }
+    ac.abort();
+  };
   worker.onmessage = async ({ data }: MessageEvent) => {
     if (data.type === "log") onLog(data.line);
-    else if (data.type === "done") { worker.terminate(); finish(data.out); }
+    else if (data.type === "done") { end(); finish(data.out); }
     else if (data.type === "call") {
       try {
         let result: unknown;
@@ -28,19 +36,26 @@ export function runScriptInWorker(code: string, onLog: (line: string) => void, t
           result = rebuildSummary(await store.kernel.rebuild(d, false, externalParts(store.state.project, d)), d.properties?.density ?? DEFAULT_DENSITY);
         } else if (data.method === "simulate") {
           const [doc, id, opts] = data.args;
-          const a = store.state.agent;
-          result = simulationSummary((await runStudyFor(asPart(doc), id, a.url, a.token, opts?.convergence)).result);
+          const { url, token } = store.state.agent;
+          const s = store.state.settings;
+          agentCalls++;
+          try {
+            result = simulationSummary((await runStudyFor(asPart(doc), id, url, token, opts?.convergence, { signal: ac.signal, meshTimeout: s.meshTimeout, solveTimeout: s.solveTimeout })).result);
+          } finally { agentCalls--; }
         } else if (data.method === "xfoil") {
           const a = store.state.agent;
-          result = polarForScript(await runXfoilAgent(data.args[0], a.url, a.token));
+          agentCalls++;
+          try {
+            result = polarForScript(await runXfoilAgent(data.args[0], a.url, a.token, ac.signal));
+          } finally { agentCalls--; }
         } else throw new Error(`Pedido desconhecido: ${data.method}`);
-        worker.postMessage({ type: "reply", id: data.id, result });
+        if (!ac.signal.aborted) worker.postMessage({ type: "reply", id: data.id, result });
       } catch (e) {
-        worker.postMessage({ type: "reply", id: data.id, error: (e as Error).message });
+        if (!ac.signal.aborted) worker.postMessage({ type: "reply", id: data.id, error: (e as Error).message });
       }
     }
   };
-  worker.onerror = (e) => { worker.terminate(); failRun(new Error(e.message || "Erro no worker do script")); };
+  worker.onerror = (e) => { end(); failRun(new Error(e.message || "Erro no worker do script")); };
   worker.postMessage({ type: "run", code, doc: structuredClone(base), timeoutMs });
-  return { promise, stop: () => { worker.terminate(); failRun(new Error("Script interrompido")); } };
+  return { promise, stop: () => { end(); failRun(new Error("Script interrompido")); } };
 }

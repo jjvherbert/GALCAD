@@ -94,7 +94,7 @@ export async function runActiveStudy(meshOnly = false) {
     }
   } catch (e) {
     // parar não é uma falha: mensagem neutra, sem o estado de erro
-    if (e instanceof CancelledError) store.set({ message: `${meshOnly ? "Malha parada" : "Cálculo parado"} —${e.message}` });
+    if (e instanceof CancelledError) store.set({ message: `${meshOnly ? "Malha parada" : "Cálculo parado"} — ${e.message}` });
     else store.set({ error: (e as Error).message });
   } finally {
     clearInterval(poll);

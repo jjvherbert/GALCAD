@@ -4,19 +4,19 @@
 //
 // - Servidor estático em 127.0.0.1 (porta livre) para a aplicação construída (dist/): o WASM, os
 //   workers e os módulos ES precisam de http, não de file://.
-// - Agente (`dist/cad-runner.mjs`, o mesmo da versão web) em 127.0.0.1 noutra porta, com um token
-//   novo a cada arranque, passado à página pelo preload (window.cadDesktop).
+// - Agente (`dist/cad-runner.mjs`, o mesmo da versão web) num processo à parte (utilityProcess,
+//   `agent-host.cjs`) em 127.0.0.1 noutra porta, com um token novo a cada arranque, passado à página
+//   pelo preload (window.cadDesktop). Um solver ou pedido encravado não congela a janela.
 // - Solvers em `resources/solvers` (CalculiX, Gmsh, XFOIL, SU2, OpenFOAM, code_aster, OpenRadioss):
 //   o agente recebe-os por CAD_CCX, CAD_GMSH, CAD_XFOIL, CAD_SU2, CAD_FOAM_DIR, CAD_ASTER,
 //   CAD_RADIOSS_DIR e corre-os como programas separados.
 // - `GALCAD.exe --galcad-setup` (chamado pelo instalador): reloca o ambiente do code_aster para a
 //   pasta de instalação e sai.
-const { app, BrowserWindow, Menu, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, shell, dialog, utilityProcess } = require("electron");
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { pathToFileURL } = require("node:url");
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
@@ -72,15 +72,38 @@ function serveStatic() {
   });
 }
 
-async function startAgent() {
+/** Processo do agente (utilityProcess); morto ao sair da aplicação. */
+let agentProc = null;
+
+/** Arranca o agente num processo à parte e espera que esteja à escuta (no máximo 30 s). */
+function startAgent() {
   try { relocateAster(); } catch (e) { console.error("code_aster: relocação falhou", e); }
-  Object.assign(process.env, solverEnv());
-  const mod = await import(pathToFileURL(path.join(root, "cad-runner.mjs")).href);
   const token = crypto.randomBytes(16).toString("hex");
-  const { server } = mod.serve(0, token);
-  await new Promise((ok) => (server.listening ? ok() : server.once("listening", ok)));
-  return { url: `http://127.0.0.1:${server.address().port}`, token, tools: mod.tools() };
+  const child = utilityProcess.fork(path.join(__dirname, "agent-host.cjs"), [], {
+    env: { ...process.env, ...solverEnv(), GALCAD_AGENT_TOKEN: token, GALCAD_AGENT_MODULE: path.join(root, "cad-runner.mjs") },
+    serviceName: "GALCAD agente",
+  });
+  agentProc = child;
+  return new Promise((ok, fail) => {
+    let ready = false;
+    const timer = setTimeout(() => { child.kill(); fail(new Error("o agente não arrancou em 30 s")); }, 30_000);
+    child.once("message", (m) => {
+      clearTimeout(timer);
+      if (m?.error) { child.kill(); fail(new Error(m.error)); return; }
+      ready = true;
+      ok({ url: `http://127.0.0.1:${m.port}`, token, tools: m.tools });
+    });
+    child.once("exit", (code) => {
+      agentProc = null;
+      if (!ready) { clearTimeout(timer); fail(new Error(`o processo do agente terminou ao arrancar (código ${code})`)); }
+      else if (!quitting) console.error(`agente de simulação terminou (código ${code}); os cálculos ficam indisponíveis até reiniciar a GALCAD`);
+    });
+  });
 }
+
+// ao sair, o fim do agente é esperado: não o reportar como falha
+let quitting = false;
+app.on("before-quit", () => { quitting = true; agentProc?.kill(); });
 
 if (!setupMode && !app.requestSingleInstanceLock()) app.quit();
 
