@@ -2,14 +2,14 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { PlaneRef, Variable } from "../doc/types.ts";
 import { resolveVariables } from "../doc/variables.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { PlaneSelect, usePickTarget } from "./forms.tsx";
 import { commandViewport } from "./commands.ts";
 
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 6 });
 
 export function VariablesDialog() {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const [rows, setRows] = useState<Variable[]>(() => structuredClone(st.doc.variables));
   const res = resolveVariables(rows);
   const set = (i: number, patch: Partial<Variable>) => setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));

@@ -4,7 +4,7 @@
 import { useState } from "preact/hooks";
 import { type Attribute, GDT, type GdtCharacteristic, type ModelView, type PmiItem, attributesCSV, fit, fitDeviation, nextDatumLabel, searchAttributes, targetLabel } from "../doc/pmi.ts";
 import type { TopoRef } from "../doc/types.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { Check, Field, RefList, Select } from "./forms.tsx";
 import { commandViewport } from "./commands.ts";
 import { download } from "./fileio.ts";
@@ -23,7 +23,7 @@ function newItem(kind: PmiItem["kind"], id: string, used: string[]): PmiItem {
 }
 
 export function PmiPanel() {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const [tab, setTab] = useState<"pmi" | "views" | "attrs">("pmi");
   return (
     <div class="knowledge-panel pmi-panel">
@@ -45,7 +45,7 @@ export function PmiPanel() {
 }
 
 function Annotations() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "result", "pmiSel");
   const items = st.doc.pmi ?? [];
   const states = new Map((st.result?.pmi ?? []).map((x) => [x.id, x]));
   const save = (next: PmiItem[], label = "PMI") => store.commitDoc("part", { ...st.doc, pmi: next }, label, true);
@@ -195,7 +195,7 @@ function FitHelper({ d, code }: { d?: number; code: string }) {
 }
 
 function Views() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "pmiView", "result");
   const views = st.doc.modelViews ?? [];
   const items = st.doc.pmi ?? [];
   const [name, setName] = useState("");
@@ -240,7 +240,7 @@ function Views() {
 }
 
 function Attributes() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "project");
   const attrs = st.doc.attributes ?? [];
   const [q, setQ] = useState("");
   const [target, setTarget] = useState<"body" | "feature" | "face">("body");

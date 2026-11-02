@@ -8,7 +8,7 @@ import { convergenceChart, errorChart, errorTable, gciTable, levelsTable, metric
 import { download } from "./fileio.ts";
 import { Check, Field, Select } from "./forms.tsx";
 import { runConvergence, setConvergence, updateStudy } from "./sim-actions.ts";
-import { useStore } from "./store.ts";
+import { useStoreKeys } from "./store.ts";
 
 const MODE: [string, string][] = [["three", "3 malhas: h, r·h, r²·h"], ["sweep", "Varrimento ±n níveis à volta de h"], ["auto", "Automático: refinar até ao GCI alvo"]];
 const slug = (s: string) => s.replace(/[^\wÀ-ÿ-]+/g, "_").replace(/^_+|_+$/g, "") || "estudo";
@@ -42,7 +42,7 @@ function DataTable({ t, caption }: { t: Table; caption: string }) {
 }
 
 export function ConvergencePanel({ s }: { s: Study }) {
-  const st = useStore();
+  const st = useStoreKeys("simBusy", "simResult", "agent");
   const cfg = { ...DEFAULT_CONVERGENCE, ...s.convergence };
   const runs = s.convergenceRuns ?? [];
   const [sel, setSel] = useState<string | null>(null);

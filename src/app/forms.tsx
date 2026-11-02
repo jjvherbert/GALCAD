@@ -4,7 +4,7 @@ import type { ComponentChildren } from "preact";
 import type { AxisRef, CadDocument, CurveRef, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, SurfaceTarget, SweepOptions, SweepOrientation, TopoRef, Vec3 } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
 import { FEATURE_LABELS, createsSheet } from "../doc/features.ts";
-import { type Pick, pickHandlers, store, useStore } from "./store.ts";
+import { type Pick, pickHandlers, store, useStoreKeys } from "./store.ts";
 
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 4 });
 
@@ -20,7 +20,7 @@ export function Field({ label, children, hint }: { label: string; children: Comp
 
 /** Campo numérico que aceita expressões com variáveis ("L/2", "10 cm"). */
 export function ExprInput({ label, value, onChange, unit = "mm", allowEmpty }: { label: string; value: Expr | undefined; onChange: (v: Expr | undefined) => void; unit?: string; allowEmpty?: boolean }) {
-  const st = useStore();
+  const st = useStoreKeys("result");
   const text = value === undefined ? "" : String(value);
   let shown = "", err = "";
   if (text.trim()) {
@@ -113,7 +113,7 @@ export function usePickTarget(field: string, onPick: (p: Pick) => void) {
 
 /** Lista de referências a faces/arestas escolhidas no 3D. */
 export function RefList({ field, label, accept, refs, onChange, single }: { field: string; label: string; accept: ("face" | "edge")[]; refs: TopoRef[]; onChange: (r: TopoRef[]) => void; single?: boolean }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget", "doc");
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => {
     if (p.kind !== "face" && p.kind !== "edge") return;
@@ -145,7 +145,7 @@ export function RefList({ field, label, accept, refs, onChange, single }: { fiel
 
 /** Esboço de entrada (dropdown dos esboços anteriores). */
 export function SketchSelect({ label, value, onChange, before }: { label: string; value: string; onChange: (v: string) => void; before: number }) {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const sketches = st.doc.features.slice(0, before).filter((f) => f.type === "sketch");
   return (
     <Field label={label}>
@@ -160,7 +160,7 @@ export function SketchSelect({ label, value, onChange, before }: { label: string
 const planeKey = (p: PlaneRef) => (p.kind === "std" ? `std:${p.name}` : p.kind === "datum" ? `datum:${p.feature}` : p.kind === "csys" ? `csys:${p.feature}:${p.name}` : "face");
 
 export function PlaneSelect({ field, label, value, onChange, before }: { field: string; label: string; value: PlaneRef; onChange: (v: PlaneRef) => void; before: number }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget", "doc", "result");
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => {
     if (p.kind === "plane") onChange(p.ref);
@@ -191,7 +191,7 @@ export function PlaneSelect({ field, label, value, onChange, before }: { field: 
 }
 
 export function AxisSelect({ field, label, value, onChange, before, sketch }: { field: string; label: string; value: AxisRef; onChange: (v: AxisRef) => void; before: number; sketch?: string }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget", "doc", "result");
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => {
     if (p.kind !== "edge") return;
@@ -228,7 +228,7 @@ export function AxisSelect({ field, label, value, onChange, before, sketch }: { 
 
 /** Seleção múltipla de features anteriores (padrões, espelho, loft). */
 export function FeatureChecklist({ label, value, onChange, before, types, ordered }: { label: string; value: string[]; onChange: (v: string[]) => void; before: number; types: FeatureType[]; ordered?: boolean }) {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const cands = st.doc.features.slice(0, before).filter((f) => types.includes(f.type) && !f.suppressed);
   return (
     <fieldset class="checklist">
@@ -275,7 +275,7 @@ export function EndEditor({ label, value, onChange, field, allowMid = true, opti
 
 /** Regiões escolhidas de um esboço ("contornos selecionados"); vazio = todos os contornos fechados. */
 export function RegionList({ sketch, value, onChange }: { sketch: string; value: RegionRef[] | undefined; onChange: (v: RegionRef[] | undefined) => void }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget", "result");
   const field = "regions";
   const active = st.pickTarget?.field === field;
   const sel = value ?? [];
@@ -321,7 +321,7 @@ function sheetCandidates(doc: CadDocument, before: number) {
  * `single`: um só corpo (lista pendente).
  */
 export function SheetList({ field, label, value, onChange, before, single, exclude }: { field: string; label: string; value: string[]; onChange: (v: string[]) => void; before: number; single?: boolean; exclude?: string[] }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget", "doc");
   const active = st.pickTarget?.field === field;
   const cands = sheetCandidates(st.doc, before).filter((f) => !exclude?.includes(f.id));
   usePickTarget(field, (p) => {
@@ -358,7 +358,7 @@ export function SheetList({ field, label, value, onChange, before, single, exclu
 
 /** Pontos escolhidos no 3D (partes a manter ao aparar). Enquanto se escolhe, mostra-se a superfície inteira. */
 export function PointList({ field, label, value, onChange }: { field: string; label: string; value: Vec3[]; onChange: (v: Vec3[]) => void }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget");
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => { if (p.kind === "face" && p.point) onChange([...value, p.point.map((x) => Math.round(x * 1e3) / 1e3) as Vec3]); });
   const toggle = () => { store.set({ pickTarget: active ? null : { field, accept: ["face"] } }); store.rebuild(0); };
@@ -405,7 +405,7 @@ const curveLabel = (doc: CadDocument, c: CurveRef) =>
 
 /** Lista ordenada de curvas (curvas 3D, esboços ou arestas escolhidas no 3D). */
 export function CurveList({ field, label, value, onChange, before, single }: { field: string; label: string; value: CurveRef[]; onChange: (v: CurveRef[]) => void; before: number; single?: boolean }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget", "doc");
   const active = st.pickTarget?.field === field;
   const push = (c: CurveRef) => onChange(single ? [c] : [...value, c]);
   usePickTarget(field, (p) => { if (p.kind === "edge") push({ kind: "edge", ref: { kind: "edge", name: p.name, hint: p.hint } }); });
@@ -436,7 +436,7 @@ export function CurveList({ field, label, value, onChange, before, single }: { f
 
 /** Caminho de varrimento: esboço ou curva 3D. */
 export function PathSelect({ label, value, onChange, before }: { label: string; value: string; onChange: (v: string) => void; before: number }) {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   const cands = st.doc.features.slice(0, before).filter((f) => f.type === "sketch" || f.type === "curve" || f.type === "external");
   return (
     <Field label={label}>

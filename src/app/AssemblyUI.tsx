@@ -3,7 +3,7 @@ import { partKey } from "../doc/knowledge.ts";
 import { useEffect, useState } from "preact/hooks";
 import type { Component, Mate, MateKind, MateRef } from "../doc/project.ts";
 import type { StdAxis, StdPlane } from "../doc/types.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { Check, ExprInput, Field, Select, usePickTarget } from "./forms.tsx";
 
 const fmt = (v: number, d = 2) => v.toLocaleString("pt-PT", { maximumFractionDigits: d });
@@ -28,7 +28,7 @@ export function refLabel(r: MateRef): string {
 
 /** Árvore da montagem (FeatureManager da montagem). */
 export function AssemblyTree() {
-  const st = useStore();
+  const st = useStoreKeys("asmResult", "project", "componentEdit", "interference", "active");
   const a = store.activeAssembly();
   const [menu, setMenu] = useState(false);
   if (!a) return null;
@@ -99,7 +99,7 @@ export function AssemblyTree() {
 
 /** Campo de referência de mate: escolhida no 3D (face/aresta de um componente) ou plano/eixo padrão. */
 function MateRefField({ field, label, value, onChange }: { field: string; label: string; value: MateRef; onChange: (r: MateRef) => void }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget", "mateEdit", "project", "active");
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => {
     const r = store.mateRefOf(p);
@@ -146,7 +146,7 @@ function MateRefField({ field, label, value, onChange }: { field: string; label:
 }
 
 export function MatePanel() {
-  const st = useStore();
+  const st = useStoreKeys("mateEdit", "asmResult");
   const e = st.mateEdit!;
   const m = e.draft;
   const up = (patch: Partial<Mate>) => store.updateMateDraft(patch);
@@ -183,7 +183,7 @@ export function MatePanel() {
 }
 
 export function ComponentPanel() {
-  const st = useStore();
+  const st = useStoreKeys("componentEdit", "project", "active");
   const a = store.activeAssembly();
   const c = a?.components.find((x) => x.id === st.componentEdit);
   if (!a || !c) return null;

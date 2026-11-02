@@ -4,11 +4,11 @@
 import { useRef, useState } from "preact/hooks";
 import { API_DOC, type ScriptOutput, tableCSV } from "../script/api.ts";
 import { type CopilotInterpretation, type CopilotScript, copilotInterpret, copilotScript, scriptContext } from "../ai/copilot.ts";
-import { type State, store, useStore } from "./store.ts";
+import { type State, store, useStoreKeys } from "./store.ts";
 import { download } from "./fileio.ts";
 import { type ScriptRun, runScriptInWorker } from "./script-client.ts";
 
-function examples(st: State): [string, string][] {
+function examples(st: Pick<State, "doc" | "result">): [string, string][] {
   const v = st.doc.variables[0]?.name ?? "L";
   const val = Number(st.result?.variables.values[v] ?? 100) || 100;
   const fem = (st.doc.studies ?? []).find((s) => s.physics === "fem");
@@ -53,7 +53,7 @@ return { ok: r.ok, falhas: r.checks.filter((c) => !c.ok).length, massa_kg: r.mea
 }
 
 export function ScriptPanel() {
-  const st = useStore();
+  const st = useStoreKeys("doc", "result");
   const saved = st.doc.scripts ?? [];
   const ex = examples(st);
   const [code, setCode] = useState(saved[0]?.code ?? ex[0][1]);

@@ -1,7 +1,7 @@
 // Estado de uma feature (erros, avisos, informação) e propriedades de massa do corpo.
 import type { FeatureStatus } from "../kernel/rebuild.ts";
 import type { MassProps, SheetInfo } from "../kernel/protocol.ts";
-import { useStore } from "./store.ts";
+import { useStoreKeys } from "./store.ts";
 
 const fmt = (v: number, d = 2) => v.toLocaleString("pt-PT", { maximumFractionDigits: d, minimumFractionDigits: 0 });
 
@@ -56,7 +56,7 @@ export function MassBlock({ mass, density, onDensity, totalMass }: { mass: MassP
 
 /** Corpos de superfície do resultado (área e arestas livres: 0 = fechado, pronto a costurar em sólido). */
 export function SheetsBlock({ sheets }: { sheets: SheetInfo[] }) {
-  const st = useStore();
+  const st = useStoreKeys("doc");
   if (!sheets.length) return null;
   const name = (id: string) => st.doc.features.find((f) => f.id === id)?.name ?? id;
   return (

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { COMMANDS, commandById, runCommand } from "./commands.ts";
-import { type Pick, store, useStore } from "./store.ts";
+import { type Pick, store, useStoreKeys } from "./store.ts";
 import type { GestureDir } from "./settings.ts";
 import { CONTINUITY_COLORS, VIEWS, type ViewName, robustScale } from "./viewport.ts";
 import { describeName } from "./forms.tsx";
@@ -40,7 +40,7 @@ function withPick(p: Pick | null, id: string) {
 }
 
 export function ContextMenu() {
-  const st = useStore();
+  const st = useStoreKeys("contextMenu", "doc", "lastCommand");
   const m = st.contextMenu!;
   const p = m.pick;
   const fid = featureOfPick(p);
@@ -78,7 +78,7 @@ export function ContextMenu() {
 
 /** Barra de contexto que aparece junto à seleção (como no SolidWorks). */
 export function ContextToolbar() {
-  const st = useStore();
+  const st = useStoreKeys("contextToolbar");
   const t = st.contextToolbar!;
   const p = t.pick;
   const fid = featureOfPick(p);
@@ -97,7 +97,7 @@ export function ContextToolbar() {
 
 /** Barra de atalhos (tecla S): pesquisa de comandos junto ao cursor. */
 export function ShortcutBar() {
-  const st = useStore();
+  const st = useStoreKeys("shortcutBar");
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -134,7 +134,7 @@ export function ShortcutBar() {
 
 /** Orientação da vista (Espaço). */
 export function OrientationMenu() {
-  const st = useStore();
+  const st = useStoreKeys("orientationMenu");
   const v = (n: ViewName) => <button key={n} role="menuitem" onClick={() => runCommand(`view.${n}`)}><span>{VIEWS[n].label}</span><kbd>{VIEWS[n].key}</kbd></button>;
   return (
     <Popup at={st.orientationMenu!.at} w={260} h={300} label="Orientação da vista">
@@ -152,7 +152,7 @@ const GESTURE_POS: Record<GestureDir, [number, number]> = {
 
 /** Guia dos gestos do rato (arrastar com o botão direito). */
 export function GestureHud() {
-  const st = useStore();
+  const st = useStoreKeys("gesture", "settings");
   const g = st.gesture!;
   return (
     <div class="gesture-hud" style={{ left: `${g.at[0]}px`, top: `${g.at[1]}px` }} aria-hidden="true">
@@ -167,7 +167,7 @@ export function GestureHud() {
 
 /** Barra de vista sobre o 3D (heads-up): ajustar, vista anterior, orientação, estilo, planos. */
 export function HeadsUpToolbar() {
-  const st = useStore();
+  const st = useStoreKeys("settings");
   const [open, setOpen] = useState<"style" | null>(null);
   const style = st.settings.displayStyle;
   return (
@@ -193,7 +193,7 @@ export function HeadsUpToolbar() {
 
 /** Controlos e legenda da análise de superfície ativa. */
 export function AnalysisPanel() {
-  const st = useStore();
+  const st = useStoreKeys("analysis", "doc");
   const a = st.analysis!;
   const fmtK = (v: number) => (v === 0 ? "0" : v.toExponential(2).replace("e", "·10^"));
   return (
