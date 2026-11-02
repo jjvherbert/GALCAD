@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 2 (fatia 3) — todos os componentes com selectors (PR #10)
+
+- **Migrados para `useStoreKeys`**: AssemblyUI, BomPanel, CalcPanel, ConvergencePanel, Dialogs, DrawingEditor, forms, GalkeelPanel, InfoPanel, KnowledgePanel, Overlays, PmiPanel, PropertiesDialog, PropertyPanel, ScriptPanel e SettingsDialog. Já nenhum componente chama `useStore()` sem seletor; a assinatura continua disponível como fachada.
+- O slice devolvido é um `Pick`, por isso o `tsc` acusa a leitura de uma chave não subscrita. Os getters `activeAssembly`/`activeDrawing` precisam de `active` e `project`; `activeDoc` precisa também de `doc`.
+- **Verificado**: tsc, lint, 178 unitários, build, e2e 12/12, ui-check 390/768/1440, CI verde.
+- **A seguir**: partir de facto em `docStore`/`sessionStore`/`uiStore` e retirar a fachada.
+
 ## Atualização: F1 passo 2 (fatia 2) — grupos de estado e componentes principais com selectors (PR #9)
 
 - **Grupos de estado** em `store.ts`: `DOC_KEYS` (projeto/modelo), `SESSION_KEYS` (edição, seleção, resultados) e `UI_KEYS` (painéis, overlays, definições). Uma verificação em tempo de compilação garante que todas as chaves de `State` pertencem a um grupo. É a fachada para partir o store em `docStore`/`sessionStore`/`uiStore`.
