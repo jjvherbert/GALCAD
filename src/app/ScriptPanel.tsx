@@ -4,11 +4,11 @@
 import { useRef, useState } from "preact/hooks";
 import { API_DOC, type ScriptOutput, tableCSV } from "../script/api.ts";
 import { type CopilotInterpretation, type CopilotScript, copilotInterpret, copilotScript, scriptContext } from "../ai/copilot.ts";
-import { store, useStore } from "./store.ts";
+import { type State, store, useStore } from "./store.ts";
 import { download } from "./fileio.ts";
 import { type ScriptRun, runScriptInWorker } from "./script-client.ts";
 
-function examples(st: ReturnType<typeof useStore>): [string, string][] {
+function examples(st: State): [string, string][] {
   const v = st.doc.variables[0]?.name ?? "L";
   const val = Number(st.result?.variables.values[v] ?? 100) || 100;
   const fem = (st.doc.studies ?? []).find((s) => s.physics === "fem");
