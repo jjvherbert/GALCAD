@@ -195,6 +195,61 @@ function drawingKernelKey(d: DrawingDoc): string {
   return JSON.stringify([d.views.map(({ at: _a, name: _n, ...v }) => v), d.sheet, d.annotations.filter((a) => a.kind === "bom").map((a) => (a.kind === "bom" ? a.source : ""))]);
 }
 
+/*
+ * Stores por domínio. Cada campo do estado pertence a um de três grupos, cada grupo tem o seu store
+ * (`docStore`, `sessionStore`, `uiStore`) e só os subscritores de um grupo alterado são avisados:
+ * - documento: o projeto e o que dele se calcula (resultados, ficheiro, alterações por guardar);
+ * - sessão: o que se está a editar ou selecionar (feature, esboço, mate, picks, estudo/desenho em edição);
+ * - interface: painéis, sobreposições, estado de trabalho, mensagens e definições.
+ * As ações do `Store` continuam a ler `this.state`, a vista unida dos três, que `set` mantém em sincronia.
+ */
+export const DOC_KEYS = [
+  "project", "active", "doc", "result", "asmResult", "drawingResult", "simResult", "interference", "analysis", "fileName", "dirty",
+] as const satisfies readonly (keyof State)[];
+export const SESSION_KEYS = [
+  "edit", "sketch", "choosingPlane", "confirmed", "simFocus", "pickTarget", "selection", "selectedFeature", "hoverFeature",
+  "lastCommand", "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy", "simSection", "drawingTool", "drawingSel",
+] as const satisfies readonly (keyof State)[];
+export const UI_KEYS = [
+  "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings",
+  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "pmiView", "simView", "simHidden",
+  "agent", "simBusy", "simProgress",
+] as const satisfies readonly (keyof State)[];
+export type DocKey = (typeof DOC_KEYS)[number];
+export type SessionKey = (typeof SESSION_KEYS)[number];
+export type UiKey = (typeof UI_KEYS)[number];
+// um campo novo em `State` que não entre num grupo falha a compilação aqui (a disjunção verifica-se nos testes)
+type Ungrouped = Exclude<keyof State, DocKey | SessionKey | UiKey>;
+export const ALL_GROUPED: [Ungrouped] extends [never] ? true : Ungrouped = true;
+
+export type StateGroup = "doc" | "session" | "ui";
+/** Grupo de cada campo do estado. */
+export const GROUP_OF = Object.fromEntries([
+  ...DOC_KEYS.map((k) => [k, "doc"]), ...SESSION_KEYS.map((k) => [k, "session"]), ...UI_KEYS.map((k) => [k, "ui"]),
+]) as Record<keyof State, StateGroup>;
+
+/** Parte do estado com só os campos `K` (o `Pick` deste módulo é a seleção no viewport, não o utilitário do TS). */
+export type StateSlice<K extends keyof State> = { [P in K]: State[P] };
+
+/** Objeto só com os campos `keys` do estado. */
+export function pickState<K extends keyof State>(s: State, keys: readonly K[]): StateSlice<K> {
+  const out = {} as StateSlice<K>;
+  for (const k of keys) out[k] = s[k];
+  return out;
+}
+
+/** Store de um domínio: guarda só os seus campos e avisa só quem o subscreveu. Escreve-se via `Store.set`. */
+export class SubStore<K extends keyof State> {
+  readonly keys: readonly K[];
+  state: StateSlice<K>;
+  readonly listeners = new Set<() => void>();
+  constructor(keys: readonly K[], full: State) { this.keys = keys; this.state = pickState(full, keys); }
+  subscribe(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
+  /** Volta a tirar a sua parte do estado unido (chamado por `Store.set` quando um campo do grupo muda). */
+  sync(full: State) { this.state = pickState(full, this.keys); }
+}
+type AnySubStore = SubStore<DocKey> | SubStore<SessionKey> | SubStore<UiKey>;
+
 class Store {
   kernel = new KernelClient({
     timeoutMs: () => this.state.settings.kernelTimeout * 1000,
@@ -225,7 +280,10 @@ class Store {
   private drawingResults = new Map<string, DrawingResponse>();
   /** Última peça/montagem ativa: ao sair do Desenho volta-se a ela, não à primeira peça. */
   lastModelDoc: DocRef | null = null;
-  private listeners = new Set<() => void>();
+  readonly docStore: SubStore<DocKey>;
+  readonly sessionStore: SubStore<SessionKey>;
+  readonly uiStore: SubStore<UiKey>;
+  readonly stores: Record<StateGroup, AnySubStore>;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private gen = 0;
 
@@ -248,6 +306,10 @@ class Store {
       workspace: "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: settings.agentUrl, token: "" },
     };
+    this.docStore = new SubStore(DOC_KEYS, this.state);
+    this.sessionStore = new SubStore(SESSION_KEYS, this.state);
+    this.uiStore = new SubStore(UI_KEYS, this.state);
+    this.stores = { doc: this.docStore, session: this.sessionStore, ui: this.uiStore };
     this.rebuild(0);
   }
 
@@ -267,7 +329,6 @@ class Store {
   activeAssembly(): AssemblyDoc | undefined { return this.state.active.kind === "assembly" ? this.state.project.assemblies.find((a) => a.id === this.state.active.id) : undefined; }
   activeDrawing(): DrawingDoc | undefined { return this.state.active.kind === "drawing" ? this.state.project.drawings.find((d) => d.id === this.state.active.id) : undefined; }
 
-  subscribe(fn: () => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   set(patch: Partial<State>) {
     // os resultados ficam também guardados por documento (o do documento ativo depois do patch)
     const id = (patch.active ?? this.state.active).id;
@@ -279,8 +340,19 @@ class Store {
       const r = patch.drawingResult;
       if (r) this.drawingResults.set(id, r); else this.drawingResults.delete(id);
     }
+    // só os grupos com algum campo realmente diferente são atualizados e avisados
+    const changed = new Set<StateGroup>();
+    for (const k of Object.keys(patch) as (keyof State)[]) {
+      if (k in GROUP_OF && !Object.is(patch[k], this.state[k])) changed.add(GROUP_OF[k]);
+    }
     this.state = { ...this.state, ...patch };
-    for (const l of this.listeners) l();
+    const notify = new Set<() => void>();
+    for (const g of changed) {
+      const sub = this.stores[g];
+      sub.sync(this.state);
+      for (const l of sub.listeners) notify.add(l);
+    }
+    for (const l of notify) l();
   }
 
   /** Documento apresentado: o confirmado com a edição em curso aplicada. */
@@ -979,64 +1051,27 @@ export function shallowEqual<T>(a: T, b: T): boolean {
 }
 
 /**
- * Sem argumentos devolve o estado todo e re-renderiza a cada alteração (comportamento antigo).
- * Com `selector`, só re-renderiza quando o valor selecionado muda segundo `eq` (por defeito `Object.is`;
- * use `shallowEqual` para seletores que montam objetos ou arrays novos).
+ * Subscreve só os campos indicados: re-renderiza quando algum deles muda (por referência). Só escuta os
+ * stores de domínio a que esses campos pertencem, por isso um `set` noutro domínio nem chega a comparar.
  */
-export function useStore(): State;
-export function useStore<T>(selector: (s: State) => T, eq?: (a: T, b: T) => boolean): T;
-export function useStore<T>(selector?: (s: State) => T, eq: (a: T, b: T) => boolean = Object.is): State | T {
-  const [, force] = useReducer((x: number) => x + 1, 0);
-  const value = selector ? selector(store.state) : store.state;
-  // o seletor, a comparação e o último valor ficam em refs: a subscrição usa sempre os do último render
-  const latest = useRef({ selector, eq, value });
-  latest.current = { selector, eq, value };
-  useEffect(() => store.subscribe(() => {
-    const { selector: sel, eq: same, value: prev } = latest.current;
-    if (!sel || !same(prev as T, sel(store.state))) force(undefined as never);
-  }), []);
-  return value;
-}
-
-/*
- * Fachada por domínio. O estado continua num só `Store` (as ações não mudam), mas cada campo pertence a
- * um de três grupos e os componentes subscrevem só os campos que usam:
- * - documento: o projeto e o que dele se calcula (resultados, ficheiro, alterações por guardar);
- * - sessão: o que se está a editar ou selecionar (feature, esboço, mate, picks, estudo/desenho em edição);
- * - interface: painéis, sobreposições, estado de trabalho, mensagens e definições.
- */
-export const DOC_KEYS = [
-  "project", "active", "doc", "result", "asmResult", "drawingResult", "simResult", "interference", "analysis", "fileName", "dirty",
-] as const satisfies readonly (keyof State)[];
-export const SESSION_KEYS = [
-  "edit", "sketch", "choosingPlane", "confirmed", "simFocus", "pickTarget", "selection", "selectedFeature", "hoverFeature",
-  "lastCommand", "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy", "simSection", "drawingTool", "drawingSel",
-] as const satisfies readonly (keyof State)[];
-export const UI_KEYS = [
-  "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings",
-  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "pmiView", "simView", "simHidden",
-  "agent", "simBusy", "simProgress",
-] as const satisfies readonly (keyof State)[];
-export type DocKey = (typeof DOC_KEYS)[number];
-export type SessionKey = (typeof SESSION_KEYS)[number];
-export type UiKey = (typeof UI_KEYS)[number];
-// um campo novo em `State` que não entre num grupo falha a compilação aqui (a disjunção verifica-se nos testes)
-type Ungrouped = Exclude<keyof State, DocKey | SessionKey | UiKey>;
-export const ALL_GROUPED: [Ungrouped] extends [never] ? true : Ungrouped = true;
-
-/** Parte do estado com só os campos `K` (o `Pick` deste módulo é a seleção no viewport, não o utilitário do TS). */
-export type StateSlice<K extends keyof State> = { [P in K]: State[P] };
-
-/** Objeto só com os campos `keys` do estado. */
-export function pickState<K extends keyof State>(s: State, keys: readonly K[]): StateSlice<K> {
-  const out = {} as StateSlice<K>;
-  for (const k of keys) out[k] = s[k];
-  return out;
-}
-
-/** Subscreve só os campos indicados: re-renderiza quando algum deles muda (por referência). */
 export function useStoreKeys<K extends keyof State>(...keys: K[]): StateSlice<K> {
-  return useStore((s) => pickState(s, keys), shallowEqual);
+  const [, force] = useReducer((x: number) => x + 1, 0);
+  const value = pickState(store.state, keys);
+  // as chaves e o último valor ficam numa ref: a subscrição usa sempre os do último render
+  const latest = useRef({ keys, value });
+  latest.current = { keys, value };
+  const groups = [...new Set(keys.map((k) => GROUP_OF[k]))].sort().join(",");
+  useEffect(() => {
+    let alive = true;
+    const check = () => {
+      const { keys: ks, value: prev } = latest.current;
+      if (alive && !shallowEqual(prev, pickState(store.state, ks))) force(undefined as never);
+    };
+    const offs = groups ? groups.split(",").map((g) => store.stores[g as StateGroup].subscribe(check)) : [];
+    check(); // uma alteração entre o render e a subscrição não se perde
+    return () => { alive = false; for (const off of offs) off(); };
+  }, [groups]);
+  return value;
 }
 export const useDocState = <K extends DocKey>(...keys: K[]) => useStoreKeys(...keys);
 export const useSessionState = <K extends SessionKey>(...keys: K[]) => useStoreKeys(...keys);
