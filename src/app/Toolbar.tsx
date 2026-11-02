@@ -5,7 +5,7 @@ import { FILE_EXTENSION } from "../doc/io.ts";
 import { commandById, runCommand } from "./commands.ts";
 import { FeatureTip, HELP } from "./featurehelp.tsx";
 import { EXPORTS } from "./fileio.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { TAB_SECTION, WORKSPACES, openSimSection, setWorkspace, workspaceDef, workspaceTabs } from "./workspaces.ts";
 import logo from "../../desktop/brand/splash-logo.png";
 
@@ -13,7 +13,8 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const short = (label: string) => cap(label.replace(/^Mate: /, "").replace(/^Vista de /, "").replace(/^Vista (projetada|auxiliar)$/, "$1")).replace("Deteção de interferências", "Interferências").replace("Lista de materiais (BOM) e assistente", "BOM").replace(/^Vista /, "").replace(/^Superfície /, "Sup. ").replace("Análise de inclinação", "Inclinação").replace(/^Análise de desvio.*/, "Desvio").replace(/^Continuidade.*/, "Continuidade").replace(/^Linhas de realce.*/, "Realce").replace(/^Pentes de curvatura.*/, "Pentes").replace(/^Conhecimento:.*/, "Regras e configs.").replace(/^Simulação:.*/, "Estudos").replace(/^PMI:.*/, "Anotações PMI").replace(/^Exportar STEP AP242.*/, "STEP AP242").replace(/^Scripts:.*/, "Scripts").replace(/^Galkeel:.*/, "Painéis Galkeel").replace(/^Cálculos:.*/, "Cálculos e perfis").replace("Desaparar superfície", "Desaparar").replace(/^Náutica: /, "").replace("Variáveis globais e equações", "Variáveis").replace("Forçar reconstrução completa", "Forçar reconstr.");
 
 export function Toolbar() {
-  const st = useStore();
+  // `project`: o histórico (desfazer/refazer) só muda quando o projeto muda
+  const st = useStoreKeys("edit", "sketch", "mateEdit", "workspace", "active", "result", "project");
   const [tabs0, setTab] = useState<Record<string, string>>({});
   const [menu, setMenu] = useState<"file" | "ws" | null>(null);
   const [tip, setTip] = useState<{ id: string; x: number; y: number } | null>(null);

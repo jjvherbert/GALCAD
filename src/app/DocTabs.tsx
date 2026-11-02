@@ -1,13 +1,13 @@
 // Abas dos documentos do projeto (peças, montagens, desenhos), como as janelas de documentos do SolidWorks.
 import { useState } from "preact/hooks";
 import type { DocKind, DocRef } from "../doc/project.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 
 const ICON: Record<DocKind, string> = { part: "▮", assembly: "⧉", drawing: "▭" };
 const KIND: Record<DocKind, string> = { part: "Peça", assembly: "Montagem", drawing: "Desenho" };
 
 export function DocTabs() {
-  const st = useStore();
+  const st = useStoreKeys("project", "active");
   const [menu, setMenu] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const p = st.project;

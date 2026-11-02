@@ -4,7 +4,7 @@
 // painel à direita; o 3D mostra o resultado do estudo escolhido.
 import type { CfdStudy, FemLoad, FemStudy, Study } from "../doc/study.ts";
 import { useState } from "preact/hooks";
-import { type SimSection, store, useStore } from "./store.ts";
+import { type SimSection, store, useStoreKeys } from "./store.ts";
 import { CONDITION_COLORS, activeStudies, activeStudy, addStudy, deleteStudy, updateStudy } from "./sim-actions.ts";
 import { runCommand } from "./commands.ts";
 import { checkStudy, checkSummary } from "../sim/modelcheck.ts";
@@ -70,7 +70,8 @@ function cfdNodes(s: CfdStudy, hasResult: boolean): Node[] {
 }
 
 export function SimBrowser() {
-  const st = useStore();
+  // `project`/`active`/`simStudy`: lidos por `activeAssembly`/`activeStudy`
+  const st = useStoreKeys("workspace", "doc", "simResult", "simSection", "simStudy", "project", "active");
   const [renaming, setRenaming] = useState<string | null>(null);
   const physics = st.workspace === "cfd" ? "cfd" : "fem";
   const asm = !!store.activeAssembly();

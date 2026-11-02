@@ -617,8 +617,12 @@ export class Viewport {
     this.recolor();
   }
 
-  /** Estilo de visualização: sombreado com arestas, sombreado, ou arestas (fio de arame). */
-  setDisplayStyle(style: Settings["displayStyle"]) { this.settings.displayStyle = style; this.applyDisplayStyle(); }
+  /** Definições novas (o store substitui o objeto a cada alteração; nunca o mutar aqui). Os planos aplicam-se no próximo `update`. */
+  setSettings(settings: Settings) {
+    const restyle = settings.displayStyle !== this.settings.displayStyle;
+    this.settings = settings;
+    if (restyle) this.applyDisplayStyle();
+  }
 
   private applyDisplayStyle() {
     const style = this.settings.displayStyle;

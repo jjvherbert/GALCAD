@@ -252,8 +252,7 @@ function escape() {
 }
 
 function setStyle(s: "shadedEdges" | "shaded" | "wireframe") {
-  store.updateSettings({ displayStyle: s });
-  viewport?.setDisplayStyle(s);
+  store.updateSettings({ displayStyle: s }); // o App passa as definições ao viewport
 }
 
 /** Última posição do rato (para abrir menus junto ao cursor). */

@@ -3,12 +3,11 @@ import { Fragment } from "preact";
 import { useState } from "preact/hooks";
 import type { Feature } from "../doc/types.ts";
 import { FEATURE_ICONS as ICONS, dependents, featureLabel } from "../doc/features.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 
 
 export function FeatureTree() {
-  const st = useStore();
-  const { doc, result, selectedFeature } = st;
+  const { doc, result, selectedFeature } = useStoreKeys("doc", "result", "selectedFeature");
   const [menu, setMenu] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
