@@ -3,7 +3,7 @@
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
 import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, type Study, SIM_FLUIDS, SIM_MATERIALS } from "../doc/study.ts";
-import { type SimSection, desktopAgent, store, useStore } from "./store.ts";
+import { type SimSection, desktopAgent, store, useStoreKeys } from "./store.ts";
 import { Fragment } from "preact";
 import type { FemSet } from "../doc/study.ts";
 import { ConvergencePanel } from "./ConvergencePanel.tsx";
@@ -24,7 +24,7 @@ const THERM = THERMAL_LOADS;
 
 /** Escolher um ponto clicando numa face do modelo (o ponto da peça mais próximo do clique). */
 function PointPick({ field, onPick }: { field: string; onPick: (p: [number, number, number]) => void }) {
-  const st = useStore();
+  const st = useStoreKeys("pickTarget");
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => {
     if (p.kind !== "face" || !p.point) return;
@@ -52,7 +52,8 @@ const SECTION_TITLE: Record<SimSection, string> = {
  * e a secção vêm do store (a barra do espaço de trabalho e a árvore mudam-nos).
  */
 export function SimPanel() {
-  const st = useStore();
+  // `project`/`active`/`simStudy`: lidos por `activeAssembly`/`activeStudy`
+  const st = useStoreKeys("workspace", "simSection", "doc", "project", "active", "simStudy");
   const physics = st.workspace === "cfd" ? "cfd" : "fem";
   const asm = store.activeAssembly() ?? null;
   const s = activeStudy(physics);
@@ -156,7 +157,7 @@ function CheckPanel({ s, assembly, up }: { s: Study; assembly: boolean; up: (p: 
 
 /** Trabalho em curso no agente: o que está a fazer, tempo decorrido, Parar e a cauda do registo do solver. */
 function JobProgress() {
-  const st = useStore();
+  const st = useStoreKeys("simProgress", "simBusy");
   const [stopping, setStopping] = useState(false);
   const p = st.simProgress;
   const stop = async () => {
@@ -177,7 +178,7 @@ function JobProgress() {
 
 /** Pré-visualizar a malha do estudo (Gmsh no agente) e a qualidade, dentro da secção Malha. */
 function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
-  const st = useStore();
+  const st = useStoreKeys("simResult", "simBusy", "agent");
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult.result : null;
   return (
     <>
@@ -199,7 +200,7 @@ function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
 
 /** Ligação ao agente local (endereço, token, solvers encontrados): partilhada com o painel Cálculos. */
 export function AgentBox() {
-  const st = useStore();
+  const st = useStoreKeys("agent");
   const a = st.agent;
   const [status, setStatus] = useState("");
   if (desktopAgent()) return (
@@ -222,7 +223,7 @@ export function AgentBox() {
 
 /** Montagem: material de cada corpo (instância) e modo de contacto entre corpos. */
 function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
-  const st = useStore();
+  const st = useStoreKeys("asmResult");
   const inst = st.asmResult?.instances ?? [];
   const mats = s.bodyMaterials ?? {};
   return (
@@ -259,7 +260,7 @@ function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => 
 }
 
 function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: Partial<FemStudy>) => void; assembly?: boolean; section: SimSection }) {
-  const st = useStore();
+  const st = useStoreKeys("simFocus");
   const thermal = s.analysis === "thermal";
   const kinds = thermal ? THERM : STRUCT;
   const setLoad = (i: number, l: FemLoad) => up({ loads: s.loads.map((x, k) => (k === i ? l : x)) });
@@ -602,7 +603,7 @@ const num = (x: number) => (Number.isFinite(x) ? (Math.abs(x) >= 1e4 || (Math.ab
 const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida" } as const;
 
 function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "results" }) {
-  const st = useStore();
+  const st = useStoreKeys("simBusy", "agent", "simResult", "simView", "simHidden");
   const busy = !!st.simBusy;
   const a = st.agent;
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult : null;
@@ -691,7 +692,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
 }
 
 function SimLegend() {
-  const st = useStore();
+  const st = useStoreKeys("simResult", "simView");
   const view = resultView(st.simResult?.result);
   const f = view?.fields[st.simView.field];
   const range = view ? fieldRange(view, st.simView.field, st.simView.hidden) : null;

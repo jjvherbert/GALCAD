@@ -4,7 +4,7 @@ import { render } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import gcsWasm from "@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm?url";
 import { initSolver } from "../sketch/solver.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { Viewport } from "./viewport.ts";
 import { Toolbar } from "./Toolbar.tsx";
 import { FeatureTree } from "./FeatureTree.tsx";
@@ -57,7 +57,14 @@ function selectedKeys(): string[] {
 }
 
 function App() {
-  const st = useStore();
+  // só os campos que o App lê ao renderizar (não `simProgress`, `agent`…, que mudam muito ou são de outros painéis)
+  const st = useStoreKeys(
+    "project", "active", "doc", "result", "asmResult", "simResult", "interference", "analysis", "dirty", "settings",
+    "edit", "sketch", "choosingPlane", "confirmed", "pickTarget", "selection", "selectedFeature", "hoverFeature",
+    "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy",
+    "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings",
+    "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden",
+  );
   const host = useRef<HTMLDivElement>(null);
   const vp = useRef<Viewport | null>(null);
   const fitted = useRef(false);
@@ -104,6 +111,8 @@ function App() {
     if (!r) return null;
     return { status: {}, variables: { values: {}, errors: {} }, ms: r.ms, reused: 0, mesh: assemblyMesh(r), sketches: {}, planes: {}, axes: {}, csys: {}, mass: r.mass, sheets: [] };
   }, [st.asmResult]);
+  // antes do efeito de `update`, para que este já veja `showPlanes` novo
+  useEffect(() => { vp.current?.setSettings(st.settings); }, [st.settings]);
   const lastKind = useRef(st.active.kind);
   useEffect(() => {
     const v = vp.current;
@@ -117,7 +126,7 @@ function App() {
     v.setOverlay(kind === "assembly" ? st.interference?.pairs.map((x) => x.mesh) ?? [] : []);
     v.setSelected(selectedKeys());
     if (!fitted.current && result?.mesh) { v.view("iso", result, true); fitted.current = true; }
-  }, [st.result, asmView, st.active, st.selection, st.edit, st.mateEdit, st.pickTarget, st.choosingPlane, st.sketch?.id, st.interference]);
+  }, [st.result, asmView, st.active, st.selection, st.edit, st.mateEdit, st.pickTarget, st.choosingPlane, st.sketch?.id, st.interference, st.settings.showPlanes]);
 
   useEffect(() => { vp.current?.setAccept(st.pickTarget?.accept ?? null); }, [st.pickTarget]);
   useEffect(() => { vp.current?.setFeatureHighlight(st.hoverFeature); }, [st.hoverFeature]);

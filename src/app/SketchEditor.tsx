@@ -12,7 +12,7 @@ import {
   applicableConstraints, applyConstraint, deleteItems, mergePoints, roundDim, smartDimension, toggleConstruction,
 } from "../sketch/ops.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
-import { store, useStore } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { commandViewport } from "./commands.ts";
 
 type Tool = "select" | "line" | "rect" | "circle" | "arc" | "spline" | "point" | "dim" | "trim" | "extend" | "skfillet" | "offset" | "convert";
@@ -49,7 +49,8 @@ const GEOM_CONSTRAINTS: ConstraintType[] = ["coincident", "pointOn", "midpoint",
 const fmt = (v: number) => (Math.round(v * 1000) / 1000).toLocaleString("pt-PT", { maximumFractionDigits: 3 });
 
 export function SketchEditor({ result }: { result: RebuildResponse | null }) {
-  const st = useStore();
+  // `settings`: a quadrícula (sketchGrid) é lida no render
+  const st = useStoreKeys("sketch", "settings");
   const edit = st.sketch!;
   const draft = edit.draft;
   const wrap = useRef<HTMLDivElement>(null);

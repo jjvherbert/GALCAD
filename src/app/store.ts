@@ -998,4 +998,48 @@ export function useStore<T>(selector?: (s: State) => T, eq: (a: T, b: T) => bool
   return value;
 }
 
+/*
+ * Fachada por domínio. O estado continua num só `Store` (as ações não mudam), mas cada campo pertence a
+ * um de três grupos e os componentes subscrevem só os campos que usam:
+ * - documento: o projeto e o que dele se calcula (resultados, ficheiro, alterações por guardar);
+ * - sessão: o que se está a editar ou selecionar (feature, esboço, mate, picks, estudo/desenho em edição);
+ * - interface: painéis, sobreposições, estado de trabalho, mensagens e definições.
+ */
+export const DOC_KEYS = [
+  "project", "active", "doc", "result", "asmResult", "drawingResult", "simResult", "interference", "analysis", "fileName", "dirty",
+] as const satisfies readonly (keyof State)[];
+export const SESSION_KEYS = [
+  "edit", "sketch", "choosingPlane", "confirmed", "simFocus", "pickTarget", "selection", "selectedFeature", "hoverFeature",
+  "lastCommand", "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy", "simSection", "drawingTool", "drawingSel",
+] as const satisfies readonly (keyof State)[];
+export const UI_KEYS = [
+  "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings",
+  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "pmiView", "simView", "simHidden",
+  "agent", "simBusy", "simProgress",
+] as const satisfies readonly (keyof State)[];
+export type DocKey = (typeof DOC_KEYS)[number];
+export type SessionKey = (typeof SESSION_KEYS)[number];
+export type UiKey = (typeof UI_KEYS)[number];
+// um campo novo em `State` que não entre num grupo falha a compilação aqui (a disjunção verifica-se nos testes)
+type Ungrouped = Exclude<keyof State, DocKey | SessionKey | UiKey>;
+export const ALL_GROUPED: [Ungrouped] extends [never] ? true : Ungrouped = true;
+
+/** Parte do estado com só os campos `K` (o `Pick` deste módulo é a seleção no viewport, não o utilitário do TS). */
+export type StateSlice<K extends keyof State> = { [P in K]: State[P] };
+
+/** Objeto só com os campos `keys` do estado. */
+export function pickState<K extends keyof State>(s: State, keys: readonly K[]): StateSlice<K> {
+  const out = {} as StateSlice<K>;
+  for (const k of keys) out[k] = s[k];
+  return out;
+}
+
+/** Subscreve só os campos indicados: re-renderiza quando algum deles muda (por referência). */
+export function useStoreKeys<K extends keyof State>(...keys: K[]): StateSlice<K> {
+  return useStore((s) => pickState(s, keys), shallowEqual);
+}
+export const useDocState = <K extends DocKey>(...keys: K[]) => useStoreKeys(...keys);
+export const useSessionState = <K extends SessionKey>(...keys: K[]) => useStoreKeys(...keys);
+export const useUiState = <K extends UiKey>(...keys: K[]) => useStoreKeys(...keys);
+
 export const featureLabelOf = (t: FeatureType) => FEATURE_LABELS[t];
