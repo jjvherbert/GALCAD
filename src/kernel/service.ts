@@ -7,7 +7,8 @@ import { combs, continuity, curvature, deviation, exactNormals } from "./analysi
 import type { NamedEdge } from "./naming.ts";
 import type { CadDocument } from "../doc/types.ts";
 import { Engine } from "./rebuild.ts";
-import { type CadProject, type PartProperties, DEFAULT_DENSITY } from "../doc/project.ts";
+import type { CadProject, PartProperties } from "../doc/project.ts";
+import { DEFAULT_DENSITY } from "../doc/types.ts";
 import { resolveVariables } from "../doc/variables.ts";
 import { configuredDoc, runChecks, splitPartKey } from "../doc/knowledge.ts";
 import type { PartDoc } from "../doc/project.ts";

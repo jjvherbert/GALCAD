@@ -1,6 +1,9 @@
 // Modelo de documento: JSON puro, sem dependências do núcleo geométrico.
 // Unidades internas: milímetros e graus.
 
+/** Massa volúmica por defeito, g/cm³ (aço). Aqui e não em project.ts para o núcleo não importar a validação (zod). */
+export const DEFAULT_DENSITY = 7.85;
+
 /** Valor numérico ou expressão (ex.: "L/2", "2*Espessura + 1", "30 deg"). */
 export type Expr = number | string;
 
