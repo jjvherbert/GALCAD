@@ -1,6 +1,7 @@
 // Formato de projeto aberto (.cadp.json): o histórico de features em JSON legível.
 import type { CadDocument, Feature, FeatureData, FeatureType } from "./types.ts";
 import { FEATURE_LABELS } from "./features.ts";
+import { FEATURE_SCHEMAS, featureError } from "./schema.ts";
 
 export const FILE_EXTENSION = ".cadp.json";
 
@@ -25,7 +26,10 @@ export function parseDocument(text: string): CadDocument {
   if (!Array.isArray(d.features) || !Array.isArray(d.variables)) throw new Error("Ficheiro inválido: faltam features ou variáveis");
   const ids = new Set<string>();
   for (const f of d.features) {
-    if (!f || typeof f.id !== "string" || !(f.type in FEATURE_LABELS)) throw new Error(`Feature inválida: ${JSON.stringify(f)?.slice(0, 80)}`);
+    // hasOwn e não `in`: um tipo como "toString" passava pelo protótipo
+    if (!f || typeof f.id !== "string" || typeof f.type !== "string" || !Object.hasOwn(FEATURE_SCHEMAS, f.type)) throw new Error(`Feature inválida: ${JSON.stringify(f)?.slice(0, 80)}`);
+    const err = featureError(f);
+    if (err) throw new Error(err);
     if (ids.has(f.id)) throw new Error(`Id de feature repetido: ${f.id}`);
     ids.add(f.id);
   }

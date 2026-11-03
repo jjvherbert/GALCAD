@@ -311,7 +311,7 @@ export function containsAssembly(project: CadProject, asmId: string, target: str
   return !!a?.components.some((c) => c.ref.kind === "assembly" && containsAssembly(project, c.ref.id, target, seen));
 }
 
-export const DEFAULT_DENSITY = 7.85;
+export { DEFAULT_DENSITY } from "./types.ts";
 
 /** Omit distributivo (mantém a união de tipos). */
 export type DistOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
