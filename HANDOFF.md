@@ -1,5 +1,14 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 3a) — schema zod por feature, validado ao abrir (PR #14)
+
+- **`src/doc/schema.ts`**: `FEATURE_SCHEMAS = exact({...})`, um schema zod por `FeatureType` (41). `exact()` obriga a que o tipo de saída de cada schema seja igual a `Data<K>`: um tipo sem schema, ou um schema que não bate com o tipo TS, não compila.
+- **`parseDocument`** (`src/doc/io.ts`) valida cada feature com `featureError(f)`: a mensagem diz o id, o nome e o caminho (`Feature f2 (Extrusão1) inválida em end.depth: …`). O tipo verifica-se com `Object.hasOwn` (antes `"toString" in FEATURE_LABELS` passava). Os schemas só validam: o objeto original fica, e as chaves desconhecidas não se perdem.
+- **Bundle**: `DEFAULT_DENSITY` passou para `src/doc/types.ts`, para o kernel não importar o zod. O worker fica igual (677.52 kB) e o index sobe 15.5 kB.
+- Testes: `tests/feature-schema.test.ts` (9). Todos os fixtures continuam a abrir.
+- **Desvio do plano:** esta fatia só faz o `schema`. `build` já existe (`BUILDERS`); `ui` e `help` ficam para as próximas fatias, porque juntos passariam as ~600 linhas.
+- **A seguir:** 3b `FEATURE_UI` das features sólidas/datum, 3c superfícies/GSD, 3d `help` obrigatório, depois plugins a registar features.
+
 ## Atualização: F1 passo 3 (fatia 2) — worker com mapa de handlers tipado (PR #13)
 
 - `ResponseMap` em `src/kernel/protocol.ts` e mapa `Handlers` em `src/kernel/handlers.ts`: um handler por tipo de pedido, cada um devolve `{result, transfer}`; um tipo sem handler é erro de compilação. `HandlerService` permite ao teste passar um serviço falso (sem WASM).
