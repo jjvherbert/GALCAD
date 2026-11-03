@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 2) — worker com mapa de handlers tipado (PR #13)
+
+- `ResponseMap` em `src/kernel/protocol.ts` e mapa `Handlers` em `src/kernel/handlers.ts`: um handler por tipo de pedido, cada um devolve `{result, transfer}`; um tipo sem handler é erro de compilação. `HandlerService` permite ao teste passar um serviço falso (sem WASM).
+- `handle()` tira os buffers repetidos da lista de transferência (um repetido fazia o `postMessage` falhar com DataCloneError).
+- O worker envia um erro se o `postMessage` falhar, em vez de deixar a fila pendurada sem resposta.
+- Testes: `tests/worker-handlers.test.ts` (6).
+- **A seguir:** metadados por feature (schema/ui/help), depois plugins a registar features.
+
 ## Atualização: F1 passo 3 (fatia 1) — registo de features tipado e chave de cache encadeada (PR #12)
 
 - **Registo** (`src/kernel/registry.ts`): `BUILDERS: { [K in FeatureType]: Builder<K> }` substitui o `switch` de `runStep`; um tipo sem builder não compila. `buildFeature(ctx, f, report)` é o único ponto de entrada. A feature de plugin passou para `features/plugin.ts`.
