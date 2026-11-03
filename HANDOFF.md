@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 1) — registo de features tipado e chave de cache encadeada (PR #12)
+
+- **Registo** (`src/kernel/registry.ts`): `BUILDERS: { [K in FeatureType]: Builder<K> }` substitui o `switch` de `runStep`; um tipo sem builder não compila. `buildFeature(ctx, f, report)` é o único ponto de entrada. A feature de plugin passou para `features/plugin.ts`.
+- **Cache** (`src/kernel/cache-key.ts`): `key(i) = h(key(i-1) | JSON(feature i) | @revisão)`, semente `seedKey(variáveis)`; O(n) em vez de O(n²). 2×cyrb53 ≈ 106 bits (colisão reutilizaria geometria errada).
+- Testes: `tests/cache-key.test.ts`, `tests/registry.test.ts`.
+- **A seguir**: worker com mapa de handlers tipado `{result, transfer}`; depois metadados por feature (schema/ui/help) e plugins a registar features.
+
 ## Atualização: F1 passo 2 (fatia 4) — três stores reais e fim da fachada (PR #11)
 
 - **`SubStore` por grupo** em `src/app/store.ts`: `store.docStore`, `store.sessionStore` e `store.uiStore`, cada um com o seu slice (`pickState`) e os seus listeners. `store.state` continua a ser a vista unida (as ações leem-na).
