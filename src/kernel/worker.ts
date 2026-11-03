@@ -5,6 +5,7 @@ import gcsWasm from "@salusoft89/planegcs/dist/planegcs_dist/planegcs.wasm?url";
 import { setOC } from "replicad";
 import { initSolver } from "../sketch/solver.ts";
 import { KernelService } from "./service.ts";
+import { handle, makeHandlers } from "./handlers.ts";
 import type { Request, Response } from "./protocol.ts";
 
 const ready = (async () => {
@@ -12,48 +13,21 @@ const ready = (async () => {
   setOC(oc);
   await initSolver(gcsWasm);
 })();
-const service = new KernelService();
+const handlers = makeHandlers(new KernelService());
 
 // pedidos tratados em série: o OCC não é reentrante
 let queue = Promise.resolve();
 self.onmessage = ({ data }: MessageEvent<Request & { id: number }>) => {
   queue = queue.then(async () => {
     let msg: Response;
+    let transfer: Transferable[] = [];
     try {
       await ready;
-      const result = data.type === "rebuild" ? await service.rebuild(data.doc, data.force, data.parts)
-        : data.type === "snapshot" ? await service.snapshot(data.doc, data.parts, data.feature)
-        : data.type === "studyCase" ? await service.studyCase(data.doc, data.parts, data.study)
-        : data.type === "panels" ? await service.panels(data.doc, data.parts, data.faces)
-        : data.type === "assemblyStudyCase" ? await service.assemblyStudyCase(data.project, data.assembly, data.study)
-        : data.type === "curvature" ? service.curvature(data.kind)
-        : data.type === "deviation" ? service.deviation()
-        : data.type === "continuity" ? service.continuity()
-        : data.type === "normals" ? service.normals()
-        : data.type === "combs" ? service.combs(data.edges)
-        : data.type === "assembly" ? await service.assembly(data.project, data.asmId, data.force)
-        : data.type === "interference" ? await service.interference()
-        : data.type === "drawing" ? await service.drawing(data.project, data.drawingId, data.force)
-        : data.type === "signatures" ? await service.signatures(data.project)
-        : await service.export(data.format, data.name);
-      msg = { id: data.id, ok: true, result };
+      const r = await handle(handlers, data);
+      transfer = r.transfer;
+      msg = { id: data.id, ok: true, result: r.result };
     } catch (e) {
       msg = { id: data.id, ok: false, error: (e as Error)?.message ?? String(e) };
-    }
-    const transfer: Transferable[] = [];
-    if (msg.ok && "instances" in msg.result) {
-      for (const m of Object.values(msg.result.parts)) transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
-    } else if (msg.ok && "pairs" in msg.result) {
-      for (const { mesh: m } of msg.result.pairs) transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
-    } else if (msg.ok && "mesh" in msg.result && msg.result.mesh) {
-      const m = msg.result.mesh;
-      transfer.push(m.vertices.buffer, m.normals.buffer, m.triangles.buffer, m.lines.buffer);
-    } else if (msg.ok && "data" in msg.result) {
-      transfer.push(msg.result.data.buffer);
-    } else if (msg.ok && "values" in msg.result) {
-      transfer.push(msg.result.values.buffer);
-    } else if (msg.ok && "normals" in msg.result && !("mesh" in msg.result)) {
-      transfer.push(msg.result.normals.buffer);
     }
     try {
       (self as unknown as Worker).postMessage(msg, transfer);

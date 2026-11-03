@@ -232,6 +232,28 @@ export interface ExportResponse {
   ext: string;
 }
 
+/** Resposta de cada tipo de pedido; um tipo de `Request` sem entrada aqui é erro de compilação. */
+export interface ResponseMap {
+  rebuild: RebuildResponse;
+  snapshot: SnapshotResponse;
+  studyCase: StudyCaseResponse;
+  assemblyStudyCase: StudyCaseResponse;
+  panels: PanelsResponse;
+  export: ExportResponse;
+  curvature: CurvatureResponse;
+  deviation: DeviationResponse;
+  continuity: ContinuityResponse;
+  normals: NormalsResponse;
+  combs: CombsResponse;
+  assembly: AssemblyResponse;
+  interference: InterferenceResponse;
+  drawing: DrawingResponse;
+  signatures: SignatureResponse;
+}
+
+export type RequestType = Request["type"];
+export type RequestOf<K extends RequestType> = Extract<Request, { type: K }>;
+
 export type Response =
-  | { id: number; ok: true; result: RebuildResponse | ExportResponse | CurvatureResponse | DeviationResponse | ContinuityResponse | CombsResponse | SnapshotResponse | NormalsResponse | StudyCaseResponse | PanelsResponse | AssemblyResponse | InterferenceResponse | DrawingResponse | SignatureResponse }
+  | { id: number; ok: true; result: ResponseMap[RequestType] }
   | { id: number; ok: false; error: string };
