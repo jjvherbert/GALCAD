@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 3b) — `SOLID_UI` das features sólidas/datum (PR #15)
+
+- **`src/app/feature-ui.tsx`** (novo): `SOLID_UI: { readonly [K in SolidUiType]: FeatureUi<K> }`, um componente por tipo para as 18 features sólidas/datum. Cada componente recebe `f` já com o tipo certo (`FeatureOf<K>`), por isso já não há casts. Um tipo de `SolidUiType` sem UI não compila.
+- **`PropertyPanel.tsx`**: usa `featureUi(f.type)` (verificado com `Object.hasOwn`). O `switch` só fica para as superfícies/GSD e o esboço.
+- Sem mudança de comportamento: tsc e oxlint limpos, unitários 203 ok, build ok, e2e 12/12 à primeira. ui-check a 390/1440, incluindo o painel «Nova extrusão».
+- **A seguir:** 3c UI das superfícies/GSD e do esboço no registo (mapped type completo sobre `FeatureType`, sem `switch`), 3d `help` obrigatório, depois plugins a registar features.
+
 ## Atualização: F1 passo 3 (fatia 3a) — schema zod por feature, validado ao abrir (PR #14)
 
 - **`src/doc/schema.ts`**: `FEATURE_SCHEMAS = exact({...})`, um schema zod por `FeatureType` (41). `exact()` obriga a que o tipo de saída de cada schema seja igual a `Data<K>`: um tipo sem schema, ou um schema que não bate com o tipo TS, não compila.
