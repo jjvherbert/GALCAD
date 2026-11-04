@@ -1,5 +1,15 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 4) — plugins registam features pelo mesmo contrato (PR #20)
+
+- **`src/plugins/types.ts`**: `PluginKind` passa a exigir `help` (título, descrição, passos). Um tipo de plugin sem ajuda não compila.
+- **`src/plugins/meta.ts` / `geometry.ts`** (e `nautica/*`): metadados com `satisfies` e construtores tipados por `PluginBuildersFor<M>` — um tipo declarado sem construtor (ou o contrário) não compila. `pluginKind()` usa `Object.hasOwn` (já não encontra `toString`).
+- **`src/plugins/params.ts`** (novo): `evalPluginParams` avalia e valida mínimo, máximo e inteiro antes de construir, com mensagens PT (`Comprimento: mínimo 1 mm (0,5 mm)`), e devolve só os parâmetros declarados.
+- **UI**: `helpForFeature` e `featureLabel` usam a ajuda e o rótulo do tipo de plugin (fallback `Plugin`); o título do painel não leva «Nova» para plugins (nome próprio, género variável). CSS: `.help-row` sem arte ocupa a largura toda — afeta também features nativas sem arte.
+- **`tests/plugins.test.ts`** (6 testes): ids, ajuda/parâmetros/omissões dentro do schema, `pluginKind`, `evalPluginParams` (só declarados, mensagens de erro), ajuda e rótulo.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12. ui-check a 390/1440 e capturas do Casco paramétrico (tooltip com passos, HelpCard a toda a largura). CI verde (3m44s). **Passo 3 completo.**
+- **A seguir:** F1 passo 4 — ficheiros < ~400 linhas, a começar pelos maiores (`viewport.ts` 1310, `store.ts` 1080, `SketchEditor.tsx` 891, `SimPanel.tsx` 769).
+
 ## Atualização: F1 passo 3 (fatia 3d) — `help` obrigatório por feature (PR #19)
 
 - **`src/app/feature-help.ts`** (novo, `.ts` para os testes Node o poderem importar): `FEATURE_HELP: { readonly [K in FeatureType]: Help }`, `CUT_HELP` e `helpForFeature(f)`. Uma feature sem ajuda não compila.
