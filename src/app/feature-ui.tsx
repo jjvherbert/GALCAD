@@ -1,12 +1,14 @@
 // Registo da UI de cada tipo de feature no painel de propriedades.
 // O mapa é tipado por tipo: um tipo da lista sem formulário não compila.
-// Por agora cobre as features sólidas e de referência; as de superfície/GSD seguem no PropertyPanel.
+// Cobre as features sólidas, de referência e de superfície/GSD (estas em feature-ui-surfaces.tsx);
+// a curva, a forma livre, a peça externa e o esboço seguem no PropertyPanel.
 import type { FunctionComponent } from "preact";
-import type { BodyOp, Feature, FeatureOf, FeatureType, HoleKind } from "../doc/types.ts";
+import type { Feature, FeatureOf, FeatureType, HoleKind } from "../doc/types.ts";
 import { SHEET_SOURCES, TOOL_FEATURES } from "../doc/features.ts";
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
 import { PLUGINS } from "../plugins/meta.ts";
-import { AxisSelect, Check, EndEditor, ExprInput, FeatureChecklist, Field, PathSelect, PlaneSelect, RefList, RegionList, Select, SketchSelect, SweepOptionsEditor } from "./forms.tsx";
+import { AxisSelect, Check, EndEditor, ExprInput, FeatureChecklist, Field, OPS, PathSelect, PlaneSelect, RefList, RegionList, Select, SketchSelect, SweepOptionsEditor } from "./forms.tsx";
+import { SURFACE_UI, type SurfaceUiType } from "./feature-ui-surfaces.tsx";
 
 export type FeatureUiProps<K extends FeatureType> = {
   f: FeatureOf<K>;
@@ -16,7 +18,6 @@ export type FeatureUiProps<K extends FeatureType> = {
 };
 export type FeatureUi<K extends FeatureType> = FunctionComponent<FeatureUiProps<K>>;
 
-export const OPS: [BodyOp, string][] = [["add", "Adicionar material"], ["cut", "Remover material (corte)"], ["intersect", "Intersetar"], ["new", "Corpo separado"]];
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 3 });
 
 type SolidUiType =
@@ -222,4 +223,6 @@ const SOLID_UI: { readonly [K in SolidUiType]: FeatureUi<K> } = {
 
 /** Formulário registado para o tipo, ou `undefined` se ainda estiver no switch do PropertyPanel. */
 export const featureUi = (type: FeatureType): FeatureUi<FeatureType> | undefined =>
-  Object.hasOwn(SOLID_UI, type) ? (SOLID_UI[type as SolidUiType] as FeatureUi<FeatureType>) : undefined;
+  Object.hasOwn(SOLID_UI, type) ? (SOLID_UI[type as SolidUiType] as FeatureUi<FeatureType>)
+  : Object.hasOwn(SURFACE_UI, type) ? (SURFACE_UI[type as SurfaceUiType] as FeatureUi<FeatureType>)
+  : undefined;
