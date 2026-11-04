@@ -2,7 +2,10 @@
 // depois), o que a feature faz, como se usa e uma nota. Aparece ao passar o rato na barra e no topo do
 // painel de propriedades. As animações são SMIL em SVG; com prefers-reduced-motion mostram só o resultado.
 import type { ComponentChildren, JSX } from "preact";
-import type { Feature } from "../doc/types.ts";
+import type { FeatureType } from "../doc/types.ts";
+import { type ArtKey, CUT_HELP, FEATURE_HELP, type Help } from "./feature-help.ts";
+
+export { type Help, helpForFeature } from "./feature-help.ts";
 
 const MOTION = typeof matchMedia === "function" ? !matchMedia("(prefers-reduced-motion: reduce)").matches : true;
 
@@ -67,7 +70,7 @@ const Svg = ({ children }: { children: ComponentChildren }) => <svg class="art" 
 
 // --- figuras --------------------------------------------------------------------------
 
-const ART: Record<string, () => JSX.Element> = {
+const ART: Record<ArtKey, () => JSX.Element> = {
   sketch: () => (
     <Svg>
       <polygon class="a-plane" points={floor(-10, -10, 60, 60)} />
@@ -252,27 +255,13 @@ const ART: Record<string, () => JSX.Element> = {
 
 // --- textos ---------------------------------------------------------------------------
 
-export interface Help { title: string; what: string; steps: string[]; tip?: string; art?: string }
+// Os textos das features vêm de `FEATURE_HELP` (obrigatório por tipo); aqui ficam com o id do comando.
+const featureCommands = (Object.keys(FEATURE_HELP) as FeatureType[]).filter((t) => t !== "sketch").map((t) => [`feature.${t}`, FEATURE_HELP[t]] as const);
 
 export const HELP: Record<string, Help> = {
-  "sketch.new": { title: "Esboço", art: "sketch", what: "Desenho 2D num plano, com restrições e cotas, que serve de base às features (extrusão, revolução, sweep, loft).", steps: ["Escolha o plano (ou uma face plana).", "Desenhe o contorno e acrescente restrições e cotas até ficar totalmente definido.", "Saia do esboço para o usar numa feature."], tip: "Um contorno fechado e sem sobreposições é o que as features sólidas pedem." },
-  "feature.extrude": { title: "Extrusão", art: "extrude", what: "Empurra um esboço fechado numa direção para criar material (ou, noutras operações, retirá-lo).", steps: ["Escolha o esboço (e as regiões, se houver contornos interiores).", "Defina o fim: valor, até à face, através de tudo ou plano médio.", "Opcional: segunda direção e ângulo de saída."], tip: "Com «plano médio» a extrusão fica simétrica ao plano do esboço." },
-  "feature.cut": { title: "Corte extrudido", art: "cut", what: "Retira material extrudindo o esboço para dentro da peça.", steps: ["Escolha o esboço do contorno a cortar.", "Defina a profundidade ou «através de tudo».", "Inverta a direção se o corte sair para fora."], tip: "O esboço pode estar numa face da peça: o corte começa aí." },
-  "feature.revolve": { title: "Revolução", art: "revolve", what: "Roda um esboço à volta de um eixo para criar sólidos de revolução: veios, anéis, tampas.", steps: ["Escolha o esboço do perfil (fechado, de um só lado do eixo).", "Escolha o eixo: padrão, de referência ou uma linha do esboço.", "Defina o ângulo (360° para um sólido completo)."], tip: "O perfil não pode cruzar o eixo." },
-  "feature.sweep": { title: "Sweep", art: "sweep", what: "Arrasta um perfil ao longo de um caminho: tubos, calhas, molas.", steps: ["Escolha o esboço do perfil.", "Escolha o esboço do caminho.", "Ajuste a orientação ou a torção, se precisar."], tip: "O perfil deve estar num plano que corte o caminho no início." },
-  "feature.loft": { title: "Loft", art: "loft", what: "Liga dois ou mais perfis em planos diferentes com uma transição suave.", steps: ["Escolha os perfis pela ordem de ligação.", "Opcional: curva-guia para controlar a forma.", "Confirme os pontos de início para evitar torção."], tip: "Perfis com o mesmo número de arestas dão transições mais limpas." },
-  "feature.rib": { title: "Nervura", art: "rib", what: "Acrescenta uma parede fina de reforço a partir de um esboço aberto, até encontrar a peça.", steps: ["Escolha o esboço da linha da nervura.", "Defina a espessura e de que lado cresce.", "Opcional: ângulo de saída."], tip: "O esboço da nervura é uma linha, não um contorno fechado." },
-  "feature.hole": { title: "Furo", art: "hole", what: "Faz um furo de diâmetro e profundidade definidos numa face, com posição por esboço de pontos.", steps: ["Escolha a face (ou o esboço com os centros).", "Defina o diâmetro e a profundidade.", "Opcional: escareado ou rebaixo."], tip: "Para vários furos iguais, use um padrão em vez de repetir o furo." },
-  "feature.fillet": { title: "Filete", art: "fillet", what: "Arredonda arestas com um raio constante, suavizando cantos vivos e concentrações de tensão.", steps: ["Selecione as arestas (ou faces, para arredondar todas as suas arestas).", "Defina o raio.", "Confirme."], tip: "Faça os filetes no fim da modelação: mudam a topologia." },
-  "feature.chamfer": { title: "Chanfro", art: "chamfer", what: "Quebra arestas com um corte reto, por distância ou por distância e ângulo.", steps: ["Selecione as arestas.", "Defina a distância (e o ângulo, se for assimétrico).", "Confirme."], tip: "Em furos e veios, o chanfro facilita a montagem." },
-  "feature.shell": { title: "Casca", art: "shell", what: "Esvazia o sólido deixando paredes de espessura uniforme; as faces escolhidas ficam abertas.", steps: ["Escolha as faces a remover.", "Defina a espessura da parede.", "Confirme."], tip: "Espessuras maiores do que os raios internos podem falhar." },
-  "feature.draft": { title: "Ângulo de saída", art: "draft", what: "Inclina faces para o produto sair do molde, com um ângulo em relação à direção de extração.", steps: ["Escolha o plano neutro (a face que não se move).", "Escolha as faces a inclinar.", "Defina o ângulo."], tip: "Uma inclinação de 1° a 3° costuma bastar em peças moldadas." },
-  "feature.linearPattern": { title: "Padrão linear", art: "linearPattern", what: "Repete features numa ou duas direções, com espaçamento e número de instâncias.", steps: ["Escolha as features a repetir.", "Escolha a direção (aresta, eixo ou face).", "Defina o espaçamento e o número."], tip: "As instâncias seguem o modelo: mude o original e todas mudam." },
-  "feature.circularPattern": { title: "Padrão circular", art: "circularPattern", what: "Repete features à volta de um eixo: furos em flange, dentes, nervuras radiais.", steps: ["Escolha as features a repetir.", "Escolha o eixo.", "Defina o número e o ângulo total."], tip: "360° espaça as instâncias de forma igual por toda a volta." },
-  "feature.mirror": { title: "Espelho", art: "mirror", what: "Cria o simétrico de features em relação a um plano ou face plana.", steps: ["Escolha o plano de simetria.", "Escolha as features a espelhar.", "Confirme."], tip: "Modelar metade e espelhar mantém a peça simétrica por construção." },
-  "feature.plane": { title: "Plano de referência", art: "plane", what: "Cria um plano auxiliar a uma distância, num ângulo ou por pontos, para esboços e cortes.", steps: ["Escolha o plano ou face de partida.", "Defina a distância ou o ângulo.", "Use o novo plano como base de esboços."], tip: "Dê um nome ao plano: fica na árvore." },
-  "feature.axis": { title: "Eixo de referência", art: "axis", what: "Cria um eixo a partir de uma aresta, da interseção de dois planos ou do centro de uma face cilíndrica.", steps: ["Escolha a geometria que define o eixo.", "Confirme.", "Use-o em revoluções, padrões circulares e mates."] },
-  "feature.csys": { title: "Sistema de coordenadas", art: "csys", what: "Define uma origem e três eixos próprios, para medir, orientar importações e referenciar planos.", steps: ["Escolha a origem.", "Defina a direção de X e de Y.", "Confirme."] },
+  "sketch.new": FEATURE_HELP.sketch,
+  ...Object.fromEntries(featureCommands),
+  "feature.cut": CUT_HELP,
   // simulação (sem figura)
   "sim.add.fixed": { title: "Encastramento", what: "Impede todos os deslocamentos nas faces escolhidas: o apoio rígido ideal.", steps: ["Escolha as faces de apoio no 3D.", "Confirme."], tip: "Um apoio sobre uma face muito pequena cria tensões artificialmente altas." },
   "sim.add.displacement": { title: "Deslocamento imposto", what: "Impõe um deslocamento (ou o impede) por direção nas faces escolhidas. Deixe em branco a direção que fica livre.", steps: ["Escolha as faces.", "Indique ux, uy, uz (0 impede, vazio deixa livre)."] },
@@ -292,16 +281,9 @@ export const HELP: Record<string, Help> = {
   "sim.run": { title: "Calcular", what: "Corre o estudo no solver escolhido, no agente local, e traz os resultados para o 3D.", steps: ["Confirme apoios, cargas e material.", "Calcule (F5).", "Veja os resultados e o fator de segurança."], tip: "Valide com um caso simples (consola, placa) antes de confiar no modelo." },
 };
 
-/** Ajuda de uma feature em edição (a extrusão de corte tem a sua). */
-export function helpForFeature(f: Feature): Help | undefined {
-  if (f.type === "extrude" && f.op === "cut") return HELP["feature.cut"];
-  if (f.type === "revolve" && f.op === "cut") return HELP["feature.revolve"];
-  return HELP[f.type === "sketch" ? "sketch.new" : `feature.${f.type}`];
-}
-
 // --- apresentação ---------------------------------------------------------------------
 
-export function HelpArt({ art }: { art?: string }) {
+export function HelpArt({ art }: { art?: ArtKey }) {
   const A = art ? ART[art] : undefined;
   return A ? <div class="help-art">{A()}</div> : null;
 }

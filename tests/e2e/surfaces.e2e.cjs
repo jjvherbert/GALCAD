@@ -34,7 +34,7 @@ async function main() {
     check("separador Superfícies", ["Sup. extrudida", "Preenchimento", "Costura", "Espessar", "Aparar superfície", "Riscas de zebra"].every((t) => tabText.includes(t)), tabText.slice(0, 200));
 
     // espessar o último corpo de superfície (meia revolução r = 60, h = 40) 2 mm: volume = π·(62² − 60²)/2·40 (ou para dentro, 60²−58²)
-    await p.click(".commands button[title^='Espessar']"); await settle();
+    await p.click(".commands button[aria-label^='Espessar']"); await settle();
     const sel = await p.$eval(".property-panel select", (s) => s.selectedOptions[0]?.textContent ?? "");
     check("espessar: corpo pré-escolhido", /revolu/i.test(sel), sel);
     await p.click(".property-panel button.primary"); await settle();
@@ -72,7 +72,7 @@ async function main() {
     await p.click(".analysis-panel button[aria-label='Desligar análise']");
 
     // curva 3D: hélice pela interface
-    await p.click(".commands button[title^='Curva 3D']"); await settle();
+    await p.click(".commands button[aria-label^='Curva 3D']"); await settle();
     await p.selectOption(".property-panel select >> nth=0", "helix"); await settle();
     await p.click(".property-panel button.primary"); await settle();
     const tree = await p.textContent(".feature-tree, aside");
