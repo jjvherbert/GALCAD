@@ -1,5 +1,15 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 3d) — `help` obrigatório por feature (PR #19)
+
+- **`src/app/feature-help.ts`** (novo, `.ts` para os testes Node o poderem importar): `FEATURE_HELP: { readonly [K in FeatureType]: Help }`, `CUT_HELP` e `helpForFeature(f)`. Uma feature sem ajuda não compila.
+- **`featurehelp.tsx`**: o `HELP` da toolbar é gerado a partir de `FEATURE_HELP` (`feature.<tipo>`, com o esboço em `sketch.new`). Ficam aqui só `feature.cut`, os `sim.*` e a arte (`ART: Record<ArtKey, …>`).
+- **`PropertyPanel.tsx`**: `<HelpCard h={helpForFeature(f)} />`.
+- **`tests/feature-help.test.ts`**: as chaves são iguais às de `FEATURE_LABELS`, nenhum título, descrição ou passo está vazio, e o corte extrudido tem ajuda própria.
+- **e2e `surfaces`**: Espessar e Curva 3D passaram a ter ajuda e, como todos os botões com `HELP`, perderam o `title` (`Toolbar.tsx`: só `aria-label` e tooltip). Os seletores passaram a `aria-label^=`. **Regra para e2e novos:** botões com ajuda procuram-se por `aria-label`.
+- Testes: tsc e oxlint limpos, unitários 206 ok, build ok, e2e 12/12 (`surfaces` repetido sozinho depois do fix do seletor). ui-check a 390/1440 do tooltip e do HelpCard de Espessar e Curva 3D, sem overflow. CI verde (3m35s).
+- **A seguir:** plugins a registar features (schema, build, ui e help pelo mesmo contrato).
+
 ## Atualização: F1 passo 3 (fatia 3c-2) — `FEATURE_UI` completo, sem `switch` (PR #17) + layout do editor de pontos (PR #18)
 
 - **`src/app/feature-ui-misc.tsx`** (novo): `MISC_UI` com `curve`, `freeform`, `external` e `sketch`.
