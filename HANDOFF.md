@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 3c-1) — `SURFACE_UI` das features de superfície/GSD (PR #16)
+
+- **`src/app/feature-ui-surfaces.tsx`** (novo): `SURFACE_UI: { readonly [K in SurfaceUiType]: FeatureUi<K> }` com os 19 tipos de superfície/GSD. `TangentEditor`, `BlendSideEditor` e `CONT` vieram também para aqui. Um tipo sem UI não compila.
+- `featureUi(type)` procura em `SOLID_UI` e depois em `SURFACE_UI`. `OPS` passou para `forms.tsx`, para evitar um import circular.
+- **`PropertyPanel.tsx`**: o `switch` só fica com `curve`, `freeform` e `external`.
+- Sem mudança de comportamento: tsc e oxlint limpos, unitários 203 ok, build ok, e2e 12/12 à primeira. ui-check a 390/1440 e painel «Nova espessar» com o fixture das superfícies.
+- **A seguir:** 3c-2 curva, forma livre, peça externa e esboço no registo, com mapped type completo sobre `FeatureType` e sem `switch`. Depois 3d `help` obrigatório e plugins a registar features.
+
 ## Atualização: F1 passo 3 (fatia 3b) — `SOLID_UI` das features sólidas/datum (PR #15)
 
 - **`src/app/feature-ui.tsx`** (novo): `SOLID_UI: { readonly [K in SolidUiType]: FeatureUi<K> }`, um componente por tipo para as 18 features sólidas/datum. Cada componente recebe `f` já com o tipo certo (`FeatureOf<K>`), por isso já não há casts. Um tipo de `SolidUiType` sem UI não compila.
