@@ -38,7 +38,7 @@ export function PropertyPanel() {
           <button onClick={() => store.cancelEdit()} title="Cancelar (Esc)">✕</button>
         </div>
       </header>
-      {helpForFeature(f) && <HelpCard h={helpForFeature(f)!} />}
+      <HelpCard h={helpForFeature(f)} />
       <Field label="Nome"><input value={f.name} onInput={(ev) => up({ name: (ev.target as HTMLInputElement).value })} /></Field>
       <Ui f={f} up={up} before={before} />
       <StatusBlock status={status} title={FEATURE_LABELS[f.type]} />
