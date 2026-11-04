@@ -1,6 +1,7 @@
 // Textos de ajuda por feature («O que faz», dicas da barra). `FEATURE_HELP` é um mapped type sobre
 // `FeatureType`: uma feature sem ajuda não compila. Ficheiro .ts puro (sem JSX) para os testes de Node.
 import type { Feature, FeatureType } from "../doc/types.ts";
+import { pluginKind } from "../plugins/meta.ts";
 
 /** Figuras animadas disponíveis (desenhadas em `featurehelp.tsx`). */
 export type ArtKey =
@@ -56,7 +57,9 @@ export const FEATURE_HELP: { readonly [K in FeatureType]: Help } = {
 /** A extrusão de corte tem ajuda e figura próprias (comando `feature.cut`). */
 export const CUT_HELP: Help = { title: "Corte extrudido", art: "cut", what: "Retira material extrudindo o esboço para dentro da peça.", steps: ["Escolha o esboço do contorno a cortar.", "Defina a profundidade ou «através de tudo».", "Inverta a direção se o corte sair para fora."], tip: "O esboço pode estar numa face da peça: o corte começa aí." };
 
-/** Ajuda de uma feature em edição (a extrusão de corte tem a sua). */
+/** Ajuda de uma feature em edição (a extrusão de corte tem a sua; a de plugin vem do tipo do plugin). */
 export function helpForFeature(f: Feature): Help {
-  return f.type === "extrude" && f.op === "cut" ? CUT_HELP : FEATURE_HELP[f.type];
+  if (f.type === "extrude" && f.op === "cut") return CUT_HELP;
+  if (f.type === "plugin") return pluginKind(f.plugin, f.kind)?.help ?? FEATURE_HELP.plugin;
+  return FEATURE_HELP[f.type];
 }

@@ -4,6 +4,7 @@
 import type { ComponentChildren, JSX } from "preact";
 import type { FeatureType } from "../doc/types.ts";
 import { type ArtKey, CUT_HELP, FEATURE_HELP, type Help } from "./feature-help.ts";
+import { PLUGINS } from "../plugins/meta.ts";
 
 export { type Help, helpForFeature } from "./feature-help.ts";
 
@@ -257,10 +258,13 @@ const ART: Record<ArtKey, () => JSX.Element> = {
 
 // Os textos das features vêm de `FEATURE_HELP` (obrigatório por tipo); aqui ficam com o id do comando.
 const featureCommands = (Object.keys(FEATURE_HELP) as FeatureType[]).filter((t) => t !== "sketch").map((t) => [`feature.${t}`, FEATURE_HELP[t]] as const);
+// Cada tipo de feature de plugin traz a sua ajuda (obrigatória em `PluginKind`).
+const pluginCommands = PLUGINS.flatMap((p) => Object.entries(p.kinds).map(([k, kind]) => [`plugin.${p.id}.${k}`, kind.help] as const));
 
 export const HELP: Record<string, Help> = {
   "sketch.new": FEATURE_HELP.sketch,
   ...Object.fromEntries(featureCommands),
+  ...Object.fromEntries(pluginCommands),
   "feature.cut": CUT_HELP,
   // simulação (sem figura)
   "sim.add.fixed": { title: "Encastramento", what: "Impede todos os deslocamentos nas faces escolhidas: o apoio rígido ideal.", steps: ["Escolha as faces de apoio no 3D.", "Confirme."], tip: "Um apoio sobre uma face muito pequena cria tensões artificialmente altas." },
