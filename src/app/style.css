@@ -550,6 +550,7 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .help-card { border: 1px solid var(--line); border-left: 3px solid var(--ws-accent, #018a8a); border-radius: 8px; margin: 6px 0 10px; background: var(--panel2); }
 .help-card > summary { cursor: pointer; padding: 6px 10px; font-size: 12px; font-weight: 600; }
 .help-row { display: grid; grid-template-columns: 96px 1fr; gap: 8px; padding: 0 10px 8px; animation: rise .2s var(--ease) both; }
+.help-row:not(:has(.help-art)) { grid-template-columns: 1fr; }
 .art { --a-top: #e9eef4; --a-left: #b9c9da; --a-right: #94aac0; }
 .art .a-top { fill: var(--a-top); } .art .a-left { fill: var(--a-left); } .art .a-right { fill: var(--a-right); }
 .art .a-top, .art .a-left, .art .a-right { stroke: #1f2937; stroke-width: .8; stroke-linejoin: round; }

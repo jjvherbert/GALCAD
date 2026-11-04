@@ -32,7 +32,8 @@ export function PropertyPanel() {
   return (
     <div class="property-panel">
       <header>
-        <h2>{e.isNew ? `Nova ${featureLabel(f).toLowerCase()}` : featureLabel(f)}</h2>
+        {/* o rótulo de um tipo de plugin é um nome próprio (género variável): sem «Nova» */}
+        <h2>{e.isNew && f.type !== "plugin" ? `Nova ${featureLabel(f).toLowerCase()}` : featureLabel(f)}</h2>
         <div class="actions">
           <button class="primary" onClick={() => store.confirmEdit()} disabled={st.busy && !st.result} title="Confirmar (Enter)">✓ OK</button>
           <button onClick={() => store.cancelEdit()} title="Cancelar (Esc)">✕</button>

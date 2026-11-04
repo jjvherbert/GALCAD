@@ -1,5 +1,6 @@
 // Catálogo de features: nomes, dependências e validação de ordem.
 import type { AxisRef, CadDocument, CurveRef, EndCondition, Feature, FeatureType, PlaneRef, SurfaceTarget, SweepOptions, TopoRef } from "./types.ts";
+import { pluginKind } from "../plugins/meta.ts";
 
 export const FEATURE_LABELS: Record<FeatureType, string> = {
   sketch: "Esboço",
@@ -49,6 +50,7 @@ export function featureLabel(f: Feature): string {
   if ((f.type === "extrude" || f.type === "revolve" || f.type === "sweep" || f.type === "loft") && f.op === "cut") {
     return { extrude: "Corte extrudido", revolve: "Corte por revolução", sweep: "Corte por varrimento", loft: "Corte por loft" }[f.type];
   }
+  if (f.type === "plugin") return pluginKind(f.plugin, f.kind)?.label ?? FEATURE_LABELS.plugin;
   return FEATURE_LABELS[f.type];
 }
 

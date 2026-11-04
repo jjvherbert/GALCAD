@@ -63,7 +63,7 @@ export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plan
     case "freeform": return { type, source: { kind: "patch", plane: opts.plane ?? { kind: "std", name: "XY" }, width: 100, height: 100, nu: 5, nv: 5 }, moves: [] };
     case "plugin": {
       const p = PLUGINS.find((x) => x.id === opts.plugin) ?? PLUGINS[0];
-      const kind = opts.kind ?? Object.keys(p.kinds)[0];
+      const kind = opts.kind && Object.hasOwn(p.kinds, opts.kind) ? opts.kind : Object.keys(p.kinds)[0];
       const params = Object.fromEntries(Object.entries(p.kinds[kind].params).map(([k, d]) => [k, d.value]));
       return { type, plugin: p.id, kind, params, op: "add" };
     }

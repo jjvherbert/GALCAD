@@ -1,11 +1,12 @@
-import type { PluginBuilders } from "../types.ts";
+import type { PluginBuildersFor } from "../types.ts";
+import type { nauticaMeta } from "./meta.ts";
 import { buildHull, hydrostatics, type HullParams } from "./hull.ts";
 
 const fmt = (v: number, d = 2) => v.toLocaleString("pt-PT", { maximumFractionDigits: d, minimumFractionDigits: d });
 
-export const nauticaBuilders: PluginBuilders = {
+export const nauticaBuilders: PluginBuildersFor<typeof nauticaMeta> = {
   casco(p) {
-    const hp = p as unknown as HullParams;
+    const hp: HullParams = p;
     const shape = buildHull(hp);
     const h = hydrostatics(shape, hp);
     const L = hp.L / 1000;
