@@ -1,14 +1,15 @@
 // Registo da UI de cada tipo de feature no painel de propriedades.
 // O mapa é tipado por tipo: um tipo da lista sem formulário não compila.
-// Cobre as features sólidas, de referência e de superfície/GSD (estas em feature-ui-surfaces.tsx);
-// a curva, a forma livre, a peça externa e o esboço seguem no PropertyPanel.
+// Sólidas e de referência aqui; superfície/GSD em feature-ui-surfaces.tsx;
+// curva, forma livre, peça externa e esboço em feature-ui-misc.tsx.
 import type { FunctionComponent } from "preact";
 import type { Feature, FeatureOf, FeatureType, HoleKind } from "../doc/types.ts";
 import { SHEET_SOURCES, TOOL_FEATURES } from "../doc/features.ts";
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { AxisSelect, Check, EndEditor, ExprInput, FeatureChecklist, Field, OPS, PathSelect, PlaneSelect, RefList, RegionList, Select, SketchSelect, SweepOptionsEditor } from "./forms.tsx";
-import { SURFACE_UI, type SurfaceUiType } from "./feature-ui-surfaces.tsx";
+import { SURFACE_UI } from "./feature-ui-surfaces.tsx";
+import { MISC_UI } from "./feature-ui-misc.tsx";
 
 export type FeatureUiProps<K extends FeatureType> = {
   f: FeatureOf<K>;
@@ -221,8 +222,8 @@ const SOLID_UI: { readonly [K in SolidUiType]: FeatureUi<K> } = {
   },
 };
 
-/** Formulário registado para o tipo, ou `undefined` se ainda estiver no switch do PropertyPanel. */
-export const featureUi = (type: FeatureType): FeatureUi<FeatureType> | undefined =>
-  Object.hasOwn(SOLID_UI, type) ? (SOLID_UI[type as SolidUiType] as FeatureUi<FeatureType>)
-  : Object.hasOwn(SURFACE_UI, type) ? (SURFACE_UI[type as SurfaceUiType] as FeatureUi<FeatureType>)
-  : undefined;
+/** Todos os tipos de feature: falta de formulário para um tipo é erro de compilação. */
+const FEATURE_UI: { readonly [K in FeatureType]: FeatureUi<K> } = { ...SOLID_UI, ...SURFACE_UI, ...MISC_UI };
+
+/** Formulário registado para o tipo. */
+export const featureUi = (type: FeatureType): FeatureUi<FeatureType> => FEATURE_UI[type] as FeatureUi<FeatureType>;
