@@ -1,10 +1,13 @@
 // Campos reutilizáveis do painel de propriedades.
 import { useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { AxisRef, CadDocument, CurveRef, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, SurfaceTarget, SweepOptions, SweepOrientation, TopoRef, Vec3 } from "../doc/types.ts";
+import type { AxisRef, BodyOp, CadDocument, CurveRef, EndCondition, Expr, FeatureType, PlaneRef, RegionRef, SurfaceTarget, SweepOptions, SweepOrientation, TopoRef, Vec3 } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
 import { FEATURE_LABELS, createsSheet } from "../doc/features.ts";
 import { type Pick, pickHandlers, store, useStoreKeys } from "./store.ts";
+
+/** Operações booleanas de um corpo novo sobre o existente. */
+export const OPS: [BodyOp, string][] = [["add", "Adicionar material"], ["cut", "Remover material (corte)"], ["intersect", "Intersetar"], ["new", "Corpo separado"]];
 
 const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 4 });
 
