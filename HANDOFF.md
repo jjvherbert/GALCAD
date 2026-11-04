@@ -1,5 +1,14 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 3 (fatia 3c-2) — `FEATURE_UI` completo, sem `switch` (PR #17) + layout do editor de pontos (PR #18)
+
+- **`src/app/feature-ui-misc.tsx`** (novo): `MISC_UI` com `curve`, `freeform`, `external` e `sketch`.
+- **`src/app/feature-ui.tsx`**: `FEATURE_UI: { readonly [K in FeatureType]: FeatureUi<K> } = { ...SOLID_UI, ...SURFACE_UI, ...MISC_UI }`. Uma feature sem UI não compila.
+- **`PropertyPanel.tsx`**: perdeu 196 linhas. Já não tem `switch`, só `featureUi(f.type)`.
+- **PR #18:** no `PointsEditor` (Curva 3D e Forma livre), o ✕ de cada ponto caía para uma linha própria e os inputs X/Y/Z transbordavam o painel. Era um problema anterior a esta fatia, que apareceu no ui-check. Agora a grelha é `repeat(3, minmax(0,1fr)) auto`.
+- Sem mudança de comportamento: tsc e oxlint limpos, unitários 203 ok, build ok, e2e 12/12 (`app` falhou por instabilidade conhecida e passou quando repetido sozinho). ui-check a 390/1440 da Curva, Forma livre e Externa.
+- **A seguir:** 3d `help` obrigatório por feature, com garantia de compilação. Depois plugins a registar features.
+
 ## Atualização: F1 passo 3 (fatia 3c-1) — `SURFACE_UI` das features de superfície/GSD (PR #16)
 
 - **`src/app/feature-ui-surfaces.tsx`** (novo): `SURFACE_UI: { readonly [K in SurfaceUiType]: FeatureUi<K> }` com os 19 tipos de superfície/GSD. `TangentEditor`, `BlendSideEditor` e `CONT` vieram também para aqui. Um tipo sem UI não compila.
