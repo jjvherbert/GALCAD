@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 12) — esboços, árvore e seleção fora de `store.ts` (PR #32)
+
+- **`src/app/store-tree.ts`** (novo, 124 linhas): `startSketch`/`editSketch`/`updateSketch`/`exitSketch`, `deleteFeature`, `toggleSuppress`, `rename`, `move`, `setRollback`, `setVariables`, `addImport`, `pick`/`clearSelection`/`setSelection`, como funções que recebem o `Store`.
+- Código movido verbatim (`this.` → `s.`); em `updateSketch`/`exitSketch` o local `s` passa a `sk` para não colidir com o parâmetro. A classe fica com delegadores de uma linha com as mesmas assinaturas. `store.ts` 469 → 370 linhas — abaixo de 400, fica concluído. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde no PR antes do merge.
+- **A seguir:** `tools/cad-runner.ts` (Sonnet), depois `SketchEditor.tsx`, `SimPanel.tsx`.
+
 ## Atualização: F1 passo 4 (fatia 11) — features, templates e publicações fora de `store.ts` (PR #31)
 
 - **`src/app/store-features.ts`** (novo, 206 linhas): `startFeature`, `editFeature`, templates (`createTemplate`/`deleteTemplate`/`importTemplate`/`instantiateTemplate`), `setPublications`, `freezeExternal`, `readPlacement`, `movePole`, `updateDraft`, `confirmEdit`/`cancelEdit` (mais `prefill` e `setTemplates` internos), com `externalParts` e `relativeMatrix`, como funções que recebem o `Store`.
