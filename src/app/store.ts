@@ -1,6 +1,6 @@
 // Estado da aplicação: documento, histórico, edição de features/esboços e resultado da reconstrução.
 import { useEffect, useReducer, useRef } from "preact/hooks";
-import type { CadDocument, Feature, FeatureData, FeatureType, PlaneRef, Publication, SketchFeature, Variable, Vec3 } from "../doc/types.ts";
+import type { CadDocument, Feature, FeatureType, PlaneRef, Publication, SketchFeature, Variable, Vec3 } from "../doc/types.ts";
 import { History } from "../doc/history.ts";
 import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "../doc/io.ts";
 import {
@@ -9,35 +9,7 @@ import {
   type FeatureTemplate,
 } from "../doc/project.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
-import { instantiateTemplate, makeTemplate } from "../doc/knowledge.ts";
 
-/** Peças de que um documento depende por referências externas (transitivamente). */
-export function externalParts(project: CadProject, doc: CadDocument): PartDoc[] {
-  const out = new Map<string, PartDoc>();
-  const visit = (d: CadDocument) => {
-    for (const f of d.features) {
-      if (f.type !== "external" || out.has(f.part)) continue;
-      const p = project.parts.find((x) => x.id === f.part);
-      if (p) { out.set(p.id, p); visit(p); }
-    }
-  };
-  visit(doc);
-  return [...out.values()];
-}
-
-/** inv(B) · A para matrizes rígidas 4×4 em coluna maior. */
-function relativeMatrix(B: ArrayLike<number>, A: ArrayLike<number>): number[] {
-  // inv(B): rotação transposta e translação −Rᵀt
-  const R = [B[0], B[1], B[2], B[4], B[5], B[6], B[8], B[9], B[10]]; // colunas
-  const t = [B[12], B[13], B[14]];
-  const inv = new Array(16).fill(0);
-  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) inv[j * 4 + i] = R[i * 3 + j];
-  for (let i = 0; i < 3; i++) inv[12 + i] = -(R[i * 3] * t[0] + R[i * 3 + 1] * t[1] + R[i * 3 + 2] * t[2]);
-  inv[15] = 1;
-  const out = new Array(16).fill(0);
-  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) { let s = 0; for (let k = 0; k < 4; k++) s += inv[k * 4 + r] * A[c * 4 + k]; out[c * 4 + r] = s; }
-  return out;
-}
 import type { DrawingResponse, ExportFormat, RebuildResponse } from "../kernel/protocol.ts";
 import {
   type Analysis, type AnySubStore, type DocKey, type Pick, type SessionKey, type State, type StateGroup, type StateSlice, type UiKey,
@@ -48,8 +20,10 @@ export * from "./store-state.ts";
 import { KernelClient, KernelRestartError } from "./kernel-client.ts";
 import * as asmOps from "./store-assembly.ts";
 import * as docOps from "./store-docs.ts";
+import * as featOps from "./store-features.ts";
+import { externalParts } from "./store-features.ts";
+export { externalParts } from "./store-features.ts";
 import { defaultFeature } from "./defaults.ts";
-import { PLUGINS } from "../plugins/meta.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
 import { applyTheme } from "./theme.ts";
 
@@ -294,182 +268,25 @@ export class Store {
   /** Texto do projeto para guardar. */
   serialized(): string { return serializeProject(this.state.project); }
 
-  // --- features --------------------------------------------------------------
+  // --- features, templates e publicações (store-features.ts) ---------------------
 
   insertIndex() { return this.state.doc.rollback ?? this.state.doc.features.length; }
-
-  startFeature(type: FeatureType, opts: Parameters<typeof defaultFeature>[2] = {}) {
-    if (this.state.sketch) return;
-    if (type === "sketch") { this.startSketch(opts.plane); return; }
-    const doc = this.state.doc;
-    const data = this.prefill(defaultFeature(doc, type, opts));
-    let name = defaultFeatureName(doc, type);
-    if (data.type === "plugin") {
-      const label = PLUGINS.find((p) => p.id === data.plugin)?.kinds[data.kind]?.label.split(" ")[0] ?? "Plugin";
-      const names = new Set(doc.features.map((f) => f.name));
-      for (let i = 1; ; i++) if (!names.has(`${label}${i}`)) { name = `${label}${i}`; break; }
-    }
-    const draft = { ...data, id: nextFeatureId(doc), name } as Feature;
-    this.set({ edit: { id: draft.id, isNew: true, draft, index: this.insertIndex() }, choosingPlane: false, pickTarget: null });
-    this.rebuild();
-  }
-
-  /** Usa a seleção atual no 3D para pré-preencher a feature (ex.: arestas para um filete). */
-  private prefill(f: FeatureData): FeatureData {
-    const sel = this.state.selection;
-    const refs = sel.filter((p): p is Extract<Pick, { kind: "face" | "edge" }> => p.kind === "face" || p.kind === "edge").map((p) => ({ kind: p.kind, name: p.name, hint: p.hint }));
-    const faces = refs.filter((r) => r.kind === "face");
-    if ((f.type === "fillet" || f.type === "chamfer") && refs.length) return { ...f, refs };
-    if ((f.type === "shell" || f.type === "draft" || f.type === "offsetSurface" || f.type === "deleteFace" || f.type === "untrim" || f.type === "replaceFace") && faces.length) return { ...f, faces };
-    const edgeRefs = refs.filter((r) => r.kind === "edge");
-    if (f.type === "ruled" && edgeRefs.length) return { ...f, edges: edgeRefs };
-    if (f.type === "curve" && edgeRefs.length) return { ...f, def: { kind: "composite", edges: edgeRefs } };
-    if (f.type === "boundary" && edgeRefs.length) return { ...f, dir1: edgeRefs.map((ref) => ({ kind: "edge" as const, ref })) };
-    if (f.type === "fill") { const es = refs.filter((r) => r.kind === "edge"); if (es.length) return { ...f, edges: es }; }
-    const sheetIds = [...new Set(sel.flatMap((p) => (p.kind === "face" && p.body ? [p.body] : [])))];
-    if (f.type === "knit" && sheetIds.length) return { ...f, sheets: sheetIds };
-    if ((f.type === "thicken" || f.type === "trimSurface") && sheetIds.length) return { ...f, sheet: sheetIds[0] };
-    if (f.type === "plane") {
-      const p = sel.find((x) => x.kind === "plane");
-      if (p) return { ...f, base: p.ref };
-      if (faces.length === 1) return { ...f, base: { kind: "face", ref: faces[0] } };
-    }
-    return f;
-  }
-
-  editFeature(id: string) {
-    const { doc } = this.state;
-    const index = doc.features.findIndex((f) => f.id === id);
-    if (index < 0 || this.state.sketch) return;
-    const f = doc.features[index];
-    if (f.type === "sketch") { this.editSketch(id); return; }
-    this.set({ edit: { id, isNew: false, draft: structuredClone(f), index }, selectedFeature: id, pickTarget: null });
-    this.rebuild();
-  }
-
-  // --- templates de features (knowledgeware) ------------------------------------
-
-  private setTemplates(templates: FeatureTemplate[], message: string) {
-    this.set({ project: { ...this.state.project, templates }, dirty: true, message });
-    this.autosave();
-  }
-
-  createTemplate(ids: string[], name: string) {
-    try {
-      const all = this.state.project.templates ?? [];
-      const n = all.reduce((m, t) => Math.max(m, Number(t.id.slice(1)) || 0), 0);
-      const t = makeTemplate(this.state.doc, ids, name, `t${n + 1}`);
-      this.setTemplates([...all, t], `Template "${name}": ${t.inputs.length} entrada(s), ${t.parameters.length} parâmetro(s)`);
-    } catch (e) {
-      this.set({ error: (e as Error).message });
-    }
-  }
-
-  deleteTemplate(id: string) {
-    this.setTemplates((this.state.project.templates ?? []).filter((t) => t.id !== id), "Template apagado");
-  }
-
-  importTemplate(text: string) {
-    const j = JSON.parse(text) as { format?: string; template?: FeatureTemplate };
-    if (j.format !== "cadp-template" || !j.template?.features) throw new Error("Ficheiro de template inválido");
-    const all = this.state.project.templates ?? [];
-    const n = all.reduce((m, t) => Math.max(m, Number(t.id.slice(1)) || 0), 0);
-    this.setTemplates([...all, { ...j.template, id: `t${n + 1}` }], `Template "${j.template.name}" importado`);
-  }
-
-  instantiateTemplate(tpl: FeatureTemplate, bindings: Record<string, string>, values: Record<string, string>): boolean {
-    try {
-      const { doc, created } = instantiateTemplate(this.state.doc, tpl, bindings, values);
-      this.commitDoc("part", doc as PartDoc, `Instância de ${tpl.name}`);
-      this.set({ message: `${created.length} feature(s) criadas a partir de "${tpl.name}"` });
-      return true;
-    } catch (e) {
-      this.set({ error: (e as Error).message });
-      return false;
-    }
-  }
-
-  // --- publicações e referências externas ---------------------------------------
-
-  setPublications(publications: Publication[], label = "Publicações") {
-    this.commitDoc("part", { ...this.state.doc, publications }, label, true);
-  }
-
+  startFeature(type: FeatureType, opts: Parameters<typeof defaultFeature>[2] = {}) { featOps.startFeature(this, type, opts); }
+  editFeature(id: string) { featOps.editFeature(this, id); }
+  createTemplate(ids: string[], name: string) { featOps.createTemplate(this, ids, name); }
+  deleteTemplate(id: string) { featOps.deleteTemplate(this, id); }
+  importTemplate(text: string) { featOps.importTemplate(this, text); }
+  instantiateTemplate(tpl: FeatureTemplate, bindings: Record<string, string>, values: Record<string, string>): boolean { return featOps.instantiateTemplate(this, tpl, bindings, values); }
+  setPublications(publications: Publication[], label = "Publicações") { featOps.setPublications(this, publications, label); }
   /** Congela a referência externa em edição (guarda a geometria atual da origem). */
-  async freezeExternal() {
-    const e = this.state.edit;
-    if (!e || e.draft.type !== "external") return;
-    try {
-      const doc = { ...this.state.doc, features: this.state.doc.features.map((f) => (f.id === e.draft.id ? e.draft : f)) };
-      if (!doc.features.some((f) => f.id === e.draft.id)) doc.features = [...doc.features, e.draft];
-      const snap = await this.kernel.snapshot(doc, externalParts(this.state.project, doc), e.draft.id);
-      this.updateDraft({ mode: "frozen", frozen: snap } as Partial<Feature>);
-      this.set({ message: "Referência congelada: a cópia guardada já não acompanha a origem" });
-    } catch (err) {
-      this.set({ error: (err as Error).message });
-    }
-  }
-
-  /**
-   * Lê a posição relativa de duas instâncias numa montagem (origem → esta peça) para a referência
-   * externa em edição: M = (M_destino)⁻¹ · M_origem.
-   */
-  async readPlacement(asmId: string, from: string, to: string) {
-    const e = this.state.edit;
-    if (!e || e.draft.type !== "external") return;
-    try {
-      const r = await this.kernel.assembly(this.state.project, asmId, false);
-      if (!r) return;
-      const A = r.instances.find((i) => i.path === from), B = r.instances.find((i) => i.path === to);
-      if (!A || !B) throw new Error("Instâncias não encontradas na montagem");
-      const m = relativeMatrix(B.matrix, A.matrix).map((x) => Math.round(x * 1e9) / 1e9);
-      this.updateDraft({ placement: { m, assembly: asmId, from, to } } as Partial<Feature>);
-      if (!r.ok) this.set({ message: "A montagem tem mates por resolver: a posição lida pode não ser a final" });
-    } catch (err) {
-      this.set({ error: (err as Error).message });
-    }
-  }
-
+  freezeExternal() { return featOps.freezeExternal(this); }
+  /** Lê a posição relativa de duas instâncias numa montagem para a referência externa em edição. */
+  readPlacement(asmId: string, from: string, to: string) { return featOps.readPlacement(this, asmId, from, to); }
   /** Acrescenta um deslocamento a um polo da forma livre em edição (soma ao que já tiver). */
-  movePole(i: number, j: number, d: Vec3, absolute = false) {
-    const e = this.state.edit;
-    if (!e || e.draft.type !== "freeform") return;
-    const moves = e.draft.moves.slice();
-    const k = moves.findIndex((m) => m.i === i && m.j === j);
-    const prev = k >= 0 ? moves[k].d : [0, 0, 0];
-    const nd = (absolute ? d : [prev[0] + d[0], prev[1] + d[1], prev[2] + d[2]]).map((x) => Math.round(x * 1000) / 1000) as Vec3;
-    if (k >= 0) moves.splice(k, 1);
-    if (nd.some((x) => x !== 0)) moves.push({ i, j, d: nd });
-    this.set({ poleSel: [i, j] });
-    this.updateDraft({ moves } as Partial<Feature>);
-  }
-
-  updateDraft(patch: Partial<Feature>) {
-    const e = this.state.edit;
-    if (!e) return;
-    this.set({ edit: { ...e, draft: { ...e.draft, ...patch } as Feature } });
-    this.rebuild();
-  }
-
-  confirmEdit() {
-    const e = this.state.edit;
-    if (!e) return;
-    const { doc } = this.state;
-    let next: CadDocument;
-    if (e.isNew) {
-      const { id: _id, ...rest } = e.draft;
-      next = addFeature(doc, rest as never, e.index).doc;
-    } else {
-      next = updateFeature(doc, e.id, e.draft);
-    }
-    this.set({ edit: null, pickTarget: null, selection: [], selectedFeature: e.id, confirmed: { id: e.id, n: (this.state.confirmed?.n ?? 0) + 1 } });
-    this.commit(next, `${e.isNew ? "Criar" : "Editar"} ${e.draft.name}`);
-  }
-
-  cancelEdit() {
-    this.set({ edit: null, pickTarget: null, choosingPlane: false });
-    this.rebuild(0);
-  }
+  movePole(i: number, j: number, d: Vec3, absolute = false) { featOps.movePole(this, i, j, d, absolute); }
+  updateDraft(patch: Partial<Feature>) { featOps.updateDraft(this, patch); }
+  confirmEdit() { featOps.confirmEdit(this); }
+  cancelEdit() { featOps.cancelEdit(this); }
 
   // --- esboços ---------------------------------------------------------------
 
