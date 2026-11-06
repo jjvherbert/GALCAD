@@ -9,7 +9,7 @@ import * as THREE from "three";
 import { type ResultView, layerShown } from "../sim/result.ts";
 import type { MeshData } from "../kernel/mesh.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
-import type { CadDocument, PlaneRef, Vec3 } from "../doc/types.ts";
+import type { CadDocument, Vec3 } from "../doc/types.ts";
 import type { Analysis, Pick, PickKind } from "./store.ts";
 import type { GestureDir, Settings } from "./settings.ts";
 import { onThemeChange, resolvedTheme } from "./theme.ts";
@@ -19,14 +19,10 @@ import { type SimView, buildSimLayers } from "./viewport-sim.ts";
 import { type PlaneMesh, buildReferences, buildSketches, modelSize } from "./viewport-scene.ts";
 import { type PoleNet, drawPoleNet, poleAt } from "./viewport-poles.ts";
 import { type PmiItem, type PmiLabel, buildPmiLabels, placePmiLabels } from "./viewport-pmi.ts";
+import * as select from "./viewport-select.ts";
+import type { Hit, RegionMesh } from "./viewport-select.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
-
-type Hit =
-  | { kind: "face"; index: number; point: THREE.Vector3 }
-  | { kind: "edge"; index: number; point: THREE.Vector3 }
-  | { kind: "plane"; ref: PlaneRef; label: string; point: THREE.Vector3 }
-  | { kind: "region"; index: number; point: THREE.Vector3 };
 
 interface CamState { pos: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; zoom: number; size: number }
 
@@ -60,7 +56,7 @@ export class Viewport {
   private faceVerts: [number, number][] = [];
   private planeMeshes: PlaneMesh[] = [];
   private regionGroup = new THREE.Group();
-  private regionMeshes: { mesh: THREE.Mesh; sketch: string; sig: string[]; seed: [number, number] }[] = [];
+  private regionMeshes: RegionMesh[] = [];
   private hover: Hit | null = null;
   private selected = new Set<string>();
   private featureHighlight: string | null = null;
@@ -266,13 +262,7 @@ export class Viewport {
     g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(mesh.vertices.length), 3));
     g.setIndex(new THREE.BufferAttribute(mesh.triangles, 1));
     // triângulo → face e intervalo de vértices de cada face (para colorir)
-    this.faceOfTri = new Int32Array(mesh.triangles.length / 3);
-    this.faceVerts = mesh.faces.map((f, i) => {
-      let lo = Infinity, hi = -1;
-      for (let k = f.start; k < f.start + f.count; k++) { const v = mesh.triangles[k]; lo = Math.min(lo, v); hi = Math.max(hi, v); }
-      for (let t = f.start / 3; t < (f.start + f.count) / 3; t++) this.faceOfTri[t] = i;
-      return [lo, hi];
-    });
+    ({ faceOfTri: this.faceOfTri, faceVerts: this.faceVerts } = select.faceIndex(mesh));
     this.shadedMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
     this.faceMesh = new THREE.Mesh(g, this.faceMaterial());
     const eg = new THREE.BufferGeometry();
@@ -449,10 +439,7 @@ export class Viewport {
   // --- cores e seleção ---------------------------------------------------------------
 
   private keyOf(h: Hit): string {
-    if (h.kind === "face") return `face:${this.mesh!.faces[h.index].name}`;
-    if (h.kind === "edge") return `edge:${this.mesh!.edges[h.index].name}`;
-    if (h.kind === "region") return `region:${this.regionMeshes[h.index].sig.join("+")}`;
-    return `plane:${JSON.stringify(h.ref)}`;
+    return select.keyOf(h, this.mesh, this.regionMeshes);
   }
 
   private recolor() {
@@ -540,41 +527,11 @@ export class Viewport {
   }
 
   private hitTest(ev: { clientX: number; clientY: number }, accept = this.accept): Hit | null {
-    const r = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-    this.ray.setFromCamera(ndc, this.camera);
-    const ok = (k: PickKind) => !accept || accept.includes(k);
-    const wpp = this.worldPerPx();
-    this.ray.params.Line = { threshold: wpp * 6 };
-    if (ok("region") && this.regionMeshes.length) {
-      const rh = this.ray.intersectObjects(this.regionMeshes.map((r) => r.mesh), false)[0];
-      if (rh) return { kind: "region", index: this.regionMeshes.findIndex((r) => r.mesh === rh.object), point: rh.point };
-      if (accept?.length === 1) return null;
-    }
-    let faceHit: THREE.Intersection | undefined;
-    if (this.faceMesh) faceHit = this.ray.intersectObject(this.faceMesh)[0];
-    if (this.edgeLines && this.edgeLines.visible !== false && ok("edge")) {
-      const eh = this.ray.intersectObject(this.edgeLines)[0];
-      if (eh && (!faceHit || eh.distance <= faceHit.distance + wpp * 8 || this.settings.displayStyle === "wireframe") && eh.index !== undefined) {
-        const vi = eh.index;
-        const idx = this.mesh!.edges.findIndex((e) => vi >= e.start && vi < e.start + e.count);
-        if (idx >= 0) return { kind: "edge", index: idx, point: eh.point };
-      }
-    }
-    if (faceHit && faceHit.faceIndex != null && ok("face")) return { kind: "face", index: this.faceOfTri[faceHit.faceIndex], point: faceHit.point };
-    if (faceHit) return null;
-    if (ok("plane")) {
-      const ph = this.ray.intersectObjects(this.planeMeshes.map((p) => p.mesh), false)[0];
-      if (ph) { const p = this.planeMeshes.find((x) => x.mesh === ph.object)!; return { kind: "plane", ref: p.ref, label: p.label, point: ph.point }; }
-    }
-    return null;
+    return select.hitTest(this.ray, this.camera, this.renderer.domElement, ev, accept, { mesh: this.mesh, faceMesh: this.faceMesh, edgeLines: this.edgeLines, faceOfTri: this.faceOfTri, regionMeshes: this.regionMeshes, planeMeshes: this.planeMeshes }, this.worldPerPx(), this.settings.displayStyle === "wireframe");
   }
 
   private toPick(h: Hit): Pick {
-    if (h.kind === "face") { const f = this.mesh!.faces[h.index]; return { kind: "face", name: f.name, type: f.type, hint: { c: f.center, n: f.normal }, body: f.body, point: [h.point.x, h.point.y, h.point.z] }; }
-    if (h.kind === "edge") { const e = this.mesh!.edges[h.index]; return { kind: "edge", name: e.name, type: e.type, hint: { c: e.mid, n: e.dir } }; }
-    if (h.kind === "region") { const r = this.regionMeshes[h.index]; return { kind: "region", sketch: r.sketch, sig: r.sig, seed: r.seed }; }
-    return { kind: "plane", ref: h.ref, label: h.label };
+    return select.toPick(h, this.mesh, this.regionMeshes);
   }
 
   /** Elemento (face/aresta/plano) sob um ponto do ecrã, sem filtro. */
@@ -747,33 +704,7 @@ export class Viewport {
 
   /** Seleção por caixa: arestas (e faces, se o filtro as aceitar) dentro da caixa ou que a cruzam. */
   boxSelect(a: [number, number], b: [number, number]): Pick[] {
-    if (!this.mesh) return [];
-    const crossing = b[0] < a[0];
-    const [x0, x1, y0, y1] = [Math.min(a[0], b[0]), Math.max(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[1], b[1])];
-    const w = this.el.clientWidth, h = this.el.clientHeight;
-    const v = new THREE.Vector3();
-    const inside = (arr: Float32Array, i: number) => {
-      v.set(arr[i * 3], arr[i * 3 + 1], arr[i * 3 + 2]).project(this.camera);
-      const sx = ((v.x + 1) / 2) * w, sy = ((1 - v.y) / 2) * h;
-      return sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
-    };
-    const test = (arr: Float32Array, idx: Iterable<number>) => {
-      let any = false, all = true;
-      for (const i of idx) { const ins = inside(arr, i); any ||= ins; all &&= ins; if (crossing && any) return true; }
-      return crossing ? any : all;
-    };
-    const out: Pick[] = [];
-    const wantFaces = this.accept?.includes("face") && !this.accept.includes("edge");
-    const wantEdges = !this.accept || this.accept.includes("edge");
-    if (wantEdges) this.mesh.edges.forEach((e, i) => {
-      const idx = Array.from({ length: e.count }, (_, k) => e.start + k);
-      if (test(this.mesh!.lines, idx)) out.push(this.toPick({ kind: "edge", index: i, point: new THREE.Vector3() }));
-    });
-    if (wantFaces) this.mesh.faces.forEach((f, i) => {
-      const [lo, hi] = this.faceVerts[i];
-      if (test(this.mesh!.vertices, Array.from({ length: hi - lo + 1 }, (_, k) => lo + k))) out.push(this.toPick({ kind: "face", index: i, point: new THREE.Vector3() }));
-    });
-    return out;
+    return select.boxSelect(a, b, this.mesh, this.faceVerts, this.camera, this.el.clientWidth, this.el.clientHeight, this.accept, (h) => this.toPick(h));
   }
 
   // --- câmara ------------------------------------------------------------------------
