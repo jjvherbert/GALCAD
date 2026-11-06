@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 16) — modelo de documento partido por tema em `src/doc/types-*.ts` (PR #36)
+
+- **Novos em `src/doc/`:** `types-base.ts` (48 linhas: Expr, Variable, Vec3, DEFAULT_DENSITY, referências), `types-sketch.ts` (67: esboço), `types-solid.ts` (202: features de sólidos), `types-surface.ts` (189: superfícies) e `types-gsd.ts` (99: superfícies avançadas, Fase 4).
+- Código movido verbatim. `types.ts` 745 → 162 linhas (publicações, `FeatureData`/`Feature`, knowledgeware, `CadDocument`) e reexporta os módulos, por isso os 115 importadores não mudam. Dependências entre módulos só com `import type` (o ciclo sólido↔superfície é só de tipos). Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, verificação visual a 390 e 1440 sem problemas. CI verde no PR antes do merge.
+- **A seguir:** `kernel/features/surface.ts` (634), `sim/calculix.ts` (610), depois `drawing/render.ts`, `kernel/features/gsd.ts`, `kernel/service.ts` e o resto >400; `viewport.ts` fica para depois.
+
 ## Atualização: F1 passo 4 (fatia 15) — editores, resultados e verificação fora de `SimPanel.tsx` (PR #35)
 
 - **Novos em `src/app/`:** `SimEditors.tsx` (358 linhas: editores FEM/CFD, cargas, conjuntos, dinâmica, malha, montagem), `SimResults.tsx` (183: exportação, progresso, histórias no tempo, qualidade, legenda, varrimento e convergência) e `SimCheck.tsx` (61: verificação do modelo e matriz de solvers).
