@@ -1,5 +1,14 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 2) — cena, polos e PMI fora de `viewport.ts` (PR #22)
+
+- **`src/app/viewport-scene.ts`** (novo): `PlaneMesh`, `planeQuad`, `buildReferences` (planos padrão/de referência, eixos, referenciais), `buildSketches`, `modelSize`.
+- **`src/app/viewport-poles.ts`** (novo): `PoleNet`, `drawPoleNet` (continua a escrever `data-poles`/`data-pole-center`), `poleAt`.
+- **`src/app/viewport-pmi.ts`** (novo): `PmiItem`, `PmiLabel`, `buildPmiLabels`, `placePmiLabels`.
+- Código movido verbatim, métodos passam a funções livres. `PoleNet` continua reexportado por `viewport.ts`. `viewport.ts` 1175 → 1037 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/1440 sem problemas. CI verde (2m32s).
+- **A seguir:** fatia 3 de `viewport.ts` (câmara/animação e handlers de input).
+
 ## Atualização: F1 passo 4 (fatia 1) — primeiro corte de `viewport.ts` (PR #21)
 
 - **`src/app/viewport-views.ts`** (novo): `STD`, `VIEWS`, `ViewName`.
