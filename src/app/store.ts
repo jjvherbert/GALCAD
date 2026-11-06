@@ -2,18 +2,17 @@
 import { useEffect, useReducer, useRef } from "preact/hooks";
 import type { CadDocument, Feature, FeatureType, PlaneRef, Publication, SketchFeature, Variable, Vec3 } from "../doc/types.ts";
 import { History } from "../doc/history.ts";
-import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "../doc/io.ts";
 import {
   type AssemblyDoc, type CadProject, type Component, type Mate, type MateKind, type MateRef, type DocKind, type DocRef, type DrawingDoc, type PartDoc, type PartProperties,
   newPart, newProject, parseProject, serializeProject,
   type FeatureTemplate,
 } from "../doc/project.ts";
-import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
+import { FEATURE_LABELS } from "../doc/features.ts";
 
 import type { DrawingResponse, ExportFormat, RebuildResponse } from "../kernel/protocol.ts";
 import {
   type Analysis, type AnySubStore, type DocKey, type Pick, type SessionKey, type State, type StateGroup, type StateSlice, type UiKey,
-  DOC_KEYS, GROUP_OF, SESSION_KEYS, SubStore, UI_KEYS, pickHandlers, pickState,
+  DOC_KEYS, GROUP_OF, SESSION_KEYS, SubStore, UI_KEYS, pickState,
 } from "./store-state.ts";
 export * from "./store-state.ts";
 
@@ -21,6 +20,7 @@ import { KernelClient, KernelRestartError } from "./kernel-client.ts";
 import * as asmOps from "./store-assembly.ts";
 import * as docOps from "./store-docs.ts";
 import * as featOps from "./store-features.ts";
+import * as treeOps from "./store-tree.ts";
 import { externalParts } from "./store-features.ts";
 export { externalParts } from "./store-features.ts";
 import { defaultFeature } from "./defaults.ts";
@@ -288,122 +288,23 @@ export class Store {
   confirmEdit() { featOps.confirmEdit(this); }
   cancelEdit() { featOps.cancelEdit(this); }
 
-  // --- esboços ---------------------------------------------------------------
+  // --- esboços, árvore e seleção (store-tree.ts) ---------------------------------
 
-  startSketch(plane?: PlaneRef) {
-    const sel = this.state.selection;
-    const picked = plane ?? (sel[0]?.kind === "plane" ? sel[0].ref : sel[0]?.kind === "face" && sel[0].type === "plane" ? { kind: "face" as const, ref: { kind: "face" as const, name: sel[0].name, hint: sel[0].hint } } : undefined);
-    if (!picked) { this.set({ choosingPlane: true, edit: null }); return; }
-    const doc = this.state.doc;
-    const draft = { ...defaultFeature(doc, "sketch", { plane: picked }), id: nextFeatureId(doc), name: defaultFeatureName(doc, "sketch") } as Feature & SketchFeature;
-    this.set({ sketch: { id: draft.id, isNew: true, draft, index: this.insertIndex() }, choosingPlane: false, selection: [], pickTarget: null });
-    this.rebuild(0);
-  }
-
-  editSketch(id: string) {
-    const { doc } = this.state;
-    const index = doc.features.findIndex((f) => f.id === id);
-    const f = doc.features[index];
-    if (f?.type !== "sketch") return;
-    this.set({ sketch: { id, isNew: false, draft: structuredClone(f) as Feature & SketchFeature, index }, edit: null, selectedFeature: id, selection: [], pickTarget: null });
-    this.rebuild(0);
-  }
-
-  updateSketch(draft: Feature & SketchFeature) {
-    const s = this.state.sketch;
-    if (!s) return;
-    this.set({ sketch: { ...s, draft } });
-  }
-
-  exitSketch(save: boolean) {
-    const s = this.state.sketch;
-    if (!s) return;
-    this.set({ sketch: null });
-    if (!save) { this.rebuild(0); return; }
-    const { doc } = this.state;
-    if (s.isNew) {
-      const { id: _id, ...rest } = s.draft;
-      this.commit(addFeature(doc, rest as never, s.index).doc, `Criar ${s.draft.name}`);
-    } else {
-      this.commit(updateFeature(doc, s.id, s.draft), `Editar ${s.draft.name}`);
-    }
-    this.set({ selectedFeature: s.id });
-  }
-
-  // --- árvore ----------------------------------------------------------------
-
-  deleteFeature(id: string) {
-    const { doc } = this.state;
-    const deps = dependents(doc, id);
-    const ids = new Set([id, ...deps]);
-    const features = doc.features.filter((f) => !ids.has(f.id));
-    const removedBefore = doc.rollback !== undefined ? doc.features.slice(0, doc.rollback).filter((f) => ids.has(f.id)).length : 0;
-    const rollback = doc.rollback !== undefined ? doc.rollback - removedBefore : undefined;
-    const name = doc.features.find((f) => f.id === id)?.name;
-    this.set({ selectedFeature: null });
-    this.commit({ ...doc, features, rollback: rollback !== undefined && rollback >= features.length ? undefined : rollback }, `Apagar ${name}${deps.length ? ` e ${deps.length} dependente(s)` : ""}`);
-  }
-
-  toggleSuppress(id: string) {
-    const f = this.state.doc.features.find((x) => x.id === id);
-    if (!f) return;
-    this.commit(updateFeature(this.state.doc, id, { suppressed: !f.suppressed }), `${f.suppressed ? "Reativar" : "Suprimir"} ${f.name}`);
-  }
-
-  rename(id: string, name: string) {
-    if (!name.trim()) return;
-    this.commit(updateFeature(this.state.doc, id, { name: name.trim() }), `Renomear`);
-  }
-
-  move(id: string, toIndex: number) {
-    const r = moveFeature(this.state.doc, id, toIndex);
-    if (Array.isArray(r)) { this.set({ message: r[0] }); return; }
-    this.commit(r, "Reordenar");
-  }
-
-  setRollback(index: number | undefined) {
-    const n = this.state.doc.features.length;
-    this.commit({ ...this.state.doc, rollback: index === undefined || index >= n ? undefined : Math.max(0, index) }, "Rollback");
-  }
-
-  setVariables(variables: Variable[]) {
-    this.commit({ ...this.state.doc, variables }, "Variáveis");
-  }
-
-  addImport(fileName: string, data: string) {
-    const doc = this.state.doc;
-    const hasBody = doc.features.some((f) => f.type !== "sketch" && f.type !== "plane" && f.type !== "axis" && f.type !== "csys");
-    const r = addFeature(doc, { type: "import", format: "step", fileName, data, op: hasBody ? "new" : "add", name: fileName.replace(/\.(step|stp)$/i, "") });
-    this.commit(r.doc, `Importar ${fileName}`);
-  }
-
-  // --- seleção ---------------------------------------------------------------
-
-  pick(p: Pick, additive: boolean) {
-    const t = this.state.pickTarget;
-    if (t) {
-      if (t.accept.includes(p.kind)) pickHandlers.get(t.field)?.(p);
-      else this.set({ message: `Este campo aceita: ${t.accept.map((k) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[k]).join(", ")}` });
-      return;
-    }
-    if (p.kind === "region") return; // regiões só se escolhem em campos de feature
-    const key = (x: Pick) => (x.kind === "face" || x.kind === "edge" ? `${x.kind}:${x.name}` : x.kind === "region" ? `region:${x.sig.join("+")}` : `${x.kind}:${JSON.stringify(x.ref)}`);
-    const sel = this.state.selection;
-    const has = sel.some((s) => key(s) === key(p));
-    this.set({ selection: additive ? (has ? sel.filter((s) => key(s) !== key(p)) : [...sel, p]) : has && sel.length === 1 ? [] : [p] });
-  }
-
-  clearSelection() { this.set({ selection: [], contextToolbar: null }); }
-
+  startSketch(plane?: PlaneRef) { treeOps.startSketch(this, plane); }
+  editSketch(id: string) { treeOps.editSketch(this, id); }
+  updateSketch(draft: Feature & SketchFeature) { treeOps.updateSketch(this, draft); }
+  exitSketch(save: boolean) { treeOps.exitSketch(this, save); }
+  deleteFeature(id: string) { treeOps.deleteFeature(this, id); }
+  toggleSuppress(id: string) { treeOps.toggleSuppress(this, id); }
+  rename(id: string, name: string) { treeOps.rename(this, id, name); }
+  move(id: string, toIndex: number) { treeOps.move(this, id, toIndex); }
+  setRollback(index: number | undefined) { treeOps.setRollback(this, index); }
+  setVariables(variables: Variable[]) { treeOps.setVariables(this, variables); }
+  addImport(fileName: string, data: string) { treeOps.addImport(this, fileName, data); }
+  pick(p: Pick, additive: boolean) { treeOps.pick(this, p, additive); }
+  clearSelection() { treeOps.clearSelection(this); }
   /** Substitui (ou soma) a seleção, por exemplo a partir de uma caixa de seleção. */
-  setSelection(picks: Pick[], additive: boolean) {
-    const t = this.state.pickTarget;
-    if (t) { for (const p of picks) if (t.accept.includes(p.kind)) pickHandlers.get(t.field)?.(p); return; }
-    const key = (x: Pick) => (x.kind === "face" || x.kind === "edge" ? `${x.kind}:${x.name}` : x.kind === "region" ? `region:${x.sig.join("+")}` : `${x.kind}:${JSON.stringify(x.ref)}`);
-    const base = additive ? this.state.selection : [];
-    const seen = new Set(base.map(key));
-    this.set({ selection: [...base, ...picks.filter((p) => !seen.has(key(p)))], contextToolbar: null });
-  }
+  setSelection(picks: Pick[], additive: boolean) { treeOps.setSelection(this, picks, additive); }
 
   updateSettings(patch: Partial<Settings>) {
     const settings = { ...this.state.settings, ...patch };
