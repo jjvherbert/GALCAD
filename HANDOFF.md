@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 8) — tipos e grupos de estado fora de `store.ts` (PR #28)
+
+- **`src/app/store-state.ts`** (novo, 201 linhas): `Analysis`, `Pick`/`PickKind`/`PickTarget`/`pickHandlers`, `FeatureEdit`/`SketchEdit`/`State`, `Workspace`/`SimSection`/`DrawingTool`, os grupos `DOC_KEYS`/`SESSION_KEYS`/`UI_KEYS` (com a verificação `ALL_GROUPED`), `StateGroup`, `GROUP_OF`, `StateSlice`, `pickState` e `SubStore`.
+- Código movido verbatim. `store.ts` reexporta tudo com `export * from "./store-state.ts"`, por isso os sítios que importam de `store.ts` não mudam. `AnySubStore` passa a ser exportado. `store.ts` 1080 → 892 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12 (1.ª corrida caiu no intermitente `app.e2e.cjs:248`), ui-check 390/768/1440 sem problemas. CI verde (2m45s).
+- **A seguir:** continuar `store.ts` (892) — métodos de montagem, documento e features/esboço em módulos com delegadores (Opus).
+
 ## Atualização: F1 passo 4 (fatia 7) — rato fora de `viewport.ts` (PR #27)
 
 - **`src/app/viewport-mouse.ts`** (novo): `Drag`, `MouseState` (`drag`/`lastMiddleUp`/`wheelAt`), `MouseHost` e os handlers `onDown`/`onMove`/`onUp`/`onDblClick`/`onWheel` (rodar, deslocar, zoom, rolar, caixa, gestos, arrasto de polos).
