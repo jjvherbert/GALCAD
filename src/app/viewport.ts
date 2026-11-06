@@ -14,7 +14,7 @@ import type { Analysis, Pick, PickKind } from "./store.ts";
 import type { GestureDir, Settings } from "./settings.ts";
 import { onThemeChange, resolvedTheme } from "./theme.ts";
 import { VIEWS, type ViewName } from "./viewport-views.ts";
-import { CONTINUITY_COLORS, type Theme, divergingColor, highlightMaterial, robustScale, themes, zebraTexture } from "./viewport-style.ts";
+import { type Theme, highlightMaterial, themes, zebraTexture } from "./viewport-style.ts";
 import { type SimView, buildSimLayers } from "./viewport-sim.ts";
 import { type PlaneMesh, buildReferences, buildSketches, modelSize } from "./viewport-scene.ts";
 import { type PoleNet, drawPoleNet, poleAt } from "./viewport-poles.ts";
@@ -23,6 +23,7 @@ import * as select from "./viewport-select.ts";
 import type { Hit, RegionMesh } from "./viewport-select.ts";
 import * as cam from "./viewport-camera.ts";
 import type { CamAnim, CamState } from "./viewport-camera.ts";
+import * as colors from "./viewport-colors.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
 
@@ -211,17 +212,16 @@ export class Viewport {
 
   setSelected(keys: string[]) { this.selected = new Set(keys); this.recolor(); }
 
-  /** Realça as faces criadas por uma feature (ao passar o rato na árvore). */
-  private flashPending: string | null = null;
-  private flash: { prefix: string; t0: number } | null = null;
+  private flash: colors.Flash = { pending: null, on: null, k: 0 };
   /** Realce que se desvanece nas faces de uma feature acabada de confirmar. */
-  flashFeature(fid: string) { this.flashPending = fid; }
+  flashFeature(fid: string) { this.flash.pending = fid; }
   private previewFeature: string | null = null;
   /** Feature em edição: as faces que ela cria ficam amarelas (pré-visualização, como no SolidWorks). */
   setPreviewFeature(fid: string | null) { if (fid !== this.previewFeature) { this.previewFeature = fid; this.recolor(); } }
   private extHover = "";
   /** Realce vindo de fora do 3D (ex.: botão de um plano no painel); chave como `plane:{...}`. */
   setHoverKey(k: string | null) { if ((k ?? "") !== this.extHover) { this.extHover = k ?? ""; this.recolor(); } }
+  /** Realça as faces criadas por uma feature (ao passar o rato na árvore). */
   setFeatureHighlight(fid: string | null) { if (fid !== this.featureHighlight) { this.featureHighlight = fid; this.recolor(); } }
   /** Cores das faces com condições de simulação (espaços FEM/CFD): o modelo mostra onde estão os apoios e as cargas. */
   setConditionFaces(m: Map<string, number> | null) {
@@ -444,66 +444,12 @@ export class Viewport {
   }
 
   private recolor() {
-    const hk = this.hover ? this.keyOf(this.hover) : this.extHover;
-    for (const r of this.regionMeshes) {
-      const k = `region:${r.sig.join("+")}`;
-      const m = r.mesh.material as THREE.MeshBasicMaterial;
-      m.color.set(this.selected.has(k) ? this.theme.sel : k === hk ? this.theme.hover : 0x9333ea);
-      m.opacity = this.selected.has(k) || k === hk ? 0.55 : 0.22;
-    }
-    for (const p of this.planeMeshes) {
-      const k = `plane:${JSON.stringify(p.ref)}`;
-      const hoverKey = this.hover ? this.keyOf(this.hover) : this.extHover;
-      (p.mesh.material as THREE.MeshBasicMaterial).color.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : p.ref.kind === "std" ? this.theme.plane : 0x22a06b);
-    }
-    if (!this.mesh || !this.faceMesh || !this.edgeLines) return;
-    const col = this.faceMesh.geometry.getAttribute("color") as THREE.BufferAttribute;
-    const c = new THREE.Color();
-    const hoverKey = this.hover ? this.keyOf(this.hover) : this.extHover;
-    // "@c2" realça o componente c2 da montagem (nomes "c2|…" e "c2/…|…")
-    const fhComp = this.featureHighlight?.startsWith("@") ? this.featureHighlight.slice(1) : null;
-    const fh = this.featureHighlight && !fhComp ? `${this.featureHighlight}:` : null;
-    const pv = this.previewFeature ? `${this.previewFeature}:` : null;
-    const a = this.analysis;
-    const nrm = this.mesh.normals;
-    const dir = a?.kind === "draft" ? { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] }[a.dir] : null;
-    const sinT = a?.kind === "draft" ? Math.sin((a.angle * Math.PI) / 180) : 0;
-    const curv = a?.kind === "curvature" && a.data && a.data.values.length === this.mesh.vertices.length / 3 ? a.data.values : null;
-    const scale = (curv && robustScale(curv)) || 1;
-    this.mesh.faces.forEach((f, i) => {
-      const k = `face:${f.name}`;
-      const [lo, hi] = this.faceVerts[i];
-      const inComp = fhComp && (f.name.startsWith(`${fhComp}|`) || f.name.startsWith(`${fhComp}/`));
-      const flat = this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : (fh && f.name.startsWith(fh)) || inComp ? this.theme.feat : pv && f.name.startsWith(pv) ? this.theme.preview : this.conditionFaces?.get(f.name) ?? null;
-      if (flat === null && (dir || curv)) {
-        for (let v = lo; v <= hi; v++) {
-          if (dir) {
-            const d = nrm[v * 3] * dir[0] + nrm[v * 3 + 1] * dir[1] + nrm[v * 3 + 2] * dir[2];
-            c.set(d >= sinT ? 0x22c55e : d <= -sinT ? 0xef4444 : 0xfacc15);
-          } else divergingColor(curv![v] / scale, c);
-          col.setXYZ(v, c.r, c.g, c.b);
-        }
-        return;
-      }
-      c.set(flat ?? (f.body ? this.theme.sheet : this.theme.body));
-      if (flat === null && this.flash && this.flashK > 0 && f.name.startsWith(this.flash.prefix)) c.lerp(this.flashColor.set(this.theme.preview), this.flashK);
-      for (let v = lo; v <= hi; v++) col.setXYZ(v, c.r, c.g, c.b);
-    });
-    col.needsUpdate = true;
-    this.el.dataset.previewFaces = String(pv ? this.mesh.faces.filter((f) => f.name.startsWith(pv)).length : 0);
-    const ecol = this.edgeLines.geometry.getAttribute("color") as THREE.BufferAttribute;
-    const dev = a?.kind === "deviation" && a.data ? new Map(a.data.edges.map((x) => [x.name, x.deg])) : null;
-    const cont = a?.kind === "continuity" && a.data ? new Map(a.data.edges.map((x) => [x.name, x.cls])) : null;
-    this.mesh.edges.forEach((e) => {
-      const k = `edge:${e.name}`;
-      const d = dev?.get(e.name);
-      const cl = cont?.get(e.name);
-      const base = cl !== undefined ? CONTINUITY_COLORS[cl]
-        : d === undefined ? (e.curve ? this.theme.curve : this.theme.edge) : d <= 0.5 ? 0x16a34a : d <= 10 ? 0xf59e0b : 0x6b7280;
-      c.set(this.selected.has(k) ? this.theme.sel : k === hoverKey ? this.theme.hover : base);
-      for (let v = e.start; v < e.start + e.count; v++) ecol.setXYZ(v, c.r, c.g, c.b);
-    });
-    ecol.needsUpdate = true;
+    colors.recolor({
+      mesh: this.mesh, faceMesh: this.faceMesh, edgeLines: this.edgeLines, faceVerts: this.faceVerts,
+      planeMeshes: this.planeMeshes, regionMeshes: this.regionMeshes, theme: this.theme, selected: this.selected,
+      hoverKey: this.hover ? this.keyOf(this.hover) : this.extHover, featureHighlight: this.featureHighlight,
+      previewFeature: this.previewFeature, conditionFaces: this.conditionFaces, analysis: this.analysis, flash: this.flash,
+    }, this.el.dataset);
   }
 
   private setHover(h: Hit | null) {
@@ -851,20 +797,7 @@ export class Viewport {
     this.stepAnim();
   }
 
-  private flashK = 0;
-  private flashColor = new THREE.Color();
-  private stepFlash() {
-    if (this.flashPending && this.mesh) {
-      const prefix = `${this.flashPending}:`;
-      this.flashPending = null;
-      if (this.animate && this.mesh.faces.some((f) => f.name.startsWith(prefix))) this.flash = { prefix, t0: performance.now() };
-    }
-    if (!this.flash) return;
-    const k = 1 - (performance.now() - this.flash.t0) / 900;
-    if (k <= 0) { this.flash = null; this.flashK = 0; this.recolor(); return; }
-    this.flashK = k * k;
-    this.recolor();
-  }
+  private stepFlash() { if (colors.stepFlash(this.flash, this.mesh, this.animate)) this.recolor(); }
 
   private stepAnim() {
     const an = this.anim;
