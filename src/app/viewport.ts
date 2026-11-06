@@ -21,10 +21,11 @@ import { type PoleNet, drawPoleNet, poleAt } from "./viewport-poles.ts";
 import { type PmiItem, type PmiLabel, buildPmiLabels, placePmiLabels } from "./viewport-pmi.ts";
 import * as select from "./viewport-select.ts";
 import type { Hit, RegionMesh } from "./viewport-select.ts";
+import * as cam from "./viewport-camera.ts";
+import type { CamAnim, CamState } from "./viewport-camera.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
 
-interface CamState { pos: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; zoom: number; size: number }
 
 type Drag = {
   button: number;
@@ -583,7 +584,7 @@ export class Viewport {
       case "pan": this.panBy(dx, dy); break;
       case "zoom": this.zoomAt(Math.exp(dy * 0.01), d.start); break;
       case "roll": this.roll(dx * 0.5); break;
-      case "box": this.drawBox(d.start, p); break;
+      case "box": cam.drawBox(this.boxEl, d.start, p); break;
       case "pole": {
         const pl = d.pole!;
         const r = this.renderer.domElement.getBoundingClientRect();
@@ -601,8 +602,8 @@ export class Viewport {
       }
       case "gesture": {
         d.path.push(p);
-        this.drawGesture(d.path);
-        this.onGestureTrack(this.gestureDir(d.start, p), [e.clientX, e.clientY]);
+        cam.drawGesture(this.gestureEl, d.path);
+        this.onGestureTrack(cam.gestureDir(d.start, p), [e.clientX, e.clientY]);
         break;
       }
     }
@@ -628,7 +629,7 @@ export class Viewport {
     if (d.button === 2) {
       this.gestureEl.replaceChildren();
       this.onGestureTrack(null, null);
-      const dir = this.gestureDir(d.start, p);
+      const dir = cam.gestureDir(d.start, p);
       if (d.moved && dir) this.onGesture(dir);
       else {
         const h = this.hitTest(e, null);
@@ -680,28 +681,6 @@ export class Viewport {
     this.zoomAt(f, this.local(e));
   }
 
-  private gestureDir(a: [number, number], b: [number, number]): GestureDir | null {
-    const dx = b[0] - a[0], dy = b[1] - a[1];
-    if (Math.hypot(dx, dy) < 40) return null;
-    const ang = (Math.atan2(-dy, dx) * 180) / Math.PI; // 0 = direita, 90 = cima
-    const dirs: GestureDir[] = ["right", "upRight", "up", "upLeft", "left", "downLeft", "down", "downRight"];
-    return dirs[((Math.round(ang / 45) % 8) + 8) % 8];
-  }
-
-  private drawBox(a: [number, number], b: [number, number]) {
-    const s = this.boxEl.style;
-    s.display = "block";
-    s.left = `${Math.min(a[0], b[0])}px`; s.top = `${Math.min(a[1], b[1])}px`;
-    s.width = `${Math.abs(b[0] - a[0])}px`; s.height = `${Math.abs(b[1] - a[1])}px`;
-    // → janela (contínua): só o que está totalmente dentro; ← cruzamento (tracejada): o que toca
-    this.boxEl.classList.toggle("crossing", b[0] < a[0]);
-  }
-
-  private drawGesture(path: [number, number][]) {
-    const svg = `<svg width="100%" height="100%"><polyline points="${path.map((p) => p.join(",")).join(" ")}" /></svg>`;
-    this.gestureEl.innerHTML = svg;
-  }
-
   /** Seleção por caixa: arestas (e faces, se o filtro as aceitar) dentro da caixa ou que a cruzam. */
   boxSelect(a: [number, number], b: [number, number]): Pick[] {
     return select.boxSelect(a, b, this.mesh, this.faceVerts, this.camera, this.el.clientWidth, this.el.clientHeight, this.accept, (h) => this.toPick(h));
@@ -709,16 +688,10 @@ export class Viewport {
 
   // --- câmara ------------------------------------------------------------------------
 
-  private viewDir(): THREE.Vector3 { return this.camera.position.clone().sub(this.target).normalize(); }
+  private viewDir(): THREE.Vector3 { return cam.viewDirOf(this.camera, this.target); }
 
-  private save(): CamState {
-    return { pos: this.camera.position.clone(), target: this.target.clone(), up: this.camera.up.clone(), zoom: this.camera.zoom, size: this.size };
-  }
-  private restore(s: CamState) {
-    this.camera.position.copy(s.pos); this.target.copy(s.target); this.camera.up.copy(s.up); this.camera.zoom = s.zoom; this.size = s.size;
-    this.camera.lookAt(this.target);
-    this.resize();
-  }
+  private save(): CamState { return cam.saveCam(this.camera, this.target, this.size); }
+  private restore(s: CamState) { this.size = cam.applyCam(this.camera, this.target, s); this.resize(); }
   private pushHistory() { this.history.push(this.save()); if (this.history.length > 30) this.history.shift(); }
 
   /** Vista anterior (como Ctrl+Shift+Z no SolidWorks). */
@@ -733,18 +706,7 @@ export class Viewport {
   /** Rodar (graus) em torno dos eixos do ecrã, centrado num ponto. */
   rotateBy(degX: number, degY: number, aboutPoint: THREE.Vector3 = this.pivot ?? this.target) {
     this.finishAnim();
-    const cam = this.camera;
-    const about = aboutPoint.clone(); // pode ser o próprio target, que também é rodado
-    const up = cam.up.clone().normalize();
-    const back = this.viewDir();
-    const right = up.clone().cross(back).normalize();
-    const screenUp = back.clone().cross(right).normalize();
-    const q = new THREE.Quaternion().setFromAxisAngle(screenUp, (-degX * Math.PI) / 180)
-      .multiply(new THREE.Quaternion().setFromAxisAngle(right, (-degY * Math.PI) / 180));
-    const rot = (v: THREE.Vector3) => v.sub(about).applyQuaternion(q).add(about);
-    rot(cam.position); rot(this.target);
-    cam.up.copy(screenUp.applyQuaternion(q));
-    cam.lookAt(this.target);
+    cam.rotateCam(this.camera, this.target, aboutPoint, degX, degY);
     if (this.pivotMarker.visible) this.pivotMarker.scale.setScalar(this.worldPerPx() * 4);
     this.publish();
   }
@@ -752,21 +714,14 @@ export class Viewport {
   /** Rolar a vista (graus) em torno da direção de visão. */
   roll(deg: number) {
     this.finishAnim();
-    this.camera.up.applyAxisAngle(this.viewDir(), (deg * Math.PI) / 180);
-    this.camera.lookAt(this.target);
+    cam.rollCam(this.camera, this.target, deg);
     this.publish();
   }
 
   /** Deslocar a vista em pixels. */
   panBy(dx: number, dy: number) {
     this.finishAnim();
-    const wpp = this.worldPerPx();
-    const back = this.viewDir();
-    const right = this.camera.up.clone().cross(back).normalize();
-    const up = back.clone().cross(right).normalize();
-    const delta = right.multiplyScalar(-dx * wpp).add(up.multiplyScalar(dy * wpp));
-    this.camera.position.add(delta);
-    this.target.add(delta);
+    cam.panCam(this.camera, this.target, dx, dy, this.worldPerPx());
     this.publish();
   }
 
@@ -774,20 +729,8 @@ export class Viewport {
   zoomAt(factor: number, at?: [number, number]) {
     this.finishAnim();
     const w = this.el.clientWidth, h = this.el.clientHeight;
-    const p = at ?? [w / 2, h / 2];
-    const before = this.screenToWorld(p);
-    this.camera.zoom = Math.min(1e4, Math.max(1e-3, this.camera.zoom / factor));
-    this.camera.updateProjectionMatrix();
-    const after = this.screenToWorld(p);
-    const delta = before.sub(after);
-    this.camera.position.add(delta);
-    this.target.add(delta);
+    cam.zoomCam(this.camera, this.target, factor, at ?? [w / 2, h / 2], w, h);
     this.publish();
-  }
-
-  private screenToWorld(p: [number, number]): THREE.Vector3 {
-    const w = this.el.clientWidth, h = this.el.clientHeight;
-    return new THREE.Vector3((p[0] / w) * 2 - 1, -(p[1] / h) * 2 + 1, 0).unproject(this.camera);
   }
 
   fit(result: RebuildResponse | null = this.lastResult, record = true) {
@@ -884,7 +827,7 @@ export class Viewport {
   /** Transições animadas das vistas; desligadas com prefers-reduced-motion. */
   animate = typeof matchMedia === "function" ? !matchMedia("(prefers-reduced-motion: reduce)").matches : true;
   private smoothing = false;
-  private anim: { t0: number; ms: number; a: CamState; b: CamState; qa: THREE.Quaternion; qb: THREE.Quaternion } | null = null;
+  private anim: CamAnim | null = null;
 
   /**
    * Aplica uma mudança de câmara e anima do estado atual para o final (rotação por slerp, centro,
@@ -926,18 +869,9 @@ export class Viewport {
   private stepAnim() {
     const an = this.anim;
     if (!an) return;
-    const t = Math.min(1, (performance.now() - an.t0) / an.ms);
-    if (t >= 1) { this.finishAnim(); return; }
-    const u = 1 - Math.pow(1 - t, 3); // desaceleração suave no fim
-    const q = an.qa.clone().slerp(an.qb, u);
-    const target = an.a.target.clone().lerp(an.b.target, u);
-    const dist = THREE.MathUtils.lerp(an.a.pos.distanceTo(an.a.target), an.b.pos.distanceTo(an.b.target), u);
-    this.target.copy(target);
-    this.camera.quaternion.copy(q);
-    this.camera.position.copy(target).add(new THREE.Vector3(0, 0, 1).applyQuaternion(q).multiplyScalar(dist));
-    this.camera.up.set(0, 1, 0).applyQuaternion(q);
-    this.camera.zoom = Math.exp(THREE.MathUtils.lerp(Math.log(an.a.zoom), Math.log(an.b.zoom), u));
-    this.size = THREE.MathUtils.lerp(an.a.size, an.b.size, u);
+    const size = cam.stepCam(an, this.camera, this.target);
+    if (size === null) { this.finishAnim(); return; }
+    this.size = size;
     this.updateProj();
   }
 
@@ -947,14 +881,11 @@ export class Viewport {
     if (!an) return;
     this.anim = null;
     this.el.dataset.animating = "";
-    const s = an.b;
-    this.camera.position.copy(s.pos); this.target.copy(s.target); this.camera.up.copy(s.up); this.camera.zoom = s.zoom; this.size = s.size;
-    this.camera.lookAt(this.target);
+    this.size = cam.applyCam(this.camera, this.target, an.b);
     this.updateProj();
     this.camera.updateMatrixWorld(true); // a seleção por raio usa já a câmara final
     this.publish();
   }
-
 
   /** Converte um ponto 3D em pixels do canvas (para sobreposições). */
   project(p: Vec3): [number, number] {
