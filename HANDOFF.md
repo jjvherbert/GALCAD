@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 7) — rato fora de `viewport.ts` (PR #27)
+
+- **`src/app/viewport-mouse.ts`** (novo): `Drag`, `MouseState` (`drag`/`lastMiddleUp`/`wheelAt`), `MouseHost` e os handlers `onDown`/`onMove`/`onUp`/`onDblClick`/`onWheel` (rodar, deslocar, zoom, rolar, caixa, gestos, arrasto de polos).
+- Código movido verbatim (`this.` → `v.`/`s.`); o `Viewport` fica com delegadores de uma linha e `mouseHostOf()`, um adaptador **só com getters**, porque é criado num inicializador de campo, antes do construtor atribuir câmara e elementos. `viewport.ts` 737 → 637 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde (3m26s).
+- **A seguir:** `store.ts` (1080) — trabalho de desenho, em Opus.
+
 ## Atualização: F1 passo 4 (fatia 6) — conteúdo fora de `viewport.ts` (PR #26)
 
 - **`src/app/viewport-content.ts`** (novo): `FaceMats` (materiais sombreado/zebra/realce), `Body`, `disposeGroup`, `buildBody` (faces e arestas), `buildOverlay`, `buildRegions`, `faceMaterial` e `applyAnalysis` (normais exatas, material, pentes; publica `exactNormals`/`analysis`/`combs`).
