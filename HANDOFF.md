@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 9) — montagens fora de `store.ts` (PR #29)
+
+- **`src/app/store-assembly.ts`** (novo, 111 linhas): `displayProject`, `insertComponent`/`updateComponent`/`deleteComponent`, mates (`startMate`, `mateRefOf`, `editMate`, `updateMateDraft`, `confirmMate`, `cancelMate`, `deleteMate`, `toggleMate`) e `checkInterference`, como funções que recebem o `Store`.
+- Código movido verbatim (`this.` → `s.`). A classe fica com delegadores de uma linha com as mesmas assinaturas, por isso nenhum sítio que chama muda. `Store` passa a ser exportada (o módulo novo importa-a só como tipo, sem ciclo em runtime) e `ensureBuilt` deixa de ser privado. `store.ts` 892 → 807 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde no PR e em `main` (o merge foi feito antes de o CI arrancar — confirmado verde a seguir; passa a esperar-se pelos checks registados).
+- **A seguir:** continuar `store.ts` (807) — projeto/documentos, features/templates/publicações e esboço/árvore/seleção em módulos com delegadores (Opus).
+
 ## Atualização: F1 passo 4 (fatia 8) — tipos e grupos de estado fora de `store.ts` (PR #28)
 
 - **`src/app/store-state.ts`** (novo, 201 linhas): `Analysis`, `Pick`/`PickKind`/`PickTarget`/`pickHandlers`, `FeatureEdit`/`SketchEdit`/`State`, `Workspace`/`SimSection`/`DrawingTool`, os grupos `DOC_KEYS`/`SESSION_KEYS`/`UI_KEYS` (com a verificação `ALL_GROUPED`), `StateGroup`, `GROUP_OF`, `StateSlice`, `pickState` e `SubStore`.
