@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 15) — editores, resultados e verificação fora de `SimPanel.tsx` (PR #35)
+
+- **Novos em `src/app/`:** `SimEditors.tsx` (358 linhas: editores FEM/CFD, cargas, conjuntos, dinâmica, malha, montagem), `SimResults.tsx` (183: exportação, progresso, histórias no tempo, qualidade, legenda, varrimento e convergência) e `SimCheck.tsx` (61: verificação do modelo e matriz de solvers).
+- Código movido verbatim, imports podados. `SimPanel.tsx` 769 → 188 linhas; `AgentBox` continua exportado de lá (usado por `CalcPanel.tsx`). Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, verificação visual do espaço FEM a 390 e 1440 sem overflow nem erros de consola. CI verde no PR antes do merge.
+- **A seguir:** `doc/types.ts` (Opus), depois `surface.ts`, `calculix.ts` e o resto >400.
+
 ## Atualização: F1 passo 4 (fatia 14) — módulos do editor de esboço fora de `SketchEditor.tsx` (PR #34)
 
 - **Novos em `src/app/`:** `sketch-types.ts` (36 linhas: tipos e constantes), `sketch-geom.ts` (36), `SketchOverlays.tsx` (115: grelha, restrições e cotas), `sketch-ref.ts` (48: arestas de referência projetadas), `sketch-hit.ts` (76: acerto, snap e pontos), `sketch-convert.ts` (57), `sketch-click.ts` (182: cliques por ferramenta e cotas), `sketch-cmd.ts` (52: comandos de filete/offset e cotas) e `sketch-draw.tsx` (43: traçado e pré-visualização).
