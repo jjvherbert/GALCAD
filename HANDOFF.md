@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 6) — conteúdo fora de `viewport.ts` (PR #26)
+
+- **`src/app/viewport-content.ts`** (novo): `FaceMats` (materiais sombreado/zebra/realce), `Body`, `disposeGroup`, `buildBody` (faces e arestas), `buildOverlay`, `buildRegions`, `faceMaterial` e `applyAnalysis` (normais exatas, material, pentes; publica `exactNormals`/`analysis`/`combs`).
+- Código movido verbatim; o `Viewport` mantém `setMesh`/`setOverlay`/`setRegions`/`setAnalysis` como delegadores finos e junta os três materiais num objeto `FaceMats`. `viewport.ts` 831 → 737 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12 (1.ª corrida com falha intermitente no esboço da suite app, `app.e2e.cjs:248`; passou na repetição), ui-check 390/768/1440 sem problemas. CI verde (2m33s).
+- **A seguir:** fatia 7 de `viewport.ts` — handlers do rato (onDown/onMove/onUp/onDblClick/roda/janela) para `viewport-mouse.ts`.
+
 ## Atualização: F1 passo 4 (fatia 5) — cores fora de `viewport.ts` (PR #25)
 
 - **`src/app/viewport-colors.ts`** (novo): `Flash`, `ColorState`, `recolor` (regiões, planos, faces com seleção/hover/feature/pré-visualização/condições/inclinação/curvatura, arestas com desvio/continuidade; publica `data-preview-faces`) e `stepFlash` (realce de 900 ms; devolve true se é preciso recolorir).
