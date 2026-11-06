@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 4) — câmara fora de `viewport.ts` (PR #24)
+
+- **`src/app/viewport-camera.ts`** (novo): `CamState`, `CamAnim`, `viewDirOf`, `saveCam`/`applyCam`, `rotateCam`, `rollCam`, `panCam`, `zoomCam`, `screenToWorld`, `stepCam` (passo da transição), `gestureDir`, `drawBox` e `drawGesture`.
+- Código movido verbatim; o `Viewport` mantém os métodos públicos como delegadores finos (passa câmara, centro e dimensões da vista explicitamente). `viewport.ts` 967 → 898 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde (3m39s).
+- **A seguir:** fatia 5 de `viewport.ts` — cores (recolor, flash) para `viewport-colors.ts`.
+
 ## Atualização: F1 passo 4 (fatia 3) — seleção fora de `viewport.ts` (PR #23)
 
 - **`src/app/viewport-select.ts`** (novo): `Hit`, `RegionMesh`, `Pickables`, `faceIndex` (triângulo → face e vértices por face), `keyOf`, `toPick`, `hitTest` (raio: regiões, arestas, faces, planos) e `boxSelect` (janela/cruzamento).
