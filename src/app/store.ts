@@ -4,7 +4,7 @@ import type { CadDocument, Feature, FeatureData, FeatureType, PlaneRef, Publicat
 import { History } from "../doc/history.ts";
 import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "../doc/io.ts";
 import {
-  type AssemblyDoc, type CadProject, type Component, type Mate, type MateKind, type MateRef, containsAssembly, type DocKind, type DocRef, type DrawingDoc, type PartDoc, type PartProperties,
+  type AssemblyDoc, type CadProject, type Component, type Mate, type MateKind, type MateRef, type DocKind, type DocRef, type DrawingDoc, type PartDoc, type PartProperties,
   newAssembly, newDrawing, newPart, newProject, parseProject, serializeProject, usages,
   type FeatureTemplate,
 } from "../doc/project.ts";
@@ -46,6 +46,7 @@ import {
 export * from "./store-state.ts";
 
 import { KernelClient, KernelRestartError } from "./kernel-client.ts";
+import * as asmOps from "./store-assembly.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
@@ -61,7 +62,7 @@ function drawingKernelKey(d: DrawingDoc): string {
   return JSON.stringify([d.views.map(({ at: _a, name: _n, ...v }) => v), d.sheet, d.annotations.filter((a) => a.kind === "bom").map((a) => (a.kind === "bom" ? a.source : ""))]);
 }
 
-class Store {
+export class Store {
   kernel = new KernelClient({
     timeoutMs: () => this.state.settings.kernelTimeout * 1000,
     // sem reconstrução automática: repetiria o que o utilizador acabou de cancelar (ou entraria em ciclo
@@ -235,7 +236,7 @@ class Store {
   }
 
   /** Depois de um reinício o worker não tem o modelo: reconstrói antes de pedir algo que dependa dele. */
-  private async ensureBuilt() {
+  async ensureBuilt() {
     if (!this.kernelStale) return;
     await this.rebuild(0, true);
     if (this.kernelStale) throw new Error("O núcleo não tem o modelo carregado; reconstrói com Ctrl+Q");
@@ -253,110 +254,24 @@ class Store {
   }
 
   /** Projeto com o mate em edição aplicado (pré-visualização na montagem). */
-  displayProject(): CadProject {
-    const { project, mateEdit, active } = this.state;
-    if (!mateEdit || active.kind !== "assembly") return project;
-    return {
-      ...project,
-      assemblies: project.assemblies.map((a) => a.id !== active.id ? a : {
-        ...a, mates: mateEdit.isNew ? [...a.mates, mateEdit.draft] : a.mates.map((m) => (m.id === mateEdit.draft.id ? mateEdit.draft : m)),
-      }),
-    };
-  }
+  displayProject(): CadProject { return asmOps.displayProject(this); }
 
-  // --- montagens -----------------------------------------------------------------
+  // --- montagens (store-assembly.ts) ----------------------------------------------
 
-  private asm(): AssemblyDoc { const a = this.activeAssembly(); if (!a) throw new Error("Nenhuma montagem ativa"); return a; }
-
-  insertComponent(ref: { kind: "part" | "assembly"; id: string }) {
-    const a = this.asm();
-    if (ref.kind === "assembly" && containsAssembly(this.state.project, ref.id, a.id)) { this.set({ error: "Uma montagem não pode conter-se a si própria" }); return; }
-    const src = ref.kind === "part" ? this.state.project.parts.find((p) => p.id === ref.id) : this.state.project.assemblies.find((x) => x.id === ref.id);
-    if (!src) return;
-    const n = a.components.filter((c) => c.ref.id === ref.id).length + 1;
-    const ids = a.components.map((c) => Number(c.id.slice(1)) || 0);
-    const id = `c${Math.max(0, ...ids) + 1}`;
-    // ao lado do que já existe, para não sobrepor
-    const box = this.state.asmResult?.mass?.bbox;
-    const x = box && a.components.length ? box.max[0] + 20 : 0;
-    const c: Component = { id, name: `${src.name}<${n}>`, ref, placement: { t: [x, 0, 0], r: [0, 0, 0] }, fixed: a.components.length === 0 ? true : undefined };
-    this.commitAssembly({ ...a, components: [...a.components, c] }, `Inserir ${c.name}`);
-  }
-
-  updateComponent(id: string, patch: Partial<Component>) {
-    const a = this.asm();
-    this.commitAssembly({ ...a, components: a.components.map((c) => (c.id === id ? { ...c, ...patch } : c)) }, "Componente");
-  }
-
-  deleteComponent(id: string) {
-    const a = this.asm();
-    const c = a.components.find((x) => x.id === id);
-    const mates = a.mates.filter((m) => m.a.component !== id && m.b.component !== id);
-    this.commitAssembly({ ...a, components: a.components.filter((x) => x.id !== id), mates }, `Apagar ${c?.name}${mates.length < a.mates.length ? ` e ${a.mates.length - mates.length} mate(s)` : ""}`);
-  }
-
+  insertComponent(ref: { kind: "part" | "assembly"; id: string }) { asmOps.insertComponent(this, ref); }
+  updateComponent(id: string, patch: Partial<Component>) { asmOps.updateComponent(this, id, patch); }
+  deleteComponent(id: string) { asmOps.deleteComponent(this, id); }
   /** Começa um mate novo; usa as duas primeiras seleções de componentes, se houver. */
-  startMate(kind: MateKind = "coincident") {
-    const a = this.asm();
-    const ids = a.mates.map((m) => Number(m.id.slice(1)) || 0);
-    const refs = this.state.selection.flatMap((p) => this.mateRefOf(p) ?? []);
-    const labels: Record<MateKind, string> = { coincident: "Coincidente", concentric: "Concêntrico", parallel: "Paralelo", perpendicular: "Perpendicular", distance: "Distância", angle: "Ângulo", tangent: "Tangente", lock: "Fixar" };
-    const n = a.mates.filter((m) => m.kind === kind).length + 1;
-    const draft: Mate = { id: `m${Math.max(0, ...ids) + 1}`, name: `${labels[kind]}${n}`, kind, a: refs[0] ?? { component: "", std: "XY" }, b: refs[1] ?? { component: "", std: "XY" } };
-    this.set({ mateEdit: { draft, isNew: true }, selection: [], pickTarget: refs.length < 2 ? { field: refs.length ? "mateB" : "mateA", accept: ["face", "edge"] } : null });
-    this.rebuild();
-  }
-
+  startMate(kind: MateKind = "coincident") { asmOps.startMate(this, kind); }
   /** Referência de mate a partir de uma seleção no 3D da montagem. */
-  mateRefOf(p: Pick): MateRef | null {
-    if ((p.kind !== "face" && p.kind !== "edge") || !p.component) return null;
-    return { component: p.component, ref: { kind: p.kind, name: p.name, hint: p.hint } };
-  }
-
-  editMate(id: string) {
-    const m = this.asm().mates.find((x) => x.id === id);
-    if (m) { this.set({ mateEdit: { draft: structuredClone(m), isNew: false }, pickTarget: null }); this.rebuild(); }
-  }
-
-  updateMateDraft(patch: Partial<Mate>) {
-    const e = this.state.mateEdit;
-    if (!e) return;
-    this.set({ mateEdit: { ...e, draft: { ...e.draft, ...patch } } });
-    this.rebuild();
-  }
-
-  confirmMate() {
-    const e = this.state.mateEdit;
-    if (!e) return;
-    const a = this.asm();
-    this.set({ mateEdit: null, pickTarget: null });
-    this.commitAssembly({ ...a, mates: e.isNew ? [...a.mates, e.draft] : a.mates.map((m) => (m.id === e.draft.id ? e.draft : m)) }, `${e.isNew ? "Criar" : "Editar"} ${e.draft.name}`);
-  }
-
-  cancelMate() { this.set({ mateEdit: null, pickTarget: null }); this.rebuild(0); }
-
-  deleteMate(id: string) {
-    const a = this.asm();
-    this.commitAssembly({ ...a, mates: a.mates.filter((m) => m.id !== id) }, "Apagar mate");
-  }
-
-  toggleMate(id: string) {
-    const a = this.asm();
-    this.commitAssembly({ ...a, mates: a.mates.map((m) => (m.id === id ? { ...m, suppressed: !m.suppressed } : m)) }, "Suprimir mate");
-  }
-
-  /** Aplica a posição resolvida pelos mates às posições iniciais (o solver parte daí da próxima vez). */
-  async checkInterference() {
-    try {
-      await this.ensureBuilt();
-      this.set({ busy: true });
-      const r = await this.kernel.interference();
-      this.set({ interference: r, busy: false, message: r.pairs.length ? `${r.pairs.length} interferência(s)` : "Sem interferências" });
-    } catch (e) {
-      // um reinício do núcleo já foi anunciado em onRestart
-      this.set(e instanceof KernelRestartError ? { busy: false } : { busy: false, error: (e as Error).message });
-    }
-  }
+  mateRefOf(p: Pick): MateRef | null { return asmOps.mateRefOf(p); }
+  editMate(id: string) { asmOps.editMate(this, id); }
+  updateMateDraft(patch: Partial<Mate>) { asmOps.updateMateDraft(this, patch); }
+  confirmMate() { asmOps.confirmMate(this); }
+  cancelMate() { asmOps.cancelMate(this); }
+  deleteMate(id: string) { asmOps.deleteMate(this, id); }
+  toggleMate(id: string) { asmOps.toggleMate(this, id); }
+  checkInterference() { return asmOps.checkInterference(this); }
 
   // --- projeto e documentos ------------------------------------------------------
 
