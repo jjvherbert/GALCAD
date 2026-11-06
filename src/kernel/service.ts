@@ -17,45 +17,21 @@ import { freezeGeom, publish } from "./features/external.ts";
 import { type AsmBody, assemblyStudyCase, singleSolid, studyCase } from "./sim.ts";
 import { pmiStates } from "./pmi.ts";
 import { panelGeometry } from "./panels.ts";
-import { type ResolvedPmi, addSemanticPmi } from "./step-pmi.ts";
-import { SHEET_COLOR, SOLID_COLOR, type StepBody, type StepPart, stepAssembly, stepPart } from "./step242.ts";
 
-/** Hash curto (FNV-1a de 32 bits) de um texto, para revisões. */
-function hashText(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
-  return h.toString(16).padStart(8, "0") + s.length.toString(16);
-}
 import type { Vec3 } from "../doc/types.ts";
 import { type PartBuild, assemblyMass, solveAssembly, toInstances } from "./assembly.ts";
 import { buildDrawing } from "./drawing.ts";
 import { partSignature } from "./signature.ts";
-import { nameFresh } from "./naming.ts";
 import { assemblyMesh } from "../assembly/combine.ts";
 import { meshBody, type MeshData } from "./mesh.ts";
-import { Arena, T, bbox, explore, makeCompound, oc, setArena, volume, type TopoDS_Shape } from "./occ.ts";
+import { Arena, T, bbox, explore, makeCompound, oc, setArena, volume } from "./occ.ts";
 
-const surfaceArea = (s: TopoDS_Shape) => {
-  const o = oc();
-  const props = new o.GProp_GProps();
-  o.BRepGProp.SurfaceProperties(s, props, false, false);
-  const a = props.Mass();
-  props.delete();
-  return a;
-};
 
-/** Corpo sólido + corpos de superfície numa só forma (malha, exportação, análises). */
-export function sceneOf(ctx: Ctx): { scene: NamedBody | null; owner: (name: string) => string } {
-  const parts: [string, NamedBody][] = [...(ctx.body ? [["", ctx.body] as [string, NamedBody]] : []), ...ctx.sheets];
-  const owners = new Map<string, string>();
-  for (const [id, b] of parts) for (const f of b.faces) owners.set(f.name, id);
-  const owner = (n: string) => owners.get(n) ?? "";
-  const curves = [...ctx.curves.values()];
-  if (!parts.length && !curves.length) return { scene: null, owner };
-  if (parts.length === 1 && !curves.length) return { scene: parts[0][1], owner };
-  return { scene: { shape: makeCompound([...parts.map(([, b]) => b.shape), ...curves.map((c) => c.shape)]), faces: parts.flatMap(([, b]) => b.faces) }, owner };
-}
+export { sceneOf };
 import { to3MF, toGLB, toOBJ } from "../io/mesh-export.ts";
+import { hashText, sceneOf, surfaceArea } from "./service-scene.ts";
+import { step242 as buildStep242 } from "./service-step.ts";
+import { interference as detectInterference } from "./service-interference.ts";
 
 export class KernelService {
   /** Um motor (com a sua cache) por peça do projeto. */
@@ -266,42 +242,8 @@ export class KernelService {
   }
 
   /** Deteção de interferências entre as peças da última montagem (volume comum > 0). */
-  async interference(): Promise<InterferenceResponse> {
-    if (!this.lastAsm) throw new Error("Não há montagem");
-    const { project, id } = this.lastAsm;
-    const builds = new Map<string, PartBuild>();
-    const get = async (pid: string) => { let b = builds.get(pid); if (!b) { b = await this.partBuild(project, pid); builds.set(pid, b); } return b; };
-    const asm = await solveAssembly(project, id, get);
-    const arena = new Arena();
-    setArena(arena);
-    try {
-      const o = oc();
-      const placed = asm.instances.flatMap((i) => {
-        const body = builds.get(i.part)?.ctx.body;
-        if (!body) return [];
-        const t = T(new o.gp_Trsf());
-        const R = i.pose.R, p = i.pose.t;
-        t.SetValues(R[0], R[1], R[2], p[0], R[3], R[4], R[5], p[1], R[6], R[7], R[8], p[2]);
-        const shape = T(T(new o.BRepBuilderAPI_Transform(body.shape, t, true, false)).Shape());
-        return [{ path: i.path.join("/"), name: i.names.join(" / "), shape, box: bbox(shape) }];
-      });
-      const pairs: InterferenceResponse["pairs"] = [];
-      const overlap = (a: { min: Vec3; max: Vec3 }, b: { min: Vec3; max: Vec3 }) => [0, 1, 2].every((k) => a.min[k] < b.max[k] && b.min[k] < a.max[k]);
-      for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
-        const A = placed[i], B = placed[j];
-        if (!overlap(A.box, B.box)) continue;
-        const c = T(new o.BRepAlgoAPI_Common(A.shape, B.shape));
-        c.Build();
-        if (!c.IsDone()) continue;
-        const common = T(c.Shape());
-        const vol = explore(common, "solid").length ? volume(common).volume : 0;
-        if (vol > 1e-6) pairs.push({ a: A.path, b: B.path, volume: vol, mesh: meshBody(nameFresh(common, "int")) });
-      }
-      return { pairs };
-    } finally {
-      arena.free();
-      setArena(this.asmArena);
-    }
+  interference(): Promise<InterferenceResponse> {
+    return detectInterference(this.lastAsm, (p, k) => this.partBuild(p, k), () => setArena(this.asmArena));
   }
 
   /** Assinaturas geométricas de todas as peças (assistente de BOM). */
@@ -345,56 +287,8 @@ export class KernelService {
     }
   }
 
-  /** STEP AP242 da peça ou da montagem ativa (produtos com nome, cores e estrutura de produto). */
-  private async step242(): Promise<Uint8Array> {
-    const title = (d: { name: string; properties?: PartProperties }, config?: string) =>
-      `${d.properties?.number ? `${d.properties.number} ` : ""}${d.name}${config ? ` [${config}]` : ""}`;
-    const bodiesOf = (ctx: Ctx): StepBody[] => [
-      ...(ctx.body ? [{ name: "Corpo", shape: ctx.body.shape, color: SOLID_COLOR }] : []),
-      ...[...ctx.sheets].map(([id, b]) => ({ name: ctx.doc.features.find((f) => f.id === id)?.name ?? id, shape: b.shape, color: SHEET_COLOR })),
-    ];
-    if (this.lastKind === "part") {
-      if (!this.lastPart) throw new Error("Não há peça para exportar");
-      const { ctx, doc } = this.lastPart;
-      const bodies = bodiesOf(ctx);
-      if (!bodies.length) throw new Error("A peça não tem corpos para exportar");
-      // PMI semântico e atributos: as faces referidas ficam com nome no STEP e as entidades AP242 são acrescentadas
-      const pmi = doc.pmi ?? [], attrs = doc.attributes ?? [];
-      if (!ctx.body || (!pmi.length && !attrs.length)) return stepPart({ key: "", name: title(doc, doc.configurations?.active), bodies });
-      const faceIdx = new Map<string, number>();
-      const pmiFaces: TopoDS_Shape[] = [];
-      const idx = (name: string) => {
-        if (!faceIdx.has(name)) {
-          const f = ctx.body!.faces.find((x) => x.name === name);
-          if (!f) return -1;
-          faceIdx.set(name, pmiFaces.length);
-          pmiFaces.push(f.face);
-        }
-        return faceIdx.get(name)!;
-      };
-      const states = new Map(pmiStates(ctx, pmi).map((x) => [x.id, x]));
-      const resolved: ResolvedPmi[] = pmi.map((item) => ({ item, nominal: states.get(item.id)?.nominal, faces: (states.get(item.id)?.faces ?? []).map(idx).filter((k) => k >= 0) }));
-      const at = attrs.map((attr) => {
-        const k = attr.target.kind === "face" ? idx(attr.target.ref.name) : -1;
-        return { attr, face: k >= 0 ? k : undefined };
-      });
-      const raw = stepPart({ key: "", name: title(doc, doc.configurations?.active), bodies, pmiFaces });
-      const out = addSemanticPmi(new TextDecoder().decode(raw), resolved, at);
-      return new TextEncoder().encode(out.step);
-    }
-    if (!this.lastAsm) throw new Error("Não há montagem para exportar");
-    const { project, id } = this.lastAsm;
-    const asm = project.assemblies.find((a) => a.id === id)!;
-    const keys = [...new Set(this.lastAsmInstances.map((i) => i.part))];
-    const parts: StepPart[] = [];
-    for (const key of keys) {
-      const b = await this.partBuild(project, key);
-      const { id: pid, config } = splitPartKey(key);
-      const doc = configuredDoc(project.parts.find((p) => p.id === pid)!, config);
-      parts.push({ key, name: title(doc, config), bodies: bodiesOf(b.ctx) });
-    }
-    setArena(this.asmArena);
-    return stepAssembly(title(asm), parts.filter((p) => p.bodies.length), this.lastAsmInstances.map((i) => ({ name: i.name, part: i.part, matrix: i.matrix })));
+  private step242(): Promise<Uint8Array> {
+    return buildStep242({ kind: this.lastKind, part: this.lastPart, asm: this.lastAsm, instances: this.lastAsmInstances }, (p, k) => this.partBuild(p, k), () => setArena(this.asmArena));
   }
 
   /** Caso de simulação de um estudo (a peça é reconstruída com a cache, na configuração ativa). */
