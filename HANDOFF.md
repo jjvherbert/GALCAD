@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 11) — features, templates e publicações fora de `store.ts` (PR #31)
+
+- **`src/app/store-features.ts`** (novo, 206 linhas): `startFeature`, `editFeature`, templates (`createTemplate`/`deleteTemplate`/`importTemplate`/`instantiateTemplate`), `setPublications`, `freezeExternal`, `readPlacement`, `movePole`, `updateDraft`, `confirmEdit`/`cancelEdit` (mais `prefill` e `setTemplates` internos), com `externalParts` e `relativeMatrix`, como funções que recebem o `Store`.
+- Código movido verbatim (`this.` → `s.`). A classe fica com delegadores de uma linha com as mesmas assinaturas (`insertIndex` fica inline); `store.ts` reexporta `externalParts`, por isso CalcPanel/GalkeelPanel/script-client/sim-client não mudam. `store.ts` 652 → 469 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde no PR antes do merge.
+- **A seguir:** acabar `store.ts` (469) — esboço/árvore/seleção num módulo com delegadores (Opus), até ficar abaixo de 400.
+
 ## Atualização: F1 passo 4 (fatia 10) — projeto e documentos fora de `store.ts` (PR #30)
 
 - **`src/app/store-docs.ts`** (novo, 180 linhas): `commitDoc`, `setActive`, `addDocument`/`deleteDocument`/`renameDocument`, `setPartProperties`, `setAnalysis`/`refreshAnalysis`, `autosave`, `commit`/`undo`/`redo`, `newDoc` e `open` (mais `restore` interno), com `AUTOSAVE` (exportada) e `drawingKernelKey`, como funções que recebem o `Store`.
