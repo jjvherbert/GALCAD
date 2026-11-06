@@ -1,5 +1,14 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 1) — primeiro corte de `viewport.ts` (PR #21)
+
+- **`src/app/viewport-views.ts`** (novo): `STD`, `VIEWS`, `ViewName`.
+- **`src/app/viewport-style.ts`** (novo): `Theme`/`themes`, viridis, `CONTINUITY_COLORS`, `highlightMaterial`, `zebraTexture`, `divergingColor`, `robustScale`.
+- **`src/app/viewport-sim.ts`** (novo): `SimView` e `buildSimLayers()` — corpo de `setSimResult` movido verbatim (`this.size` passa a parâmetro). `setSimResult` continua a escrever `data-sim-scale`.
+- `commands.ts` e `Overlays.tsx` importam diretamente dos novos módulos. `viewport.ts` 1310 → 1175 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde (3m40s).
+- **A seguir:** fatia 2 de `viewport.ts` (rede de polos, depois handlers de input/câmara).
+
 ## Atualização: F1 passo 3 (fatia 4) — plugins registam features pelo mesmo contrato (PR #20)
 
 - **`src/plugins/types.ts`**: `PluginKind` passa a exigir `help` (título, descrição, passos). Um tipo de plugin sem ajuda não compila.
