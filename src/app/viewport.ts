@@ -9,15 +9,18 @@ import * as THREE from "three";
 import { type ResultView, layerShown } from "../sim/result.ts";
 import type { MeshData } from "../kernel/mesh.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
-import type { Frame } from "../kernel/frame.ts";
-import type { CadDocument, PlaneRef, StdPlane, Vec3 } from "../doc/types.ts";
-import { sampleEntity, allEntities } from "../sketch/geometry.ts";
+import type { CadDocument, PlaneRef, Vec3 } from "../doc/types.ts";
 import type { Analysis, Pick, PickKind } from "./store.ts";
 import type { GestureDir, Settings } from "./settings.ts";
 import { onThemeChange, resolvedTheme } from "./theme.ts";
-import { STD, VIEWS, type ViewName } from "./viewport-views.ts";
+import { VIEWS, type ViewName } from "./viewport-views.ts";
 import { CONTINUITY_COLORS, type Theme, divergingColor, highlightMaterial, robustScale, themes, zebraTexture } from "./viewport-style.ts";
 import { type SimView, buildSimLayers } from "./viewport-sim.ts";
+import { type PlaneMesh, buildReferences, buildSketches, modelSize } from "./viewport-scene.ts";
+import { type PoleNet, drawPoleNet, poleAt } from "./viewport-poles.ts";
+import { type PmiItem, type PmiLabel, buildPmiLabels, placePmiLabels } from "./viewport-pmi.ts";
+
+export type { PoleNet } from "./viewport-poles.ts";
 
 type Hit =
   | { kind: "face"; index: number; point: THREE.Vector3 }
@@ -26,9 +29,6 @@ type Hit =
   | { kind: "region"; index: number; point: THREE.Vector3 };
 
 interface CamState { pos: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; zoom: number; size: number }
-
-/** Rede de controlo de uma superfície de forma livre (polos linha a linha, u maior). */
-export interface PoleNet { nu: number; nv: number; poles: number[] }
 
 type Drag = {
   button: number;
@@ -58,7 +58,7 @@ export class Viewport {
   private edgeLines: THREE.LineSegments | null = null;
   private faceOfTri: Int32Array = new Int32Array(0);
   private faceVerts: [number, number][] = [];
-  private planeMeshes: { mesh: THREE.Mesh; ref: PlaneRef; label: string }[] = [];
+  private planeMeshes: PlaneMesh[] = [];
   private regionGroup = new THREE.Group();
   private regionMeshes: { mesh: THREE.Mesh; sketch: string; sig: string[]; seed: [number, number] }[] = [];
   private hover: Hit | null = null;
@@ -147,7 +147,7 @@ export class Viewport {
 
   private pmiEl: HTMLDivElement;
   private pmiSvg: SVGSVGElement;
-  private pmiLabels: { anchor: THREE.Vector3; at: THREE.Vector3; el: HTMLDivElement; line: SVGLineElement; stack: number }[] = [];
+  private pmiLabels: PmiLabel[] = [];
   /** Chamado ao clicar num rótulo PMI (id do item). */
   onPmiClick: ((id: string) => void) | null = null;
 
@@ -155,45 +155,20 @@ export class Viewport {
    * Rótulos PMI no 3D: o texto do item (quadro de tolerância, cota, referência) afastado da face pela
    * normal, com linha de chamada até ao ponto de ancoragem. Acompanham a câmara a cada imagem.
    */
-  setPmi(items: { id: string; text: string; anchor: Vec3; normal: Vec3; kind: string; error: boolean; selected: boolean }[] | null) {
+  setPmi(items: PmiItem[] | null) {
     this.pmiEl.replaceChildren();
     this.pmiSvg.replaceChildren();
     this.pmiLabels = [];
     this.el.dataset.pmi = items ? String(items.length) : "";
     if (!items) return;
-    const L = Math.max(4, this.modelSize(this.lastResult) * 0.18);
-    // rótulos com a mesma âncora e normal empilham-se no ecrã (uma linha cada)
-    const seen = new Map<string, number>();
-    for (const it of items) {
-      const key = `${it.anchor.map((x) => x.toFixed(2))}|${it.normal.map((x) => x.toFixed(2))}`;
-      const k = seen.get(key) ?? 0;
-      seen.set(key, k + 1);
-      const anchor = new THREE.Vector3(...it.anchor);
-      const at = anchor.clone().addScaledVector(new THREE.Vector3(...it.normal), L);
-      const el = Object.assign(document.createElement("div"), { className: `pmi-label pmi-${it.kind}${it.error ? " error" : ""}${it.selected ? " on" : ""}`, textContent: it.text, title: it.error ? "PMI com erros: ver o painel" : it.text });
-      el.dataset.id = it.id;
-      el.addEventListener("click", () => this.onPmiClick?.(it.id));
-      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      this.pmiEl.append(el);
-      this.pmiSvg.append(line);
-      this.pmiLabels.push({ anchor, at, el, line, stack: k });
-    }
+    const L = Math.max(4, modelSize(this.lastResult) * 0.18);
+    this.pmiLabels = buildPmiLabels(items, this.pmiEl, this.pmiSvg, L, (id) => this.onPmiClick?.(id));
     // posicionar já: sem isto os rótulos novos ficam uma imagem no canto (0,0) até à próxima frame
     this.placePmi();
   }
 
   private placePmi() {
-    if (!this.pmiLabels.length) return;
-    const r = this.renderer.domElement, w = r.clientWidth, h = r.clientHeight;
-    const v = new THREE.Vector3();
-    const px = (p: THREE.Vector3) => { v.copy(p).project(this.camera); return [((v.x + 1) / 2) * w, ((1 - v.y) / 2) * h]; };
-    for (const l of this.pmiLabels) {
-      const [ax, ay] = px(l.anchor), [bx, b0] = px(l.at);
-      const by = b0 + l.stack * 22;
-      l.el.style.transform = `translate(${bx.toFixed(1)}px, ${by.toFixed(1)}px) translate(-50%, -50%)`;
-      l.line.setAttribute("x1", ax.toFixed(1)); l.line.setAttribute("y1", ay.toFixed(1));
-      l.line.setAttribute("x2", bx.toFixed(1)); l.line.setAttribute("y2", by.toFixed(1));
-    }
+    placePmiLabels(this.pmiLabels, this.camera, this.renderer.domElement);
   }
 
   /** Orientação atual da câmara (direção de visão, do alvo para a câmara, e "para cima"). */
@@ -382,50 +357,7 @@ export class Viewport {
   private drawPoles(preview?: { k: number; p: THREE.Vector3 }) {
     this.disposeGroup(this.poleGroup);
     if (!this.poleGroup.parent) this.scene.add(this.poleGroup);
-    const net = this.poleNet;
-    this.el.dataset.poles = net ? String(net.nu * net.nv) : "";
-    if (!net) return;
-    const pos = new Float32Array(net.poles);
-    if (preview) pos.set([preview.p.x, preview.p.y, preview.p.z], preview.k * 3);
-    const col = new Float32Array(pos.length);
-    const c = new THREE.Color();
-    for (let k = 0; k < pos.length / 3; k++) { c.set(k === this.poleSel || k === preview?.k ? 0xdc2626 : 0x7c3aed); col.set([c.r, c.g, c.b], k * 3); }
-    const pg = new THREE.BufferGeometry();
-    pg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    pg.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    const pts = new THREE.Points(pg, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false }));
-    pts.renderOrder = 9;
-    const seg: number[] = [];
-    const at = (i: number, j: number) => [pos[(i * net.nv + j) * 3], pos[(i * net.nv + j) * 3 + 1], pos[(i * net.nv + j) * 3 + 2]];
-    for (let i = 0; i < net.nu; i++) for (let j = 0; j < net.nv; j++) {
-      if (i + 1 < net.nu) seg.push(...at(i, j), ...at(i + 1, j));
-      if (j + 1 < net.nv) seg.push(...at(i, j), ...at(i, j + 1));
-    }
-    const lg = new THREE.BufferGeometry();
-    lg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(seg), 3));
-    const lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x8b5cf6, transparent: true, opacity: 0.7, depthTest: false }));
-    lines.renderOrder = 8;
-    this.poleGroup.add(lines, pts);
-    // posição no ecrã do polo central (ajuda os testes de interface a arrastá-lo)
-    const kc = (net.nu >> 1) * net.nv + (net.nv >> 1);
-    const v = new THREE.Vector3(pos[kc * 3], pos[kc * 3 + 1], pos[kc * 3 + 2]).project(this.camera);
-    const r = this.renderer.domElement.getBoundingClientRect();
-    this.el.dataset.poleCenter = `${Math.round(r.left + ((v.x + 1) / 2) * r.width)},${Math.round(r.top + ((1 - v.y) / 2) * r.height)}`;
-  }
-
-  /** Índice do polo sob o cursor (a menos de 9 px), ou −1. */
-  private poleAt(ev: { clientX: number; clientY: number }): number {
-    const net = this.poleNet;
-    if (!net) return -1;
-    const r = this.renderer.domElement.getBoundingClientRect();
-    const v = new THREE.Vector3();
-    let best = -1, bestD = 9;
-    for (let k = 0; k < net.poles.length / 3; k++) {
-      v.set(net.poles[k * 3], net.poles[k * 3 + 1], net.poles[k * 3 + 2]).project(this.camera);
-      const d = Math.hypot(((v.x + 1) / 2) * r.width - (ev.clientX - r.left), ((1 - v.y) / 2) * r.height - (ev.clientY - r.top));
-      if (d < bestD) { bestD = d; best = k; }
-    }
-    return best;
+    drawPoleNet(this.poleGroup, this.poleNet, this.poleSel, this.camera, this.renderer.domElement, this.el.dataset, preview);
   }
 
   /** Material das faces conforme a análise (zebra, linhas de realce ou sombreado com cores). */
@@ -504,85 +436,14 @@ export class Viewport {
     }
   }
 
-  private planeQuad(f: Frame, size: number, color: number, opacity: number) {
-    const geo = new THREE.PlaneGeometry(size, size);
-    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
-    const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...f.x), new THREE.Vector3(...f.y), new THREE.Vector3(...f.z));
-    m.quaternion.setFromRotationMatrix(basis);
-    m.position.set(...f.o);
-    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color, transparent: true, opacity: Math.min(1, opacity * 4) }));
-    m.add(edges);
-    return m;
-  }
-
   private setReferences(result: RebuildResponse | null, doc: CadDocument, showStd: boolean) {
     this.disposeGroup(this.refGroup);
-    this.planeMeshes = [];
-    const s = this.modelSize(result) * 0.6;
-    if (showStd) {
-      for (const n of ["XY", "XZ", "YZ"] as StdPlane[]) {
-        const m = this.planeQuad(STD[n], s, this.theme.plane, 0.05);
-        this.refGroup.add(m);
-        this.planeMeshes.push({ mesh: m, ref: { kind: "std", name: n }, label: `Plano ${n}` });
-      }
-    }
-    const visible = (id: string) => { const f = doc.features.find((x) => x.id === id); return f && !f.suppressed; };
-    for (const [id, f] of Object.entries(result?.planes ?? {})) {
-      if (!visible(id)) continue;
-      const m = this.planeQuad(f, s * 0.8, 0x22a06b, 0.08);
-      this.refGroup.add(m);
-      this.planeMeshes.push({ mesh: m, ref: { kind: "datum", feature: id }, label: doc.features.find((x) => x.id === id)?.name ?? id });
-    }
-    for (const [id, a] of Object.entries(result?.axes ?? {})) {
-      if (!visible(id)) continue;
-      const p0 = new THREE.Vector3(...a.o).addScaledVector(new THREE.Vector3(...a.d), -s / 2);
-      const p1 = new THREE.Vector3(...a.o).addScaledVector(new THREE.Vector3(...a.d), s / 2);
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([p0, p1]), new THREE.LineDashedMaterial({ color: 0x22a06b, dashSize: s / 40, gapSize: s / 80 }));
-      line.computeLineDistances();
-      this.refGroup.add(line);
-    }
-    for (const [, f] of Object.entries(result?.csys ?? {})) {
-      const h = new THREE.AxesHelper(s / 4);
-      const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...f.x), new THREE.Vector3(...f.y), new THREE.Vector3(...f.z));
-      h.quaternion.setFromRotationMatrix(basis);
-      h.position.set(...f.o);
-      this.refGroup.add(h);
-    }
-    this.refGroup.add(new THREE.AxesHelper(s / 6));
+    this.planeMeshes = buildReferences(this.refGroup, result, doc, showStd, this.theme.plane);
   }
 
   private setSketches(result: RebuildResponse | null, doc: CadDocument, hide?: string) {
     this.disposeGroup(this.sketchGroup);
-    if (!result) return;
-    for (const [id, sv] of Object.entries(result.sketches)) {
-      if (id === hide) continue;
-      const f = doc.features.find((x) => x.id === id);
-      if (!f || f.suppressed) continue;
-      // esconder esboços já consumidos por features (como no SolidWorks)
-      const used = doc.features.some((x) => JSON.stringify(x).includes(`"${id}"`) && x.id !== id);
-      if (used) continue;
-      const ents = allEntities({ entities: sv.entities });
-      const pts: THREE.Vector3[] = [];
-      for (const [eid, e] of Object.entries(sv.entities)) {
-        if (e.type === "point") continue;
-        const poly = sampleEntity(ents, eid);
-        for (let i = 0; i < poly.length - 1; i++) {
-          for (const p of [poly[i], poly[i + 1]]) {
-            const v = sv.frame;
-            pts.push(new THREE.Vector3(v.o[0] + v.x[0] * p[0] + v.y[0] * p[1], v.o[1] + v.x[1] * p[0] + v.y[1] * p[1], v.o[2] + v.x[2] * p[0] + v.y[2] * p[1]));
-          }
-        }
-      }
-      const g = new THREE.BufferGeometry().setFromPoints(pts);
-      this.sketchGroup.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: this.theme.sketch })));
-    }
-  }
-
-  private modelSize(result: RebuildResponse | null) {
-    const m = result?.mass;
-    if (!m) return 200;
-    const d = Math.hypot(m.bbox.max[0] - m.bbox.min[0], m.bbox.max[1] - m.bbox.min[1], m.bbox.max[2] - m.bbox.min[2]);
-    return Math.max(50, d * 1.2);
+    buildSketches(this.sketchGroup, result, doc, this.theme.sketch, hide);
   }
 
   // --- cores e seleção ---------------------------------------------------------------
@@ -729,7 +590,7 @@ export class Viewport {
     const p = this.local(e);
     this.renderer.domElement.setPointerCapture(e.pointerId);
     let mode: Drag["mode"] = "pending";
-    const pk = e.button === 0 ? this.poleAt(e) : -1;
+    const pk = e.button === 0 ? poleAt(this.poleNet, this.camera, this.renderer.domElement, e) : -1;
     if (pk >= 0 && this.poleNet) {
       const n = this.poleNet.poles;
       const start = new THREE.Vector3(n[pk * 3], n[pk * 3 + 1], n[pk * 3 + 2]);
@@ -1007,7 +868,7 @@ export class Viewport {
     if (record) this.pushHistory();
     const m = result?.mass;
     const c = m ? new THREE.Vector3((m.bbox.min[0] + m.bbox.max[0]) / 2, (m.bbox.min[1] + m.bbox.max[1]) / 2, (m.bbox.min[2] + m.bbox.max[2]) / 2) : new THREE.Vector3();
-    this.size = this.modelSize(result) * 0.6;
+    this.size = modelSize(result) * 0.6;
     const dir = this.viewDir();
     this.target.copy(c);
     this.camera.position.copy(c).addScaledVector(dir, this.size * 20);
