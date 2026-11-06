@@ -5,7 +5,7 @@ import { History } from "../doc/history.ts";
 import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "../doc/io.ts";
 import {
   type AssemblyDoc, type CadProject, type Component, type Mate, type MateKind, type MateRef, type DocKind, type DocRef, type DrawingDoc, type PartDoc, type PartProperties,
-  newAssembly, newDrawing, newPart, newProject, parseProject, serializeProject, usages,
+  newPart, newProject, parseProject, serializeProject,
   type FeatureTemplate,
 } from "../doc/project.ts";
 import { dependents, moveFeature, FEATURE_LABELS } from "../doc/features.ts";
@@ -47,6 +47,7 @@ export * from "./store-state.ts";
 
 import { KernelClient, KernelRestartError } from "./kernel-client.ts";
 import * as asmOps from "./store-assembly.ts";
+import * as docOps from "./store-docs.ts";
 import { defaultFeature } from "./defaults.ts";
 import { PLUGINS } from "../plugins/meta.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
@@ -54,13 +55,6 @@ import { applyTheme } from "./theme.ts";
 
 /** App de ambiente de trabalho (GALCAD para Windows): agente embutido, com endereço e token próprios. */
 export const desktopAgent = (): { url: string; token: string } | null => (globalThis as { cadDesktop?: { agent: { url: string; token: string } | null } }).cadDesktop?.agent ?? null;
-
-const AUTOSAVE = "cad-prototipo:autosave";
-
-/** Partes de um desenho que o núcleo usa (as vistas sem posição; as fontes das tabelas de BOM). */
-function drawingKernelKey(d: DrawingDoc): string {
-  return JSON.stringify([d.views.map(({ at: _a, name: _n, ...v }) => v), d.sheet, d.annotations.filter((a) => a.kind === "bom").map((a) => (a.kind === "bom" ? a.source : ""))]);
-}
 
 export class Store {
   kernel = new KernelClient({
@@ -86,10 +80,10 @@ export class Store {
   /** Resolve a promessa da reconstrução agendada que ainda não arrancou. */
   private settleRebuild: (() => void) | null = null;
   state: State;
-  private histories = new Map<string, History<unknown>>();
+  histories = new Map<string, History<unknown>>();
   /** Último resultado de simulação/desenho de cada documento: trocar de documento não os perde (A3). */
-  private simResults = new Map<string, NonNullable<State["simResult"]>>();
-  private drawingResults = new Map<string, DrawingResponse>();
+  simResults = new Map<string, NonNullable<State["simResult"]>>();
+  drawingResults = new Map<string, DrawingResponse>();
   /** Última peça/montagem ativa: ao sair do Desenho volta-se a ela, não à primeira peça. */
   lastModelDoc: DocRef | null = null;
   readonly docStore: SubStore<DocKey>;
@@ -102,7 +96,7 @@ export class Store {
   constructor() {
     let project = newProject();
     try {
-      const saved = localStorage.getItem(AUTOSAVE);
+      const saved = localStorage.getItem(docOps.AUTOSAVE);
       if (saved) project = parseProject(saved);
     } catch { /* sem armazenamento local ou autosave inválido */ }
     if (!project.parts.length) project = { ...project, parts: [newPart(project)] };
@@ -273,177 +267,29 @@ export class Store {
   toggleMate(id: string) { asmOps.toggleMate(this, id); }
   checkInterference() { return asmOps.checkInterference(this); }
 
-  // --- projeto e documentos ------------------------------------------------------
+  // --- projeto e documentos (store-docs.ts) ---------------------------------------
 
   /** Grava um documento no projeto (com desfazer). */
-  commitDoc(kind: DocKind, doc: PartDoc | AssemblyDoc | DrawingDoc, label: string, merge = false) {
-    const p = this.state.project;
-    const project: CadProject = kind === "part" ? { ...p, parts: p.parts.map((x) => (x.id === doc.id ? (doc as PartDoc) : x)) }
-      : kind === "assembly" ? { ...p, assemblies: p.assemblies.map((x) => (x.id === doc.id ? (doc as AssemblyDoc) : x)) }
-      : { ...p, drawings: p.drawings.map((x) => (x.id === doc.id ? (doc as DrawingDoc) : x)) };
-    if (this.state.active.id === doc.id) this.history.push(doc, label, merge);
-    const before = kind === "drawing" ? p.drawings.find((x) => x.id === doc.id) : undefined;
-    this.set({ project, dirty: true, ...(kind === "part" && this.state.doc.id === doc.id ? { doc: doc as PartDoc } : {}) });
-    this.autosave();
-    // num desenho, mover vistas ou editar anotações não muda as projeções: não é preciso o núcleo
-    if (kind === "drawing" && before && drawingKernelKey(before) === drawingKernelKey(doc as DrawingDoc) && this.state.drawingResult) return;
-    this.rebuild();
-  }
-
+  commitDoc(kind: DocKind, doc: PartDoc | AssemblyDoc | DrawingDoc, label: string, merge = false) { docOps.commitDoc(this, kind, doc, label, merge); }
   commitAssembly(a: AssemblyDoc, label: string, merge = false) { this.commitDoc("assembly", a, label, merge); }
   commitDrawing(d: DrawingDoc, label: string, merge = false) { this.commitDoc("drawing", d, label, merge); }
-
-  setActive(ref: DocRef) {
-    if (this.state.edit || this.state.sketch) { this.set({ message: "Termine primeiro a edição em curso" }); return; }
-    const doc = ref.kind === "part" ? this.state.project.parts.find((p) => p.id === ref.id) : undefined;
-    this.set({
-      active: ref, ...(doc ? { doc, result: null } : {}), selection: [], selectedFeature: null, pickTarget: null, analysis: null,
-      // o espaço de trabalho segue o documento: desenhos no Desenho; peças e montagens fora dele (CFD só em peças)
-      workspace: ref.kind === "drawing" ? "drawing" : this.state.workspace === "drawing" || (ref.kind === "assembly" && this.state.workspace === "cfd") ? "design" : this.state.workspace,
-      asmResult: ref.kind === "assembly" ? this.state.asmResult : null, contextToolbar: null,
-      mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null,
-      // os resultados do documento novo voltam (A3); o rebuild a seguir atualiza o desenho se o modelo mudou
-      simResult: this.simResults.get(ref.id) ?? null,
-      drawingResult: ref.kind === "drawing" ? this.drawingResults.get(ref.id) ?? null : null,
-    });
-    if (ref.kind !== "drawing") this.lastModelDoc = ref;
-    this.rebuild(0);
-  }
-
-  addDocument(kind: DocKind) {
-    const p = this.state.project;
-    let project: CadProject, id: string;
-    if (kind === "part") { const d = newPart(p); project = { ...p, parts: [...p.parts, d] }; id = d.id; }
-    else if (kind === "assembly") { const d = newAssembly(p); project = { ...p, assemblies: [...p.assemblies, d] }; id = d.id; }
-    else { const d = newDrawing(p); project = { ...p, drawings: [...p.drawings, d] }; id = d.id; }
-    this.set({ project, dirty: true });
-    this.autosave();
-    this.setActive({ kind, id });
-  }
-
-  deleteDocument(ref: DocRef) {
-    const p = this.state.project;
-    const used = usages(p, ref.id);
-    if (used.length) { this.set({ error: `Não é possível apagar: usado em ${used.join(", ")}` }); return; }
-    if (ref.kind === "part" && p.parts.length === 1) { this.set({ error: "O projeto tem de ter pelo menos uma peça" }); return; }
-    const project: CadProject = {
-      ...p,
-      parts: p.parts.filter((x) => x.id !== ref.id),
-      assemblies: p.assemblies.filter((x) => x.id !== ref.id),
-      drawings: p.drawings.filter((x) => x.id !== ref.id),
-    };
-    this.histories.delete(ref.id);
-    this.simResults.delete(ref.id);
-    this.drawingResults.delete(ref.id);
-    if (this.lastModelDoc?.id === ref.id) this.lastModelDoc = null;
-    this.set({ project, dirty: true });
-    this.autosave();
-    if (this.state.active.id === ref.id) this.setActive({ kind: "part", id: project.parts[0].id });
-  }
-
-  renameDocument(ref: DocRef, name: string) {
-    if (!name.trim()) return;
-    const p = this.state.project;
-    const list = ref.kind === "part" ? p.parts : ref.kind === "assembly" ? p.assemblies : p.drawings;
-    const d = list.find((x) => x.id === ref.id);
-    if (d) this.commitDoc(ref.kind, { ...d, name: name.trim() } as never, "Renomear");
-  }
-
-  setPartProperties(props: PartProperties) {
-    this.commitDoc("part", { ...this.state.doc, properties: props }, "Propriedades");
-  }
-
+  setActive(ref: DocRef) { docOps.setActive(this, ref); }
+  addDocument(kind: DocKind) { docOps.addDocument(this, kind); }
+  deleteDocument(ref: DocRef) { docOps.deleteDocument(this, ref); }
+  renameDocument(ref: DocRef, name: string) { docOps.renameDocument(this, ref, name); }
+  setPartProperties(props: PartProperties) { docOps.setPartProperties(this, props); }
   /** Liga/desliga uma análise; a curvatura é calculada no núcleo (exata, por vértice). */
-  async setAnalysis(a: Analysis | null) {
-    this.set({ analysis: a });
-    await this.refreshAnalysis();
-  }
-
+  setAnalysis(a: Analysis | null) { return docOps.setAnalysis(this, a); }
   /** Resultado a que pertencem as normais exatas das linhas de realce. */
-  private normalsFor: RebuildResponse | null = null;
-
-  private async refreshAnalysis() {
-    const a = this.state.analysis;
-    if (a?.kind === "highlight" && this.state.result?.mesh && (!a.normals || this.normalsFor !== this.state.result)) {
-      try {
-        await this.ensureBuilt();
-        const res = this.state.result;
-        const { normals } = await this.kernel.normals();
-        this.normalsFor = res;
-        if (this.state.analysis === a) this.set({ analysis: { ...a, normals } });
-      } catch (e) { if (!(e instanceof KernelRestartError)) this.set({ error: (e as Error).message }); }
-      return;
-    }
-    if ((a?.kind !== "curvature" && a?.kind !== "deviation" && a?.kind !== "continuity" && a?.kind !== "combs") || !this.state.result?.mesh) return;
-    try {
-      await this.ensureBuilt();
-      const data = a.kind === "curvature" ? await this.kernel.curvature(a.mode)
-        : a.kind === "continuity" ? await this.kernel.continuity()
-        : a.kind === "combs" ? await this.kernel.combs(a.edges)
-        : await this.kernel.deviation();
-      if (this.state.analysis === a) this.set({ analysis: { ...a, data } as Analysis });
-    } catch (e) {
-      if (!(e instanceof KernelRestartError)) this.set({ error: (e as Error).message });
-    }
-  }
-
-  private autosave() {
-    try { localStorage.setItem(AUTOSAVE, serializeProject(this.state.project)); } catch { /* quota/privado: ignorar */ }
-  }
-
+  normalsFor: RebuildResponse | null = null;
+  refreshAnalysis() { return docOps.refreshAnalysis(this); }
+  autosave() { docOps.autosave(this); }
   /** Grava a peça ativa. */
-  commit(doc: CadDocument, label: string, merge = false) {
-    this.commitDoc("part", { ...doc, id: this.state.doc.id, properties: this.state.doc.properties } as PartDoc, label, merge);
-  }
-
-  private restore(d: unknown, message: string) {
-    const kind = this.state.active.kind;
-    const p = this.state.project;
-    const doc = d as PartDoc & AssemblyDoc & DrawingDoc;
-    const project: CadProject = kind === "part" ? { ...p, parts: p.parts.map((x) => (x.id === doc.id ? doc : x)) }
-      : kind === "assembly" ? { ...p, assemblies: p.assemblies.map((x) => (x.id === doc.id ? doc : x)) }
-      : { ...p, drawings: p.drawings.map((x) => (x.id === doc.id ? doc : x)) };
-    this.set({ project, message, ...(kind === "part" ? { doc } : {}) });
-    this.autosave();
-    this.rebuild(0);
-  }
-
-  undo() {
-    if (this.state.edit || this.state.sketch) return;
-    const d = this.history.undo();
-    if (d) this.restore(d, "Desfeito");
-  }
-  redo() {
-    if (this.state.edit || this.state.sketch) return;
-    const d = this.history.redo();
-    if (d) this.restore(d, "Refeito");
-  }
-
-  // --- ficheiros -------------------------------------------------------------
-
-  newDoc() {
-    const project = newProject();
-    this.histories.clear();
-    this.simResults.clear();
-    this.drawingResults.clear();
-    this.lastModelDoc = null;
-    this.set({ project, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, simResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: project.name, dirty: false, pickTarget: null });
-    this.autosave();
-    this.rebuild(0);
-  }
-
-  open(text: string, fileName: string) {
-    const project = parseProject(text);
-    if (!project.parts.length) project.parts.push(newPart(project));
-    this.histories.clear();
-    this.simResults.clear();
-    this.drawingResults.clear();
-    this.lastModelDoc = null;
-    const name = fileName.replace(/\.cadp\.json$|\.json$/i, "");
-    this.set({ project: { ...project, name: project.name || name }, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, simResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: name, dirty: false });
-    this.autosave();
-    this.rebuild(0);
-  }
+  commit(doc: CadDocument, label: string, merge = false) { docOps.commit(this, doc, label, merge); }
+  undo() { docOps.undo(this); }
+  redo() { docOps.redo(this); }
+  newDoc() { docOps.newDoc(this); }
+  open(text: string, fileName: string) { docOps.open(this, text, fileName); }
 
   /** Texto do projeto para guardar. */
   serialized(): string { return serializeProject(this.state.project); }
