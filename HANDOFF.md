@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 14) — módulos do editor de esboço fora de `SketchEditor.tsx` (PR #34)
+
+- **Novos em `src/app/`:** `sketch-types.ts` (36 linhas: tipos e constantes), `sketch-geom.ts` (36), `SketchOverlays.tsx` (115: grelha, restrições e cotas), `sketch-ref.ts` (48: arestas de referência projetadas), `sketch-hit.ts` (76: acerto, snap e pontos), `sketch-convert.ts` (57), `sketch-click.ts` (182: cliques por ferramenta e cotas), `sketch-cmd.ts` (52: comandos de filete/offset e cotas) e `sketch-draw.tsx` (43: traçado e pré-visualização).
+- Código movido verbatim; o estado a que as funções acediam por fecho passa a objeto de contexto (`ctx`) com desestruturação no topo. `SketchEditor.tsx` 891 → 401 linhas, com delegadores de uma linha com as mesmas assinaturas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde no PR antes do merge.
+- **A seguir:** `SimPanel.tsx` (Sonnet), depois `doc/types.ts` (Opus).
+
 ## Atualização: F1 passo 4 (fatia 13) — processos, FEM e CFD fora de `tools/cad-runner.ts` (PR #33)
 
 - **`tools/cad-runner-proc.ts`** (novo, 160 linhas): localização de solvers, `run`/`foam`, cancelamento e tempo limite; o estado do trabalho em curso é `jobState.current` (antes `currentJob`).
