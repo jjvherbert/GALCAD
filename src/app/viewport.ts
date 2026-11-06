@@ -14,7 +14,7 @@ import type { Analysis, Pick, PickKind } from "./store.ts";
 import type { GestureDir, Settings } from "./settings.ts";
 import { onThemeChange, resolvedTheme } from "./theme.ts";
 import { VIEWS, type ViewName } from "./viewport-views.ts";
-import { type Theme, highlightMaterial, themes, zebraTexture } from "./viewport-style.ts";
+import { type Theme, themes } from "./viewport-style.ts";
 import { type SimView, buildSimLayers } from "./viewport-sim.ts";
 import { type PlaneMesh, buildReferences, buildSketches, modelSize } from "./viewport-scene.ts";
 import { type PoleNet, drawPoleNet, poleAt } from "./viewport-poles.ts";
@@ -24,6 +24,7 @@ import type { Hit, RegionMesh } from "./viewport-select.ts";
 import * as cam from "./viewport-camera.ts";
 import type { CamAnim, CamState } from "./viewport-camera.ts";
 import * as colors from "./viewport-colors.ts";
+import * as content from "./viewport-content.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
 
@@ -76,8 +77,6 @@ export class Viewport {
   private lastResult: RebuildResponse | null = null;
   private analysis: Analysis | null = null;
   private overlayGroup = new THREE.Group();
-  private zebraMat: THREE.MeshMatcapMaterial | null = null;
-  private highlightMat: THREE.ShaderMaterial | null = null;
   private analysisGroup = new THREE.Group();
   private poleGroup = new THREE.Group();
   private poleNet: PoleNet | null = null;
@@ -86,7 +85,7 @@ export class Viewport {
   poleAxis: "free" | "X" | "Y" | "Z" = "free";
   onPoleSelect: (i: number, j: number) => void = () => {};
   onPoleMoved: (i: number, j: number, d: Vec3) => void = () => {};
-  private shadedMat: THREE.Material | null = null;
+  private mats: content.FaceMats = { shaded: null, zebra: null, highlight: null };
   settings: Settings;
 
   onPick: (p: Pick, additive: boolean, at: [number, number]) => void = () => {};
@@ -242,13 +241,7 @@ export class Viewport {
   }
 
   private disposeGroup(g: THREE.Group) {
-    g.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (!m.userData?.shared) m.geometry?.dispose();
-      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-      if (Array.isArray(mat)) mat.forEach((x) => x.dispose()); else mat?.dispose();
-    });
-    g.clear();
+    content.disposeGroup(g);
   }
 
   private setMesh(mesh: MeshData | null) {
@@ -257,20 +250,7 @@ export class Viewport {
     this.faceMesh = null;
     this.edgeLines = null;
     if (!mesh) return;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(mesh.vertices, 3));
-    g.setAttribute("normal", new THREE.BufferAttribute(mesh.normals, 3));
-    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(mesh.vertices.length), 3));
-    g.setIndex(new THREE.BufferAttribute(mesh.triangles, 1));
-    // triângulo → face e intervalo de vértices de cada face (para colorir)
-    ({ faceOfTri: this.faceOfTri, faceVerts: this.faceVerts } = select.faceIndex(mesh));
-    this.shadedMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.05, roughness: 0.55, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    this.faceMesh = new THREE.Mesh(g, this.faceMaterial());
-    const eg = new THREE.BufferGeometry();
-    eg.setAttribute("position", new THREE.BufferAttribute(mesh.lines, 3));
-    eg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(mesh.lines.length), 3));
-    this.edgeLines = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ vertexColors: true }));
-    this.bodyGroup.add(this.faceMesh, this.edgeLines);
+    ({ faceMesh: this.faceMesh, edgeLines: this.edgeLines, faceOfTri: this.faceOfTri, faceVerts: this.faceVerts } = content.buildBody(this.bodyGroup, mesh, this.mats, this.analysis, this.size));
     this.recolor();
   }
 
@@ -278,14 +258,7 @@ export class Viewport {
   setOverlay(meshes: MeshData[]) {
     this.disposeGroup(this.overlayGroup);
     if (!this.overlayGroup.parent) this.scene.add(this.overlayGroup);
-    for (const m of meshes) {
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(m.vertices, 3));
-      g.setIndex(new THREE.BufferAttribute(m.triangles, 1));
-      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.6, depthTest: false, side: THREE.DoubleSide }));
-      mesh.renderOrder = 6;
-      this.overlayGroup.add(mesh);
-    }
+    content.buildOverlay(this.overlayGroup, meshes);
     this.el.dataset.overlay = String(meshes.length);
   }
 
@@ -294,28 +267,8 @@ export class Viewport {
     this.disposeGroup(this.regionGroup);
     this.regionMeshes = [];
     if (!sketch || !view) return;
-    const f = view.frame;
-    for (const r of view.regionList) {
-      const pos = new Float32Array((r.tris.length / 2) * 3);
-      for (let i = 0, j = 0; i < r.tris.length; i += 2, j += 3) {
-        const x = r.tris[i], y = r.tris[i + 1];
-        pos[j] = f.o[0] + f.x[0] * x + f.y[0] * y;
-        pos[j + 1] = f.o[1] + f.x[1] * x + f.y[1] * y;
-        pos[j + 2] = f.o[2] + f.x[2] * x + f.y[2] * y;
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-      const mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x9333ea, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
-      mesh.renderOrder = 5;
-      this.regionGroup.add(mesh);
-      this.regionMeshes.push({ mesh, sketch, sig: r.sig, seed: r.seed });
-    }
+    this.regionMeshes = content.buildRegions(this.regionGroup, sketch, view);
     this.recolor();
-  }
-
-  private zebra() {
-    this.zebraMat ??= new THREE.MeshMatcapMaterial({ matcap: zebraTexture(), side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-    return this.zebraMat;
   }
 
   private simGroup = new THREE.Group();
@@ -351,57 +304,10 @@ export class Viewport {
     drawPoleNet(this.poleGroup, this.poleNet, this.poleSel, this.camera, this.renderer.domElement, this.el.dataset, preview);
   }
 
-  /** Material das faces conforme a análise (zebra, linhas de realce ou sombreado com cores). */
-  private faceMaterial(): THREE.Material {
-    const a = this.analysis;
-    if (a?.kind === "zebra") return this.zebra();
-    if (a?.kind === "highlight") {
-      this.highlightMat ??= highlightMaterial();
-      const u = this.highlightMat.uniforms;
-      const axes = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] } as const;
-      const e = axes[a.axis];
-      // luzes acima do modelo: plano perpendicular ao eixo "mais vertical" que não é o das luzes
-      const up = a.axis === "Z" ? axes.Y : axes.Z;
-      const sdir = new THREE.Vector3(...e).cross(new THREE.Vector3(...up)).normalize();
-      u.e.value.set(...e);
-      u.sdir.value.copy(sdir);
-      const k = new THREE.Vector3(...e).cross(sdir);
-      u.h.value = this.size * 0.8 * k.dot(new THREE.Vector3(...up));
-      u.w.value = a.spacing;
-      return this.highlightMat;
-    }
-    return this.shadedMat!;
-  }
-
   /** Análise de superfície: zebra/realce (materiais), inclinação e curvatura (cores), pentes (linhas). */
   setAnalysis(a: Analysis | null) {
     this.analysis = a;
-    // linhas de realce: normais exatas do núcleo (as da malha são médias dos triângulos)
-    if (this.faceMesh && this.mesh) {
-      const exact = a?.kind === "highlight" && a.normals && a.normals.length === this.mesh.normals.length ? a.normals : null;
-      this.faceMesh.geometry.setAttribute("normal", new THREE.BufferAttribute(exact ?? this.mesh.normals, 3));
-      this.el.dataset.exactNormals = exact ? "1" : "";
-    }
-    if (this.faceMesh && this.shadedMat) this.faceMesh.material = this.faceMaterial();
-    this.el.dataset.analysis = a?.kind ?? "";
-    this.disposeGroup(this.analysisGroup);
-    if (!this.analysisGroup.parent) this.scene.add(this.analysisGroup);
-    if (a?.kind === "combs" && a.data) {
-      const add = (arr: Float32Array, color: number) => {
-        if (!arr.length) return;
-        const g = new THREE.BufferGeometry();
-        // as cerdas são desenhadas com o ganho escolhido na interface (a partir da base de cada cerda)
-        const pos = arr.slice();
-        if (a.gain !== 1 && arr === a.data!.quills) for (let i = 0; i < pos.length; i += 6) for (let k = 0; k < 3; k++) pos[i + 3 + k] = pos[i + k] + (pos[i + 3 + k] - pos[i + k]) * a.gain;
-        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-        const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, depthTest: false }));
-        l.renderOrder = 7;
-        this.analysisGroup.add(l);
-      };
-      add(a.data.quills, 0x7c3aed);
-      if (a.gain === 1) add(a.data.envelope, 0xdb2777);
-      this.el.dataset.combs = String(a.data.quills.length / 6);
-    }
+    content.applyAnalysis({ mesh: this.mesh, faceMesh: this.faceMesh, mats: this.mats, size: this.size, scene: this.scene, analysisGroup: this.analysisGroup }, a, this.el.dataset);
     this.recolor();
   }
 
