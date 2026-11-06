@@ -5,7 +5,8 @@ import type { ComponentChildren } from "preact";
 import { COMMANDS, commandById, runCommand } from "./commands.ts";
 import { type Pick, store, useStoreKeys } from "./store.ts";
 import type { GestureDir } from "./settings.ts";
-import { CONTINUITY_COLORS, VIEWS, type ViewName, robustScale } from "./viewport.ts";
+import { CONTINUITY_COLORS, robustScale } from "./viewport-style.ts";
+import { VIEWS, type ViewName } from "./viewport-views.ts";
 import { describeName } from "./forms.tsx";
 
 /** Feature que criou uma face/aresta (pelo primeiro id do nome topológico). */
