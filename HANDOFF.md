@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 5) — cores fora de `viewport.ts` (PR #25)
+
+- **`src/app/viewport-colors.ts`** (novo): `Flash`, `ColorState`, `recolor` (regiões, planos, faces com seleção/hover/feature/pré-visualização/condições/inclinação/curvatura, arestas com desvio/continuidade; publica `data-preview-faces`) e `stepFlash` (realce de 900 ms; devolve true se é preciso recolorir).
+- Código movido verbatim; o `Viewport` mantém `recolor`/`stepFlash` como delegadores finos e junta os três campos do flash num objeto `Flash`. `viewport.ts` 898 → 831 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde (3m36s).
+- **A seguir:** fatia 6 de `viewport.ts` — conteúdo (setMesh, regiões, material das faces, análise) para módulo próprio.
+
 ## Atualização: F1 passo 4 (fatia 4) — câmara fora de `viewport.ts` (PR #24)
 
 - **`src/app/viewport-camera.ts`** (novo): `CamState`, `CamAnim`, `viewDirOf`, `saveCam`/`applyCam`, `rotateCam`, `rollCam`, `panCam`, `zoomCam`, `screenToWorld`, `stepCam` (passo da transição), `gestureDir`, `drawBox` e `drawGesture`.
