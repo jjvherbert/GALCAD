@@ -17,7 +17,7 @@ import { VIEWS, type ViewName } from "./viewport-views.ts";
 import { type Theme, themes } from "./viewport-style.ts";
 import { type SimView, buildSimLayers } from "./viewport-sim.ts";
 import { type PlaneMesh, buildReferences, buildSketches, modelSize } from "./viewport-scene.ts";
-import { type PoleNet, drawPoleNet, poleAt } from "./viewport-poles.ts";
+import { type PoleNet, drawPoleNet } from "./viewport-poles.ts";
 import { type PmiItem, type PmiLabel, buildPmiLabels, placePmiLabels } from "./viewport-pmi.ts";
 import * as select from "./viewport-select.ts";
 import type { Hit, RegionMesh } from "./viewport-select.ts";
@@ -25,21 +25,10 @@ import * as cam from "./viewport-camera.ts";
 import type { CamAnim, CamState } from "./viewport-camera.ts";
 import * as colors from "./viewport-colors.ts";
 import * as content from "./viewport-content.ts";
+import * as mouse from "./viewport-mouse.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
 
-
-type Drag = {
-  button: number;
-  mode: "rotate" | "pan" | "zoom" | "roll" | "box" | "gesture" | "pending" | "pole";
-  pole?: { k: number; start: THREE.Vector3; plane: THREE.Plane; delta: THREE.Vector3 };
-  start: [number, number];
-  last: [number, number];
-  path: [number, number][];
-  moved: boolean;
-  shift: boolean;
-  ctrl: boolean;
-};
 
 export class Viewport {
   readonly renderer: THREE.WebGLRenderer;
@@ -67,8 +56,8 @@ export class Viewport {
   private theme: Theme = themes.light;
   private ray = new THREE.Raycaster();
   private accept: PickKind[] | null = null;
-  private drag: Drag | null = null;
-  private lastMiddleUp = 0;
+  private mouse = mouse.newMouseState();
+  private mouseHost = Viewport.mouseHostOf(this);
   private history: CamState[] = [];
   private boxEl: HTMLDivElement;
   private gestureEl: HTMLDivElement;
@@ -128,7 +117,7 @@ export class Viewport {
     cv.addEventListener("pointerdown", (e) => this.onDown(e));
     cv.addEventListener("pointermove", (e) => this.onMove(e));
     cv.addEventListener("pointerup", (e) => this.onUp(e));
-    cv.addEventListener("pointerleave", () => { if (!this.drag) this.setHover(null); });
+    cv.addEventListener("pointerleave", () => { if (!this.mouse.drag) this.setHover(null); });
     cv.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
     cv.addEventListener("contextmenu", (e) => e.preventDefault());
     cv.addEventListener("dblclick", (e) => this.onDblClick(e));
@@ -395,142 +384,53 @@ export class Viewport {
 
   // --- rato ------------------------------------------------------------------------
 
-  private onDown(e: PointerEvent) {
-    this.finishAnim();
-    const p = this.local(e);
-    this.renderer.domElement.setPointerCapture(e.pointerId);
-    let mode: Drag["mode"] = "pending";
-    const pk = e.button === 0 ? poleAt(this.poleNet, this.camera, this.renderer.domElement, e) : -1;
-    if (pk >= 0 && this.poleNet) {
-      const n = this.poleNet.poles;
-      const start = new THREE.Vector3(n[pk * 3], n[pk * 3 + 1], n[pk * 3 + 2]);
-      const normal = new THREE.Vector3();
-      this.camera.getWorldDirection(normal);
-      this.drag = { button: 0, mode: "pole", start: p, last: p, path: [p], moved: false, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey,
-        pole: { k: pk, start, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(normal, start), delta: new THREE.Vector3() } };
-      return;
-    }
-    if (e.button === 1) mode = e.ctrlKey ? "pan" : e.shiftKey ? "zoom" : e.altKey ? "roll" : "rotate";
-    else if (e.button === 2) mode = "gesture";
-    else if (e.button === 0) mode = this.hitTest(e) ? "pending" : "box";
-    this.drag = { button: e.button, mode, start: p, last: p, path: [p], moved: false, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
-    if (e.button === 1) {
-      e.preventDefault();
-      if (mode === "rotate" && !this.pivot) this.pivot = this.target.clone();
-    }
-  }
+  private onDown(e: PointerEvent) { mouse.onDown(this.mouseHost, this.mouse, e); }
+  private onMove(e: PointerEvent) { mouse.onMove(this.mouseHost, this.mouse, e); }
+  private onUp(e: PointerEvent) { mouse.onUp(this.mouseHost, this.mouse, e); }
+  private onDblClick(e: MouseEvent) { mouse.onDblClick(this.mouseHost, e); }
+  private onWheel(e: WheelEvent) { mouse.onWheel(this.mouseHost, this.mouse, e); }
 
-  private onMove(e: PointerEvent) {
-    const p = this.local(e);
-    const d = this.drag;
-    if (!d) { this.setHover(this.hitTest(e)); return; }
-    const dx = p[0] - d.last[0], dy = p[1] - d.last[1];
-    if (!d.moved && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) > 4) {
-      d.moved = true;
-      if (d.mode === "rotate" || d.mode === "pan" || d.mode === "zoom" || d.mode === "roll") this.pushHistory();
-    }
-    d.last = p;
-    if (!d.moved) return;
-    switch (d.mode) {
-      case "rotate": this.rotateBy(dx * 0.5, dy * 0.5, this.pivot ?? this.target); break;
-      case "pan": this.panBy(dx, dy); break;
-      case "zoom": this.zoomAt(Math.exp(dy * 0.01), d.start); break;
-      case "roll": this.roll(dx * 0.5); break;
-      case "box": cam.drawBox(this.boxEl, d.start, p); break;
-      case "pole": {
-        const pl = d.pole!;
-        const r = this.renderer.domElement.getBoundingClientRect();
-        this.ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), this.camera);
-        const hit = new THREE.Vector3();
-        if (!this.ray.ray.intersectPlane(pl.plane, hit)) break;
-        const delta = hit.sub(pl.start);
-        if (this.poleAxis !== "free") {
-          const ax = { X: new THREE.Vector3(1, 0, 0), Y: new THREE.Vector3(0, 1, 0), Z: new THREE.Vector3(0, 0, 1) }[this.poleAxis];
-          delta.copy(ax.multiplyScalar(delta.dot(ax)));
-        }
-        pl.delta.copy(delta);
-        this.drawPoles({ k: pl.k, p: pl.start.clone().add(delta) });
-        break;
-      }
-      case "gesture": {
-        d.path.push(p);
-        cam.drawGesture(this.gestureEl, d.path);
-        this.onGestureTrack(cam.gestureDir(d.start, p), [e.clientX, e.clientY]);
-        break;
-      }
-    }
-  }
-
-  private onUp(e: PointerEvent) {
-    const d = this.drag;
-    this.drag = null;
-    if (!d) return;
-    const p = this.local(e);
-    if (d.button === 1) {
-      const now = performance.now();
-      if (!d.moved) {
-        if (now - this.lastMiddleUp < 350) { this.fit(this.lastResult); this.lastMiddleUp = 0; return; }
-        this.lastMiddleUp = now;
-        // clique no meio sobre a geometria: centro de rotação nesse ponto
-        const h = this.hitTest(e, null);
-        this.setPivot(h ? h.point : null);
-      }
-      this.publish();
-      return;
-    }
-    if (d.button === 2) {
-      this.gestureEl.replaceChildren();
-      this.onGestureTrack(null, null);
-      const dir = cam.gestureDir(d.start, p);
-      if (d.moved && dir) this.onGesture(dir);
-      else {
-        const h = this.hitTest(e, null);
-        this.onContextMenu([e.clientX, e.clientY], h ? this.toPick(h) : null);
-      }
-      return;
-    }
-    if (d.button !== 0) return;
-    if (d.mode === "pole" && d.pole && this.poleNet) {
-      const nv = this.poleNet.nv;
-      const i = Math.floor(d.pole.k / nv), j = d.pole.k % nv;
-      const r3 = (x: number) => Math.round(x * 1000) / 1000;
-      if (d.moved) this.onPoleMoved(i, j, [r3(d.pole.delta.x), r3(d.pole.delta.y), r3(d.pole.delta.z)]);
-      else this.onPoleSelect(i, j);
-      return;
-    }
-    if (d.mode === "box") {
-      this.boxEl.style.display = "none";
-      if (d.moved) { this.onBoxSelect(this.boxSelect(d.start, p), d.ctrl || d.shift); return; }
-      this.onEmptyClick();
-      return;
-    }
-    if (d.moved) return;
-    const h = this.hitTest(e);
-    if (!h) { this.onEmptyClick(); return; }
-    this.onPick(this.toPick(h), e.ctrlKey || e.shiftKey || e.metaKey, [e.clientX, e.clientY]);
-  }
-
-  private onDblClick(e: MouseEvent) {
-    if (e.button !== 0) return;
-    const h = this.hitTest(e, null);
-    if (h) {
-      const pick = this.toPick(h);
-      this.el.dataset.lastDblClick = pick.kind === "face" || pick.kind === "edge" ? `${pick.kind}:${pick.name}` : pick.kind;
-      this.onDoubleClick(pick);
-    }
-  }
-
-  private wheelAt = 0;
-  private onWheel(e: WheelEvent) {
-    this.finishAnim();
-    e.preventDefault();
-    // uma sequência de roda conta como uma só mudança de vista no histórico
-    if (performance.now() - this.wheelAt > 500) this.pushHistory();
-    this.wheelAt = performance.now();
-    // SolidWorks: roda para a frente (deltaY < 0) afasta; "reverseWheel" inverte
-    let f = Math.exp(-e.deltaY * 0.0015);
-    if (this.settings.reverseWheel) f = 1 / f;
-    this.zoomAt(f, this.local(e));
+  /** Adaptador para `viewport-mouse.ts`: getters (é criado antes do construtor atribuir os campos), setas para métodos e callbacks. */
+  private static mouseHostOf(v: Viewport): mouse.MouseHost {
+    return {
+      get camera() { return v.camera; },
+      get renderer() { return v.renderer; },
+      get ray() { return v.ray; },
+      get el() { return v.el; },
+      get boxEl() { return v.boxEl; },
+      get gestureEl() { return v.gestureEl; },
+      get target() { return v.target; },
+      get settings() { return v.settings; },
+      get poleNet() { return v.poleNet; },
+      get poleAxis() { return v.poleAxis; },
+      get lastResult() { return v.lastResult; },
+      get pivot() { return v.pivot; },
+      set pivot(p) { v.pivot = p; },
+      local: (ev) => v.local(ev),
+      hitTest: (ev, accept) => v.hitTest(ev, accept),
+      toPick: (h) => v.toPick(h),
+      setHover: (h) => v.setHover(h),
+      pushHistory: () => v.pushHistory(),
+      rotateBy: (x, y, about) => v.rotateBy(x, y, about),
+      panBy: (dx, dy) => v.panBy(dx, dy),
+      zoomAt: (f, at) => v.zoomAt(f, at),
+      roll: (deg) => v.roll(deg),
+      drawPoles: (preview) => v.drawPoles(preview),
+      fit: (r) => v.fit(r),
+      setPivot: (p) => v.setPivot(p),
+      publish: () => v.publish(),
+      finishAnim: () => v.finishAnim(),
+      boxSelect: (p, q) => v.boxSelect(p, q),
+      onPick: (p, add, at) => v.onPick(p, add, at),
+      onEmptyClick: () => v.onEmptyClick(),
+      onContextMenu: (at, pick) => v.onContextMenu(at, pick),
+      onGesture: (d) => v.onGesture(d),
+      onBoxSelect: (picks, add) => v.onBoxSelect(picks, add),
+      onDoubleClick: (pick) => v.onDoubleClick(pick),
+      onGestureTrack: (d, at) => v.onGestureTrack(d, at),
+      onPoleSelect: (i, j) => v.onPoleSelect(i, j),
+      onPoleMoved: (i, j, d) => v.onPoleMoved(i, j, d),
+    };
   }
 
   /** Seleção por caixa: arestas (e faces, se o filtro as aceitar) dentro da caixa ou que a cruzam. */
