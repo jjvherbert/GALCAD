@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 17) — superfícies partidas por tema em `src/kernel/features/surface-*.ts` (PR #37)
+
+- **Novos em `src/kernel/features/`:** `surface-common.ts` (70 linhas: tipo `Step`, cadeias de esboço, costura, sólidos a partir de cascas), `surface-sketch.ts` (81: extrudir/revolver/varrer/loft), `surface-fill.ts` (165: preencher, fronteira, regrada), `surface-edit.ts` (95: desaparar, substituir face, desviar), `surface-solid.ts` (73: costurar, espessar) e `surface-trim.ts` (181: aparar, apagar face).
+- Código movido verbatim. `surface.ts` 634 → 9 linhas e reexporta os módulos, por isso `registry.ts` não muda. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, verificação visual a 390 e 1440 sem problemas. CI verde no PR antes do merge.
+- **A seguir:** `sim/calculix.ts` (610), depois `drawing/render.ts`, `kernel/features/gsd.ts`, `kernel/service.ts` e o resto >400; `viewport.ts` fica para depois.
+
 ## Atualização: F1 passo 4 (fatia 16) — modelo de documento partido por tema em `src/doc/types-*.ts` (PR #36)
 
 - **Novos em `src/doc/`:** `types-base.ts` (48 linhas: Expr, Variable, Vec3, DEFAULT_DENSITY, referências), `types-sketch.ts` (67: esboço), `types-solid.ts` (202: features de sólidos), `types-surface.ts` (189: superfícies) e `types-gsd.ts` (99: superfícies avançadas, Fase 4).
