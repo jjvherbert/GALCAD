@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 3) — seleção fora de `viewport.ts` (PR #23)
+
+- **`src/app/viewport-select.ts`** (novo): `Hit`, `RegionMesh`, `Pickables`, `faceIndex` (triângulo → face e vértices por face), `keyOf`, `toPick`, `hitTest` (raio: regiões, arestas, faces, planos) e `boxSelect` (janela/cruzamento).
+- Código movido verbatim; o `Viewport` mantém `keyOf`/`hitTest`/`toPick`/`boxSelect` como métodos finos que delegam (passa um objeto explícito porque os campos são privados). `viewport.ts` 1037 → 967 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/1440 sem problemas. CI verde (3m42s).
+- **A seguir:** fatia 4 de `viewport.ts` — câmara (rodar/deslocar/zoom, animação, gestos) para `viewport-camera.ts`.
+
 ## Atualização: F1 passo 4 (fatia 2) — cena, polos e PMI fora de `viewport.ts` (PR #22)
 
 - **`src/app/viewport-scene.ts`** (novo): `PlaneMesh`, `planeQuad`, `buildReferences` (planos padrão/de referência, eixos, referenciais), `buildSketches`, `modelSize`.
