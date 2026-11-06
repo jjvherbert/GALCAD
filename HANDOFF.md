@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 10) — projeto e documentos fora de `store.ts` (PR #30)
+
+- **`src/app/store-docs.ts`** (novo, 180 linhas): `commitDoc`, `setActive`, `addDocument`/`deleteDocument`/`renameDocument`, `setPartProperties`, `setAnalysis`/`refreshAnalysis`, `autosave`, `commit`/`undo`/`redo`, `newDoc` e `open` (mais `restore` interno), com `AUTOSAVE` (exportada) e `drawingKernelKey`, como funções que recebem o `Store`.
+- Código movido verbatim (`this.` → `s.`). A classe fica com delegadores de uma linha com as mesmas assinaturas; `refreshAnalysis` e `autosave` passam a públicos, tal como `histories`, `simResults` e `drawingResults`. `store.ts` 807 → 652 linhas. Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde no PR antes do merge.
+- **A seguir:** continuar `store.ts` (652) — features/templates/publicações e esboço/árvore/seleção em módulos com delegadores (Opus).
+
 ## Atualização: F1 passo 4 (fatia 9) — montagens fora de `store.ts` (PR #29)
 
 - **`src/app/store-assembly.ts`** (novo, 111 linhas): `displayProject`, `insertComponent`/`updateComponent`/`deleteComponent`, mates (`startMate`, `mateRefOf`, `editMate`, `updateMateDraft`, `confirmMate`, `cancelMate`, `deleteMate`, `toggleMate`) e `checkInterference`, como funções que recebem o `Store`.
