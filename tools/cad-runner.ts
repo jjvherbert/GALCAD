@@ -10,28 +10,25 @@
 // scripts recebidos: os ficheiros de entrada dos solvers são gerados aqui a partir de `case.json`
 // (geometria em BREP e superfícies em STL são só dados). Os solvers correm como processos separados
 // (as licenças GPL/AGPL não se estendem à aplicação).
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { cpus, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import type { CfdCase, FemCase, SimCase } from "../src/sim/case.ts";
-import { type Algo3D, femGeo, type GeoOpts, su2Geo } from "../src/sim/gmsh.ts";
-import { elementsOf, faceBlocks, parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
-import { faceIntegrals } from "../src/sim/elements.ts";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import type { SimCase } from "../src/sim/case.ts";
 import { meshPreview } from "../src/sim/meshview.ts";
-import { type VtkFrame, parseVtk, radiossBlocks, radiossDeck } from "../src/sim/radioss.ts";
 import type { MeshQuality } from "../src/sim/quality.ts";
-import { calculixDeck, femResult, femResultFrom, type FemResult } from "../src/sim/calculix.ts";
-import { openfoamCase } from "../src/sim/openfoam.ts";
-import { patchAverage, patchFlux, patchPressureForce, readBoundary, readFaces, readLabels, readPoints, readScalarField } from "../src/sim/foamread.ts";
-import { su2Config } from "../src/sim/su2.ts";
-import { asterCase, asterResult } from "../src/sim/aster.ts";
-import { type LayerField, type FoamMeshFull, patchLayer, readField, sliceLayer } from "../src/sim/foamfields.ts";
-import { type ResultLayer, type ResultView, femView } from "../src/sim/result.ts";
+import { type FemResult } from "../src/sim/calculix.ts";
+import { type ResultView } from "../src/sim/result.ts";
 import { type ConvergenceLevel, type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci, isMonotonic } from "../src/sim/convergence.ts";
 import { type XfoilRequest, type XfoilResult, XFOIL_HYPOTHESES, parsePolar, polarSummary, xfoilCommands, xfoilRetryCommands } from "../src/sim/xfoil.ts";
+import { type Log, type Job, jobState, cancelJob, CancelledError, tail, tools } from "./cad-runner-proc.ts";
+import { checkGroups, gmshMesh, runFem } from "./cad-runner-fem.ts";
+import { runOpenfoam, runSu2 } from "./cad-runner-cfd.ts";
+export { tools } from "./cad-runner-proc.ts";
+export { gmshError } from "./cad-runner-fem.ts";
+
 
 export interface RunResult {
   ok: boolean;
@@ -55,508 +52,6 @@ export interface RunResult {
   /** Pré-visualização da malha: relatório de qualidade. */
   quality?: MeshQuality;
 }
-
-type Log = (s: string) => void;
-
-// ---------------------------------------------------------------------------
-// Solvers instalados
-// ---------------------------------------------------------------------------
-
-const which = (cmd: string) => {
-  const r = spawnSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8" });
-  return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null;
-};
-const FOAM_RC = ["/usr/lib/openfoam/openfoam2606/etc/bashrc", "/usr/lib/openfoam/openfoam2512/etc/bashrc", "/usr/lib/openfoam/openfoam2506/etc/bashrc", "/opt/openfoam2606/etc/bashrc", "/usr/share/openfoam/etc/bashrc"];
-
-export function tools() {
-  const gmsh = process.env.CAD_GMSH ?? which("gmsh");
-  const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
-  const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
-  // code_aster: PATH, ou um ambiente conda/micromamba "aster" (instalação recomendada: conda-forge)
-  const home = process.env.HOME ?? "";
-  const condaAster = [process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`, `${home}/micromamba/envs/aster/bin/run_aster`, `${home}/miniforge3/envs/aster/bin/run_aster`, "/opt/mamba/root/envs/aster/bin/run_aster", "/opt/conda/envs/aster/bin/run_aster"].find((p) => p && existsSync(p));
-  const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
-  const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
-  // OpenRadioss/OpenCourant: pasta da distribuição oficial (exec/, hm_cfg_files/, extlib/)
-  const radDir = [process.env.CAD_RADIOSS_DIR, `${home}/OpenCourant`, "/opt/OpenCourant"].find((p) => p && existsSync(join(p, "exec")));
-  const radExe = radDir ? radiossExecutables(radDir) : null;
-  // OpenFOAM nativo para Windows (versão MinGW da openfoam.com): pasta OpenFOAM-vXXXX com platforms/*/bin
-  const foamDir = process.env.CAD_FOAM_DIR && existsSync(process.env.CAD_FOAM_DIR) ? process.env.CAD_FOAM_DIR : null;
-  const foamBin = foamDir ? (() => { const pl = join(foamDir, "platforms"); const t = existsSync(pl) ? readdirSync(pl).find((d) => existsSync(join(pl, d, "bin"))) : undefined; return t ? join(pl, t, "bin") : null; })() : null;
-  const foamDirect = which("simpleFoam");
-  const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
-  const version = (cmd: string | null, args: string[]) => {
-    if (!cmd) return null;
-    // lançadores .cmd/.bat só correm pelo cmd.exe (o Node recusa-os sem shell: EINVAL, stdout null);
-    // um executável que não arranca não pode derrubar o agente — fica sem versão
-    const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
-    const r = script
-      ? spawnSync(`"${cmd}"`, args, { encoding: "utf8", timeout: 10000, shell: true })
-      : spawnSync(cmd, args, { encoding: "utf8", timeout: 10000 });
-    return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split(/\r?\n/)[0]?.slice(0, 80) ?? "";
-  };
-  return {
-    gmsh: gmsh ? { path: gmsh, version: version(gmsh, ["--version"]) } : null,
-    calculix: ccx ? { path: ccx, version: version(ccx, ["-v"]) } : null,
-    openfoam: foamDir && foamBin
-      ? { path: foamBin, version: foamDir.replace(/.*[\\/]/, ""), rc: null, dir: foamDir, bin: foamBin }
-      : foamDirect || foamRc ? { path: foamDirect ?? foamRc!, version: foamRc ? foamRc.replace(/\/etc\/bashrc$/, "") : "no PATH", rc: foamRc } : null,
-    su2: su2 ? { path: su2, version: "SU2_CFD" } : null,
-    code_aster: aster ? { path: aster, version: aster.endsWith("as_run") ? "as_run" : "run_aster" } : null,
-    xfoil: xfoil ? { path: xfoil, version: "XFOIL 6.9x", preload: process.env.CAD_XFOIL_PRELOAD ?? null } : null,
-    openradioss: radDir && radExe ? { path: radExe.engine, version: "OpenCourant", dir: radDir, ...radExe } : null,
-  };
-}
-
-/** Executáveis da distribuição do OpenCourant: Starter, Engine (sem MPI, dupla precisão) e anim_to_vtk. */
-function radiossExecutables(dir: string): { starter: string; engine: string; animToVtk: string } | null {
-  const ex = readdirSync(join(dir, "exec"));
-  const pick = (re: RegExp) => { const f = ex.filter((x) => re.test(x) && !/_sp(\.exe)?$|ompi|impi|msmpi/.test(x)).sort((a, b) => a.length - b.length)[0]; return f ? join(dir, "exec", f) : null; };
-  const starter = pick(/^starter_/), engine = pick(/^engine_/), animToVtk = pick(/^anim_to_vtk/);
-  return starter && engine && animToVtk ? { starter, engine, animToVtk } : null;
-}
-
-/** Ambiente do processo com variáveis extra; `PATH` junta-se ao existente (no Windows a chave é "Path"). */
-function withEnv(extra?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  if (!extra) return env;
-  const { PATH_PREPEND, ...rest } = extra;
-  Object.assign(env, rest);
-  if (PATH_PREPEND) {
-    const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
-    env[key] = `${PATH_PREPEND}${process.platform === "win32" ? ";" : ":"}${env[key] ?? ""}`;
-  }
-  return env;
-}
-
-/**
- * Job em curso (o agente corre um de cada vez): processo filho atual, cauda da saída para o progresso
- * ao vivo e motivo de cancelamento. `run()` regista aqui o processo para o poder matar.
- */
-interface Job { start: number; tail: string; child?: ReturnType<typeof spawn>; cancelled?: string; meshTimeout?: number; solveTimeout?: number }
-let currentJob: Job | null = null;
-
-/** Mata o processo e os filhos: no Windows o `shell:true` mete um cmd.exe pelo meio, daí `taskkill /T`. */
-function killTree(p: ReturnType<typeof spawn>): void {
-  if (p.exitCode !== null || p.pid === undefined) return;
-  if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(p.pid), "/T", "/F"], { stdio: "ignore" });
-  else p.kill("SIGKILL");
-}
-
-/** Cancela o job em curso (Parar no browser ou pedido fechado); devolve se havia algo a cancelar. */
-function cancelJob(reason: string): boolean {
-  if (!currentJob) return false;
-  currentJob.cancelled ??= reason;
-  if (currentJob.child) killTree(currentJob.child);
-  return true;
-}
-
-class CancelledError extends Error {}
-class TimeoutError extends Error {}
-
-function run(cmd: string, args: string[], cwd: string, logFile: string, log: Log, env?: NodeJS.ProcessEnv & { PATH_PREPEND?: string }, opts: { timeoutSec?: number } = {}): Promise<void> {
-  return new Promise((ok, fail) => {
-    if (currentJob?.cancelled) { fail(new CancelledError(currentJob.cancelled)); return; }
-    log(`$ ${[cmd, ...args].join(" ")}`);
-    const out: string[] = [];
-    // lançadores .cmd/.bat (code_aster no Windows) só correm através do cmd.exe; os argumentos são
-    // nomes de ficheiros gerados aqui (sem aspas nem metacaracteres)
-    const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
-    if (script && args.some((a) => /["&|<>^%]/.test(a))) { fail(new Error(`Argumento inválido para ${cmd}`)); return; }
-    const p = script
-      ? spawn(`"${cmd}"`, args.map((a) => `"${a}"`), { cwd, env: withEnv(env), shell: true })
-      : spawn(cmd, args, { cwd, env: withEnv(env) });
-    const job = currentJob;
-    if (job) job.child = p;
-    const take = (b: Buffer) => {
-      const s = b.toString();
-      out.push(s);
-      if (job) job.tail = (job.tail + s).slice(-20000);
-    };
-    p.stdout.on("data", take);
-    p.stderr.on("data", take);
-    // limite de tempo: mata a árvore de processos e diz porquê
-    // (sem limite explícito, os solvers usam o limite de cálculo do pedido)
-    let timedOut = false;
-    const limit = opts.timeoutSec ?? job?.solveTimeout;
-    const timer = limit ? setTimeout(() => { timedOut = true; killTree(p); }, limit * 1000) : undefined;
-    p.on("error", (e) => { clearTimeout(timer); fail(new Error(`${cmd}: ${e.message}`)); });
-    p.on("close", (code) => {
-      clearTimeout(timer);
-      if (job?.child === p) job.child = undefined;
-      writeFileSync(join(cwd, logFile), out.join(""));
-      if (job?.cancelled) fail(new CancelledError(job.cancelled));
-      else if (timedOut) fail(new TimeoutError(`${cmd.split(/[\\/]/).pop()} não terminou em ${limit} s`));
-      else if (code === 0) ok();
-      else fail(new Error(`${cmd} terminou com o código ${code}:\n${out.join("").split(/\r?\n/).slice(-15).join("\n")}`));
-    });
-  });
-}
-
-/**
- * Comandos do OpenFOAM: com o ambiente já carregado (WM_PROJECT_DIR) correm diretamente; senão,
- * pelo bashrc da instalação (os executáveis precisam do ambiente para encontrar o diretório etc).
- */
-function foam(cmd: string, args: string[], cwd: string, log: Log) {
-  const t = tools().openfoam;
-  if (!t) throw new Error("OpenFOAM não encontrado (instale a versão openfoam.com ou defina CAD_FOAM_BASHRC)");
-  if ("dir" in t && t.dir) {
-    // Windows: o ambiente do setEnvVariables-vXXXX.bat oficial, sem MSYS2 nem MPI (Pstream de série)
-    const version = t.dir.replace(/.*[\\/]OpenFOAM-/, "");
-    return run(join(t.bin, `${cmd}.exe`), args, cwd, `log.${cmd}`, log, { WM_PROJECT: "OpenFOAM", WM_PROJECT_VERSION: version, WM_PROJECT_DIR: t.dir, FOAM_SIGFPE: "1", PATH_PREPEND: t.bin });
-  }
-  if (process.env.WM_PROJECT_DIR || !t.rc) return run(cmd, args, cwd, `log.${cmd}`, log);
-  const quoted = [cmd, ...args].map((a) => `'${a.replace(/'/g, "")}'`).join(" ");
-  return run("bash", ["-c", `. '${t.rc}' >/dev/null 2>&1; exec ${quoted}`], cwd, `log.${cmd}`, log);
-}
-
-// ---------------------------------------------------------------------------
-// Casos
-// ---------------------------------------------------------------------------
-
-/** Confere os grupos da malha com as faces do CAD (centroide médio dos triângulos de cada grupo). */
-function checkGroups(c: FemCase, m: Msh): string[] {
-  const out: string[] = [];
-  const diag = Math.hypot(...c.bbox.max.map((x, i) => x - c.bbox.min[i]));
-  for (const [name, tags] of Object.entries(c.groups)) {
-    const faces = c.faces.filter((f) => tags.includes(f.tag));
-    const A = faces.reduce((s, f) => s + f.area, 0);
-    const want = [0, 1, 2].map((k) => faces.reduce((s, f) => s + f.center[k] * f.area, 0) / A);
-    let a = 0;
-    const got = [0, 0, 0];
-    for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
-      const P = nodes.map((t) => m.nodes.get(t)!);
-      const fi = faceIntegrals(type, P);
-      a += fi.area;
-      // centroide da face pelas áreas nodais consistentes
-      fi.nodal.forEach((w, i) => { for (let q = 0; q < 3; q++) got[q] += w * P[i][q]; });
-    }
-    if (!a) { out.push(`Grupo ${name}: sem faces na malha`); continue; }
-    const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
-    if (d > 0.02 * diag || Math.abs(a - A) > 0.05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
-  }
-  // montagens: cada volume da malha tem de cair na caixa do corpo correspondente
-  for (const b of c.bodies ?? []) {
-    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-    for (const bl of physicalBlocks(m, b.group)) for (const t of bl.conn) { const p = m.nodes.get(t)!; for (let q = 0; q < 3; q++) { lo[q] = Math.min(lo[q], p[q]); hi[q] = Math.max(hi[q], p[q]); } }
-    const dev = Math.max(...[0, 1, 2].map((q) => Math.max(Math.abs(lo[q] - b.bbox.min[q]), Math.abs(hi[q] - b.bbox.max[q]))));
-    if (!Number.isFinite(dev) || dev > 0.02 * diag) out.push(`Corpo ${b.name} (${b.group}): o volume da malha não corresponde ao corpo do CAD`);
-  }
-  // seeds e faces mapeadas: as curvas do Gmsh têm de ser as arestas do CAD com a mesma tag
-  for (const cv of c.mesh.curves ?? []) {
-    const box = m.entityBox.get(`1:${cv.tag}`);
-    const dev = box ? Math.max(...[0, 1, 2].map((q) => Math.max(Math.abs(box[q] - cv.box.min[q]), Math.abs(box[q + 3] - cv.box.max[q])))) : Infinity;
-    if (dev > 1e-3 * diag + 1e-6) { out.push(`Aresta ${cv.tag}: a curva do Gmsh não corresponde à aresta do CAD (numeração diferente) — as seeds não podem ser aplicadas`); break; }
-  }
-  return out;
-}
-
-/**
- * Traduz os erros habituais do `log.gmsh` para uma mensagem legível (com as superfícies em causa);
- * `null` se não reconhecer nada. As faces do Gmsh têm a numeração do núcleo (o BREP é o mesmo).
- */
-export function gmshError(logText: string): string | null {
-  const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim());
-  if (!errs.length) return null;
-  const all = errs.join("\n");
-  const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
-  const where = faces.length ? ` (faces ${faces.join(", ")})` : "";
-  if (/self[- ]?intersect|intersecting facets|overlapping facets|PLC Error|invalid PLC/i.test(all))
-    return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
-  if (/boundary recovery|could not recover/i.test(all))
-    return `O gerador 3D não conseguiu respeitar a malha das faces${where}. Normalmente é uma face muito fina ou um ângulo muito agudo; tente um tamanho de elemento menor nessa zona.`;
-  if (/no (volume|elements) in|not closed|unable to recover the volume|no tetrahedra/i.test(all))
-    return `A geometria não forma um volume fechado${where}. Verifique se o sólido é estanque (sem faces em falta).`;
-  if (/degenerat|small edge|too small|zero length/i.test(all))
-    return `Há arestas ou faces degeneradas/minúsculas${where}. Remova detalhes muito pequenos ou aumente o tamanho mínimo.`;
-  return `O Gmsh falhou: ${errs[errs.length - 1]}`;
-}
-
-const ALGO_NAMES: Record<Algo3D, string> = { 1: "Delaunay", 4: "Frontal", 10: "HXT" };
-
-/**
- * Gera a malha com o Gmsh. Ao regenerar tenta em cascata Delaunay → HXT (paralelo) → Frontal sem
- * otimização de ordem 2 → (FEM) com reparação OCC, cada tentativa com limite de tempo; a reparação só
- * é aceite se os grupos continuarem a bater certo. Devolve a malha lida (FEM) ou `undefined` (SU2).
- */
-async function gmshMesh(c: SimCase, dir: string, log: Log, o: { kind: "fem" | "su2"; regenerate: boolean; preview?: boolean }): Promise<Msh | undefined> {
-  const t = tools();
-  if (!t.gmsh) throw new Error("Gmsh não encontrado (instale o Gmsh ou defina CAD_GMSH)");
-  const geo = join(dir, "mesh.geo");
-  const nt = String(Math.max(1, cpus().length));
-  const args = (n: string) => o.kind === "fem" ? ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", n] : ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", n];
-  const write = (g: GeoOpts) => writeFileSync(geo, o.kind === "fem" ? femGeo(c as FemCase, g) : su2Geo(c as CfdCase, g));
-  const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : undefined;
-  const timeoutSec = currentJob?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
-  // geo já existente e sem regenerar: corre-o tal como está (pode ter sido editado à mão)
-  if (!o.regenerate && existsSync(geo)) {
-    try { await run(t.gmsh.path, args(nt), dir, "log.gmsh", log, undefined, { timeoutSec }); }
-    catch (e) { throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? (e as Error).message); }
-    return read();
-  }
-  const attempts: GeoOpts[] = [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
-  if (o.kind === "fem") attempts.push({ algorithm3D: 4, optimizeHO: false, heal: true });
-  const start = Date.now();
-  let last: Error | undefined, diag: string | null = null;
-  for (const [k, g] of attempts.entries()) {
-    if (k > 0 && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
-    write(g);
-    log(`Malha: tentativa ${k + 1}/${attempts.length} — ${ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
-    try {
-      // só o HXT é paralelo; os outros com -nt 1 (resultado reprodutível)
-      await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec });
-      const msh = read();
-      if (g.heal && msh) {
-        const w = checkGroups(c as FemCase, msh);
-        if (w.length) { last = new Error(`A reparação da geometria alterou as faces das condições:\n${w.join("\n")}`); continue; }
-      }
-      if (k > 0) log(`Malha: obtida na tentativa ${k + 1} (${ALGO_NAMES[g.algorithm3D ?? 1]}).`);
-      return msh;
-    } catch (e) {
-      if (e instanceof CancelledError) throw e;
-      last = e as Error;
-      diag ??= gmshError(logOf(dir));
-      log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
-    }
-  }
-  throw new Error(diag ?? last?.message ?? "A malha falhou");
-}
-
-const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh"), "utf8"); } catch { return ""; } };
-
-/** Descrição curta dos elementos da malha (resumo). */
-const meshKind = (c: FemCase) => (c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`);
-
-/** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
-async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
-  const t = tools();
-  if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-  if (!t.code_aster) throw new Error("code_aster (run_aster) não encontrado (https://code-aster.org, ou defina CAD_ASTER)");
-  const msh = (await gmshMesh(c, dir, log, { kind: "fem", regenerate }))!;
-  const warnings = checkGroups(c, msh);
-  if (warnings.length) throw new Error(warnings.join("\n"));
-  const ac = asterCase(c, msh);
-  warnings.push(...ac.warnings);
-  for (const [p, text] of Object.entries(ac.files)) writeFileSync(join(dir, p), text);
-  await run(t.code_aster.path, ["job.export"], dir, "log.aster", log);
-  const rd = (f: string) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : undefined);
-  const u = rd("u.tab");
-  if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
-  const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab") }, ac.nodeOrder);
-  const elements = [...elementsOf(solidBlocks(msh, c.bodies))].length;
-  const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} ${meshKind(c)}`], ...fem.summary];
-  return { ok: true, physics: "fem", solver: "code_aster", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
-}
-
-/**
- * OpenRadioss (OpenCourant): Starter e Engine sobre a malha Gmsh, animações convertidas em VTK pelo
- * anim_to_vtk e lidas como blocos nodais (deslocamento, von Mises) para o mesmo resultado dinâmico.
- */
-async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
-  const t = tools();
-  if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-  const r = t.openradioss;
-  if (!r) throw new Error("OpenRadioss/OpenCourant não encontrado (https://github.com/OpenCourant/OpenCourant/releases: descompacte e defina CAD_RADIOSS_DIR)");
-  const msh = (await gmshMesh(c, dir, log, { kind: "fem", regenerate }))!;
-  const warnings = checkGroups(c, msh);
-  if (warnings.length) throw new Error(warnings.join("\n"));
-  const deck = radiossDeck(c, msh);
-  warnings.push(...deck.warnings);
-  writeFileSync(join(dir, `${deck.name}_0000.rad`), deck.starter);
-  writeFileSync(join(dir, `${deck.name}_0001.rad`), deck.engine);
-  const plat = process.platform === "win32" ? "win64" : "linux64";
-  // bibliotecas do leitor de entradas e do h3d; no Windows também o runtime Intel oneAPI dos executáveis
-  const libs = [join(r.dir, "extlib", "hm_reader", plat), join(r.dir, "extlib", "h3d", "lib", plat), ...(plat === "win64" ? [join(r.dir, "extlib", "intelOneAPI_runtime", "win64")] : [])];
-  const env = {
-    RAD_CFG_PATH: join(r.dir, "hm_cfg_files"), RAD_H3D_PATH: libs[1], OMP_NUM_THREADS: "1", KMP_STACKSIZE: "400m", OMP_STACKSIZE: "400m",
-    ...(process.platform === "win32" ? { PATH_PREPEND: libs.join(";") } : { LD_LIBRARY_PATH: [...libs, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }),
-  };
-  await run(r.starter, ["-i", `${deck.name}_0000.rad`, "-np", "1", "-nt", "1"], dir, "log.starter", log, env);
-  const out0 = existsSync(join(dir, `${deck.name}_0000.out`)) ? readFileSync(join(dir, `${deck.name}_0000.out`), "utf8") : "";
-  const nerr = /(\d+)\s+ERROR\(S\)/.exec(out0);
-  if (!/NORMAL TERMINATION/i.test(out0) || !nerr || Number(nerr[1]) > 0) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
-  await run(r.engine, ["-i", `${deck.name}_0001.rad`, "-nt", "1"], dir, "log.engine", log, env);
-  const out1 = existsSync(join(dir, `${deck.name}_0001.out`)) ? readFileSync(join(dir, `${deck.name}_0001.out`), "utf8") : "";
-  if (!/NORMAL TERMINATION/i.test(out1)) throw new Error(`Engine do OpenRadioss não terminou normalmente:\n${tail(join(dir, `${deck.name}_0001.out`), 40)}`);
-  // animações galcadA001, galcadA002, … → VTK (o anim_to_vtk escreve no stdout)
-  const anims = readdirSync(dir).filter((f) => new RegExp(`^${deck.name}A\\d+$`).test(f)).sort();
-  if (!anims.length) throw new Error("O OpenRadioss não escreveu animações");
-  const frames: VtkFrame[] = [];
-  for (const a of anims) {
-    const res = spawnSync(r.animToVtk, [a], { cwd: dir, env: withEnv(env), encoding: "utf8", maxBuffer: 1 << 30 });
-    if (res.status !== 0 || !res.stdout.includes("UNSTRUCTURED_GRID")) throw new Error(`anim_to_vtk falhou em ${a}: ${(res.stderr || res.stdout).slice(-400)}`);
-    frames.push(parseVtk(res.stdout));
-  }
-  const fem = femResultFrom(c, msh, radiossBlocks(frames), { frequencies: [], buckling: [], reactions: [], reactionHistory: [] });
-  const dtm = /TIME STEP\s*[:=]?\s*([\d.Ee+-]+)/.exec(out1) ?? /DT\s*=\s*([\d.Ee+-]+)/.exec(out1);
-  const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`], ["Integração no tempo", `explícita (OpenRadioss), passo estável do Engine${dtm ? ` ≈ ${(Number(dtm[1]) / 1000).toExponential(3)} s` : ""}, ${frames.length} animações`], ...fem.summary];
-  return { ok: true, physics: "fem", solver: "OpenRadioss (OpenCourant)", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, `${deck.name}_0001.out`)) };
-}
-
-async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
-  if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
-  if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
-  const t = tools();
-  if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-  if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
-  const msh = (await gmshMesh(c, dir, log, { kind: "fem", regenerate }))!;
-  const warnings = checkGroups(c, msh);
-  if (warnings.length) throw new Error(warnings.join("\n"));
-  const deck = calculixDeck(c, msh);
-  warnings.push(...deck.warnings);
-  writeFileSync(join(dir, "job.inp"), deck.inp);
-  log(`malha: ${deck.nodes} nós, ${deck.elements} elementos`);
-  await run(t.calculix.path, ["-i", "job"], dir, "log.ccx", log, { OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "2" });
-  const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "", deck.supportLoad);
-  const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`], ...fem.summary];
-  if (deck.dynamic) {
-    summary.splice(1, 0, ["Integração no tempo", `${c.dynamic!.scheme === "explicit" ? "explícita" : "implícita"}, passo ${deck.dynamic.dt.toExponential(3)} s${deck.dynamic.stable ? " (estável da malha)" : ""}, ${deck.dynamic.increments} incrementos`]);
-    // o CalculiX escala a massa (seletivamente) quando o passo pedido passa o estável
-    const lg = existsSync(join(dir, "log.ccx")) ? readFileSync(join(dir, "log.ccx"), "utf8") : "";
-    const sc = /Scaling factor of time increment:\s*([\d.Ee+-]+)/.exec(lg);
-    if (/Selective Mass Scaling is active/.test(lg) || (sc && Number(sc[1]) > 1.0001)) warnings.push(`O passo pedido passa o limite de estabilidade: o CalculiX escalou a massa (fator ${sc?.[1] ?? "?"} no passo) — os modos altos ficam alterados; deixe o passo em branco para usar o estável`);
-  }
-  return { ok: true, physics: "fem", solver: `CalculiX ${t.calculix.version ?? ""}`.trim(), summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, "log.ccx")) };
-}
-
-/**
- * Camadas do resultado CFD: patches (paredes/corpo, entrada, saída) com a pressão e três cortes
- * pelo centro do corpo com a pressão e |U|. Visíveis por omissão: interno — entrada, saída e o corte
- * que contém o escoamento; externo — corpo e esse corte.
- */
-function cfdView(c: CfdCase, mesh: FoamMeshFull, p: ReturnType<typeof readField>, U: ReturnType<typeof readField>): ResultView {
-  const pres: LayerField = { name: "Pressão", unit: "Pa", field: p, ncomp: 1, map: (v) => v[0] * c.fluid.rho };
-  const vel: LayerField = { name: "Velocidade", unit: "m/s", field: U, ncomp: 3, map: (v) => Math.hypot(v[0], v[1], v[2]) };
-  const internal = c.regime === "internal";
-  const layers: ResultLayer[] = [];
-  const add = (l: ResultLayer | null) => { if (l) layers.push(l); };
-  if (internal) {
-    add(patchLayer("Paredes", mesh, "walls", [pres, null], false));
-    add(patchLayer("Entrada", mesh, "inlet", [pres, vel], true));
-    add(patchLayer("Saída", mesh, "outlet", [pres, vel], true));
-  } else add(patchLayer("Corpo", mesh, "body", [pres, null], true));
-  const ax = [0, 1, 2].reduce((m, k) => (Math.abs(c.velocity[k]) > Math.abs(c.velocity[m]) ? k : m), 0);
-  const show = ax === 2 ? 1 : 2;
-  const mid = [0, 1, 2].map((k) => ((c.bbox.min[k] + c.bbox.max[k]) / 2) * 1e-3);
-  for (const k of [0, 1, 2]) {
-    const n = [0, 0, 0];
-    n[k] = 1;
-    add(sliceLayer(`Corte ${"XYZ"[k]} = ${(mid[k] * 1000).toFixed(1)} mm`, mesh, mid, n, [pres, vel], k === show));
-  }
-  return { fields: [{ name: pres.name, unit: pres.unit }, { name: vel.name, unit: vel.unit }], modes: [], layers };
-}
-
-/** Diretivas de dicionário do OpenFOAM que executam código (recusadas nos ficheiros recebidos). */
-const UNSAFE = /#(codeStream|calc|include|includeEtc|includeFunc|eval)\b|\bcode(Include|Options|Libs)?\s*#?\{/;
-
-async function runOpenfoam(c: CfdCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
-  if (regenerate) {
-    const stl: Record<string, string> = {};
-    for (const name of Object.keys(c.groups)) stl[name] = readFileSync(join(dir, `constant/triSurface/${name}.stl`), "utf8");
-    for (const [p, text] of Object.entries(openfoamCase(c, stl))) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), text); }
-  }
-  // nenhum dicionário pode trazer código (#codeStream, #calc, …): os solvers correm na máquina do utilizador
-  for (const sub of ["system", "constant", "0"]) for (const fn of readdirSync(join(dir, sub))) {
-    const p = join(dir, sub, fn);
-    if (!statSync(p).isFile() || fn.endsWith(".stl")) continue;
-    if (UNSAFE.test(readFileSync(p, "utf8"))) throw new Error(`Diretiva não permitida em ${sub}/${fn}`);
-  }
-  await foam("blockMesh", [], dir, log);
-  await foam("surfaceFeatureExtract", [], dir, log);
-  await foam("snappyHexMesh", ["-overwrite"], dir, log);
-  await foam("checkMesh", [], dir, log).catch(() => log("checkMesh com avisos"));
-  const warnings: string[] = [];
-  try {
-    await foam("simpleFoam", [], dir, log);
-  } catch (e) {
-    // algumas compilações falham nos function objects: repetir sem eles (o resumo vem dos campos)
-    if (!/sha1|functionObject|function object/i.test((e as Error).message)) throw e;
-    warnings.push("Os function objects falharam nesta instalação do OpenFOAM: cálculo repetido com -noFunctionObjects");
-    await foam("simpleFoam", ["-noFunctionObjects"], dir, log);
-  }
-  const L = readFileSync(join(dir, "log.simpleFoam"), "utf8");
-  const conv = /SIMPLE solution converged in (\d+) iterations/.exec(L);
-  const iters = [...L.matchAll(/^Time = (\d+)/gm)].length;
-  const cells = /cells:\s+(\d+)/.exec(tail(join(dir, "log.checkMesh"), 400))?.[1];
-  const summary: [string, string][] = [
-    ["Malha", `${cells ?? "?"} células (snappyHexMesh)`],
-    ["Iterações", conv ? `${conv[1]} (convergido)` : `${iters} (sem atingir os resíduos pedidos)`],
-    ["Re", c.reynolds.toExponential(2)],
-  ];
-  if (!conv) warnings.push("O simpleFoam não convergiu para os resíduos pedidos: aumente as iterações ou reveja a malha");
-  // resumo e campos a partir do último tempo (independente da versão e dos function objects)
-  const metrics: Metric[] = [];
-  let view: ResultView | undefined;
-  const times = readdirSync(dir).filter((d) => /^\d+(\.\d+)?$/.test(d) && d !== "0").sort((a, b) => Number(a) - Number(b));
-  const last = times.at(-1);
-  if (last) {
-    const pm = join(dir, "constant/polyMesh");
-    const mesh: FoamMeshFull = { points: readPoints(readFileSync(join(pm, "points"), "utf8")), faces: readFaces(readFileSync(join(pm, "faces"), "utf8")), owner: readLabels(readFileSync(join(pm, "owner"), "utf8")), neighbour: readLabels(readFileSync(join(pm, "neighbour"), "utf8")), boundary: readBoundary(readFileSync(join(pm, "boundary"), "utf8")) };
-    const phi = existsSync(join(dir, last, "phi")) ? readScalarField(readFileSync(join(dir, last, "phi"), "utf8")) : null;
-    const pText = readFileSync(join(dir, last, "p"), "utf8");
-    const p = readScalarField(pText);
-    if (phi && mesh.boundary.has("inlet") && mesh.boundary.has("outlet")) {
-      const Qi = -patchFlux(phi, mesh, "inlet"), Qo = patchFlux(phi, mesh, "outlet");
-      const bal = (100 * (Qo - Qi)) / Math.max(Math.abs(Qi), 1e-30);
-      summary.push(["Caudal de entrada", `${(Qi * 1000).toPrecision(5)} L/s`], ["Balanço de massa", `${bal.toFixed(3)} %`]);
-      metrics.push({ key: "q", label: "Caudal de entrada", unit: "L/s", value: Qi * 1000 });
-    }
-    if (c.regime === "internal" && mesh.boundary.has("inlet") && mesh.boundary.has("outlet")) {
-      const dp = (patchAverage(p, mesh, "inlet") - patchAverage(p, mesh, "outlet")) * c.fluid.rho;
-      summary.push(["Queda de pressão", `${dp.toPrecision(5)} Pa`]);
-      metrics.push({ key: "dp", label: "Queda de pressão", unit: "Pa", value: dp });
-    }
-    if (c.regime === "external" && mesh.boundary.has("body")) {
-      const F = patchPressureForce(p, mesh, "body", c.fluid.rho);
-      const U = Math.hypot(...c.velocity), dir = c.velocity.map((x) => x / U);
-      const drag = F[0] * dir[0] + F[1] * dir[1] + F[2] * dir[2];
-      // área de referência: projeção da caixa envolvente do corpo no plano normal ao escoamento
-      const ax = [0, 1, 2].reduce((m, k) => (Math.abs(dir[k]) > Math.abs(dir[m]) ? k : m), 0);
-      const ext = [0, 1, 2].map((k) => (c.bbox.max[k] - c.bbox.min[k]) * 1e-3);
-      const Aref = ext.filter((_, k) => k !== ax).reduce((a, b) => a * b, 1);
-      const cd = drag / (0.5 * c.fluid.rho * U * U * Aref);
-      summary.push(["Força de pressão no corpo (N)", F.map((x) => x.toPrecision(4)).join(" · ")], ["Arrasto de pressão", `${drag.toPrecision(4)} N (Cd ≈ ${cd.toFixed(3)}, área ${(Aref * 1e6).toFixed(0)} mm²)`]);
-      metrics.push({ key: "drag", label: "Arrasto de pressão", unit: "N", value: drag }, { key: "cd", label: "Cd (pressão)", unit: "", value: cd });
-      warnings.push("Força calculada só com a pressão: falta a parcela viscosa (use o function object forces/wallShearStress do OpenFOAM)");
-    }
-    try {
-      view = cfdView(c, mesh, readField(pText), readField(readFileSync(join(dir, last, "U"), "utf8")));
-    } catch (e) {
-      warnings.push(`Campos para o 3D não lidos: ${(e as Error).message}`);
-    }
-  }
-  const nCells = Number(cells) || 0;
-  return { ok: true, physics: "cfd", solver: "OpenFOAM simpleFoam", summary, warnings, view, metrics, cells: nCells, log: L.split(/\r?\n/).slice(-30).join("\n") };
-}
-
-async function runSu2(c: CfdCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
-  const t = tools();
-  if (!t.gmsh) throw new Error("Gmsh não encontrado");
-  if (!t.su2) throw new Error("SU2 não encontrado (https://su2code.github.io, ou defina CAD_SU2)");
-  if (regenerate) writeFileSync(join(dir, "case.cfg"), su2Config(c));
-  await gmshMesh(c, dir, log, { kind: "su2", regenerate });
-  await run(t.su2.path, ["case.cfg"], dir, "log.su2", log);
-  const hist = existsSync(join(dir, "history.csv")) ? readFileSync(join(dir, "history.csv"), "utf8").trim().split(/\r?\n/) : [];
-  const summary: [string, string][] = [["Iterações", String(Math.max(0, hist.length - 1))], ["Re", c.reynolds.toExponential(2)]];
-  const metrics: Metric[] = [];
-  if (hist.length > 1) {
-    const h = hist[0].split(",").map((x) => x.replace(/"/g, "").trim()), v = hist.at(-1)!.split(",");
-    h.forEach((k, i) => {
-      if (!/rms\[P\]|^C[DL]$|Press|Massflow|Drop/i.test(k)) return;
-      summary.push([k, v[i].trim()]);
-      if (/^C[DL]$/i.test(k)) metrics.push({ key: k.toLowerCase(), label: k, unit: "", value: Number(v[i]) });
-      // queda de pressão entre os marcadores analisados (entrada → saída), em Pa (SU2 dimensional)
-      if (/Pressure_Drop/i.test(k)) metrics.push({ key: "dp", label: "Queda de pressão", unit: "Pa", value: Math.abs(Number(v[i])) });
-      if (/Massflow/i.test(k) && !metrics.some((m) => m.key === "mdot")) metrics.push({ key: "mdot", label: "Caudal mássico", unit: "kg/s", value: Math.abs(Number(v[i])) });
-    });
-    const rms = h.findIndex((k) => /rms\[P\]/i.test(k));
-    if (rms >= 0) metrics.push({ key: "rmsP", label: "Resíduo RMS de pressão (log10)", unit: "", value: Number(v[rms]) });
-  }
-  const nelem = Number(/NELEM=\s*(\d+)/.exec(readFileSync(join(dir, "mesh.su2"), "utf8").slice(0, 400))?.[1] ?? 0);
-  return { ok: true, physics: "cfd", solver: "SU2", summary, warnings: [], metrics, cells: nelem, log: tail(join(dir, "log.su2")) };
-}
-
-const tail = (p: string, n = 25) => (existsSync(p) ? readFileSync(p, "utf8").split(/\r?\n/).slice(-n).join("\n") : "");
 
 export interface RunOptions {
   /**
@@ -819,7 +314,7 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     if (req.headers["x-cad-token"] !== token) { send(401, { error: "Token do agente em falta ou errado" }); return; }
     if (req.method === "GET" && req.url === "/status") { send(200, { ok: true, tools: tools(), busy }); return; }
     // progresso ao vivo do job em curso (tempo decorrido e cauda da saída do solver)
-    if (req.method === "GET" && req.url === "/job") { send(200, currentJob ? { busy: true, elapsed: (Date.now() - currentJob.start) / 1000, tail: currentJob.tail.slice(-4000), cancelled: currentJob.cancelled } : { busy: false }); return; }
+    if (req.method === "GET" && req.url === "/job") { send(200, jobState.current ? { busy: true, elapsed: (Date.now() - jobState.current.start) / 1000, tail: jobState.current.tail.slice(-4000), cancelled: jobState.current.cancelled } : { busy: false }); return; }
     if (req.method === "POST" && req.url === "/cancel") { send(200, { ok: true, cancelled: cancelJob("Parado pelo utilizador") }); return; }
     if (req.method !== "POST" || (req.url !== "/run" && req.url !== "/xfoil" && req.url !== "/mesh")) { send(404, { error: "Pedido desconhecido" }); return; }
     if (busy) { send(409, { error: "O agente está ocupado com outro cálculo" }); return; }
@@ -828,9 +323,9 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     for await (const ch of req) { size += (ch as Buffer).length; if (size > 200e6) { send(413, { error: "Pedido demasiado grande" }); return; } chunks.push(ch as Buffer); }
     busy = true;
     const job: Job = { start: Date.now(), tail: "" };
-    currentJob = job;
+    jobState.current = job;
     // o browser fechou o pedido (separador fechado, fetch abortado) antes da resposta: mata o solver
-    res.on("close", () => { if (!res.writableFinished && currentJob === job) cancelJob("Pedido fechado pelo cliente"); });
+    res.on("close", () => { if (!res.writableFinished && jobState.current === job) cancelJob("Pedido fechado pelo cliente"); });
     // as mensagens do agente também entram na cauda do progresso
     const log = (s: string) => { console.log(s); job.tail = (job.tail + s + "\n").slice(-20000); };
     // cancelado: 499 (convenção do nginx para «o cliente fechou o pedido»)
@@ -838,7 +333,7 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     if (req.url === "/xfoil") {
       try { send(200, await runXfoil(JSON.parse(Buffer.concat(chunks).toString("utf8")) as XfoilRequest, log)); }
       catch (e) { fail(e); }
-      finally { busy = false; currentJob = null; }
+      finally { busy = false; jobState.current = null; }
       return;
     }
     const dir = mkdtempSync(join(tmpdir(), "cad-run-"));
@@ -864,7 +359,7 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
       fail(e, { log: tail(join(dir, "log.ccx")) || tail(join(dir, "log.gmsh")) });
     } finally {
       busy = false;
-      currentJob = null;
+      jobState.current = null;
       if (!process.env.CAD_KEEP) rmSync(dir, { recursive: true, force: true });
     }
   });
