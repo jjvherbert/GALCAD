@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatia 13) — processos, FEM e CFD fora de `tools/cad-runner.ts` (PR #33)
+
+- **`tools/cad-runner-proc.ts`** (novo, 160 linhas): localização de solvers, `run`/`foam`, cancelamento e tempo limite; o estado do trabalho em curso é `jobState.current` (antes `currentJob`).
+- **`tools/cad-runner-fem.ts`** (novo, 224 linhas): malha Gmsh e casos CalculiX/code_aster/Radioss. **`tools/cad-runner-cfd.ts`** (novo, 150 linhas): OpenFOAM e SU2.
+- Código movido verbatim; `cad-runner.ts` 856 → 392 linhas, abaixo de 400, e re-exporta `tools` e `gmshError` (os testes importam de lá). Sem mudança de comportamento.
+- Testes: tsc e oxlint limpos, unitários 212 ok, build ok, e2e 12/12, ui-check 390/768/1440 sem problemas. CI verde no PR antes do merge.
+- **A seguir:** `SketchEditor.tsx` (Sonnet), depois `SimPanel.tsx`.
+
 ## Atualização: F1 passo 4 (fatia 12) — esboços, árvore e seleção fora de `store.ts` (PR #32)
 
 - **`src/app/store-tree.ts`** (novo, 124 linhas): `startSketch`/`editSketch`/`updateSketch`/`exitSketch`, `deleteFeature`, `toggleSuppress`, `rename`, `move`, `setRollback`, `setVariables`, `addImport`, `pick`/`clearSelection`/`setSelection`, como funções que recebem o `Store`.
