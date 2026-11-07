@@ -181,7 +181,7 @@ export function trim(s0: SketchData, id: string, click: P2): SketchData {
 }
 
 /** Apaga pontos que deixaram de ser usados por curvas (e as suas restrições). */
-function dropOrphans(s: SketchData, candidates: string[]): SketchData {
+export function dropOrphans(s: SketchData, candidates: string[]): SketchData {
   const used = new Set(Object.values(s.entities).flatMap(entityPoints));
   const gone = candidates.filter((p) => s.entities[p] && !used.has(p));
   return gone.length ? deleteItems(s, gone) : s;

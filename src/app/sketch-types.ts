@@ -2,7 +2,7 @@
 import type { ConstraintType } from "../doc/types.ts";
 import type { P2 } from "../sketch/geometry.ts";
 
-export type Tool = "select" | "line" | "rect" | "circle" | "arc" | "spline" | "point" | "dim" | "trim" | "extend" | "skfillet" | "offset" | "convert";
+export type Tool = "select" | "line" | "rect" | "circle" | "arc" | "spline" | "point" | "dim" | "trim" | "extend" | "skfillet" | "skchamfer" | "offset" | "convert";
 export type DimMode = "auto" | "horizontal" | "vertical";
 
 export type Draw =
@@ -27,6 +27,7 @@ export const TOOLS: { id: Tool; label: string; key: string; icon: string }[] = [
   { id: "trim", label: "Aparar", key: "T", icon: "✂" },
   { id: "extend", label: "Estender", key: "E", icon: "⟶" },
   { id: "skfillet", label: "Filete de canto", key: "G", icon: "◟" },
+  { id: "skchamfer", label: "Chanfro de canto", key: "H", icon: "◿" },
   { id: "offset", label: "Deslocar", key: "O", icon: "⧈" },
   { id: "convert", label: "Converter arestas", key: "K", icon: "⇲" },
 ];

@@ -1,9 +1,10 @@
 // Aplicar o valor de filete/deslocamento e gravar cotas editadas do editor de esboço 2D.
 import { evalExpr } from "../doc/expr.ts";
+import { sketchChamfer } from "../sketch/chamfer.ts";
 import { offset, sketchFillet } from "../sketch/modify.ts";
 import type { SketchData } from "../sketch/ops.ts";
 
-type Prompt = { kind: "fillet" | "offset"; at: [number, number]; text: string; target: string[] };
+type Prompt = { kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[] };
 
 /** Contexto dos comandos: estado do editor e as ações que usam. */
 export type CmdCtx = {
@@ -13,7 +14,7 @@ export type CmdCtx = {
   scope: (n: string) => number | undefined;
   data: () => SketchData;
   commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => boolean;
-  lastValue: { current: { fillet: string; offset: string } };
+  lastValue: { current: { fillet: string; chamfer: string; offset: string } };
   setMsg: (m: string | null) => void;
   setPrompt: (p: Prompt | null) => void;
   setSel: (s: string[]) => void;
@@ -30,6 +31,10 @@ export function applyPromptIn(c: CmdCtx) {
     const r = sketchFillet(data(), prompt.target[0], Math.abs(v));
     if (!r) { setMsg("Raio demasiado grande para as linhas do canto"); return; }
     if (commit(r, "Filete de canto")) setPrompt(null);
+  } else if (prompt.kind === "chamfer") {
+    const r = sketchChamfer(data(), prompt.target[0], Math.abs(v));
+    if (!r) { setMsg("Distância demasiado grande para as linhas do canto"); return; }
+    if (commit(r, "Chanfro de canto")) setPrompt(null);
   } else {
     if (commit(offset(data(), prompt.target, v), "Deslocar")) { setPrompt(null); setSel([]); }
   }

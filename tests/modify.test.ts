@@ -2,6 +2,7 @@ import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { initSolver, solveSketch } from "../src/sketch/solver.ts";
 import { addCircle, addLine, addPoint, addRectangle, type SketchData } from "../src/sketch/ops.ts";
+import { sketchChamfer } from "../src/sketch/chamfer.ts";
 import { extend, offset, sketchFillet, trim } from "../src/sketch/modify.ts";
 import { findProfiles } from "../src/sketch/profiles.ts";
 import { allEntities, measure, pt } from "../src/sketch/geometry.ts";
@@ -81,6 +82,19 @@ test("filete de canto num retângulo: perfil fechado e área correta", () => {
   assert.deepEqual(pr.errors, []);
   assert.ok(Math.abs(Math.abs(pr.regions[0].outer.area) - (800 - (25 - Math.PI * 25 / 4))) < 0.05);
   assert.equal(sketchFillet(r.s, r.points[2], 50), null); // raio demasiado grande
+});
+
+test("chanfro de canto num retângulo: perfil fechado e área correta", () => {
+  const r = addRectangle(empty(), [0, 0], [40, 20]);
+  const c = sketchChamfer(r.s, r.points[2], 5)!;
+  assert.ok(c);
+  const sol = solveSketch(c);
+  assert.ok(sol.ok, sol.message ?? "");
+  const pr = findProfiles(sol.entities);
+  assert.deepEqual(pr.errors, []);
+  assert.ok(Math.abs(Math.abs(pr.regions[0].outer.area) - (800 - 12.5)) < 1e-6);
+  assert.equal(sketchChamfer(r.s, r.points[2], 25), null); // distância demasiado grande
+  assert.equal(sketchChamfer(r.s, r.points[2], 0), null);
 });
 
 test("deslocar um retângulo para fora e um círculo", () => {
