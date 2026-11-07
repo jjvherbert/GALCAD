@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F3 fatia 4 — plasticidade multilinear (PR #62)
+
+- **Modelo:** `plasticCurve: [σ, εp][]` no material, com σ em MPa e εp a deformação plástica. O 1.º ponto é a cedência (εp = 0). Depois do último ponto o material é perfeitamente plástico. Não pode ser usada ao mesmo tempo que Et (bilinear).
+- **Diálogo «Materiais…»:** novo campo «Curva plástica σ; εp» com um ponto por linha. Aceita `;`, espaço ou tab como separador e vírgula decimal. Se a cedência ficar vazia, é preenchida com o 1.º ponto. Os erros de leitura indicam a linha. A validação recusa: menos de 2 pontos, 1.º εp ≠ 0, εp não crescente, σ a descer, 1.º σ diferente da cedência e curva + Et em simultâneo. A lista mostra «curva N pts».
+- **Solvers:** no CalculiX, `*PLASTIC` com os pontos da curva. No code_aster, `DEFI_FONCTION` σ–ε total (ε = σ/E + εp) com `VMIS_ISOT_TRAC`. O editor do estudo mostra «Endurecimento: curva N pts» e a verificação do modelo descreve a curva.
+- **Verificação:** os testes de tração uniaxial nos dois solvers reais comparam a deformação com o εp interpolado na curva. O filtro de testes do workflow «Instalador Windows» passou a incluir «plasticidade»: 22/22 passaram, sem nenhum saltado. tsc, oxlint, 251 unitários, build, e2e 12/12, ui-check (390/768/1440) e CI verdes.
+- **A seguir (F3 fatia 5):** diálogos e o resto do R4 (ver ROADMAP, linha F3).
+
 ## Atualização: F3 fatia 3 — biblioteca de materiais do utilizador (PR #60)
 
 - **Diálogo «Materiais…»** (comando `sim.materials`, botão no seletor de material do estudo): lista os materiais do utilizador e os de referência (só leitura, com «Duplicar»). Formulário com E, ν, ρ, α (10⁻⁶/K), k, cedência e Et, mais fonte/notas. Aceita vírgula decimal. Avisa antes de descartar alterações.
