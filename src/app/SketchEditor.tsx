@@ -194,7 +194,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       if (r.ok) store.updateSketch({ ...draft, entities: r.entities });
       return;
     }
-    if (tool === "select" || tool === "dim" || tool === "trim" || tool === "extend" || tool === "offset" || tool === "skmirror") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "dim" || tool === "skmirror" ? hitAt(sx, sy) : null));
+    if (tool === "select" || tool === "dim" || tool === "trim" || tool === "extend" || tool === "offset" || tool === "skmirror" || tool === "skpattern") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "dim" || tool === "skmirror" || tool === "skpattern" ? hitAt(sx, sy) : null));
     else if (tool === "convert") { const i = hitRef(sx, sy); setHover(i >= 0 ? `ref:${i}` : null); }
     else if (tool === "skfillet" || tool === "skchamfer") { const h = hitAt(sx, sy, { curves: false }); setHover(h && isLineCorner(data(), h) ? h : null); }
     else setHover(snap(sx, sy).id ?? null);
@@ -368,7 +368,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           })}
           <circle cx={v.tx} cy={v.ty} r={4} class={`origin ${hover === "O" || sel.includes("O") ? "hover" : ""}`} />
         </svg>
-        {prompt && <PromptBox prompt={prompt} setPrompt={setPrompt} apply={applyPrompt} />}
+        {prompt && <PromptBox prompt={prompt} setPrompt={setPrompt} apply={applyPrompt} lv={lastValue.current} />}
         {dimEdit && (() => {
           const c = draft.constraints.find((x) => x.id === dimEdit.id);
           if (!c) return null;

@@ -1,8 +1,10 @@
-// Pedido de valor do editor de esboço (filete/chanfro/deslocar) e opções do chanfro: modo, segundo valor, troca de lado e pré-visualização.
+// Pedido de valor do editor de esboço (filete/chanfro/deslocar/repetir) e opções do chanfro: modo, segundo valor, troca de lado e pré-visualização.
+import { useEffect, useRef } from "preact/hooks";
 import type { P2 } from "../sketch/geometry.ts";
 import { chamferGeometry } from "../sketch/chamfer.ts";
 import type { SketchData } from "../sketch/ops.ts";
 import { type ChamferMode, type LastValues, type Prompt, chamferSpecOf } from "./sketch-cmd.ts";
+import { PatternFields } from "./SketchPatternUI.tsx";
 
 export const CHAMFER_MODES: [ChamferMode, string][] = [["equal", "Distância igual"], ["angle", "Distância + ângulo"], ["two", "Duas distâncias"]];
 
@@ -20,14 +22,21 @@ export function ChamferModeSelect({ mode, onChange }: { mode: ChamferMode; onCha
   );
 }
 
-const LABEL = { fillet: "Raio do filete", chamfer: "Distância do chanfro", offset: "Distância (negativa para o outro lado)" };
+const LABEL = { fillet: "Raio do filete", chamfer: "Distância do chanfro", offset: "Distância (negativa para o outro lado)", pattern: "Número de instâncias" };
 
-export function PromptBox({ prompt, setPrompt, apply }: { prompt: Prompt; setPrompt: (p: Prompt | null) => void; apply: () => void }) {
+export function PromptBox({ prompt, setPrompt, apply, lv }: { prompt: Prompt; setPrompt: (p: Prompt | null) => void; apply: () => void; lv: LastValues }) {
   const keys = (e: KeyboardEvent) => { if (e.key === "Enter") apply(); if (e.key === "Escape") setPrompt(null); };
   const two = prompt.kind === "chamfer" && (prompt.mode === "angle" || prompt.mode === "two");
+  // o clique no desenho termina depois de o pedido abrir e tira-lhe o foco: focar já a seguir, para o Enter funcionar
+  const first = useRef<HTMLInputElement>(null);
+  const [ax, ay] = prompt.at;
+  useEffect(() => {
+    const t = setTimeout(() => { first.current?.focus(); first.current?.select(); }, 0);
+    return () => clearTimeout(t);
+  }, [ax, ay, prompt.kind]);
   return (
     <div class="dim-input" style={{ left: `${prompt.at[0]}px`, top: `${prompt.at[1]}px` }}>
-      <input autoFocus value={prompt.text} aria-label={prompt.kind === "chamfer" && two ? "Primeira distância do chanfro" : LABEL[prompt.kind]}
+      <input ref={first} value={prompt.text} aria-label={prompt.kind === "chamfer" && two ? "Primeira distância do chanfro" : LABEL[prompt.kind]}
         onInput={(e) => setPrompt({ ...prompt, text: (e.target as HTMLInputElement).value })} onKeyDown={keys} />
       {two && (
         <input value={prompt.text2 ?? ""} aria-label={prompt.mode === "angle" ? "Ângulo do chanfro (°)" : "Segunda distância do chanfro"}
@@ -35,6 +44,7 @@ export function PromptBox({ prompt, setPrompt, apply }: { prompt: Prompt; setPro
           onInput={(e) => setPrompt({ ...prompt, text2: (e.target as HTMLInputElement).value })} onKeyDown={keys} />
       )}
       {two && <button onClick={() => setPrompt({ ...prompt, flip: !prompt.flip })} title="Trocar de lado (a distância passa para a outra linha)">⇄</button>}
+      {prompt.kind === "pattern" && <PatternFields prompt={prompt} setPrompt={setPrompt} lv={lv} keys={keys} />}
       <button onClick={apply} title="Aplicar">✓</button>
       <button onClick={() => setPrompt(null)} title="Fechar">✕</button>
     </div>
