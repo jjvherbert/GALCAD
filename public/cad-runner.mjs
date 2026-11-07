@@ -1288,9 +1288,10 @@ function femResultFrom(c, m, blocks, d) {
 			return {
 				...p,
 				vm,
-				fs: p.material.yield ? p.material.yield / Math.max(vm, 1e-12) : void 0
+				fs: p.material.yield && vm > 0 ? p.material.yield / vm : void 0
 			};
 		});
+		const why = (p) => p.material.yield ? "não aplicável: sem tensões no corpo" : `sem tensão de cedência (${p.material.name})`;
 		const vmax = max(per.map((p) => p.vm));
 		summary.push([label, `${vmax.toFixed(2)} MPa`]);
 		metrics.push({
@@ -1301,7 +1302,10 @@ function femResultFrom(c, m, blocks, d) {
 		});
 		if (!withSafety) return;
 		const gov = per.filter((p) => p.fs !== void 0).reduce((a, p) => !a || p.fs < a.fs ? p : a, void 0);
-		if (!gov) return;
+		if (!gov) {
+			if (per.some((p) => p.material.yield)) summary.push(["Fator de segurança mín. (cedência)", "não aplicável: tensões nulas (verifique cargas e apoios)"]);
+			return;
+		}
 		const multi = per.length > 1;
 		summary.push(["Fator de segurança mín. (cedência)", `${gov.fs.toFixed(2)}${multi ? ` — ${gov.name} (${gov.material.name})` : ""}`]);
 		metrics.push({
@@ -1310,7 +1314,7 @@ function femResultFrom(c, m, blocks, d) {
 			unit: "",
 			value: gov.fs
 		});
-		if (multi) for (const p of per) summary.push([`Fator de segurança — ${p.name}`, p.fs === void 0 ? `sem tensão de cedência (${p.material.name})` : `${p.fs.toFixed(2)} (σ von Mises máx. ${p.vm.toFixed(2)} MPa; cedência ${p.material.yield} MPa, ${p.material.name})`]);
+		if (multi) for (const p of per) summary.push([`Fator de segurança — ${p.name}`, p.fs === void 0 ? why(p) : `${p.fs.toFixed(2)} (σ von Mises máx. ${p.vm.toFixed(2)} MPa; cedência ${p.material.yield} MPa, ${p.material.name})`]);
 	};
 	const sameT = (a, b) => Math.abs(a - b) <= 1e-5 * Math.max(Math.abs(a), Math.abs(b), 1e-30);
 	const atTime = (name, t) => r.blocks.find((b) => b.name === name && sameT(b.value, t));
