@@ -1,5 +1,5 @@
 // Estudos: caso FEM de uma peça (apoios, cargas, malha e hipóteses).
-import { type FemStudy, loadFaces } from "../doc/study.ts";
+import { type FemStudy, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
 import { type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges } from "./context.ts";
@@ -108,7 +108,9 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     ? { geometry: !!s.nonlinear.geometry, plasticity: !!s.nonlinear.plasticity, increments: Math.max(1, Math.round(s.nonlinear.increments ?? 10)) } : undefined;
   const m = s.material;
   if (nl?.plasticity && !(m.yield! > 0)) throw new Error("Plasticidade: indique a tensão de cedência do material");
-  if (nl?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) throw new Error("Plasticidade: o módulo tangente tem de estar entre 0 e E");
+  const curve = nl?.plasticity ? m.plasticCurve : undefined;
+  if (curve?.length) { const e = plasticCurveErrors(m); if (e.length) throw new Error(`Plasticidade: ${e[0]}`); }
+  else if (nl?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) throw new Error("Plasticidade: o módulo tangente tem de estar entre 0 e E");
   if (s.solver === "openradioss" && s.analysis !== "dynamic") throw new Error("OpenRadioss: escolha a análise «Dinâmica transitória» (explícita)");
   // dinâmica: duração, passo, amplitude e Rayleigh resolvidos
   let dynamic: FemCase["dynamic"];
@@ -131,7 +133,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   const analysisHyp = dynamic
     ? `${FEM_HYP.dynamic}; ${dynamic.scheme === "implicit" ? "integração implícita (CalculiX: α-HHT, α = −0,05; code_aster: Newmark, aceleração média)" : "integração explícita (diferenças centrais, massa diagonal, passo abaixo do limite de estabilidade)"}; ${dynamic.duration} s${dynamic.dt ? `, passo ${dynamic.dt} s` : ", passo estável da malha"}; carga em ${LOAD_NAME[s.dynamic?.load ?? "step"]}; ${dynamic.alpha || dynamic.beta ? `amortecimento de Rayleigh α = ${dynamic.alpha} 1/s, β = ${dynamic.beta} s` : "sem amortecimento físico"}`
     : !nl ? FEM_HYP[s.analysis]
-    : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && "plasticidade de von Mises com encruamento isotrópico bilinear"].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
+    : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && `plasticidade de von Mises com encruamento isotrópico ${curve?.length ? "multilinear" : "bilinear"}`].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
     format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, dynamic, probes: probes.length ? probes : undefined,
     material: s.material, groups, faces, loads, bbox: box,
@@ -142,7 +144,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     },
     hypotheses: [
       analysisHyp,
-      `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, Et = ${m.tangent} MPa` : ""})${m.source ? ` — ${m.source}` : ""}`,
+      `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
       ...(s.loads.some((l) => l.kind === "symmetry") ? ["Simetria: modelo parcial — geometria, apoios e cargas têm de ser simétricos em relação ao plano; as cargas são as da parte modelada (metade da total) e os resultados só valem nessa parte"] : []),

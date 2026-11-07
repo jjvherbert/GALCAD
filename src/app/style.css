@@ -306,6 +306,9 @@ button.mat-pick { border: 0; background: none; }
 .mat-form .row > input, .mat-form .unit input { width: 100%; min-width: 0; }
 .mat-form .unit { display: grid; grid-template-columns: minmax(0, 1fr) 54px; gap: 6px; align-items: center; }
 .mat-form .unit small { color: var(--muted); font-size: 11px; }
+.mat-form .row.curve { align-items: start; }
+.mat-form .row.curve > span small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+.mat-form .row.curve textarea { width: 100%; min-width: 0; box-sizing: border-box; font: 12px/1.4 ui-monospace, Consolas, monospace; resize: vertical; }
 .mat-errors { color: var(--bad); margin: 6px 0; padding-left: 18px; font-size: 13px; }
 .mat-select { display: flex; gap: 6px; align-items: center; }
 /* width:0 — sem isto o select mede pela opção mais longa e o fieldset (min-width: min-content) alarga o painel */

@@ -1715,6 +1715,10 @@ function calculixDeck(c, m) {
 		if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
 		if (c.nonlinear?.plasticity) {
 			if (!(mat.yield > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
+			if (mat.plasticCurve?.length) {
+				L.push("*PLASTIC", ...mat.plasticCurve.map(([s, ep]) => `${fmt(s)}, ${fmt(ep)}`));
+				return;
+			}
 			const Et = mat.tangent ?? 0, Hp = mat.E * Et / (mat.E - Et);
 			L.push("*PLASTIC", `${fmt(mat.yield)}, 0.`, `${fmt(mat.yield + Hp)}, 1.`);
 		}
@@ -3047,9 +3051,17 @@ function asterCase(c, m) {
 	if (hex && c.mesh.integration === "reduced" && explicit) warnings.push("code_aster explícito: os hexaedros passam a integração completa (o 3D_SI não tem explícito)");
 	if (hex && c.mesh.order === 1 && c.mesh.integration !== "reduced") warnings.push("code_aster: HEXA8 com integração completa (o code_aster não tem modos incompatíveis como o C3D8I) bloqueia em flexão — use hexaedros de 20 nós ou o CalculiX");
 	C.push(`MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='${modelisation}'))`);
+	const trac = !!nl?.plasticity && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
 	const material = (name, m2) => {
 		if (nl?.plasticity && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
-		const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield)})` : "";
+		let plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield)})` : "";
+		if (trac) {
+			const Et = m2.tangent ?? 0, s2 = m2.yield + m2.E * Et / (m2.E - Et);
+			const pts = m2.plasticCurve?.length ? m2.plasticCurve : [[m2.yield, 0], [s2, 1]];
+			const tr = `TR${name.slice(3)}`;
+			C.push(`${tr} = DEFI_FONCTION(NOM_PARA='EPSI', VALE=(${pts.flatMap(([s, ep]) => [num(ep + s / m2.E), num(s)]).join(", ")}), PROL_DROITE='${m2.plasticCurve?.length ? "CONSTANT" : "LINEAIRE"}')`);
+			plast = `, TRACTION=_F(SIGM=${tr})`;
+		}
 		const damp = c.dynamic && (c.dynamic.alpha || c.dynamic.beta) ? `, AMOR_ALPHA=${num(c.dynamic.beta)}, AMOR_BETA=${num(c.dynamic.alpha)}` : "";
 		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)}${damp})${plast})`);
 	};
@@ -3139,7 +3151,7 @@ function asterCase(c, m) {
 	} else if (c.analysis === "modal") C.push("ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM, CHARGE=BC, NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))", `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes}))`, "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
 	else if (!nl) C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH)," : ""}))`);
 	else {
-		const rel = nl.plasticity ? "VMIS_ISOT_LINE" : "ELAS";
+		const rel = nl.plasticity ? trac ? "VMIS_ISOT_TRAC" : "VMIS_ISOT_LINE" : "ELAS";
 		const def = nl.geometry ? nl.plasticity ? "GDEF_LOG" : "GREEN_LAGRANGE" : "PETIT";
 		C.push("RAMPE = DEFI_FONCTION(NOM_PARA='INST', VALE=(0., 0., 1., 1.))", `LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=1., NOMBRE=${nl.increments}))`, "LINST = DEFI_LIST_INST(DEFI_LIST=_F(LIST_INST=LR), ECHEC=_F(EVENEMENT='ERREUR', ACTION='DECOUPE', SUBD_METHODE='MANUEL', SUBD_PAS=4, SUBD_NIVEAU=5))", `RES = STAT_NON_LINE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH, FONC_MULT=RAMPE)," : ""}), COMPORTEMENT=_F(RELATION='${rel}', DEFORMATION='${def}', TOUT='OUI'), INCREMENT=_F(LIST_INST=LINST), NEWTON=_F(REAC_ITER=1), CONVERGENCE=_F(ITER_GLOB_MAXI=25))`);
 	}

@@ -81,6 +81,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
   const kinds = thermal ? THERM : STRUCT;
   const setLoad = (i: number, l: FemLoad) => up({ loads: s.loads.map((x, k) => (k === i ? l : x)) });
   const m = s.material;
+  const curve = m.plasticCurve?.length ? m.plasticCurve : undefined;
   void assembly;
   return (
     <>
@@ -96,7 +97,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
         <fieldset class="checklist">
           <legend class="field-label">Não linear</legend>
           <Check label="Grandes deslocamentos e rotações" value={!!s.nonlinear?.geometry} onChange={(geometry) => up({ nonlinear: { ...s.nonlinear, geometry } })} />
-          <Check label="Plasticidade (von Mises, bilinear)" value={!!s.nonlinear?.plasticity} onChange={(plasticity) => up({ nonlinear: { ...s.nonlinear, plasticity } })} />
+          <Check label="Plasticidade (von Mises)" value={!!s.nonlinear?.plasticity} onChange={(plasticity) => up({ nonlinear: { ...s.nonlinear, plasticity } })} />
           {(s.nonlinear?.geometry || s.nonlinear?.plasticity) && <Field label="Incrementos de carga"><input type="number" min="1" max="200" value={s.nonlinear?.increments ?? 10} onChange={(e) => up({ nonlinear: { ...s.nonlinear, increments: Number((e.target as HTMLInputElement).value) || 10 } })} /></Field>}
         </fieldset>
       )}
@@ -119,10 +120,14 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
         </div>
         <div class="row3">
           <Field label="k (W/(m·K))"><input type="number" value={m.k ?? ""} onChange={(e) => up({ material: { ...m, k: Number((e.target as HTMLInputElement).value) } })} /></Field>
-          <Field label="Cedência (MPa)"><input type="number" value={m.yield ?? ""} onChange={(e) => up({ material: { ...m, yield: Number((e.target as HTMLInputElement).value) } })} /></Field>
-          <Field label="Et (MPa)"><input type="number" value={m.tangent ?? ""} onChange={(e) => up({ material: { ...m, tangent: Number((e.target as HTMLInputElement).value) } })} /></Field>
+          <Field label="Cedência (MPa)"><input type="number" value={m.yield ?? ""} readOnly={!!curve} title={curve ? "Primeiro ponto da curva plástica: altere em «Materiais…»" : undefined} onChange={(e) => up({ material: { ...m, yield: Number((e.target as HTMLInputElement).value) } })} /></Field>
+          {curve
+            ? <Field label="Endurecimento"><input value={`curva ${curve.length} pts`} readOnly title="Curva σ–εp do material: altere em «Materiais…»" /></Field>
+            : <Field label="Et (MPa)"><input type="number" value={m.tangent ?? ""} onChange={(e) => up({ material: { ...m, tangent: Number((e.target as HTMLInputElement).value) } })} /></Field>}
         </div>
-        {s.nonlinear?.plasticity && <p class="field-hint">Et (módulo tangente depois da cedência) dos materiais de referência é indicativo (≈ E/100): use a curva do certificado do material quando a plasticidade decide.</p>}
+        {s.nonlinear?.plasticity && (curve
+          ? <p class="field-hint">Plasticidade multilinear: curva σ–εp com {curve.length} pontos, de {curve[0][0]} a {curve[curve.length - 1][0]} MPa, e plástico perfeito depois do último ponto. A curva e a cedência editam-se em «Materiais…».</p>
+          : <p class="field-hint">Et (módulo tangente depois da cedência) dos materiais de referência é indicativo (≈ E/100): use a curva do certificado do material quando a plasticidade decide (em «Materiais…», curva plástica).</p>)}
         {m.source && <p class="muted">{m.source}</p>}
       </fieldset>}
       {section === "conditions" && <>

@@ -140,3 +140,18 @@ test("Térmico: falta de k é erro na verificação e no deck (sem os 50 W/(m·K
   const c: FemCase = { ...base, analysis: "thermal", bodies: [base.bodies![0], { ...base.bodies![1], material: { ...alu, k: undefined } }] };
   assert.throws(() => calculixDeck(c, parseMsh(MSH)), /material Alumínio EN AW-5083 H111 não tem condutividade térmica k/);
 });
+
+test("Plasticidade multilinear: *PLASTIC com os pontos (σ, εp) da curva; o corpo bilinear continua com 2 pontos", () => {
+  const curve = { ...steel, tangent: undefined, plasticCurve: [[235, 0], [270, 0.01], [320, 0.05]] as [number, number][] };
+  const nl = { geometry: false, plasticity: true, increments: 8 };
+  const c: FemCase = { ...base, nonlinear: nl, bodies: [{ ...base.bodies![0], material: curve }, base.bodies![1]] };
+  const inp = calculixDeck(c, parseMsh(MSH)).inp;
+  const plastic = (name: string) => inp.match(new RegExp(`\\*MATERIAL, NAME=${name}\\n[^]*?\\*PLASTIC\\n((?:[^*\\n][^\\n]*\\n)+)`))?.[1].trimEnd().split("\n");
+  assert.deepEqual(plastic("MAT_B1"), ["235, 0", "270, 0.01", "320, 0.05"]);
+  // alumínio bilinear: σy e σy + Hp a εp = 1
+  const al = plastic("MAT_B2")!;
+  assert.equal(al.length, 2);
+  assert.equal(al[0], `${alu.yield}, 0.`);
+  // sem plasticidade, nenhuma curva entra no deck
+  assert.ok(!/\*PLASTIC/.test(calculixDeck({ ...c, nonlinear: undefined }, parseMsh(MSH)).inp));
+});

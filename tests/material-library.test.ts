@@ -53,6 +53,30 @@ test("sanitizeMaterials: descarta lixo, inválidos e repetidos; só guarda campo
   assert.deepEqual(out, [{ ...ok, source: "ficha" }]);
 });
 
+test("validateMaterial: curva plástica multilinear coerente com a cedência e sem Et", () => {
+  const c: SimMaterial = { ...ok, tangent: undefined, plasticCurve: [[355, 0], [400, 0.02], [420, 0.08]] };
+  assert.deepEqual(validateMaterial(c, []), []);
+  const errs = (p: Partial<SimMaterial>) => validateMaterial({ ...c, ...p }, []);
+  assert.match(errs({ yield: 300 }).join(" "), /cedência tem de ser igual/);
+  assert.match(errs({ tangent: 2000 }).join(" "), /não os dois/);
+  assert.match(errs({ plasticCurve: [[355, 0.001], [400, 0.02]] }).join(" "), /εp = 0/);
+  assert.match(errs({ plasticCurve: [[355, 0], [400, 0.02], [410, 0.02]] }).join(" "), /εp tem de crescer.*ponto 3/);
+  assert.match(errs({ plasticCurve: [[355, 0], [340, 0.02]] }).join(" "), /amolecimento/);
+  assert.deepEqual(errs({ plasticCurve: [[355, 0]] }), ["A curva plástica precisa de pelo menos 2 pontos."]);
+  assert.match(errs({ plasticCurve: [[355, 0], [NaN, 0.02]] }).join(" "), /não são números/);
+});
+
+test("sanitizeMaterials: guarda a curva válida e descarta só a curva malformada", () => {
+  const c = { ...ok, name: "Com curva", tangent: undefined, plasticCurve: [[355, 0], [400, 0.02]] };
+  const out = sanitizeMaterials([c, { ...c, name: "Curva lixo", plasticCurve: [[1, "x"]] }, { ...c, name: "Curva não lista", plasticCurve: "355;0" }]);
+  assert.deepEqual(out.map((m) => m.name), ["Com curva", "Curva lixo", "Curva não lista"]);
+  assert.deepEqual(out[0].plasticCurve, [[355, 0], [400, 0.02]]);
+  assert.equal(out[1].plasticCurve, undefined);
+  assert.equal(out[2].plasticCurve, undefined);
+  // curva bem formada mas incoerente com a cedência → material descartado
+  assert.deepEqual(sanitizeMaterials([{ ...c, yield: 300 }]), []);
+});
+
 test("allMaterials: referência primeiro, depois os do utilizador, sem alterar a referência", () => {
   const before = SIM_MATERIALS.length;
   const all = allMaterials([ok]);

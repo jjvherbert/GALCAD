@@ -1,6 +1,6 @@
 // Biblioteca de materiais do utilizador (por browser), ao lado dos materiais de referência do programa.
 // Os estudos guardam uma cópia do material: editar ou apagar aqui não altera estudos já criados.
-import { SIM_MATERIALS, type SimMaterial } from "../doc/study.ts";
+import { SIM_MATERIALS, type SimMaterial, plasticCurveErrors } from "../doc/study.ts";
 
 const KEY = "cad-prototipo:materials";
 const OPTIONAL = ["alpha", "k", "yield", "tangent"] as const;
@@ -27,6 +27,7 @@ export function validateMaterial(m: SimMaterial, others: readonly SimMaterial[],
     if (!(Number.isFinite(m.tangent) && m.tangent >= 0 && m.tangent < m.E)) e.push("Et tem de estar entre 0 e E (exclusive).");
     else if (m.yield === undefined) e.push("Et só tem significado com tensão de cedência.");
   }
+  if (ok("plasticCurve") && ok("yield") && ok("tangent")) e.push(...plasticCurveErrors(m));
   return e;
 }
 
@@ -37,6 +38,10 @@ function clean(raw: unknown): SimMaterial | null {
   if (typeof r.name !== "string" || typeof r.E !== "number" || typeof r.nu !== "number" || typeof r.density !== "number") return null;
   const m: SimMaterial = { name: r.name.trim(), E: r.E, nu: r.nu, density: r.density };
   for (const k of OPTIONAL) if (typeof r[k] === "number") m[k] = r[k];
+  const pc = r.plasticCurve;
+  if (Array.isArray(pc) && pc.every((p) => Array.isArray(p) && p.length === 2 && p.every((x) => typeof x === "number"))) {
+    m.plasticCurve = pc.map((p: number[]) => [p[0], p[1]]);
+  }
   if (typeof r.source === "string" && r.source.trim()) m.source = r.source.trim();
   return m;
 }

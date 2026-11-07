@@ -132,9 +132,21 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   if (hex && c.mesh.integration === "reduced" && explicit) warnings.push("code_aster explícito: os hexaedros passam a integração completa (o 3D_SI não tem explícito)");
   if (hex && c.mesh.order === 1 && c.mesh.integration !== "reduced") warnings.push("code_aster: HEXA8 com integração completa (o code_aster não tem modos incompatíveis como o C3D8I) bloqueia em flexão — use hexaedros de 20 nós ou o CalculiX");
   C.push(`MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='${modelisation}'))`);
+  // plasticidade: com alguma curva multilinear, todos os materiais passam à curva de tração
+  // (VMIS_ISOT_TRAC, uma só relação para o modelo); senão, encruamento linear (VMIS_ISOT_LINE)
+  const trac = !!nl?.plasticity && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
   const material = (name: string, m2: FemCase["material"]) => {
     if (nl?.plasticity && !(m2.yield! > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
-    const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield!)})` : "";
+    let plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield!)})` : "";
+    if (trac) {
+      // curva σ–ε total (ε = σ/E + εp), o 1.º ponto no limite elástico; a bilinear vira 2 pontos
+      // prolongados com a mesma inclinação Et, a multilinear fica constante depois do último
+      const Et = m2.tangent ?? 0, s2 = m2.yield! + (m2.E * Et) / (m2.E - Et);
+      const pts = m2.plasticCurve?.length ? m2.plasticCurve : [[m2.yield!, 0], [s2, 1]];
+      const tr = `TR${name.slice(3)}`;
+      C.push(`${tr} = DEFI_FONCTION(NOM_PARA='EPSI', VALE=(${pts.flatMap(([s, ep]) => [num(ep + s / m2.E), num(s)]).join(", ")}), PROL_DROITE='${m2.plasticCurve?.length ? "CONSTANT" : "LINEAIRE"}')`);
+      plast = `, TRACTION=_F(SIGM=${tr})`;
+    }
     // Rayleigh no code_aster: AMOR_ALPHA multiplica a rigidez e AMOR_BETA a massa (C = AMOR_BETA·M + AMOR_ALPHA·K)
     const damp = c.dynamic && (c.dynamic.alpha || c.dynamic.beta) ? `, AMOR_ALPHA=${num(c.dynamic.beta)}, AMOR_BETA=${num(c.dynamic.alpha)}` : "";
     C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)}${damp})${plast})`);
@@ -215,7 +227,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   } else if (!nl) {
     C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH)," : ""}))`);
   } else {
-    const rel = nl.plasticity ? "VMIS_ISOT_LINE" : "ELAS";
+    const rel = nl.plasticity ? (trac ? "VMIS_ISOT_TRAC" : "VMIS_ISOT_LINE") : "ELAS";
     // grandes deslocamentos: GREEN_LAGRANGE em elasticidade (o GROT_GDEP não aceita TETRA10), GDEF_LOG com plasticidade
     const def = nl.geometry ? (nl.plasticity ? "GDEF_LOG" : "GREEN_LAGRANGE") : "PETIT";
     C.push(
