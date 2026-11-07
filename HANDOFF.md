@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 passo 4 (fatias 18–27) — o resto dos ficheiros >400 linhas partido (PR #38–#47)
+
+- **#38** `sim/calculix.ts` 610 → 280 (resultados em módulo próprio). **#39** `drawing/render.ts` 576 → 333. **#40** `kernel/features/gsd.ts` partido por tema. **#41** `kernel/service.ts` 507 → 401. **#42** `app/forms.tsx` (493) → `forms-base`, `forms-select`, `forms-lists`. **#43** `kernel/occ.ts` dividido. **#44** `DrawingEditor.tsx` 472 → 280 (painel em `drawing-panel.tsx`). **#45** `kernel/sim.ts` → comum/FEM/montagem/CFD. **#46** `kernel/drawing.ts` → `drawing-common/view/source/derived`.
+- **#47** `app/viewport.ts` 637 → 390: câmara em `viewport-nav.ts` (162), adaptador do rato em `viewport-host.ts` (46), camadas (PMI, polos, simulação, estilo, referências, esboços) em `viewport-layers.ts` (70), realce em `viewport-hover.ts` (25). Cada função recebe a `Viewport` como primeiro argumento; os membros usados passaram de `private` a públicos.
+- Código movido verbatim, sem mudança de comportamento. Todos os PR com tsc, oxlint, unitários (212), build e e2e (12 suites) limpos e CI verde; os de UI com ui-check a 390/1440.
+- **Estado:** nenhum ficheiro de `src`, `tools`, `tests` ou `desktop` passa das ~400 linhas; `service.ts` e `SketchEditor.tsx` ficam em 401 (aceite). **Passo 4 completo.**
+
 ## Atualização: F1 passo 4 (fatia 17) — superfícies partidas por tema em `src/kernel/features/surface-*.ts` (PR #37)
 
 - **Novos em `src/kernel/features/`:** `surface-common.ts` (70 linhas: tipo `Step`, cadeias de esboço, costura, sólidos a partir de cascas), `surface-sketch.ts` (81: extrudir/revolver/varrer/loft), `surface-fill.ts` (165: preencher, fronteira, regrada), `surface-edit.ts` (95: desaparar, substituir face, desviar), `surface-solid.ts` (73: costurar, espessar) e `surface-trim.ts` (181: aparar, apagar face).
