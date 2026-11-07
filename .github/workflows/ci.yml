@@ -51,6 +51,13 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      # o runner do kernel (public/cad-runner.mjs) é gerado e versionado: o build não pode alterá-lo
+      - name: Ficheiros gerados em dia
+        run: |
+          if ! git diff --exit-code --stat; then
+            echo "::error::O build alterou ficheiros versionados (ex.: public/cad-runner.mjs). Corra npm run build e faça commit."
+            exit 1
+          fi
       - name: Chromium para os e2e
         run: npx playwright install --with-deps chromium
       - name: Testes e2e (todas as suites, reporta todas as falhas)

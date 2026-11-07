@@ -187,18 +187,23 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       for (const e of elementsOf(p.blocks)) for (const n of e.nodes) nodes.add(n);
       let vm = 0;
       for (const b of sb) for (const t of nodes) { const v = b.data.get(t); if (v) vm = Math.max(vm, b.name === "VMIS" ? v[0] : vmOf(v)); }
-      return { ...p, vm, fs: p.material.yield ? p.material.yield / Math.max(vm, 1e-12) : undefined };
+      // sem tensão (campo nulo: sem cargas efetivas) o FS não se aplica, em vez de cedência/1e-12
+      return { ...p, vm, fs: p.material.yield && vm > 0 ? p.material.yield / vm : undefined };
     });
+    const why = (p: (typeof per)[number]) => (p.material.yield ? "não aplicável: sem tensões no corpo" : `sem tensão de cedência (${p.material.name})`);
     const vmax = max(per.map((p) => p.vm));
     summary.push([label, `${vmax.toFixed(2)} MPa`]);
     metrics.push({ key: "vmmax", label, unit: "MPa", value: vmax });
     if (!withSafety) return;
     const gov = per.filter((p) => p.fs !== undefined).reduce<(typeof per)[number] | undefined>((a, p) => (!a || p.fs! < a.fs! ? p : a), undefined);
-    if (!gov) return;
+    if (!gov) {
+      if (per.some((p) => p.material.yield)) summary.push(["Fator de segurança mín. (cedência)", "não aplicável: tensões nulas (verifique cargas e apoios)"]);
+      return;
+    }
     const multi = per.length > 1;
     summary.push(["Fator de segurança mín. (cedência)", `${gov.fs!.toFixed(2)}${multi ? ` — ${gov.name} (${gov.material.name})` : ""}`]);
     metrics.push({ key: "fsmin", label: "Fator de segurança mín. (cedência)", unit: "", value: gov.fs! });
-    if (multi) for (const p of per) summary.push([`Fator de segurança — ${p.name}`, p.fs === undefined ? `sem tensão de cedência (${p.material.name})` : `${p.fs.toFixed(2)} (σ von Mises máx. ${p.vm.toFixed(2)} MPa; cedência ${p.material.yield} MPa, ${p.material.name})`]);
+    if (multi) for (const p of per) summary.push([`Fator de segurança — ${p.name}`, p.fs === undefined ? why(p) : `${p.fs.toFixed(2)} (σ von Mises máx. ${p.vm.toFixed(2)} MPa; cedência ${p.material.yield} MPa, ${p.material.name})`]);
   };
   // instantes da dinâmica: blocos por tempo (o .frd escreve o tempo com 6 algarismos)
   const sameT = (a: number, b: number) => Math.abs(a - b) <= 1e-5 * Math.max(Math.abs(a), Math.abs(b), 1e-30);

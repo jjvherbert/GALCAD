@@ -99,6 +99,16 @@ test("FS de peça única: material do estudo sobre todos os nós, sem linhas por
   assert.ok(!r.summary.some(([k]) => k.startsWith("Fator de segurança —")));
 });
 
+test("FS sem tensões: «não aplicável» em vez de cedência/1e-12; corpo sem tensão não governa", () => {
+  const zero = (pick: (n: number) => number): FrdBlock[] => [blocks[0], { ...blocks[1], data: new Map(nodes.map((n) => [n, [pick(n)]])) }];
+  const r = femResultFrom(base, parseMsh(MSH), zero(() => 0), dat);
+  assert.ok(!r.metrics.some((x) => x.key === "fsmin"));
+  assert.match(row(r, "Fator de segurança mín. (cedência)")!, /^não aplicável: tensões nulas/);
+  const one = femResultFrom(base, parseMsh(MSH), zero((n) => (n === 2 ? 150 : 0)), dat);
+  assert.ok(Math.abs(one.metrics.find((x) => x.key === "fsmin")!.value - 235 / 150) < 1e-12);
+  assert.equal(row(one, "Fator de segurança — Perfil"), "não aplicável: sem tensões no corpo");
+});
+
 test("GCI: entradas inválidas dão comportamento «invalid» com NaN em vez de um GCI enganador", () => {
   const n: [number, number, number] = [8000, 2370, 702];
   for (const [nn, f, why] of [
