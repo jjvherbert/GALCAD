@@ -146,6 +146,7 @@ table.vars tr.invalid input { border-color: var(--bad); }
 .sk-relations { position: absolute; z-index: 5; top: 8px; left: 8px; right: 8px; width: fit-content; max-width: calc(100% - 16px); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 4px 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
 .sk-toolbar button { display: flex; gap: 4px; align-items: center; }
 .sk-toolbar .ic { font-size: 15px; }
+.sk-toolbar .sk-opt { display: flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 12px; padding: 0 4px; }
 .sk-toolbar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
 .sk-relations button .glyph { font-weight: 700; color: var(--accent); }
 .sk-canvas { flex: 1; position: relative; overflow: hidden; touch-action: none; }
@@ -615,6 +616,7 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 /* esboço: fundo transparente sobre o modelo 3D (a câmara acompanha o editor), como no SolidWorks */
 .sk-toolbar { animation: sk-bar-in .3s var(--ease) both; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px; padding: 5px 8px; box-shadow: 0 1px 0 var(--line), 0 6px 16px rgba(10, 36, 100, .07); }
 .sk-toolbar::-webkit-scrollbar { display: none; }
+.sk-toolbar > * { flex-shrink: 0; }
 .sk-toolbar > button { min-width: 34px; justify-content: center; border-color: transparent; background: transparent; padding: 4px 7px; border-radius: 8px; }
 .sk-toolbar > button:hover:not(:disabled) { background: var(--accent-soft); }
 .sk-toolbar > button.on { background: var(--accent-soft); border-color: var(--ws-accent, var(--accent)); font-weight: 600; }

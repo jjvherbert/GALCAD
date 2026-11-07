@@ -3,6 +3,7 @@ import { type SketchEntity } from "../doc/types.ts";
 import { type P2, measure, pt } from "../sketch/geometry.ts";
 import { connectedCurves, extend, isLineCorner, trim } from "../sketch/modify.ts";
 import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, addRectangle, mergePoints, roundDim, smartDimension } from "../sketch/ops.ts";
+import { sketchMirror } from "../sketch/mirror.ts";
 import { type HitOpts, placePoint } from "./sketch-hit.ts";
 import { type RefGroup } from "./sketch-ref.ts";
 import { type Draw, type DimMode, type Snap, type Tool } from "./sketch-types.ts";
@@ -25,6 +26,8 @@ export type ClickCtx = {
   data: () => SketchData;
   W: (sx: number, sy: number) => P2;
   lastValue: { current: { fillet: string; chamfer: string; offset: string } };
+  /** Espelhar: manter as entidades originais (por defeito) ou ficar só com a cópia. */
+  mirrorKeep: boolean;
   setSel: (s: string[]) => void;
   setMsg: (m: string | null) => void;
   setPrompt: (p: { kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[] } | null) => void;
@@ -70,6 +73,18 @@ export function handleClick(c: ClickCtx, sx: number, sy: number, additive: boole
   if (tool === "convert") {
     const i = hitRef(sx, sy);
     if (i >= 0) convert([refGroups[i]]);
+    return;
+  }
+  if (tool === "skmirror") {
+    // clique simples numa linha (ou eixo H/V) com seleção feita = linha de simetria; Shift junta à seleção
+    const id = hitAt(sx, sy);
+    if (!id) { setMsg("Selecione as entidades (Shift+clique) e depois clique na linha de simetria"); return; }
+    if (!additive && sel.length && !sel.includes(id) && ents[id]?.type === "line") {
+      const r = sketchMirror(data(), sel, id, { keep: c.mirrorKeep });
+      if (r) { if (commit(r, "Espelhar")) setSel([]); return; }
+    }
+    if (id === "H" || id === "V" || id === "O") return;
+    setSel(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]);
     return;
   }
   if (tool === "offset") {
