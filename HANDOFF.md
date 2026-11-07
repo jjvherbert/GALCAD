@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F2 fatia 3 — modos de chanfro (PR #50)
+
+- **`src/sketch/chamfer.ts`:** `ChamferSpec` = `{mode:"equal",d}` | `{mode:"angle",d,angle}` | `{mode:"two",d1,d2}`. `chamferGeometry` calcula os pontos de corte (modo ângulo pela lei dos senos); `sketchChamfer(s, canto, spec|número, flip)` mantém a chamada antiga com número. No modo ângulo fica cotada a distância na primeira linha e o ângulo entre essa linha e o chanfro.
+- Editor: seletor "Como definir o chanfro" (Distância igual / Distância + ângulo, 45° por defeito / Duas distâncias) na barra do esboço; o pedido de valor ganha segundo campo e botão ⇄ (troca a linha onde se mede a distância); pré-visualização tracejada do chanfro com os valores atuais. Últimos valores lembrados (`chamfer2`, `chamferAng`, `chamferMode`).
+- Testes novos em `tests/modify.test.ts` (duas distâncias com troca; ângulo 45°/30°; 90° impossível). Unitários 221, tsc, oxlint, build, e2e 12/12 e CI verdes; ui-check 1440 mostra cota 30° e distância, 390 sem overflow nem erros.
+- **A seguir (F2):** repetir linear (n + passo ou n + comprimento total) e circular (n + ângulo, 360° ou parcial) em `feat/sketch-pattern`; aparar splines.
+
 ## Atualização: F2 fatia 2 — espelhar no esboço (PR #49)
 
 - **Novo `src/sketch/mirror.ts`:** `sketchMirror(s, ids, eixo, {keep})` espelha linhas, círculos, arcos (sentido invertido) e splines em relação a uma linha do esboço ou aos eixos H/V. Cada ponto novo fica preso ao original por `symmetric [p, imagem, eixo]`; pontos sobre o eixo são partilhados; círculos/arcos levam `equal`. Com `keep:false` os originais (não partilhados) são apagados.
