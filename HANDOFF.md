@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F2 fatia 1 — chanfro de canto no esboço (PR #48)
+
+- **Novo `src/sketch/chamfer.ts`:** `sketchChamfer(s, canto, d)` corta as duas linhas do canto à distância `d`, liga-as com uma linha nova e fixa cada ponto com uma cota ponto–ponto (`comprimento − d`). Devolve `null` se o canto não tiver exatamente 2 linhas, se `d ≤ 0` ou se `d` ≥ comprimento de uma delas.
+- Ferramenta `skchamfer` (tecla **H**, "Chanfro de canto") em `sketch-types/click/cmd` e `SketchEditor.tsx`, com o mesmo fluxo do filete (clique no canto, valor, Enter). `dropOrphans` passou a exportado em `modify.ts`.
+- Teste novo em `tests/modify.test.ts` (retângulo 40×20, chanfro 5 → área 787,5; nulo para d=25 e d=0). Unitários 213, tsc, oxlint, build, e2e 12/12 e CI verdes; ui-check 1440 confirma o chanfro, 390 sem overflow nem erros.
+- **A seguir (F2):** espelhar (`feat/sketch-mirror`), repetir linear/circular (`feat/sketch-pattern`), aparar splines (`feat/sketch-trim-spline`). Fundo sem quadrícula e cota inteligente já estavam feitos.
+
 ## Atualização: F1 fechada
 
 F1 (refactor) concluída: jobs canceláveis, store partido, registo de features e ficheiros ≤ ~400 linhas (passos 1–4). ROADMAP marcado como feito. Próxima fase: F2 (`feat/sketch-*`).
