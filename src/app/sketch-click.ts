@@ -1,4 +1,4 @@
-// Cliques por ferramenta do editor de esboço 2D (desenho, aparar, estender, filete, conversão, cotas).
+// Cliques por ferramenta do editor de esboço 2D (desenho, aparar, estender, filete, chanfro, conversão, cotas).
 import { type SketchEntity } from "../doc/types.ts";
 import { type P2, measure, pt } from "../sketch/geometry.ts";
 import { connectedCurves, extend, isLineCorner, trim } from "../sketch/modify.ts";
@@ -24,10 +24,10 @@ export type ClickCtx = {
   commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => boolean;
   data: () => SketchData;
   W: (sx: number, sy: number) => P2;
-  lastValue: { current: { fillet: string; offset: string } };
+  lastValue: { current: { fillet: string; chamfer: string; offset: string } };
   setSel: (s: string[]) => void;
   setMsg: (m: string | null) => void;
-  setPrompt: (p: { kind: "fillet" | "offset"; at: [number, number]; text: string; target: string[] } | null) => void;
+  setPrompt: (p: { kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[] } | null) => void;
   setDrawing: (d: Draw | null) => void;
   setDimEdit: (d: { id: string; text: string } | null) => void;
 };
@@ -58,6 +58,12 @@ export function handleClick(c: ClickCtx, sx: number, sy: number, additive: boole
   if (tool === "skfillet") {
     const id = hitAt(sx, sy, { curves: false });
     if (id && isLineCorner(data(), id)) setPrompt({ kind: "fillet", at: [sx, sy], text: lastValue.current.fillet, target: [id] });
+    else setMsg("Clique num canto entre duas linhas");
+    return;
+  }
+  if (tool === "skchamfer") {
+    const id = hitAt(sx, sy, { curves: false });
+    if (id && isLineCorner(data(), id)) setPrompt({ kind: "chamfer", at: [sx, sy], text: lastValue.current.chamfer, target: [id] });
     else setMsg("Clique num canto entre duas linhas");
     return;
   }

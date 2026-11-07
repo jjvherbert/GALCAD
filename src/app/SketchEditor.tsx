@@ -35,8 +35,8 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const [mouse, setMouse] = useState<P2 | null>(null);
   const [dimEdit, setDimEdit] = useState<{ id: string; text: string } | null>(null);
   /** Pedido de valor para filete de canto (raio) ou deslocamento (distância). */
-  const [prompt, setPrompt] = useState<{ kind: "fillet" | "offset"; at: [number, number]; text: string; target: string[] } | null>(null);
-  const lastValue = useRef<{ fillet: string; offset: string }>({ fillet: "5", offset: "5" });
+  const [prompt, setPrompt] = useState<{ kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[] } | null>(null);
+  const lastValue = useRef<{ fillet: string; chamfer: string; offset: string }>({ fillet: "5", chamfer: "5", offset: "5" });
   const [info, setInfo] = useState<SolveResult | null>(null);
   const [free, setFree] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState<string | null>(null);
@@ -193,7 +193,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     }
     if (tool === "select" || tool === "dim" || tool === "trim" || tool === "extend" || tool === "offset") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "dim" ? hitAt(sx, sy) : null));
     else if (tool === "convert") { const i = hitRef(sx, sy); setHover(i >= 0 ? `ref:${i}` : null); }
-    else if (tool === "skfillet") { const h = hitAt(sx, sy, { curves: false }); setHover(h && isLineCorner(data(), h) ? h : null); }
+    else if (tool === "skfillet" || tool === "skchamfer") { const h = hitAt(sx, sy, { curves: false }); setHover(h && isLineCorner(data(), h) ? h : null); }
     else setHover(snap(sx, sy).id ?? null);
     if (drawing?.kind === "arc" && drawing.start) {
       const c = pt(ents, drawing.center);
@@ -366,7 +366,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
         </svg>
         {prompt && (
           <div class="dim-input" style={{ left: `${prompt.at[0]}px`, top: `${prompt.at[1]}px` }}>
-            <input autoFocus value={prompt.text} aria-label={prompt.kind === "fillet" ? "Raio do filete" : "Distância (negativa para o outro lado)"}
+            <input autoFocus value={prompt.text} aria-label={prompt.kind === "fillet" ? "Raio do filete" : prompt.kind === "chamfer" ? "Distância do chanfro" : "Distância (negativa para o outro lado)"}
               onInput={(e) => setPrompt({ ...prompt, text: (e.target as HTMLInputElement).value })}
               onKeyDown={(e) => { if (e.key === "Enter") applyPrompt(); if (e.key === "Escape") setPrompt(null); }} />
             <button onClick={applyPrompt} title="Aplicar">✓</button>
