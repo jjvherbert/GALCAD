@@ -1,5 +1,14 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F3 fatia 3 — biblioteca de materiais do utilizador (PR #60)
+
+- **Diálogo «Materiais…»** (comando `sim.materials`, botão no seletor de material do estudo): lista os materiais do utilizador e os de referência (só leitura, com «Duplicar»). Formulário com E, ν, ρ, α (10⁻⁶/K), k, cedência e Et, mais fonte/notas. Aceita vírgula decimal. Avisa antes de descartar alterações.
+- **Validação (`src/app/material-library.ts`):** nomes vazios, repetidos (sem distinguir maiúsculas), de referência ou «Personalizado» são recusados. Também recusa E ≤ 0, ν fora de [0; 0,5[, ρ ≤ 0, k ≤ 0, cedência ≤ 0, Et fora de [0; E[ e Et sem cedência. Os erros de leitura («abc» não é um número) aparecem junto com os de física, sem repetir o mesmo campo.
+- **Armazenamento:** a lista fica em `localStorage` (`cad-prototipo:materials`). Ao ler, descarta o que for lixo, inválido ou repetido e guarda só os campos conhecidos. Cada estudo guarda uma cópia do material, por isso editar ou apagar no diálogo não altera estudos existentes.
+- Os seletores de material mostram os de referência seguidos dos do utilizador. Um nome de opção longo já não alarga o painel.
+- 7 testes novos em `tests/material-library.test.ts`, incluindo α dos materiais de referência na escala 10⁻⁶/K. tsc, oxlint, 247 unitários, build, e2e 12/12, ui-check (390/768/1440) e CI verdes.
+- **A seguir (F3 fatia 4):** plasticidade multilinear (curva σ–εp por pontos).
+
 ## Atualização: F3 fatia 2 — tensões não-médias investigadas e descartadas (sem código)
 
 - **Premissa caiu:** os corpos de uma montagem não partilham nós (malha do Gmsh por corpo, decks do CalculiX e do code_aster), por isso a média nodal das tensões nunca mistura materiais diferentes. Não havia nada a corrigir.
