@@ -4,7 +4,7 @@
 // análise que o solver não faz, material impossível, apoios em falta). `erro` bloqueia o cálculo,
 // `aviso` não; os rótulos do que cada solver faz vêm do que os adaptadores deste repositório
 // implementam e estão verificados, não do que o solver em geral sabe fazer.
-import { type CfdStudy, type FemLoad, type FemStudy, type Study, loadFaces } from "../doc/study.ts";
+import { type CfdStudy, type FemLoad, type FemStudy, type Study, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 
 export type CheckLevel = "erro" | "aviso" | "info";
 /** Secção do modelo onde se corrige (as mesmas da árvore). */
@@ -112,7 +112,8 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
     for (const x of new Set(mats.filter((x) => !(num(x.k) && x.k! > 0)).map((x) => x.name))) add("erro", "material", `Falta a condutividade térmica k do material ${x}`);
   }
   if (s.nonlinear?.plasticity && !(m.yield! > 0)) add("erro", "material", "Plasticidade: falta a tensão de cedência do material");
-  if (s.nonlinear?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) add("erro", "material", "Plasticidade: o módulo tangente tem de estar entre 0 e E");
+  if (s.nonlinear?.plasticity && m.plasticCurve?.length) for (const e of plasticCurveErrors(m)) add("erro", "material", e);
+  else if (s.nonlinear?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) add("erro", "material", "Plasticidade: o módulo tangente tem de estar entre 0 e E");
 
   // condições
   s.loads.forEach((l, i) => {

@@ -93,6 +93,44 @@ test("code_aster: comandos da estática linear, não linear e modal", () => {
   assert.match(pr, /PRES_REP=\(_F\(GROUP_MA='L2_FORCE', PRES=2\.\),\)/);
 });
 
+test("code_aster: plasticidade multilinear → curva de tração σ–ε total (VMIS_ISOT_TRAC)", () => {
+  const m = parseMsh(MSH);
+  const curve = { ...SIM_MATERIALS[0], tangent: undefined, yield: 235, plasticCurve: [[235, 0], [270, 0.01], [320, 0.05]] as [number, number][] };
+  const nl = { geometry: false, plasticity: true, increments: 8 };
+  const one = asterCase({ ...base, material: curve, nonlinear: nl }, m).files["job.comm"];
+  const vale = (s: string) => s.match(/^TR = DEFI_FONCTION\(NOM_PARA='EPSI', VALE=\(([^)]*)\), PROL_DROITE='(\w+)'\)$/m);
+  const tr = vale(one);
+  assert.ok(tr, one);
+  // ε = εp + σ/E nos pontos dados; plástico perfeito depois do último
+  const v = tr[1].split(", ").map(Number);
+  [[235, 0], [270, 0.01], [320, 0.05]].forEach(([s, ep], i) => {
+    assert.ok(Math.abs(v[2 * i] - (ep + s / 210000)) < 1e-8, `ε do ponto ${i + 1}`);
+    assert.equal(v[2 * i + 1], s);
+  });
+  assert.equal(tr[2], "CONSTANT");
+  assert.match(one, /MAT = DEFI_MATERIAU\(ELAS=_F\([^)]*\), TRACTION=_F\(SIGM=TR\)\)/);
+  assert.match(one, /RELATION='VMIS_ISOT_TRAC'/);
+  assert.ok(!/ECRO_LINE/.test(one));
+  assert.ok(!/[^\x00-\x7f]/.test(one), "comandos em ASCII");
+  // montagem mista: o corpo bilinear passa a 2 pontos com a mesma inclinação Et, prolongada linearmente
+  const box = { min: [0, 0, 0] as [number, number, number], max: [1, 1, 1] as [number, number, number] };
+  const mixed = asterCase({ ...base, nonlinear: nl, bodies: [
+    { group: "SOLID", path: "a", name: "A", material: curve, bbox: box },
+    { group: "SOLID", path: "b", name: "B", material: { ...SIM_MATERIALS[0] }, bbox: box },
+  ] }, m).files["job.comm"];
+  const t2 = mixed.match(/^TR2 = DEFI_FONCTION\(NOM_PARA='EPSI', VALE=\(([^)]*)\), PROL_DROITE='(\w+)'\)$/m);
+  assert.ok(t2 && /^TR1 = DEFI_FONCTION.*'CONSTANT'\)$/m.test(mixed), mixed);
+  const [e1, s1, e2, s2] = t2[1].split(", ").map(Number);
+  assert.equal(t2[2], "LINEAIRE");
+  assert.equal(s1, 235);
+  assert.ok(Math.abs(e1 - 235 / 210000) < 1e-8);
+  // inclinação da curva total = Et = 2100 MPa
+  assert.ok(Math.abs((s2 - s1) / (e2 - e1) - 2100) < 1e-3);
+  assert.match(mixed, /MAT2 = DEFI_MATERIAU\(ELAS=_F\([^)]*\), TRACTION=_F\(SIGM=TR2\)\)/);
+  // sem curvas, continua o encruamento linear
+  assert.match(asterCase({ ...base, nonlinear: nl }, m).files["job.comm"], /RELATION='VMIS_ISOT_LINE'/);
+});
+
 test("code_aster: tabelas IMPR_TABLE → resultado com deslocamentos, von Mises e reações", () => {
   const u = "#\n#ASTER 17.0 CONCEPT TU CALCULE LE ...\n INTITULE NOM_CHAM NUME_ORDRE INST NOEUD DX DY DZ\n U DEPL 1 1.0 N1 0.0 0.0 0.0\n U DEPL 1 1.0 N2 0.0 0.0 -0.5\n U DEPL 1 1.0 N3 0.0 0.0 0.0\n U DEPL 1 1.0 N4 0.0 0.0 0.0\n";
   assert.equal(parseAsterTable(u).length, 4);

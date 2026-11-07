@@ -80,6 +80,21 @@ test("code_aster: plasticidade bilinear em tração uniaxial (VMIS_ISOT_LINE)", 
   near(-r.fem!.history.at(-1)!.reaction![0], sigma * 100, 1e-3);
 });
 
+test("code_aster: plasticidade multilinear em tração uniaxial (VMIS_ISOT_TRAC)", { skip: !has && "code_aster não instalado", timeout: 600000 }, async () => {
+  const { doc, face } = await bar();
+  const sym: FemStudy["loads"] = [{ kind: "displacement", faces: [face(0, 0)], ux: 0 }, { kind: "displacement", faces: [face(1, 0)], uy: 0 }, { kind: "displacement", faces: [face(2, 0)], uz: 0 }];
+  const E = 210000, sigma = 300;
+  const material = { ...SIM_MATERIALS[0], tangent: undefined, plasticCurve: [[235, 0], [270, 0.01], [320, 0.05]] as [number, number][] };
+  // εp(σ) por interpolação linear entre os pontos da curva
+  const ep = (s: number) => (s <= 270 ? ((s - 235) / 35) * 0.01 : 0.01 + ((s - 270) / 50) * 0.04);
+  const r = await run(doc, fem({ material, mesh: { size: 5, order: 2, curvature: 0 }, nonlinear: { plasticity: true, increments: 6 }, loads: [...sym, { kind: "force", faces: [face(0, 100)], f: [sigma * 100, 0, 0] }] }));
+  near(tipMean(r.fem!, 0), (sigma / E + ep(sigma)) * 100, 0.005);
+  const peeq = r.fem!.fields.find((x) => /plástica/.test(x.name))!.values;
+  near(peeq.reduce((a, b) => a + b, 0) / peeq.length, ep(sigma), 0.01);
+  assert.equal(r.fem!.history.length, 6);
+  near(r.fem!.history[4].umax, (250 / E + ep(250)) * 100, 0.02);
+});
+
 test("code_aster: grandes deslocamentos (GREEN_LAGRANGE) — elástica de Bisshopp–Drucker, PL²/EI = 1", { skip: !has && "code_aster não instalado", timeout: 600000 }, async () => {
   const { doc, face } = await bar();
   const E = 210000, I = (10 * 10 ** 3) / 12, L = 100, P = (E * I) / L ** 2;

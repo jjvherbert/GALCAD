@@ -115,6 +115,11 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
     if (c.nonlinear?.plasticity) {
       if (!(mat.yield! > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
+      // multilinear: os pontos (σ, εp) tal como estão; depois do último, plástico perfeito
+      if (mat.plasticCurve?.length) {
+        L.push("*PLASTIC", ...mat.plasticCurve.map(([s, ep]) => `${fmt(s)}, ${fmt(ep)}`));
+        return;
+      }
       // bilinear: σ = σy + Hp·εp, com o módulo plástico Hp = E·Et/(E − Et) (Et = módulo tangente)
       const Et = mat.tangent ?? 0, Hp = (mat.E * Et) / (mat.E - Et);
       L.push("*PLASTIC", `${fmt(mat.yield!)}, 0.`, `${fmt(mat.yield! + Hp)}, 1.`);

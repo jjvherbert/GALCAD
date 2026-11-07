@@ -5,10 +5,10 @@ import { store, useStoreKeys } from "./store.ts";
 import { validateMaterial } from "./material-library.ts";
 import { SIM_MATERIALS, type SimMaterial } from "../doc/study.ts";
 
-type Key = "name" | "E" | "nu" | "density" | "alpha" | "k" | "yield" | "tangent" | "source";
+type Key = "name" | "E" | "nu" | "density" | "alpha" | "k" | "yield" | "tangent" | "curve" | "source";
 type Draft = Record<Key, string>;
 /** Campos do formulário: chave, rótulo, unidade, escala (valor guardado = texto × escala), obrigatório. */
-const FIELDS: [Exclude<Key, "name" | "source">, string, string, number, boolean][] = [
+const FIELDS: [Exclude<Key, "name" | "source" | "curve">, string, string, number, boolean][] = [
   ["E", "Módulo de Young E", "MPa", 1, true],
   ["nu", "Coeficiente de Poisson ν", "", 1, true],
   ["density", "Massa volúmica ρ", "g/cm³", 1, true],
@@ -21,9 +21,24 @@ const FIELDS: [Exclude<Key, "name" | "source">, string, string, number, boolean]
 const fmt = (v: number | undefined, scale = 1) => (v === undefined ? "" : String(Number((v / scale).toPrecision(10))));
 const toDraft = (m: SimMaterial): Draft => ({
   name: m.name, source: m.source ?? "",
+  curve: (m.plasticCurve ?? []).map(([s, ep]) => `${fmt(s)}; ${fmt(ep)}`).join("\n"),
   ...Object.fromEntries(FIELDS.map(([k, , , s]) => [k, fmt(m[k], s)])),
 } as Draft);
-const EMPTY: Draft = { name: "", E: "", nu: "", density: "", alpha: "", k: "", yield: "", tangent: "", source: "" };
+const EMPTY: Draft = { name: "", E: "", nu: "", density: "", alpha: "", k: "", yield: "", tangent: "", curve: "", source: "" };
+
+/** Curva σ–εp em texto: um ponto por linha, «σ; εp» (ou separados por espaço/tab), vírgula decimal aceite. */
+function parseCurve(text: string): { curve?: [number, number][]; errors: string[] } {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return { errors: [] };
+  const errors: string[] = [];
+  const curve: [number, number][] = [];
+  lines.forEach((l, i) => {
+    const t = l.split(/\s*;\s*|\s+/).map((x) => Number(x.replace(",", ".")));
+    if (t.length !== 2 || !t.every(Number.isFinite)) errors.push(`Curva plástica, linha ${i + 1}: «${l}» deve ter σ e εp (ex.: 270; 0,01).`);
+    else curve.push([t[0], t[1]]);
+  });
+  return errors.length ? { errors } : { curve, errors };
+}
 
 /** Texto do formulário → material (aceita vírgula decimal) e erros de leitura dos números. */
 function fromDraft(d: Draft): { m: SimMaterial; errors: string[]; unread: Set<keyof SimMaterial> } {
@@ -37,12 +52,21 @@ function fromDraft(d: Draft): { m: SimMaterial; errors: string[]; unread: Set<ke
     if (!Number.isFinite(v)) { errors.push(`${label}: «${d[k].trim()}» não é um número.`); unread.add(k); continue; }
     m[k] = v * scale;
   }
+  const pc = parseCurve(d.curve);
+  errors.push(...pc.errors);
+  if (pc.errors.length) unread.add("plasticCurve");
+  if (pc.curve) {
+    m.plasticCurve = pc.curve;
+    // A cedência é o primeiro ponto da curva: preenchida automaticamente se ficou vazia.
+    if (!d.yield.trim()) m.yield = pc.curve[0][0];
+  }
   if (d.source.trim()) m.source = d.source.trim();
   return { m, errors, unread };
 }
 
 const summary = (m: SimMaterial) =>
-  `E ${m.E.toLocaleString("pt-PT")} MPa · ν ${m.nu} · ρ ${m.density}${m.yield ? ` · cedência ${m.yield} MPa` : ""}`;
+  `E ${m.E.toLocaleString("pt-PT")} MPa · ν ${m.nu} · ρ ${m.density}${m.yield ? ` · cedência ${m.yield} MPa` : ""}` +
+  (m.plasticCurve?.length ? ` · curva ${m.plasticCurve.length} pts` : "");
 
 export function MaterialsDialog() {
   const { userMaterials: user } = useStoreKeys("userMaterials");
@@ -90,7 +114,7 @@ export function MaterialsDialog() {
     return () => removeEventListener("keydown", onKey, true);
   }, []);
 
-  const set = (k: Key) => (e: Event) => setDraft({ ...draft, [k]: (e.currentTarget as HTMLInputElement).value });
+  const set = (k: Key) => (e: Event) => setDraft({ ...draft, [k]: (e.currentTarget as HTMLInputElement | HTMLTextAreaElement).value });
 
   return (
     <div class="modal-back" onClick={close}>
@@ -129,8 +153,11 @@ export function MaterialsDialog() {
                     <span class="unit"><input inputMode="decimal" value={draft[k]} onInput={set(k)} placeholder={req ? "" : "opcional"} /><small>{unit}</small></span>
                   </label>
                 ))}
+                <label class="row curve"><span>Curva plástica σ; εp<small>um ponto por linha, MPa e deformação plástica; o 1.º ponto é a cedência com εp = 0; plástico perfeito depois do último</small></span>
+                  <textarea rows={4} value={draft.curve} onInput={set("curve")} placeholder={"opcional, ex.:\n235; 0\n270; 0,01\n320; 0,05"} spellcheck={false} />
+                </label>
                 <label class="row"><span>Fonte / notas</span><input value={draft.source} onInput={set("source")} placeholder="ex.: ficha técnica do fornecedor" /></label>
-                <p class="muted">* obrigatório. Sem k não há análise térmica; sem cedência não há fator de segurança nem plasticidade.</p>
+                <p class="muted">* obrigatório. Sem k não há análise térmica; sem cedência não há fator de segurança nem plasticidade. Para endurecimento use Et (bilinear) ou a curva (multilinear), não os dois.</p>
                 {!!errors.length && <ul class="mat-errors" role="alert">{errors.map((x) => <li key={x}>{x}</li>)}</ul>}
                 <div class="actions"><span class="grow" />
                   {dirty && <button onClick={() => { setDraft(initial.current); setErrors([]); }}>Repor</button>}

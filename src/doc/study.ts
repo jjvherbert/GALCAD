@@ -22,7 +22,30 @@ export interface SimMaterial {
   yield?: number;
   /** Módulo tangente depois da cedência (MPa), curva bilinear com encruamento isotrópico. */
   tangent?: number;
+  /**
+   * Curva multilinear (alternativa a `tangent`): pontos (σ MPa, εp deformação plástica), o primeiro
+   * com εp = 0 e σ = cedência; plástico perfeito depois do último ponto. Encruamento isotrópico.
+   */
+  plasticCurve?: [number, number][];
   source?: string;
+}
+
+/** Erros da curva plástica de um material (vazio = sem curva ou curva válida). */
+export function plasticCurveErrors(m: SimMaterial): string[] {
+  const c = m.plasticCurve;
+  if (!c) return [];
+  if (c.length < 2) return ["A curva plástica precisa de pelo menos 2 pontos."];
+  if (c.some((p) => !(Number.isFinite(p[0]) && Number.isFinite(p[1])))) return ["A curva plástica tem valores que não são números."];
+  const e: string[] = [];
+  if (c[0][1] !== 0) e.push("O primeiro ponto da curva plástica tem de ter εp = 0 (início da cedência).");
+  if (!(c[0][0] > 0)) e.push("A tensão do primeiro ponto da curva plástica tem de ser positiva.");
+  for (let i = 1; i < c.length; i++) {
+    if (!(c[i][1] > c[i - 1][1])) { e.push(`Curva plástica: εp tem de crescer de ponto para ponto (ponto ${i + 1}).`); break; }
+    if (c[i][0] < c[i - 1][0]) { e.push(`Curva plástica: σ não pode descer (amolecimento não suportado, ponto ${i + 1}).`); break; }
+  }
+  if (m.tangent !== undefined) e.push("Use o módulo tangente Et ou a curva plástica, não os dois.");
+  if (m.yield !== c[0][0]) e.push("A cedência tem de ser igual à tensão do primeiro ponto da curva plástica.");
+  return e;
 }
 
 /** Conjunto nomeado de faces (como os «sets» do Abaqus e os grupos do Femap): reutilizável em várias condições. */
@@ -115,7 +138,7 @@ export interface FemDynamic {
 export interface FemNonlinear {
   /** Grandes deslocamentos e rotações (NLGEOM / GROT_GDEP). */
   geometry?: boolean;
-  /** Plasticidade de von Mises com encruamento isotrópico bilinear (cedência e módulo tangente do material). */
+  /** Plasticidade de von Mises com encruamento isotrópico: bilinear (cedência e Et) ou multilinear (curva plástica do material). */
   plasticity?: boolean;
   /** N.º de incrementos de carga (mínimo; o solver pode subdividir). */
   increments?: number;

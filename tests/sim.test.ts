@@ -205,6 +205,24 @@ test("CalculiX: plasticidade bilinear em tração uniaxial (ε = σ/E + (σ − 
   assert.ok(r.metrics.some((m) => m.key === "peeq"));
 });
 
+test("CalculiX: plasticidade multilinear em tração uniaxial (εp interpolado na curva σ–εp)", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 300000 }, async () => {
+  const { doc, face } = await bar();
+  const sym: FemStudy["loads"] = [{ kind: "displacement", faces: [face(0, 0)], ux: 0 }, { kind: "displacement", faces: [face(1, 0)], uy: 0 }, { kind: "displacement", faces: [face(2, 0)], uz: 0 }];
+  const E = 210000, sigma = 300;
+  const material = { ...SIM_MATERIALS[0], tangent: undefined, plasticCurve: [[235, 0], [270, 0.01], [320, 0.05]] as [number, number][] };
+  // εp(σ) por interpolação linear entre os pontos da curva
+  const ep = (s: number) => (s <= 270 ? ((s - 235) / 35) * 0.01 : 0.01 + ((s - 270) / 50) * 0.04);
+  const r = await (await solve(doc, fem({ material, mesh: { size: 5, order: 2, curvature: 0 }, nonlinear: { plasticity: true, increments: 6 }, loads: [...sym, { kind: "force", faces: [face(0, 100)], f: [sigma * 100, 0, 0] }] }))).run();
+  const f = r.fem!;
+  const tip = f.positions.reduce<number[]>((a, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...a, f.displacements[0].values[i]] : a), []);
+  near(tip.reduce((a, b) => a + b, 0) / tip.length, (sigma / E + ep(sigma)) * 100, 0.005);
+  const peeq = f.fields.find((x) => /plástica/.test(x.name))!.values;
+  near(peeq.reduce((a, b) => a + b, 0) / peeq.length, ep(sigma), 0.01);
+  // incremento 5 (250 MPa) cai no 1.º troço da curva: confirma a interpolação, não só o último ponto
+  assert.equal(f.history.length, 6);
+  near(f.history[4].umax, (250 / E + ep(250)) * 100, 0.02);
+});
+
 test("CalculiX: grandes deslocamentos (NLGEOM) — consola elástica de Bisshopp–Drucker, PL²/EI = 1", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 300000 }, async () => {
   const { doc, face } = await bar();
   const E = 210000, I = (10 * 10 ** 3) / 12, L = 100, P = (E * I) / L ** 2;
