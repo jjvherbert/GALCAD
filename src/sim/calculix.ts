@@ -105,7 +105,8 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   const material = (name: string, mat: FemCase["material"]) => {
     L.push(`*MATERIAL, NAME=${name}`, `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
     if (thermal) {
-      L.push("*CONDUCTIVITY", fmt(mat.k ?? 50));
+      if (!(mat.k! > 0)) throw new Error(`Térmico: o material ${mat.name} não tem condutividade térmica k`);
+      L.push("*CONDUCTIVITY", fmt(mat.k!));
       return;
     }
     L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
@@ -133,7 +134,8 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   // contacto colado: nós da face escrava presos (por MPC) às faces dos elementos da face mestra.
   // Contacto com atrito: penalidade face a face (pressão linear com a interpenetração, rigidez
   // K = 20·E por mm, como recomenda o manual do CalculiX) e Coulomb com declive de aderência K/100.
-  const Emax = Math.max(c.material.E, ...(c.bodies ?? []).map((b) => b.material.E));
+  // numa montagem cada corpo tem o seu material (o do estudo só conta sem corpos)
+  const Emax = c.bodies?.length ? Math.max(...c.bodies.map((b) => b.material.E)) : c.material.E;
   for (const t of c.ties ?? []) {
     const master = tris[t.master].filter((x) => x.face);
     if (!tris[t.slave]?.length || !master.length) { warnings.push(`Contacto ${t.name}: faces sem malha`); continue; }

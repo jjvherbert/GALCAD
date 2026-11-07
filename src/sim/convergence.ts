@@ -17,8 +17,10 @@ export interface GciResult {
   gciFine: number;
   /** Verificação da gama assintótica: GCI32 / (r21^p · GCI21) ≈ 1. */
   asymptotic: number;
-  /** monotónica (0 < R < 1), oscilatória (R < 0), divergente (R > 1) ou já convergida (ε21 = 0). */
-  behaviour: "monotonic" | "oscillatory" | "divergent" | "converged";
+  /** monotónica (0 < R < 1), oscilatória (R < 0), divergente (R > 1), já convergida (ε21 = 0) ou
+   *  inválida (malhas não refinadas por ordem, valores não finitos, valor nulo na malha fina ou ordem
+   *  aparente indefinida: não há GCI). */
+  behaviour: "monotonic" | "oscillatory" | "divergent" | "converged" | "invalid";
   notes: string[];
 }
 
@@ -32,10 +34,14 @@ export function gci(n: [number, number, number], f: [number, number, number], di
   const [f1, f2, f3] = f;
   const e21 = f2 - f1, e32 = f3 - f2;
   const notes: string[] = [];
+  const invalid = (why: string): GciResult => ({ r21, r32, p: NaN, extrapolated: NaN, ea21: NaN, eext21: NaN, gciFine: NaN, asymptotic: NaN, behaviour: "invalid", notes: [...notes, why] });
+  if (![...n, ...f].every(Number.isFinite) || !n.every((x) => x > 0)) return invalid("Valores ou números de células não finitos: sem GCI");
+  if (!(r21 > 1 && r32 > 1)) return invalid(`As malhas não estão refinadas por ordem (razões ${r21.toFixed(3)} / ${r32.toFixed(3)}; têm de ser > 1): sem GCI`);
   if (r21 < 1.3 || r32 < 1.3) notes.push(`Razões de refinamento ${r21.toFixed(2)} / ${r32.toFixed(2)} abaixo de 1,3 (recomendado ≥ 1,3)`);
   if (e21 === 0 || Math.abs(e21) <= 1e-12 * Math.max(Math.abs(f1), 1e-300)) {
     return { r21, r32, p: NaN, extrapolated: f1, ea21: 0, eext21: 0, gciFine: 0, asymptotic: NaN, behaviour: "converged", notes: [...notes, "As duas malhas mais finas dão o mesmo valor"] };
   }
+  if (f1 === 0) return invalid("Valor nulo na malha fina: os erros relativos não estão definidos (use outra grandeza): sem GCI");
   const R = e21 / e32;
   const behaviour = !Number.isFinite(R) ? "divergent" : R < 0 ? "oscillatory" : R > 1 ? "divergent" : "monotonic";
   const s = Math.sign(e32 / e21);
@@ -48,10 +54,13 @@ export function gci(n: [number, number, number], f: [number, number, number], di
     if (Math.abs(next - p) < 1e-12) { p = next; break; }
     p = next;
   }
+  if (!Number.isFinite(p) || !(p > 0)) return invalid("Ordem aparente indefinida (a iteração não converge): sem GCI");
   const rp = r21 ** p;
   const extrapolated = (rp * f1 - f2) / (rp - 1);
   const ea21 = Math.abs((f1 - f2) / f1);
-  const eext21 = Math.abs((extrapolated - f1) / extrapolated);
+  // com o extrapolado nulo o erro relativo extrapolado não está definido (o GCI não depende dele)
+  const eext21 = extrapolated === 0 ? NaN : Math.abs((extrapolated - f1) / extrapolated);
+  if (extrapolated === 0) notes.push("Valor extrapolado nulo: o erro relativo extrapolado não está definido");
   const gciFine = (Fs * ea21) / (rp - 1);
   const gci32 = (Fs * Math.abs((f2 - f3) / f2)) / (r32 ** p - 1);
   const asymptotic = gci32 / (rp * gciFine);

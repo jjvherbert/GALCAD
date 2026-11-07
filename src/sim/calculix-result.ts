@@ -178,6 +178,28 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
   const metrics: Metric[] = [];
   const max = (a: number[]) => a.reduce((x, y) => Math.max(x, y), 0);
   const vmOf = (v: number[]) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
+  // tensão de von Mises máxima e fator de segurança à cedência, por corpo com o material de cada corpo e
+  // sobre todos os nós do corpo (não só os da superfície: o máximo pode ser interior, como no contacto)
+  const stressSummary = (sb: FrdBlock[], label: string, withSafety: boolean) => {
+    const parts = c.bodies?.length ? c.bodies.map((b) => ({ name: b.name, material: b.material, blocks: solidBlocks(m, [b]) })) : [{ name: "", material: c.material, blocks: solidBlocks(m) }];
+    const per = parts.map((p) => {
+      const nodes = new Set<number>();
+      for (const e of elementsOf(p.blocks)) for (const n of e.nodes) nodes.add(n);
+      let vm = 0;
+      for (const b of sb) for (const t of nodes) { const v = b.data.get(t); if (v) vm = Math.max(vm, b.name === "VMIS" ? v[0] : vmOf(v)); }
+      return { ...p, vm, fs: p.material.yield ? p.material.yield / Math.max(vm, 1e-12) : undefined };
+    });
+    const vmax = max(per.map((p) => p.vm));
+    summary.push([label, `${vmax.toFixed(2)} MPa`]);
+    metrics.push({ key: "vmmax", label, unit: "MPa", value: vmax });
+    if (!withSafety) return;
+    const gov = per.filter((p) => p.fs !== undefined).reduce<(typeof per)[number] | undefined>((a, p) => (!a || p.fs! < a.fs! ? p : a), undefined);
+    if (!gov) return;
+    const multi = per.length > 1;
+    summary.push(["Fator de segurança mín. (cedência)", `${gov.fs!.toFixed(2)}${multi ? ` — ${gov.name} (${gov.material.name})` : ""}`]);
+    metrics.push({ key: "fsmin", label: "Fator de segurança mín. (cedência)", unit: "", value: gov.fs! });
+    if (multi) for (const p of per) summary.push([`Fator de segurança — ${p.name}`, p.fs === undefined ? `sem tensão de cedência (${p.material.name})` : `${p.fs.toFixed(2)} (σ von Mises máx. ${p.vm.toFixed(2)} MPa; cedência ${p.material.yield} MPa, ${p.material.name})`]);
+  };
   // instantes da dinâmica: blocos por tempo (o .frd escreve o tempo com 6 algarismos)
   const sameT = (a: number, b: number) => Math.abs(a - b) <= 1e-5 * Math.max(Math.abs(a), Math.abs(b), 1e-30);
   const atTime = (name: string, t: number) => r.blocks.find((b) => b.name === name && sameT(b.value, t));
@@ -203,11 +225,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
     timeHistory = { times, series: [{ key: "umax", label: "Deslocamento máx.", unit: "mm", values: umaxT }] };
     summary.push(["Deslocamento máx. (pico)", `${umaxT[peak]?.toFixed(4) ?? "—"} mm em t = ${((times[peak] ?? 0) * 1e3).toPrecision(4)} ms`]);
     metrics.push({ key: "umax", label: "Deslocamento máx. (pico)", unit: "mm", value: umaxT[peak] ?? NaN }, { key: "tpeak", label: "Instante do pico", unit: "s", value: times[peak] ?? NaN });
-    if (hasS) {
-      summary.push(["Tensão de von Mises máx. no tempo", `${max(vmEnv).toFixed(2)} MPa`]);
-      metrics.push({ key: "vmmax", label: "Tensão de von Mises máx. no tempo", unit: "MPa", value: max(vmEnv) });
-      if (c.material.yield) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vmEnv), 1e-12)).toFixed(2)]);
-    }
+    if (hasS) stressSummary(frames.map((b) => atTime("STRESS", b.value) ?? atTime("VMIS", b.value)).filter((b) => !!b), "Tensão de von Mises máx. no tempo", true);
     summary.push(["Instantes guardados", `${frames.length} (até ${((times.at(-1) ?? 0) * 1e3).toPrecision(4)} ms)`]);
   } else if (c.analysis === "thermal") {
     const t = r.blocks.find((b) => b.name === "NDTEMP");
@@ -230,9 +248,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       if (s || sv) {
         const vm = sv ? field(sv, (v) => v[0]) : field(s, (v) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
         fields.push({ name: "Tensão de von Mises", unit: "MPa", values: vm });
-        summary.push(["Tensão de von Mises máx.", `${max(vm).toFixed(2)} MPa`]);
-        metrics.push({ key: "vmmax", label: "Tensão de von Mises máx.", unit: "MPa", value: max(vm) });
-        if (c.material.yield && !c.nonlinear?.plasticity) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
+        stressSummary([(sv ?? s)!], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
       }
       const pe = lastOf("PE");
       if (pe) {

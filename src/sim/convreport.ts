@@ -48,7 +48,7 @@ export function levelsTable(r: ConvergenceReport): Table {
 
 /** Tabela do GCI por grandeza (três malhas mais finas): ordem aparente, extrapolado, GCI e comportamento. */
 export function gciTable(r: ConvergenceReport): Table {
-  const BEH = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida" } as const;
+  const BEH = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida", invalid: "inválida" } as const;
   return {
     header: ["Grandeza", "Unidade", "Fina", "Média", "Grossa", "Ordem aparente p", "Extrapolado (Richardson)", "Erro aprox. (%)", "Erro extrapolado (%)", "GCI fina (%)", "Razão assintótica", "Comportamento", "Notas"],
     rows: r.rows.map((x) => [x.label, x.unit, fmt(x.values[0]), fmt(x.values[1]), fmt(x.values[2]), fmt(x.gci.p, 4), fmt(x.gci.extrapolated), pct(x.gci.ea21), pct(x.gci.eext21), pct(x.gci.gciFine), fmt(x.gci.asymptotic, 3), BEH[x.gci.behaviour], x.gci.notes.join(" · ")]),
