@@ -29,6 +29,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const [view, setView] = useState<{ k: number; tx: number; ty: number } | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [dimMode, setDimMode] = useState<DimMode>("auto");
+  const [mirrorKeep, setMirrorKeep] = useState(true);
   const [sel, setSel] = useState<string[]>([]);
   const [hover, setHover] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<Draw | null>(null);
@@ -191,7 +192,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       if (r.ok) store.updateSketch({ ...draft, entities: r.entities });
       return;
     }
-    if (tool === "select" || tool === "dim" || tool === "trim" || tool === "extend" || tool === "offset") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "dim" ? hitAt(sx, sy) : null));
+    if (tool === "select" || tool === "dim" || tool === "trim" || tool === "extend" || tool === "offset" || tool === "skmirror") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "dim" || tool === "skmirror" ? hitAt(sx, sy) : null));
     else if (tool === "convert") { const i = hitRef(sx, sy); setHover(i >= 0 ? `ref:${i}` : null); }
     else if (tool === "skfillet" || tool === "skchamfer") { const h = hitAt(sx, sy, { curves: false }); setHover(h && isLineCorner(data(), h) ? h : null); }
     else setHover(snap(sx, sy).id ?? null);
@@ -235,13 +236,9 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   }
 
   // --- cliques por ferramenta ---------------------------------------------------------
-  function click(sx: number, sy: number, additive: boolean, dbl: boolean) {
-    handleClick({ tool, sel, drawing, dimMode, draft, ents, hitAt, snap, hitRef, refGroups, convert, commit, data, W, lastValue, setSel, setMsg, setPrompt, setDrawing, setDimEdit }, sx, sy, additive, dbl);
-  }
-
-  function finishSpline(pts: string[]) {
-    finishSplineIn({ tool, sel, drawing, dimMode, draft, ents, hitAt, snap, hitRef, refGroups, convert, commit, data, W, lastValue, setSel, setMsg, setPrompt, setDrawing, setDimEdit }, pts);
-  }
+  const clickCtx = () => ({ tool, sel, drawing, dimMode, draft, ents, hitAt, snap, hitRef, refGroups, convert, commit, data, W, lastValue, mirrorKeep, setSel, setMsg, setPrompt, setDrawing, setDimEdit });
+  const click = (sx: number, sy: number, additive: boolean, dbl: boolean) => handleClick(clickCtx(), sx, sy, additive, dbl);
+  const finishSpline = (pts: string[]) => finishSplineIn(clickCtx(), pts);
 
   // --- comandos ---------------------------------------------------------------------
   const entitySel = sel.filter((id) => ents[id]);
@@ -310,6 +307,9 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
             <option value="horizontal">Horizontal</option>
             <option value="vertical">Vertical</option>
           </select>
+        )}
+        {tool === "skmirror" && (
+          <label class="sk-opt" title="Desmarcado: apaga as entidades originais e fica só a cópia espelhada"><input type="checkbox" checked={mirrorKeep} onChange={(e) => setMirrorKeep((e.target as HTMLInputElement).checked)} /> Manter original</label>
         )}
         {tool === "convert" && refGroups.some((g) => g.inPlane) && (
           <button title="Converter todas as arestas do modelo que estão no plano do esboço" onClick={() => convert(refGroups.filter((g) => g.inPlane))}>Contorno no plano</button>
