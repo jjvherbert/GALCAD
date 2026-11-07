@@ -1,5 +1,9 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F1 fechada
+
+F1 (refactor) concluída: jobs canceláveis, store partido, registo de features e ficheiros ≤ ~400 linhas (passos 1–4). ROADMAP marcado como feito. Próxima fase: F2 (`feat/sketch-*`).
+
 ## Atualização: F1 passo 4 (fatias 18–27) — o resto dos ficheiros >400 linhas partido (PR #38–#47)
 
 - **#38** `sim/calculix.ts` 610 → 280 (resultados em módulo próprio). **#39** `drawing/render.ts` 576 → 333. **#40** `kernel/features/gsd.ts` partido por tema. **#41** `kernel/service.ts` 507 → 401. **#42** `app/forms.tsx` (493) → `forms-base`, `forms-select`, `forms-lists`. **#43** `kernel/occ.ts` dividido. **#44** `DrawingEditor.tsx` 472 → 280 (painel em `drawing-panel.tsx`). **#45** `kernel/sim.ts` → comum/FEM/montagem/CFD. **#46** `kernel/drawing.ts` → `drawing-common/view/source/derived`.
