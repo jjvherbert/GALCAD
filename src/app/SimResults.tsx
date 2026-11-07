@@ -103,7 +103,7 @@ export function QualityReport({ q }: { q: NonNullable<RunResult["quality"]> }) {
 
 export const pct = (x: number) => (Number.isFinite(x) ? `${(100 * x).toFixed(2)} %` : "—");
 export const num = (x: number) => (Number.isFinite(x) ? (Math.abs(x) >= 1e4 || (Math.abs(x) < 1e-3 && x !== 0) ? x.toExponential(3) : x.toPrecision(5)) : "—");
-export const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida" } as const;
+export const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória", divergent: "divergente", converged: "convergida", invalid: "inválida" } as const;
 
 export function SimLegend() {
   const st = useStoreKeys("simResult", "simView");

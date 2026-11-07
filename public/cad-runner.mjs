@@ -2,70 +2,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-// src/sim/gmsh.ts
-const list = (tags) => `{${tags.join(", ")}}`;
-function femGeo(c) {
-	const hex = c.mesh.element === "hex";
-	const out = [
-		`// Gerado pelo CAD protótipo — ${c.title}`,
-		`// Unidades: mm. Elementos ${hex ? c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados" : "tetraédricos"} de ordem ${c.mesh.order}.`,
-		`SetFactory("OpenCASCADE");`,
-		`Merge "model.brep";`
-	];
-	if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
-	else out.push(`Physical Volume("SOLID") = Volume{:};`);
-	for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
-	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${c.mesh.minSize};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${c.mesh.order};`, `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = 1;`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = 0;`, `Mesh.SaveAll = 0;`);
-	for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
-	out.push(...meshControls(c));
-	return out.join("\n") + "\n";
-}
-/**
-* Controlos manuais da malha (ao estilo do pré-processador do Femap): seeds nas arestas (n.º de
-* elementos e distribuição), superfícies e volumes mapeados (transfinitos) e o tipo de elemento.
-*/
-function meshControls(c) {
-	const m = c.mesh, out = [];
-	const hex = m.element === "hex";
-	for (const cv of m.curves ?? []) {
-		const dist = cv.progression && Math.abs(cv.progression - 1) > 1e-9 ? ` Using Progression ${cv.progression}` : cv.bump && Math.abs(cv.bump - 1) > 1e-9 ? ` Using Bump ${cv.bump}` : "";
-		out.push(`Transfinite Curve{${cv.tag}} = ${cv.n + 1}${dist};`);
-	}
-	if (m.surfaces?.length) {
-		out.push(`Transfinite Surface${list(m.surfaces)};`);
-		if (hex) out.push(`Recombine Surface${list(m.surfaces)};`);
-	}
-	if (m.volumes?.length) out.push(`Transfinite Volume${list(m.volumes)};`);
-	if (hex) {
-		if (m.order === 2) out.push(`Mesh.SecondOrderIncomplete = 1;`);
-		if (m.hexMethod === "subdivision") out.push(`Mesh.SubdivisionAlgorithm = 2;`);
-	}
-	return out;
-}
-/**
-* Malha de volume de fluido para o SU2. Interno: o próprio corpo. Externo: caixa do domínio menos o
-* corpo; as faces da caixa ficam "farfield" e as do corpo "body" (identificadas pela caixa envolvente).
-*/
-function su2Geo(c) {
-	const out = [
-		`// Gerado pelo CAD protótipo — ${c.title} (SU2)`,
-		`SetFactory("OpenCASCADE");`,
-		`Merge "model.brep";`
-	];
-	const s = c.mesh.size;
-	if (c.regime === "internal") {
-		out.push(`Physical Volume("fluid") = Volume{:};`);
-		for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
-	} else {
-		const d = c.domain;
-		const e = .001 * Math.max(...d.max.map((x, i) => x - d.min[i]));
-		out.push(`box = newv; Box(box) = {${d.min.join(", ")}, ${d.max.map((x, i) => x - d.min[i]).join(", ")}};`, `fluid() = BooleanDifference{ Volume{box}; Delete; }{ Volume{1}; Delete; };`, `inner() = Surface In BoundingBox{${d.min.map((x) => x + e).join(", ")}, ${d.max.map((x) => x - e).join(", ")}};`, `far() = Surface{:};`, `far() -= inner();`, `Physical Volume("fluid") = fluid();`, `Physical Surface("body") = inner();`, `Physical Surface("farfield") = far();`);
-	}
-	out.push(`Mesh.ScalingFactor = 0.001;`, `Mesh.MeshSizeMax = ${s};`, `Mesh.MeshSizeMin = ${s / 10};`, `Mesh.MeshSizeFromCurvature = 12;`, `Mesh.Algorithm3D = 1;`, `Mesh.ElementOrder = 1;`, `Mesh.SaveAll = 0;`);
-	return out.join("\n") + "\n";
-}
 // src/sim/elements.ts
 const id = (n) => Array.from({ length: n }, (_, i) => i);
 const HEX20_CCX = [
@@ -695,15 +633,6 @@ function* elementsOf(blocks) {
 		};
 	}
 }
-// src/sim/case.ts
-/** Fator da amplitude no instante t (interpolação linear; constante fora da tabela). Sem dinâmica: 1. */
-function amplitudeAt(c, t) {
-	const a = c.dynamic?.amplitude;
-	if (!a?.length) return 1;
-	if (t <= a[0][0]) return a[0][1];
-	for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + (a[i][1] - a[i - 1][1]) * (t - a[i - 1][0]) / (a[i][0] - a[i - 1][0] || 1);
-	return a[a.length - 1][1];
-}
 // src/sim/quality.ts
 const sub = (a, b) => [
 	a[0] - b[0],
@@ -1126,310 +1055,16 @@ function stableIncrement(m, materials) {
 	}
 	return best;
 }
-// src/sim/calculix.ts
-/**
-* Elemento do CalculiX: tetraedros C3D4/C3D10; hexaedros lineares com modos incompatíveis (C3D8I,
-* sem bloqueio por corte em flexão — por omissão), integração completa (C3D8) ou reduzida (C3D8R,
-* controlo de hourglass); quadráticos com integração reduzida (C3D20R, por omissão) ou completa
-* (C3D20). Na térmica, sempre integração completa.
-*/
-function ccxElement(st, integration, thermal = false) {
-	if (st.kind === "tet") return st.order === 2 ? "C3D10" : "C3D4";
-	if (thermal) return st.order === 2 ? "C3D20" : "C3D8";
-	if (st.order === 2) return integration === "full" ? "C3D20" : "C3D20R";
-	return integration === "full" ? "C3D8" : integration === "reduced" ? "C3D8R" : "C3D8I";
+// src/sim/case.ts
+/** Fator da amplitude no instante t (interpolação linear; constante fora da tabela). Sem dinâmica: 1. */
+function amplitudeAt(c, t) {
+	const a = c.dynamic?.amplitude;
+	if (!a?.length) return 1;
+	if (t <= a[0][0]) return a[0][1];
+	for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + (a[i][1] - a[i - 1][1]) * (t - a[i - 1][0]) / (a[i][0] - a[i - 1][0] || 1);
+	return a[a.length - 1][1];
 }
-const fmt = (x) => Number.isInteger(x) ? String(x) : x.toPrecision(10).replace(/\.?0+(e|$)/, "$1");
-function calculixDeck(c, m) {
-	const warnings = [];
-	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
-	const thermal = c.analysis === "thermal";
-	if (!solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
-	const elems = [];
-	const bodyRange = [];
-	for (const g of groupsOfBodies) {
-		const first = elems.length + 1;
-		for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
-			const st = SOLIDS[e.type];
-			elems.push({
-				type: ccxElement(st, c.mesh.integration, thermal),
-				st,
-				n: st.toCcx.map((i) => e.nodes[i])
-			});
-		}
-		if (elems.length < first) throw new Error(`O corpo ${g} não tem elementos na malha`);
-		bodyRange.push([first, elems.length]);
-	}
-	const faceOf = /* @__PURE__ */ new Map();
-	elems.forEach((e, i) => e.st.faces.forEach((f, j) => faceOf.set(faceKey(f.map((q) => e.n[q])), [i + 1, j + 1])));
-	const used = /* @__PURE__ */ new Set();
-	for (const e of elems) for (const n of e.n) used.add(n);
-	const bfaces = (name) => [...elementsOf(faceBlocks(m, name))].map(({ type, nodes }) => {
-		const corners = nodes.slice(0, FACES[type].corners);
-		return {
-			n: nodes,
-			corners,
-			...faceIntegrals(type, nodes.map((t) => m.nodes.get(t))),
-			face: faceOf.get(faceKey(corners))
-		};
-	});
-	const groupArea = {};
-	const tris = {};
-	for (const name of Object.keys(c.groups)) {
-		tris[name] = bfaces(name);
-		groupArea[name] = tris[name].reduce((s, t) => s + t.area, 0);
-		if (!tris[name].length) warnings.push(`O grupo ${name} não tem faces na malha`);
-		if (tris[name].some((t) => !t.face)) warnings.push(`Grupo ${name}: faces sem face de elemento correspondente`);
-	}
-	const L = [];
-	L.push("*HEADING", `${c.title} — gerado pelo CAD protótipo`);
-	for (const h of c.hypotheses) L.push(`** ${h}`);
-	L.push("** Unidades: mm, N, MPa, t, s");
-	L.push("*NODE, NSET=NALL");
-	for (const [t, p] of [...m.nodes].sort((a, b) => a[0] - b[0])) if (used.has(t)) L.push(`${t}, ${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])}`);
-	elems.forEach((e, i) => {
-		if (i === 0 || elems[i - 1].type !== e.type) L.push(`*ELEMENT, TYPE=${e.type}, ELSET=EALL`);
-		L.push(e.n.length > 15 ? `${i + 1}, ${e.n.slice(0, 15).join(", ")},\n${e.n.slice(15).join(", ")}` : `${i + 1}, ${e.n.join(", ")}`);
-	});
-	for (const [name, list] of Object.entries(tris)) {
-		const ns = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b);
-		L.push(`*NSET, NSET=N_${name}`);
-		for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
-	}
-	const dofSets = [
-		0,
-		1,
-		2
-	].map((k) => c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" && ld.u[k] !== null ? [`N_${ld.group}`] : []));
-	if (!thermal) dofSets.forEach((sets, k) => {
-		if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`));
-	});
-	const material = (name, mat) => {
-		L.push(`*MATERIAL, NAME=${name}`, `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
-		if (thermal) {
-			L.push("*CONDUCTIVITY", fmt(mat.k ?? 50));
-			return;
-		}
-		L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
-		if (c.dynamic && (c.dynamic.alpha || c.dynamic.beta)) L.push(`*DAMPING, ALPHA=${fmt(c.dynamic.alpha)}, BETA=${fmt(c.dynamic.beta)}`);
-		if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
-		if (c.nonlinear?.plasticity) {
-			if (!(mat.yield > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
-			const Et = mat.tangent ?? 0, Hp = mat.E * Et / (mat.E - Et);
-			L.push("*PLASTIC", `${fmt(mat.yield)}, 0.`, `${fmt(mat.yield + Hp)}, 1.`);
-		}
-	};
-	if (c.bodies?.length) c.bodies.forEach((b, k) => {
-		L.push(`*ELSET, ELSET=${b.group}, GENERATE`, `${bodyRange[k][0]}, ${bodyRange[k][1]}, 1`);
-		material(`MAT_${b.group}`, b.material);
-		L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
-	});
-	else {
-		material("MAT", c.material);
-		L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
-	}
-	const Emax = Math.max(c.material.E, ...(c.bodies ?? []).map((b) => b.material.E));
-	for (const t of c.ties ?? []) {
-		const master = tris[t.master].filter((x) => x.face);
-		if (!tris[t.slave]?.length || !master.length) {
-			warnings.push(`Contacto ${t.name}: faces sem malha`);
-			continue;
-		}
-		if (t.kind === "contact") {
-			const slave = tris[t.slave].filter((x) => x.face);
-			const K = 20 * Emax;
-			L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=ELEMENT`, ...slave.map((x) => `${x.face[0]}, S${x.face[1]}`));
-			L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
-			L.push(`*SURFACE INTERACTION, NAME=SI_${t.name}`, "*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=LINEAR", `${fmt(K)}`);
-			if ((t.mu ?? 0) > 0) L.push("*FRICTION", `${fmt(t.mu)}, ${fmt(K / 100)}`);
-			L.push(`*CONTACT PAIR, INTERACTION=SI_${t.name}, TYPE=SURFACE TO SURFACE`, `S_${t.slave}, S_${t.master}`);
-			continue;
-		}
-		L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=NODE`, `N_${t.slave}`);
-		L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
-		L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
-	}
-	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
-	const bcs = [], loads = [], bcsAmp = [];
-	const cload = /* @__PURE__ */ new Map();
-	for (const ld of c.loads) switch (ld.kind) {
-		case "fixed":
-			bcs.push(`N_${ld.group}, 1, 3`);
-			break;
-		case "displacement":
-			ld.u.forEach((u, k) => {
-				if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`);
-			});
-			break;
-		case "temperature":
-			bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`);
-			break;
-		case "pointForce": {
-			let best = -1, bd = Infinity;
-			for (const t of used) {
-				const q = m.nodes.get(t);
-				if (!q) continue;
-				const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2;
-				if (d < bd) {
-					bd = d;
-					best = t;
-				}
-			}
-			if (best < 0) {
-				warnings.push("Força pontual sem nó da malha");
-				break;
-			}
-			const acc = cload.get(best) ?? [
-				0,
-				0,
-				0
-			];
-			for (let k = 0; k < 3; k++) acc[k] += ld.f[k];
-			cload.set(best, acc);
-			warnings.push(`Força pontual aplicada no nó ${best}, a ${Math.sqrt(bd).toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
-			break;
-		}
-		case "force": {
-			const A = groupArea[ld.group];
-			if (!(A > 0)) {
-				warnings.push(`Força no grupo ${ld.group} sem área`);
-				break;
-			}
-			for (const t of tris[ld.group]) t.n.forEach((n, i) => {
-				if (t.nodal[i] === 0) return;
-				const acc = cload.get(n) ?? [
-					0,
-					0,
-					0
-				];
-				for (let k = 0; k < 3; k++) acc[k] += ld.f[k] * t.nodal[i] / A;
-				cload.set(n, acc);
-			});
-			break;
-		}
-		case "pressure":
-			loads.push("*DLOAD");
-			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
-			break;
-		case "gravity": {
-			const g = Math.hypot(...ld.g);
-			if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt(g)}, ${ld.g.map((x) => fmt(x / g)).join(", ")}`);
-			break;
-		}
-		case "convection":
-			loads.push("*FILM");
-			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt(ld.tInf)}, ${fmt(ld.h * .001)}`);
-			break;
-		case "heatFlux":
-			loads.push("*DFLUX");
-			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * .001)}`);
-	}
-	const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => tris[n.slice(2)]?.flatMap((t) => t.n) ?? [])));
-	const supportLoad = [
-		0,
-		0,
-		0
-	];
-	for (const [n, f] of cload) for (let k = 0; k < 3; k++) if (dofNodes[k].has(n)) supportLoad[k] += f[k];
-	for (const ld of c.loads) {
-		if (ld.kind !== "pressure") continue;
-		for (const t of tris[ld.group]) {
-			if (!t.face) continue;
-			const el = elems[t.face[0] - 1];
-			const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x));
-			const ce = [
-				0,
-				1,
-				2
-			].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
-			const A = m.nodes.get(t.n[0]);
-			const nv = t.vec.reduce((s, v) => [
-				s[0] + v[0],
-				s[1] + v[1],
-				s[2] + v[2]
-			], [
-				0,
-				0,
-				0
-			]);
-			const sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
-			t.n.forEach((nd, i) => {
-				for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += -ld.p * sgn * t.vec[i][k];
-			});
-		}
-	}
-	if (cload.size) {
-		loads.push("*CLOAD");
-		for (const [n, f] of cload) f.forEach((x, k) => {
-			if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`);
-		});
-	}
-	const nl = c.analysis === "static" ? c.nonlinear : void 0;
-	const contact = (c.ties ?? []).some((t) => t.kind === "contact");
-	let dyn;
-	if (c.dynamic) {
-		const D = c.dynamic;
-		const st = D.dt === void 0 ? stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({
-			group: b.group,
-			...b.material
-		})) : [{
-			group: "SOLID",
-			...c.material
-		}]) : void 0;
-		const dt = D.dt ?? st.dt;
-		const increments = Math.ceil(D.duration / dt - 1e-9);
-		if (increments > 2e6) throw new Error(`Dinâmica: ${increments} incrementos — reduza a duração ou aumente os elementos (o passo estável é ${dt.toExponential(2)} s)`);
-		dyn = {
-			dt,
-			increments,
-			frequency: Math.max(1, Math.round(increments / D.frames)),
-			stable: !!st
-		};
-		L.push("*AMPLITUDE, NAME=A1");
-		for (let k = 0; k < D.amplitude.length; k += 4) L.push(D.amplitude.slice(k, k + 4).flatMap(([t, v]) => [fmt(t), fmt(v)]).join(", "));
-		for (let i = 0; i < loads.length; i++) if (/^\*(CLOAD|DLOAD|DFLUX|FILM)$/.test(loads[i])) loads[i] += ", AMPLITUDE=A1";
-	}
-	if (contact && c.analysis !== "static") throw new Error("Contacto com atrito: só em análises estáticas (use contacto colado nas modais/encurvadura/térmicas)");
-	if (dyn) L.push(`*STEP, INC=${dyn.increments + 100}`, c.dynamic.scheme === "explicit" ? "*DYNAMIC, EXPLICIT, DIRECT" : "*DYNAMIC, DIRECT", `${fmt(dyn.dt)}, ${fmt(c.dynamic.duration)}`);
-	else if (nl || contact) {
-		const n = nl?.increments ?? 10, inc = 1 / n;
-		L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
-	} else if (c.analysis === "static") L.push("*STEP", "*STATIC");
-	else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
-	else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
-	else L.push("*STEP", "*HEAT TRANSFER, STEADY STATE");
-	if (bcs.length) L.push("*BOUNDARY", ...bcs);
-	if (bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...bcsAmp);
-	if (c.analysis !== "modal") L.push(...loads);
-	if (thermal) L.push("*NODE FILE", "NT");
-	else if (dyn) {
-		const f = `, FREQUENCY=${dyn.frequency}`;
-		L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
-		dofSets.forEach((sets, k) => {
-			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}`, "RF");
-		});
-	} else {
-		L.push("*NODE FILE", "U");
-		if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
-		if (c.analysis === "static") dofSets.forEach((sets, k) => {
-			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF");
-		});
-		if (c.analysis === "static") {
-			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
-		}
-	}
-	L.push("*END STEP");
-	if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
-	return {
-		inp: L.join("\n") + "\n",
-		nodes: used.size,
-		elements: elems.length,
-		groupArea,
-		supportLoad,
-		warnings,
-		dynamic: dyn
-	};
-}
+// src/sim/calculix-result.ts
 /** Lê um `.frd` ASCII: coordenadas dos nós e blocos de resultados nodais. */
 function parseFrd(text) {
 	const lines = text.split(/\r?\n/);
@@ -1633,6 +1268,50 @@ function femResultFrom(c, m, blocks, d) {
 	const metrics = [];
 	const max = (a) => a.reduce((x, y) => Math.max(x, y), 0);
 	const vmOf = (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
+	const stressSummary = (sb, label, withSafety) => {
+		const per = (c.bodies?.length ? c.bodies.map((b) => ({
+			name: b.name,
+			material: b.material,
+			blocks: solidBlocks(m, [b])
+		})) : [{
+			name: "",
+			material: c.material,
+			blocks: solidBlocks(m)
+		}]).map((p) => {
+			const nodes = /* @__PURE__ */ new Set();
+			for (const e of elementsOf(p.blocks)) for (const n of e.nodes) nodes.add(n);
+			let vm = 0;
+			for (const b of sb) for (const t of nodes) {
+				const v = b.data.get(t);
+				if (v) vm = Math.max(vm, b.name === "VMIS" ? v[0] : vmOf(v));
+			}
+			return {
+				...p,
+				vm,
+				fs: p.material.yield ? p.material.yield / Math.max(vm, 1e-12) : void 0
+			};
+		});
+		const vmax = max(per.map((p) => p.vm));
+		summary.push([label, `${vmax.toFixed(2)} MPa`]);
+		metrics.push({
+			key: "vmmax",
+			label,
+			unit: "MPa",
+			value: vmax
+		});
+		if (!withSafety) return;
+		const gov = per.filter((p) => p.fs !== void 0).reduce((a, p) => !a || p.fs < a.fs ? p : a, void 0);
+		if (!gov) return;
+		const multi = per.length > 1;
+		summary.push(["Fator de segurança mín. (cedência)", `${gov.fs.toFixed(2)}${multi ? ` — ${gov.name} (${gov.material.name})` : ""}`]);
+		metrics.push({
+			key: "fsmin",
+			label: "Fator de segurança mín. (cedência)",
+			unit: "",
+			value: gov.fs
+		});
+		if (multi) for (const p of per) summary.push([`Fator de segurança — ${p.name}`, p.fs === void 0 ? `sem tensão de cedência (${p.material.name})` : `${p.fs.toFixed(2)} (σ von Mises máx. ${p.vm.toFixed(2)} MPa; cedência ${p.material.yield} MPa, ${p.material.name})`]);
+	};
 	const sameT = (a, b) => Math.abs(a - b) <= 1e-5 * Math.max(Math.abs(a), Math.abs(b), 1e-30);
 	const atTime = (name, t) => r.blocks.find((b) => b.name === name && sameT(b.value, t));
 	let timeHistory;
@@ -1697,16 +1376,7 @@ function femResultFrom(c, m, blocks, d) {
 			unit: "s",
 			value: times[peak] ?? NaN
 		});
-		if (hasS) {
-			summary.push(["Tensão de von Mises máx. no tempo", `${max(vmEnv).toFixed(2)} MPa`]);
-			metrics.push({
-				key: "vmmax",
-				label: "Tensão de von Mises máx. no tempo",
-				unit: "MPa",
-				value: max(vmEnv)
-			});
-			if (c.material.yield) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vmEnv), 1e-12)).toFixed(2)]);
-		}
+		if (hasS) stressSummary(frames.map((b) => atTime("STRESS", b.value) ?? atTime("VMIS", b.value)).filter((b) => !!b), "Tensão de von Mises máx. no tempo", true);
 		summary.push(["Instantes guardados", `${frames.length} (até ${((times.at(-1) ?? 0) * 1e3).toPrecision(4)} ms)`]);
 	} else if (c.analysis === "thermal") {
 		const T = field(r.blocks.find((b) => b.name === "NDTEMP"), (v) => v[0]);
@@ -1756,14 +1426,7 @@ function femResultFrom(c, m, blocks, d) {
 					unit: "MPa",
 					values: vm
 				});
-				summary.push(["Tensão de von Mises máx.", `${max(vm).toFixed(2)} MPa`]);
-				metrics.push({
-					key: "vmmax",
-					label: "Tensão de von Mises máx.",
-					unit: "MPa",
-					value: max(vm)
-				});
-				if (c.material.yield && !c.nonlinear?.plasticity) summary.push(["Fator de segurança mín. (cedência)", (c.material.yield / Math.max(max(vm), 1e-12)).toFixed(2)]);
+				stressSummary([sv ?? s], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
 			}
 			const pe = lastOf("PE");
 			if (pe) {
@@ -1958,6 +1621,311 @@ function femResultFrom(c, m, blocks, d) {
 		hypotheses: c.hypotheses
 	};
 }
+// src/sim/calculix.ts
+/**
+* Elemento do CalculiX: tetraedros C3D4/C3D10; hexaedros lineares com modos incompatíveis (C3D8I,
+* sem bloqueio por corte em flexão — por omissão), integração completa (C3D8) ou reduzida (C3D8R,
+* controlo de hourglass); quadráticos com integração reduzida (C3D20R, por omissão) ou completa
+* (C3D20). Na térmica, sempre integração completa.
+*/
+function ccxElement(st, integration, thermal = false) {
+	if (st.kind === "tet") return st.order === 2 ? "C3D10" : "C3D4";
+	if (thermal) return st.order === 2 ? "C3D20" : "C3D8";
+	if (st.order === 2) return integration === "full" ? "C3D20" : "C3D20R";
+	return integration === "full" ? "C3D8" : integration === "reduced" ? "C3D8R" : "C3D8I";
+}
+const fmt = (x) => Number.isInteger(x) ? String(x) : x.toPrecision(10).replace(/\.?0+(e|$)/, "$1");
+function calculixDeck(c, m) {
+	const warnings = [];
+	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
+	const thermal = c.analysis === "thermal";
+	if (!solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
+	const elems = [];
+	const bodyRange = [];
+	for (const g of groupsOfBodies) {
+		const first = elems.length + 1;
+		for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
+			const st = SOLIDS[e.type];
+			elems.push({
+				type: ccxElement(st, c.mesh.integration, thermal),
+				st,
+				n: st.toCcx.map((i) => e.nodes[i])
+			});
+		}
+		if (elems.length < first) throw new Error(`O corpo ${g} não tem elementos na malha`);
+		bodyRange.push([first, elems.length]);
+	}
+	const faceOf = /* @__PURE__ */ new Map();
+	elems.forEach((e, i) => e.st.faces.forEach((f, j) => faceOf.set(faceKey(f.map((q) => e.n[q])), [i + 1, j + 1])));
+	const used = /* @__PURE__ */ new Set();
+	for (const e of elems) for (const n of e.n) used.add(n);
+	const bfaces = (name) => [...elementsOf(faceBlocks(m, name))].map(({ type, nodes }) => {
+		const corners = nodes.slice(0, FACES[type].corners);
+		return {
+			n: nodes,
+			corners,
+			...faceIntegrals(type, nodes.map((t) => m.nodes.get(t))),
+			face: faceOf.get(faceKey(corners))
+		};
+	});
+	const groupArea = {};
+	const tris = {};
+	for (const name of Object.keys(c.groups)) {
+		tris[name] = bfaces(name);
+		groupArea[name] = tris[name].reduce((s, t) => s + t.area, 0);
+		if (!tris[name].length) warnings.push(`O grupo ${name} não tem faces na malha`);
+		if (tris[name].some((t) => !t.face)) warnings.push(`Grupo ${name}: faces sem face de elemento correspondente`);
+	}
+	const L = [];
+	L.push("*HEADING", `${c.title} — gerado pelo CAD protótipo`);
+	for (const h of c.hypotheses) L.push(`** ${h}`);
+	L.push("** Unidades: mm, N, MPa, t, s");
+	L.push("*NODE, NSET=NALL");
+	for (const [t, p] of [...m.nodes].sort((a, b) => a[0] - b[0])) if (used.has(t)) L.push(`${t}, ${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])}`);
+	elems.forEach((e, i) => {
+		if (i === 0 || elems[i - 1].type !== e.type) L.push(`*ELEMENT, TYPE=${e.type}, ELSET=EALL`);
+		L.push(e.n.length > 15 ? `${i + 1}, ${e.n.slice(0, 15).join(", ")},\n${e.n.slice(15).join(", ")}` : `${i + 1}, ${e.n.join(", ")}`);
+	});
+	for (const [name, list] of Object.entries(tris)) {
+		const ns = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b);
+		L.push(`*NSET, NSET=N_${name}`);
+		for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
+	}
+	const dofSets = [
+		0,
+		1,
+		2
+	].map((k) => c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" && ld.u[k] !== null ? [`N_${ld.group}`] : []));
+	if (!thermal) dofSets.forEach((sets, k) => {
+		if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`));
+	});
+	const material = (name, mat) => {
+		L.push(`*MATERIAL, NAME=${name}`, `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
+		if (thermal) {
+			if (!(mat.k > 0)) throw new Error(`Térmico: o material ${mat.name} não tem condutividade térmica k`);
+			L.push("*CONDUCTIVITY", fmt(mat.k));
+			return;
+		}
+		L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
+		if (c.dynamic && (c.dynamic.alpha || c.dynamic.beta)) L.push(`*DAMPING, ALPHA=${fmt(c.dynamic.alpha)}, BETA=${fmt(c.dynamic.beta)}`);
+		if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
+		if (c.nonlinear?.plasticity) {
+			if (!(mat.yield > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
+			const Et = mat.tangent ?? 0, Hp = mat.E * Et / (mat.E - Et);
+			L.push("*PLASTIC", `${fmt(mat.yield)}, 0.`, `${fmt(mat.yield + Hp)}, 1.`);
+		}
+	};
+	if (c.bodies?.length) c.bodies.forEach((b, k) => {
+		L.push(`*ELSET, ELSET=${b.group}, GENERATE`, `${bodyRange[k][0]}, ${bodyRange[k][1]}, 1`);
+		material(`MAT_${b.group}`, b.material);
+		L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
+	});
+	else {
+		material("MAT", c.material);
+		L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
+	}
+	const Emax = c.bodies?.length ? Math.max(...c.bodies.map((b) => b.material.E)) : c.material.E;
+	for (const t of c.ties ?? []) {
+		const master = tris[t.master].filter((x) => x.face);
+		if (!tris[t.slave]?.length || !master.length) {
+			warnings.push(`Contacto ${t.name}: faces sem malha`);
+			continue;
+		}
+		if (t.kind === "contact") {
+			const slave = tris[t.slave].filter((x) => x.face);
+			const K = 20 * Emax;
+			L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=ELEMENT`, ...slave.map((x) => `${x.face[0]}, S${x.face[1]}`));
+			L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
+			L.push(`*SURFACE INTERACTION, NAME=SI_${t.name}`, "*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=LINEAR", `${fmt(K)}`);
+			if ((t.mu ?? 0) > 0) L.push("*FRICTION", `${fmt(t.mu)}, ${fmt(K / 100)}`);
+			L.push(`*CONTACT PAIR, INTERACTION=SI_${t.name}, TYPE=SURFACE TO SURFACE`, `S_${t.slave}, S_${t.master}`);
+			continue;
+		}
+		L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=NODE`, `N_${t.slave}`);
+		L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
+		L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
+	}
+	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
+	const bcs = [], loads = [], bcsAmp = [];
+	const cload = /* @__PURE__ */ new Map();
+	for (const ld of c.loads) switch (ld.kind) {
+		case "fixed":
+			bcs.push(`N_${ld.group}, 1, 3`);
+			break;
+		case "displacement":
+			ld.u.forEach((u, k) => {
+				if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`);
+			});
+			break;
+		case "temperature":
+			bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`);
+			break;
+		case "pointForce": {
+			let best = -1, bd = Infinity;
+			for (const t of used) {
+				const q = m.nodes.get(t);
+				if (!q) continue;
+				const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2;
+				if (d < bd) {
+					bd = d;
+					best = t;
+				}
+			}
+			if (best < 0) {
+				warnings.push("Força pontual sem nó da malha");
+				break;
+			}
+			const acc = cload.get(best) ?? [
+				0,
+				0,
+				0
+			];
+			for (let k = 0; k < 3; k++) acc[k] += ld.f[k];
+			cload.set(best, acc);
+			warnings.push(`Força pontual aplicada no nó ${best}, a ${Math.sqrt(bd).toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
+			break;
+		}
+		case "force": {
+			const A = groupArea[ld.group];
+			if (!(A > 0)) {
+				warnings.push(`Força no grupo ${ld.group} sem área`);
+				break;
+			}
+			for (const t of tris[ld.group]) t.n.forEach((n, i) => {
+				if (t.nodal[i] === 0) return;
+				const acc = cload.get(n) ?? [
+					0,
+					0,
+					0
+				];
+				for (let k = 0; k < 3; k++) acc[k] += ld.f[k] * t.nodal[i] / A;
+				cload.set(n, acc);
+			});
+			break;
+		}
+		case "pressure":
+			loads.push("*DLOAD");
+			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
+			break;
+		case "gravity": {
+			const g = Math.hypot(...ld.g);
+			if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt(g)}, ${ld.g.map((x) => fmt(x / g)).join(", ")}`);
+			break;
+		}
+		case "convection":
+			loads.push("*FILM");
+			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt(ld.tInf)}, ${fmt(ld.h * .001)}`);
+			break;
+		case "heatFlux":
+			loads.push("*DFLUX");
+			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * .001)}`);
+	}
+	const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => tris[n.slice(2)]?.flatMap((t) => t.n) ?? [])));
+	const supportLoad = [
+		0,
+		0,
+		0
+	];
+	for (const [n, f] of cload) for (let k = 0; k < 3; k++) if (dofNodes[k].has(n)) supportLoad[k] += f[k];
+	for (const ld of c.loads) {
+		if (ld.kind !== "pressure") continue;
+		for (const t of tris[ld.group]) {
+			if (!t.face) continue;
+			const el = elems[t.face[0] - 1];
+			const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x));
+			const ce = [
+				0,
+				1,
+				2
+			].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
+			const A = m.nodes.get(t.n[0]);
+			const nv = t.vec.reduce((s, v) => [
+				s[0] + v[0],
+				s[1] + v[1],
+				s[2] + v[2]
+			], [
+				0,
+				0,
+				0
+			]);
+			const sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
+			t.n.forEach((nd, i) => {
+				for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += -ld.p * sgn * t.vec[i][k];
+			});
+		}
+	}
+	if (cload.size) {
+		loads.push("*CLOAD");
+		for (const [n, f] of cload) f.forEach((x, k) => {
+			if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`);
+		});
+	}
+	const nl = c.analysis === "static" ? c.nonlinear : void 0;
+	const contact = (c.ties ?? []).some((t) => t.kind === "contact");
+	let dyn;
+	if (c.dynamic) {
+		const D = c.dynamic;
+		const st = D.dt === void 0 ? stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({
+			group: b.group,
+			...b.material
+		})) : [{
+			group: "SOLID",
+			...c.material
+		}]) : void 0;
+		const dt = D.dt ?? st.dt;
+		const increments = Math.ceil(D.duration / dt - 1e-9);
+		if (increments > 2e6) throw new Error(`Dinâmica: ${increments} incrementos — reduza a duração ou aumente os elementos (o passo estável é ${dt.toExponential(2)} s)`);
+		dyn = {
+			dt,
+			increments,
+			frequency: Math.max(1, Math.round(increments / D.frames)),
+			stable: !!st
+		};
+		L.push("*AMPLITUDE, NAME=A1");
+		for (let k = 0; k < D.amplitude.length; k += 4) L.push(D.amplitude.slice(k, k + 4).flatMap(([t, v]) => [fmt(t), fmt(v)]).join(", "));
+		for (let i = 0; i < loads.length; i++) if (/^\*(CLOAD|DLOAD|DFLUX|FILM)$/.test(loads[i])) loads[i] += ", AMPLITUDE=A1";
+	}
+	if (contact && c.analysis !== "static") throw new Error("Contacto com atrito: só em análises estáticas (use contacto colado nas modais/encurvadura/térmicas)");
+	if (dyn) L.push(`*STEP, INC=${dyn.increments + 100}`, c.dynamic.scheme === "explicit" ? "*DYNAMIC, EXPLICIT, DIRECT" : "*DYNAMIC, DIRECT", `${fmt(dyn.dt)}, ${fmt(c.dynamic.duration)}`);
+	else if (nl || contact) {
+		const n = nl?.increments ?? 10, inc = 1 / n;
+		L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
+	} else if (c.analysis === "static") L.push("*STEP", "*STATIC");
+	else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
+	else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
+	else L.push("*STEP", "*HEAT TRANSFER, STEADY STATE");
+	if (bcs.length) L.push("*BOUNDARY", ...bcs);
+	if (bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...bcsAmp);
+	if (c.analysis !== "modal") L.push(...loads);
+	if (thermal) L.push("*NODE FILE", "NT");
+	else if (dyn) {
+		const f = `, FREQUENCY=${dyn.frequency}`;
+		L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
+		dofSets.forEach((sets, k) => {
+			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}`, "RF");
+		});
+	} else {
+		L.push("*NODE FILE", "U");
+		if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
+		if (c.analysis === "static") dofSets.forEach((sets, k) => {
+			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF");
+		});
+		if (c.analysis === "static") {
+			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
+		}
+	}
+	L.push("*END STEP");
+	if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
+	return {
+		inp: L.join("\n") + "\n",
+		nodes: used.size,
+		elements: elems.length,
+		groupArea,
+		supportLoad,
+		warnings,
+		dynamic: dyn
+	};
+}
 // src/sim/meshview.ts
 function meshPreview(c, m) {
 	const quality = meshQuality(m, c.bodies);
@@ -2012,6 +1980,629 @@ function meshPreview(c, m) {
 		view,
 		summary
 	};
+}
+// src/sim/result.ts
+/** Resultado FEM como uma camada única (superfície exterior da malha). */
+function femView(r) {
+	return {
+		fields: r.fields.map((f) => ({
+			name: f.name,
+			unit: f.unit
+		})),
+		modes: r.displacements.map((d) => d.label),
+		layers: [{
+			name: "Peça",
+			visible: true,
+			positions: r.positions,
+			triangles: r.triangles,
+			values: r.fields.map((f) => f.values),
+			displacements: r.displacements.map((d) => d.values)
+		}]
+	};
+}
+// src/sim/convergence.ts
+/**
+* GCI de três soluções `f` (fina → grossa) com números de células/elementos `n` (fina → grossa).
+* `Fs` = 1,25 (fator de segurança recomendado para três malhas).
+*/
+function gci(n, f, dim = 3, Fs = 1.25) {
+	const h = n.map((x) => (1 / x) ** (1 / dim));
+	const r21 = h[1] / h[0], r32 = h[2] / h[1];
+	const [f1, f2, f3] = f;
+	const e21 = f2 - f1, e32 = f3 - f2;
+	const notes = [];
+	const invalid = (why) => ({
+		r21,
+		r32,
+		p: NaN,
+		extrapolated: NaN,
+		ea21: NaN,
+		eext21: NaN,
+		gciFine: NaN,
+		asymptotic: NaN,
+		behaviour: "invalid",
+		notes: [...notes, why]
+	});
+	if (![...n, ...f].every(Number.isFinite) || !n.every((x) => x > 0)) return invalid("Valores ou números de células não finitos: sem GCI");
+	if (!(r21 > 1 && r32 > 1)) return invalid(`As malhas não estão refinadas por ordem (razões ${r21.toFixed(3)} / ${r32.toFixed(3)}; têm de ser > 1): sem GCI`);
+	if (r21 < 1.3 || r32 < 1.3) notes.push(`Razões de refinamento ${r21.toFixed(2)} / ${r32.toFixed(2)} abaixo de 1,3 (recomendado ≥ 1,3)`);
+	if (e21 === 0 || Math.abs(e21) <= 1e-12 * Math.max(Math.abs(f1), 1e-300)) return {
+		r21,
+		r32,
+		p: NaN,
+		extrapolated: f1,
+		ea21: 0,
+		eext21: 0,
+		gciFine: 0,
+		asymptotic: NaN,
+		behaviour: "converged",
+		notes: [...notes, "As duas malhas mais finas dão o mesmo valor"]
+	};
+	if (f1 === 0) return invalid("Valor nulo na malha fina: os erros relativos não estão definidos (use outra grandeza): sem GCI");
+	const R = e21 / e32;
+	const behaviour = !Number.isFinite(R) ? "divergent" : R < 0 ? "oscillatory" : R > 1 ? "divergent" : "monotonic";
+	const s = Math.sign(e32 / e21);
+	let p = Math.abs(Math.log(Math.abs(e32 / e21))) / Math.log(r21);
+	for (let it = 0; it < 200; it++) {
+		const q = Math.log((r21 ** p - s) / (r32 ** p - s));
+		const next = Math.abs(Math.log(Math.abs(e32 / e21)) + q) / Math.log(r21);
+		if (!Number.isFinite(next)) break;
+		if (Math.abs(next - p) < 1e-12) {
+			p = next;
+			break;
+		}
+		p = next;
+	}
+	if (!Number.isFinite(p) || !(p > 0)) return invalid("Ordem aparente indefinida (a iteração não converge): sem GCI");
+	const rp = r21 ** p;
+	const extrapolated = (rp * f1 - f2) / (rp - 1);
+	const ea21 = Math.abs((f1 - f2) / f1);
+	const eext21 = extrapolated === 0 ? NaN : Math.abs((extrapolated - f1) / extrapolated);
+	if (extrapolated === 0) notes.push("Valor extrapolado nulo: o erro relativo extrapolado não está definido");
+	const gciFine = Fs * ea21 / (rp - 1);
+	const asymptotic = Fs * Math.abs((f2 - f3) / f2) / (r32 ** p - 1) / (rp * gciFine);
+	if (behaviour === "oscillatory") notes.push("Convergência oscilatória: o GCI é apenas indicativo");
+	if (behaviour === "divergent") notes.push("As soluções afastam-se ao refinar: a malha não está na gama assintótica (singularidade, malha demasiado grossa ou erro de modelação)");
+	if (behaviour === "monotonic" && Math.abs(asymptotic - 1) > .1) notes.push(`Fora da gama assintótica (razão ${asymptotic.toFixed(2)}; esperado ≈ 1)`);
+	if (p > 6 || p < .5) notes.push(`Ordem aparente ${p.toFixed(2)} pouco plausível para o método (esperado ≈ 1–2 em CFD, 2–3 em tetraedros quadráticos)`);
+	return {
+		r21,
+		r32,
+		p,
+		extrapolated,
+		ea21,
+		eext21,
+		gciFine,
+		asymptotic,
+		behaviour,
+		notes
+	};
+}
+/** As diferenças entre malhas consecutivas mantêm o sinal (sem oscilação) — valores pela ordem do refinamento. */
+function isMonotonic(values) {
+	const d = values.slice(1).map((v, i) => v - values[i]).filter((x) => Math.abs(x) > 1e-12 * Math.max(1, ...values.map(Math.abs)));
+	return d.every((x) => Math.sign(x) === Math.sign(d[0]));
+}
+/** Junta as métricas das três malhas (fina → grossa) num relatório de convergência. */
+function convergenceReport(ratio, meshes) {
+	const [a, b, c] = meshes;
+	const rows = [];
+	for (const m of a.metrics) {
+		const v2 = b.metrics.find((x) => x.key === m.key)?.value, v3 = c.metrics.find((x) => x.key === m.key)?.value;
+		if (v2 === void 0 || v3 === void 0 || ![
+			m.value,
+			v2,
+			v3
+		].every(Number.isFinite)) continue;
+		rows.push({
+			key: m.key,
+			label: m.label,
+			unit: m.unit,
+			values: [
+				m.value,
+				v2,
+				v3
+			],
+			gci: gci([
+				a.cells,
+				b.cells,
+				c.cells
+			], [
+				m.value,
+				v2,
+				v3
+			])
+		});
+	}
+	return {
+		ratio,
+		meshes: meshes.map((m) => ({
+			cells: m.cells,
+			size: m.size
+		})),
+		rows,
+		hypotheses: [
+			"Incerteza numérica da discretização pelo GCI (Celik et al., J. Fluids Eng. 130, 2008; ASME V&V 20-2009), Fs = 1,25, três malhas refinadas de forma sistemática",
+			"h = (1/N)^(1/3) com N células/elementos (domínio igual nas três malhas)",
+			"Não inclui erros de modelação (condições de fronteira, material, turbulência) nem de convergência iterativa",
+			"Máximos locais junto a singularidades geométricas (cantos vivos, cargas pontuais) não convergem: use valores afastados das singularidades"
+		]
+	};
+}
+// src/sim/xfoil.ts
+const num$1 = (x, what, lo, hi) => {
+	const v = Number(x);
+	if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`${what}: valor inválido (${String(x)}; entre ${lo} e ${hi})`);
+	return v;
+};
+/** Pedido validado (limites físicos e de tamanho); deita fora tudo o que não é número ou código NACA. */
+function checkXfoilRequest(r) {
+	const a = r?.airfoil;
+	let airfoil;
+	if (a && typeof a.naca === "string") {
+		if (!/^\d{4,5}$/.test(a.naca)) throw new Error("Código NACA inválido (4 ou 5 dígitos)");
+		airfoil = { naca: a.naca };
+	} else if (a && Array.isArray(a.coords)) {
+		const coords = a.coords.map((p, i) => {
+			if (!Array.isArray(p) || p.length < 2) throw new Error(`Coordenada ${i + 1} inválida`);
+			return [num$1(p[0], "x/c", -.1, 1.1), num$1(p[1], "y/c", -.5, .5)];
+		});
+		if (coords.length < 20 || coords.length > 1e3) throw new Error("O perfil precisa de 20 a 1000 pontos");
+		airfoil = {
+			name: String(a.name ?? "Perfil").replace(/[^\w .+-]/g, "").slice(0, 40) || "Perfil",
+			coords
+		};
+	} else throw new Error("Perfil em falta (código NACA ou coordenadas)");
+	const al = r.alpha ?? {};
+	const from = num$1(al.from, "α inicial", -30, 30), to = num$1(al.to, "α final", -30, 30);
+	const step = Math.abs(num$1(al.step, "passo de α", .05, 10));
+	if (Math.abs(to - from) / step > 200) throw new Error("Demasiados ângulos (máx. 200)");
+	return {
+		airfoil,
+		re: num$1(r.re, "Reynolds", 1e4, 1e9),
+		mach: num$1(r.mach ?? 0, "Mach", 0, .7),
+		ncrit: num$1(r.ncrit ?? 9, "Ncrit", 1, 14),
+		alpha: {
+			from,
+			to,
+			step
+		},
+		xtrTop: num$1(r.xtrTop ?? 1, "transição no extradorso", 0, 1),
+		xtrBot: num$1(r.xtrBot ?? 1, "transição no intradorso", 0, 1),
+		iter: Math.round(num$1(r.iter ?? 150, "iterações", 10, 1e3)),
+		panels: Math.round(num$1(r.panels ?? 160, "painéis", 60, 400))
+	};
+}
+/** Ficheiro de coordenadas (formato Selig com nome na primeira linha). */
+function airfoilFile(name, coords) {
+	return `${name}\n${coords.map(([x, y]) => ` ${x.toFixed(6)}  ${y.toFixed(6)}`).join("\n")}\n`;
+}
+/**
+* Comandos para o XFOIL (stdin). A varredura começa em α = 0 (ou no ângulo mais próximo) e vai para
+* cada lado separadamente, com a camada-limite reiniciada, porque o XFOIL converge melhor partindo
+* da solução vizinha. Sem gráficos (PLOP G F).
+*/
+function xfoilCommands(req, polarFile = "polar.txt", airfoilPath = "airfoil.dat") {
+	const r = checkXfoilRequest(req);
+	const lo = Math.min(r.alpha.from, r.alpha.to), hi = Math.max(r.alpha.from, r.alpha.to), s = r.alpha.step;
+	const start = lo > 0 ? lo : hi < 0 ? hi : 0;
+	const f = (x) => x.toFixed(3);
+	const lines = [
+		"PLOP",
+		"G F",
+		""
+	];
+	lines.push("naca" in r.airfoil ? `NACA ${r.airfoil.naca}` : `LOAD ${airfoilPath}`);
+	lines.push("PPAR", `N ${r.panels}`, "", "");
+	lines.push("OPER", "VPAR", `N ${r.ncrit}`, `XTR ${r.xtrTop} ${r.xtrBot}`, "");
+	lines.push(`ITER ${r.iter}`, `VISC ${r.re}`, `MACH ${r.mach}`, "PACC", polarFile, "");
+	if (hi >= start) lines.push(`ASEQ ${f(start)} ${f(hi)} ${f(s)}`);
+	if (lo < start) lines.push("INIT", `ASEQ ${f(start - s)} ${f(lo)} ${f(-s)}`);
+	lines.push("PACC", "", "QUIT", "");
+	return {
+		stdin: lines.join("\n"),
+		files: "coords" in r.airfoil ? { [airfoilPath]: airfoilFile(r.airfoil.name, r.airfoil.coords) } : {},
+		request: r
+	};
+}
+/**
+* Segunda passagem para os ângulos que não convergiram: cada um é aproximado a partir do vizinho
+* convergido mais próximo em passos de 0,25° (camada-limite reiniciada), com o dobro das iterações
+* e mais 10 painéis.
+*/
+function xfoilRetryCommands(req, missing, converged, polarFile = "polar2.txt", airfoilPath = "airfoil.dat") {
+	const base = xfoilCommands({
+		...req,
+		iter: Math.min(1e3, (req.iter ?? 150) * 2),
+		panels: Math.min(400, (req.panels ?? 160) + 10)
+	}, polarFile, airfoilPath);
+	const head = base.stdin.split("\n");
+	const cut = head.findIndex((l) => l.startsWith("ASEQ") || l === "INIT");
+	const lines = head.slice(0, cut);
+	const f = (x) => x.toFixed(3);
+	missing.forEach((m, k) => {
+		const near = converged.length ? converged.reduce((b, a) => Math.abs(a - m) < Math.abs(b - m) ? a : b) : 0;
+		const d = m > near ? .25 : -.25;
+		if (k > 0) lines.push("INIT");
+		lines.push(`ALFA ${f(near)}`);
+		if (Math.abs(m - near) > .26) lines.push(`ASEQ ${f(near + d)} ${f(m - d)} ${f(d)}`);
+		lines.push(`ALFA ${f(m)}`);
+	});
+	lines.push("PACC", "", "QUIT", "");
+	return {
+		stdin: lines.join("\n"),
+		files: base.files,
+		request: base.request
+	};
+}
+/** Lê a polar do XFOIL (colunas depois da linha de traços), ordenada por α e sem repetidos. */
+function parsePolar(text) {
+	const lines = text.split(/\r?\n/);
+	const i = lines.findIndex((l) => /^\s*-{5,}/.test(l));
+	if (i < 0) return [];
+	const rows = /* @__PURE__ */ new Map();
+	for (const l of lines.slice(i + 1)) {
+		const v = l.trim().split(/\s+/).map(Number);
+		if (v.length < 7 || v.slice(0, 7).some((x) => !Number.isFinite(x))) continue;
+		rows.set(v[0].toFixed(3), {
+			alpha: v[0],
+			cl: v[1],
+			cd: v[2],
+			cdp: v[3],
+			cm: v[4],
+			xtrTop: v[5],
+			xtrBot: v[6]
+		});
+	}
+	return [...rows.values()].sort((a, b) => a.alpha - b.alpha);
+}
+/** Grandezas de projeto da polar: declive e α0 (mínimos quadrados na zona linear), CLmax, CDmin, L/D. */
+function polarSummary(polar, req) {
+	const missing = [];
+	if (req) {
+		const lo = Math.min(req.alpha.from, req.alpha.to), hi = Math.max(req.alpha.from, req.alpha.to);
+		for (let a = lo; a <= hi + 1e-9; a += Math.abs(req.alpha.step)) if (!polar.some((p) => Math.abs(p.alpha - a) < .001)) missing.push(Math.round(a * 1e3) / 1e3);
+	}
+	if (!polar.length) return {
+		clAlphaDeg: null,
+		clAlphaRad: null,
+		alpha0: null,
+		clMax: null,
+		alphaClMax: null,
+		cdMin: NaN,
+		clAtCdMin: NaN,
+		ldMax: NaN,
+		alphaLdMax: NaN,
+		missing
+	};
+	const near0 = polar.reduce((b, p) => Math.abs(p.cl) < Math.abs(b.cl) ? p : b);
+	const lin = polar.filter((p) => Math.abs(p.alpha - near0.alpha) <= 5);
+	let clAlphaDeg = null, alpha0 = null;
+	if (lin.length >= 3) {
+		const n = lin.length, sx = lin.reduce((s, p) => s + p.alpha, 0), sy = lin.reduce((s, p) => s + p.cl, 0);
+		const sxx = lin.reduce((s, p) => s + p.alpha * p.alpha, 0);
+		const k = (n * lin.reduce((s, p) => s + p.alpha * p.cl, 0) - sx * sy) / (n * sxx - sx * sx), b = (sy - k * sx) / n;
+		clAlphaDeg = k;
+		alpha0 = -b / k;
+	}
+	let iMax = 0;
+	polar.forEach((p, i) => {
+		if (p.cl > polar[iMax].cl) iMax = i;
+	});
+	const interior = iMax < polar.length - 1;
+	const cdBest = polar.reduce((b, p) => p.cd < b.cd ? p : b);
+	const ldBest = polar.reduce((b, p) => p.cl / p.cd > b.cl / b.cd ? p : b);
+	return {
+		clAlphaDeg,
+		clAlphaRad: clAlphaDeg === null ? null : clAlphaDeg * 180 / Math.PI,
+		alpha0,
+		clMax: interior ? polar[iMax].cl : null,
+		alphaClMax: interior ? polar[iMax].alpha : null,
+		cdMin: cdBest.cd,
+		clAtCdMin: cdBest.cl,
+		ldMax: ldBest.cl / ldBest.cd,
+		alphaLdMax: ldBest.alpha,
+		missing
+	};
+}
+const XFOIL_HYPOTHESES = [
+	"Escoamento 2D (perfil de envergadura infinita), subsónico; compressibilidade pela correção de Kármán–Tsien (válida abaixo do Mach crítico).",
+	"Camada-limite integral acoplada ao escoamento potencial (método de painéis); transição pelo método e^n com o Ncrit indicado.",
+	"Fiável na zona linear e até perto do CLmax; depois da perda (separação extensa) o XFOIL tende a sobrestimar CLmax e subestimar CD — confirmar com dados de túnel ou CFD.",
+	"Ângulos que não convergem são omitidos da polar (listados nos avisos).",
+	"Para uma asa finita, corrigir o declive pelo alongamento (cálculo «Asa finita») — resultado de apoio ao projeto, não substitui ensaio nem certificação."
+];
+// tools/cad-runner-proc.ts
+const which = (cmd) => {
+	const r = spawnSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8" });
+	return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null;
+};
+const FOAM_RC = [
+	"/usr/lib/openfoam/openfoam2606/etc/bashrc",
+	"/usr/lib/openfoam/openfoam2512/etc/bashrc",
+	"/usr/lib/openfoam/openfoam2506/etc/bashrc",
+	"/opt/openfoam2606/etc/bashrc",
+	"/usr/share/openfoam/etc/bashrc"
+];
+function tools() {
+	const gmsh = process.env.CAD_GMSH ?? which("gmsh");
+	const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
+	const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
+	const home = process.env.HOME ?? "";
+	const condaAster = [
+		process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`,
+		`${home}/micromamba/envs/aster/bin/run_aster`,
+		`${home}/miniforge3/envs/aster/bin/run_aster`,
+		"/opt/mamba/root/envs/aster/bin/run_aster",
+		"/opt/conda/envs/aster/bin/run_aster"
+	].find((p) => p && existsSync(p));
+	const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
+	const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
+	const radDir = [
+		process.env.CAD_RADIOSS_DIR,
+		`${home}/OpenCourant`,
+		"/opt/OpenCourant"
+	].find((p) => p && existsSync(join(p, "exec")));
+	const radExe = radDir ? radiossExecutables(radDir) : null;
+	const foamDir = process.env.CAD_FOAM_DIR && existsSync(process.env.CAD_FOAM_DIR) ? process.env.CAD_FOAM_DIR : null;
+	const foamBin = foamDir ? (() => {
+		const pl = join(foamDir, "platforms");
+		const t = existsSync(pl) ? readdirSync(pl).find((d) => existsSync(join(pl, d, "bin"))) : void 0;
+		return t ? join(pl, t, "bin") : null;
+	})() : null;
+	const foamDirect = which("simpleFoam");
+	const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
+	const version = (cmd, args) => {
+		if (!cmd) return null;
+		const r = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd) ? spawnSync(`"${cmd}"`, args, {
+			encoding: "utf8",
+			timeout: 1e4,
+			shell: true
+		}) : spawnSync(cmd, args, {
+			encoding: "utf8",
+			timeout: 1e4
+		});
+		return `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split(/\r?\n/)[0]?.slice(0, 80) ?? "";
+	};
+	return {
+		gmsh: gmsh ? {
+			path: gmsh,
+			version: version(gmsh, ["--version"])
+		} : null,
+		calculix: ccx ? {
+			path: ccx,
+			version: version(ccx, ["-v"])
+		} : null,
+		openfoam: foamDir && foamBin ? {
+			path: foamBin,
+			version: foamDir.replace(/.*[\\/]/, ""),
+			rc: null,
+			dir: foamDir,
+			bin: foamBin
+		} : foamDirect || foamRc ? {
+			path: foamDirect ?? foamRc,
+			version: foamRc ? foamRc.replace(/\/etc\/bashrc$/, "") : "no PATH",
+			rc: foamRc
+		} : null,
+		su2: su2 ? {
+			path: su2,
+			version: "SU2_CFD"
+		} : null,
+		code_aster: aster ? {
+			path: aster,
+			version: aster.endsWith("as_run") ? "as_run" : "run_aster"
+		} : null,
+		xfoil: xfoil ? {
+			path: xfoil,
+			version: "XFOIL 6.9x",
+			preload: process.env.CAD_XFOIL_PRELOAD ?? null
+		} : null,
+		openradioss: radDir && radExe ? {
+			path: radExe.engine,
+			version: "OpenCourant",
+			dir: radDir,
+			...radExe
+		} : null
+	};
+}
+/** Executáveis da distribuição do OpenCourant: Starter, Engine (sem MPI, dupla precisão) e anim_to_vtk. */
+function radiossExecutables(dir) {
+	const ex = readdirSync(join(dir, "exec"));
+	const pick = (re) => {
+		const f = ex.filter((x) => re.test(x) && !/_sp(\.exe)?$|ompi|impi|msmpi/.test(x)).sort((a, b) => a.length - b.length)[0];
+		return f ? join(dir, "exec", f) : null;
+	};
+	const starter = pick(/^starter_/), engine = pick(/^engine_/), animToVtk = pick(/^anim_to_vtk/);
+	return starter && engine && animToVtk ? {
+		starter,
+		engine,
+		animToVtk
+	} : null;
+}
+/** Ambiente do processo com variáveis extra; `PATH` junta-se ao existente (no Windows a chave é "Path"). */
+function withEnv(extra) {
+	const env = { ...process.env };
+	if (!extra) return env;
+	const { PATH_PREPEND, ...rest } = extra;
+	Object.assign(env, rest);
+	if (PATH_PREPEND) {
+		const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+		env[key] = `${PATH_PREPEND}${process.platform === "win32" ? ";" : ":"}${env[key] ?? ""}`;
+	}
+	return env;
+}
+const jobState = { current: null };
+/** Mata o processo e os filhos: no Windows o `shell:true` mete um cmd.exe pelo meio, daí `taskkill /T`. */
+function killTree(p) {
+	if (p.exitCode !== null || p.pid === void 0) return;
+	if (process.platform === "win32") spawnSync("taskkill", [
+		"/PID",
+		String(p.pid),
+		"/T",
+		"/F"
+	], { stdio: "ignore" });
+	else p.kill("SIGKILL");
+}
+/** Cancela o job em curso (Parar no browser ou pedido fechado); devolve se havia algo a cancelar. */
+function cancelJob(reason) {
+	if (!jobState.current) return false;
+	jobState.current.cancelled ??= reason;
+	if (jobState.current.child) killTree(jobState.current.child);
+	return true;
+}
+var CancelledError = class extends Error {};
+var TimeoutError = class extends Error {};
+function run(cmd, args, cwd, logFile, log, env, opts = {}) {
+	return new Promise((ok, fail) => {
+		if (jobState.current?.cancelled) {
+			fail(new CancelledError(jobState.current.cancelled));
+			return;
+		}
+		log(`$ ${[cmd, ...args].join(" ")}`);
+		const out = [];
+		const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
+		if (script && args.some((a) => /["&|<>^%]/.test(a))) {
+			fail(/* @__PURE__ */ new Error(`Argumento inválido para ${cmd}`));
+			return;
+		}
+		const p = script ? spawn(`"${cmd}"`, args.map((a) => `"${a}"`), {
+			cwd,
+			env: withEnv(env),
+			shell: true
+		}) : spawn(cmd, args, {
+			cwd,
+			env: withEnv(env)
+		});
+		const job = jobState.current;
+		if (job) job.child = p;
+		const take = (b) => {
+			const s = b.toString();
+			out.push(s);
+			if (job) job.tail = (job.tail + s).slice(-2e4);
+		};
+		p.stdout.on("data", take);
+		p.stderr.on("data", take);
+		let timedOut = false;
+		const limit = opts.timeoutSec ?? job?.solveTimeout;
+		const timer = limit ? setTimeout(() => {
+			timedOut = true;
+			killTree(p);
+		}, limit * 1e3) : void 0;
+		p.on("error", (e) => {
+			clearTimeout(timer);
+			fail(/* @__PURE__ */ new Error(`${cmd}: ${e.message}`));
+		});
+		p.on("close", (code) => {
+			clearTimeout(timer);
+			if (job?.child === p) job.child = void 0;
+			writeFileSync(join(cwd, logFile), out.join(""));
+			if (job?.cancelled) fail(new CancelledError(job.cancelled));
+			else if (timedOut) fail(new TimeoutError(`${cmd.split(/[\\/]/).pop()} não terminou em ${limit} s`));
+			else if (code === 0) ok();
+			else fail(/* @__PURE__ */ new Error(`${cmd} terminou com o código ${code}:\n${out.join("").split(/\r?\n/).slice(-15).join("\n")}`));
+		});
+	});
+}
+/**
+* Comandos do OpenFOAM: com o ambiente já carregado (WM_PROJECT_DIR) correm diretamente; senão,
+* pelo bashrc da instalação (os executáveis precisam do ambiente para encontrar o diretório etc).
+*/
+function foam(cmd, args, cwd, log) {
+	const t = tools().openfoam;
+	if (!t) throw new Error("OpenFOAM não encontrado (instale a versão openfoam.com ou defina CAD_FOAM_BASHRC)");
+	if ("dir" in t && t.dir) {
+		const version = t.dir.replace(/.*[\\/]OpenFOAM-/, "");
+		return run(join(t.bin, `${cmd}.exe`), args, cwd, `log.${cmd}`, log, {
+			WM_PROJECT: "OpenFOAM",
+			WM_PROJECT_VERSION: version,
+			WM_PROJECT_DIR: t.dir,
+			FOAM_SIGFPE: "1",
+			PATH_PREPEND: t.bin
+		});
+	}
+	if (process.env.WM_PROJECT_DIR || !t.rc) return run(cmd, args, cwd, `log.${cmd}`, log);
+	const quoted = [cmd, ...args].map((a) => `'${a.replace(/'/g, "")}'`).join(" ");
+	return run("bash", ["-c", `. '${t.rc}' >/dev/null 2>&1; exec ${quoted}`], cwd, `log.${cmd}`, log);
+}
+const tail = (p, n = 25) => existsSync(p) ? readFileSync(p, "utf8").split(/\r?\n/).slice(-n).join("\n") : "";
+// src/sim/gmsh.ts
+const list = (tags) => `{${tags.join(", ")}}`;
+/**
+* Piso do tamanho mínimo: 1e-4 da diagonal (com MeshSizeMin ≈ 0 a curvatura refina sem limite em
+* arestas minúsculas), mas nunca acima do tamanho global nem dos tamanhos locais pedidos.
+*/
+function minSizeFloor(c) {
+	const d = Math.hypot(...c.bbox.max.map((x, i) => x - c.bbox.min[i]));
+	const cap = Math.min(c.mesh.size, ...c.mesh.local.map((l) => l.size));
+	return Math.min(cap, Math.max(c.mesh.minSize, 1e-4 * d));
+}
+const healLines = [
+	`Geometry.Tolerance = 1e-6;`,
+	`Geometry.OCCFixDegenerated = 1;`,
+	`Geometry.OCCFixSmallEdges = 1;`,
+	`Geometry.OCCFixSmallFaces = 1;`,
+	`Geometry.OCCSewFaces = 1;`
+];
+function femGeo(c, o = {}) {
+	const hex = c.mesh.element === "hex";
+	const out = [
+		`// Gerado pelo CAD protótipo — ${c.title}`,
+		`// Unidades: mm. Elementos ${hex ? c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados" : "tetraédricos"} de ordem ${c.mesh.order}.`,
+		`SetFactory("OpenCASCADE");`,
+		...o.heal ? healLines : [],
+		`Merge "model.brep";`
+	];
+	if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
+	else out.push(`Physical Volume("SOLID") = Volume{:};`);
+	for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
+	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${minSizeFloor(c)};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${c.mesh.order};`, `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = 0;`, `Mesh.SaveAll = 0;`);
+	for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
+	out.push(...meshControls(c));
+	return out.join("\n") + "\n";
+}
+/**
+* Controlos manuais da malha (ao estilo do pré-processador do Femap): seeds nas arestas (n.º de
+* elementos e distribuição), superfícies e volumes mapeados (transfinitos) e o tipo de elemento.
+*/
+function meshControls(c) {
+	const m = c.mesh, out = [];
+	const hex = m.element === "hex";
+	for (const cv of m.curves ?? []) {
+		const dist = cv.progression && Math.abs(cv.progression - 1) > 1e-9 ? ` Using Progression ${cv.progression}` : cv.bump && Math.abs(cv.bump - 1) > 1e-9 ? ` Using Bump ${cv.bump}` : "";
+		out.push(`Transfinite Curve{${cv.tag}} = ${cv.n + 1}${dist};`);
+	}
+	if (m.surfaces?.length) {
+		out.push(`Transfinite Surface${list(m.surfaces)};`);
+		if (hex) out.push(`Recombine Surface${list(m.surfaces)};`);
+	}
+	if (m.volumes?.length) out.push(`Transfinite Volume${list(m.volumes)};`);
+	if (hex) {
+		if (m.order === 2) out.push(`Mesh.SecondOrderIncomplete = 1;`);
+		if (m.hexMethod === "subdivision") out.push(`Mesh.SubdivisionAlgorithm = 2;`);
+	}
+	return out;
+}
+/**
+* Malha de volume de fluido para o SU2. Interno: o próprio corpo. Externo: caixa do domínio menos o
+* corpo; as faces da caixa ficam "farfield" e as do corpo "body" (identificadas pela caixa envolvente).
+*/
+function su2Geo(c, o = {}) {
+	const out = [
+		`// Gerado pelo CAD protótipo — ${c.title} (SU2)`,
+		`SetFactory("OpenCASCADE");`,
+		`Merge "model.brep";`
+	];
+	const s = c.mesh.size;
+	if (c.regime === "internal") {
+		out.push(`Physical Volume("fluid") = Volume{:};`);
+		for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
+	} else {
+		const d = c.domain;
+		const e = .001 * Math.max(...d.max.map((x, i) => x - d.min[i]));
+		out.push(`box = newv; Box(box) = {${d.min.join(", ")}, ${d.max.map((x, i) => x - d.min[i]).join(", ")}};`, `fluid() = BooleanDifference{ Volume{box}; Delete; }{ Volume{1}; Delete; };`, `inner() = Surface In BoundingBox{${d.min.map((x) => x + e).join(", ")}, ${d.max.map((x) => x - e).join(", ")}};`, `far() = Surface{:};`, `far() -= inner();`, `Physical Volume("fluid") = fluid();`, `Physical Surface("body") = inner();`, `Physical Surface("farfield") = far();`);
+	}
+	out.push(`Mesh.ScalingFactor = 0.001;`, `Mesh.MeshSizeMax = ${s};`, `Mesh.MeshSizeMin = ${s / 10};`, `Mesh.MeshSizeFromCurvature = 12;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.ElementOrder = 1;`, `Mesh.SaveAll = 0;`);
+	return out.join("\n") + "\n";
 }
 // src/sim/radioss.ts
 const I = (x) => String(Math.round(x)).padStart(10);
@@ -2324,6 +2915,676 @@ function radiossBlocks(frames) {
 		}
 	}
 	return out;
+}
+// src/sim/aster.ts
+const num = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
+/** Nó da malha mais próximo de cada força pontual (ordem das condições `pointForce`), com a distância ao ponto pedido. */
+function pointNodes(c, m, nodes) {
+	return c.loads.flatMap((ld) => {
+		if (ld.kind !== "pointForce") return [];
+		let best = -1, bd = Infinity;
+		for (const t of nodes) {
+			const q = m.nodes.get(t);
+			const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2;
+			if (d < bd) {
+				bd = d;
+				best = t;
+			}
+		}
+		return [{
+			node: best,
+			dist: Math.sqrt(bd)
+		}];
+	});
+}
+/** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
+function asterMesh(c, m) {
+	if (!solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
+	const L = [
+		"TITRE",
+		` ${c.title.replace(/[^\x20-\x7e]/g, "_").slice(0, 70)}`,
+		"FINSF",
+		"%"
+	];
+	const used = /* @__PURE__ */ new Set();
+	const cells = [];
+	const bodyCells = {};
+	for (const g of c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"]) {
+		bodyCells[g] = [];
+		for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
+			const st = SOLIDS[e.type];
+			const n = st.toAster.map((i) => e.nodes[i]);
+			n.forEach((x) => used.add(x));
+			cells.push({
+				name: `M${cells.length + 1}`,
+				type: st.aster,
+				nodes: n
+			});
+			bodyCells[g].push(cells.at(-1).name);
+		}
+	}
+	const nodeOrder = [...used].sort((a, b) => a - b);
+	L.push("COOR_3D");
+	for (const t of nodeOrder) L.push(`N${t} ${m.nodes.get(t).map(num).join(" ")}`);
+	L.push("FINSF", "%");
+	const section = (list) => {
+		for (const type of [...new Set(list.map((x) => x.type))]) {
+			L.push(type);
+			for (const e of list) if (e.type === type) for (let k = 0; k < e.nodes.length; k += 8) L.push(`${k ? "  " : `${e.name} `}${e.nodes.slice(k, k + 8).map((x) => `N${x}`).join(" ")}`);
+			L.push("FINSF", "%");
+		}
+	};
+	section(cells);
+	const faceGroups = {};
+	const nodeGroups = {};
+	const areas = {};
+	const faces = [];
+	for (const name of Object.keys(c.groups)) {
+		faceGroups[name] = [];
+		const ns = /* @__PURE__ */ new Set();
+		let A = 0;
+		for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
+			nodes.forEach((x) => ns.add(x));
+			A += faceIntegrals(type, nodes.map((x) => m.nodes.get(x))).area;
+			const id = `F${faces.length + 1}`;
+			faces.push({
+				name: id,
+				type: FACES[type].aster,
+				nodes: FACES[type].toAster.map((i) => nodes[i])
+			});
+			faceGroups[name].push(id);
+		}
+		nodeGroups[name] = [...ns].sort((a, b) => a - b);
+		areas[name] = A;
+	}
+	section(faces);
+	const block = (kw, name, ids) => {
+		L.push(kw, name);
+		for (let k = 0; k < ids.length; k += 10) L.push(ids.slice(k, k + 10).join(" "));
+		L.push("FINSF", "%");
+	};
+	block("GROUP_MA", "SOLID", cells.map((e) => e.name));
+	for (const [g, ids] of Object.entries(bodyCells)) if (g !== "SOLID") block("GROUP_MA", g, ids);
+	for (const [g, ids] of Object.entries(faceGroups)) if (ids.length) block("GROUP_MA", g, ids);
+	pointNodes(c, m, nodeOrder).forEach((n, k) => {
+		if (n.node >= 0) nodeGroups[`PF${k + 1}`] = [n.node];
+	});
+	for (const [g, ns] of Object.entries(nodeGroups)) if (ns.length) block("GROUP_NO", g, ns.map((x) => `N${x}`));
+	const supportNodes = new Set(c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? nodeGroups[ld.group] ?? [] : []));
+	for (const t of c.ties ?? []) {
+		const ns = (nodeGroups[t.slave] ?? []).filter((x) => !supportNodes.has(x));
+		if (ns.length) block("GROUP_NO", `${t.slave}_L`, ns.map((x) => `N${x}`));
+	}
+	block("GROUP_NO", "NALL", nodeOrder.map((x) => `N${x}`));
+	L.push("FIN");
+	return {
+		mail: L.join("\n") + "\n",
+		nodeOrder,
+		areas
+	};
+}
+/** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
+function asterCase(c, m) {
+	if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
+	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
+	const { mail, nodeOrder, areas } = asterMesh(c, m);
+	const warnings = [];
+	const mat = c.material;
+	const nl = c.analysis === "static" ? c.nonlinear : void 0;
+	const C = [];
+	C.push(`# ${c.title.replace(/[^\x20-\x7e]/g, "_")} -- gerado pelo CAD prototipo (unidades: mm, N, MPa, t, s)`);
+	for (const h of c.hypotheses) C.push(`# ${h.replace(/[^\x20-\x7e]/g, "_")}`);
+	C.push("DEBUT(LANG='FR')", "MA = LIRE_MAILLAGE(FORMAT='ASTER', UNITE=20)");
+	const presGroups = c.loads.flatMap((ld) => ld.kind === "pressure" ? [`'${ld.group}'`] : []);
+	if (presGroups.length) C.push(`MA = MODI_MAILLAGE(reuse=MA, MAILLAGE=MA, ORIE_PEAU=_F(GROUP_MA_PEAU=(${presGroups.join(", ")},)))`);
+	const hex = c.mesh.element === "hex";
+	const explicit = c.dynamic?.scheme === "explicit";
+	const modelisation = hex && c.mesh.integration === "reduced" && !explicit ? "3D_SI" : "3D";
+	if (hex && c.mesh.integration === "reduced" && explicit) warnings.push("code_aster explícito: os hexaedros passam a integração completa (o 3D_SI não tem explícito)");
+	if (hex && c.mesh.order === 1 && c.mesh.integration !== "reduced") warnings.push("code_aster: HEXA8 com integração completa (o code_aster não tem modos incompatíveis como o C3D8I) bloqueia em flexão — use hexaedros de 20 nós ou o CalculiX");
+	C.push(`MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='${modelisation}'))`);
+	const material = (name, m2) => {
+		if (nl?.plasticity && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
+		const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield)})` : "";
+		const damp = c.dynamic && (c.dynamic.alpha || c.dynamic.beta) ? `, AMOR_ALPHA=${num(c.dynamic.beta)}, AMOR_BETA=${num(c.dynamic.alpha)}` : "";
+		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)}${damp})${plast})`);
+	};
+	if (c.bodies?.length) {
+		c.bodies.forEach((b, k) => material(`MAT${k + 1}`, b.material));
+		C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=(${c.bodies.map((b, k) => `_F(GROUP_MA='${b.group}', MATER=MAT${k + 1})`).join(", ")},))`);
+	} else {
+		material("MAT", mat);
+		C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
+	}
+	const ddl = [], ddlAmp = [], force = [], pres = [], nodal = [];
+	let pf = 0;
+	let grav = "";
+	for (const ld of c.loads) switch (ld.kind) {
+		case "fixed":
+			ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.)`);
+			break;
+		case "displacement": {
+			const comps = ld.u.map((u, k) => u === null ? "" : `D${"XYZ"[k]}=${num(u)}`).filter(Boolean);
+			if (comps.length) (c.dynamic && ld.u.some((u) => u !== null && u !== 0) ? ddlAmp : ddl).push(`_F(GROUP_NO='${ld.group}', ${comps.join(", ")})`);
+			break;
+		}
+		case "force": {
+			const A = areas[ld.group];
+			if (!(A > 0)) {
+				warnings.push(`Força no grupo ${ld.group} sem área`);
+				break;
+			}
+			force.push(`_F(GROUP_MA='${ld.group}', FX=${num(ld.f[0] / A)}, FY=${num(ld.f[1] / A)}, FZ=${num(ld.f[2] / A)})`);
+			break;
+		}
+		case "pointForce": {
+			const pn = pointNodes(c, m, nodeOrder)[pf++];
+			if (!pn || pn.node < 0) {
+				warnings.push("Força pontual sem nó da malha");
+				break;
+			}
+			nodal.push(`_F(GROUP_NO='PF${pf}', FX=${num(ld.f[0])}, FY=${num(ld.f[1])}, FZ=${num(ld.f[2])})`);
+			warnings.push(`Força pontual aplicada no nó ${pn.node}, a ${pn.dist.toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
+			break;
+		}
+		case "pressure":
+			pres.push(`_F(GROUP_MA='${ld.group}', PRES=${num(ld.p)})`);
+			break;
+		case "gravity": {
+			const g = Math.hypot(...ld.g);
+			if (g > 0) grav = `PESANTEUR=_F(GRAVITE=${num(g)}, DIRECTION=(${ld.g.map((x) => num(x / g)).join(", ")}))`;
+			break;
+		}
+		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
+	}
+	if (!ddl.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
+	const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
+	const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
+	if (!bcParts.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
+	C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
+	const chParts = [
+		force.length && `FORCE_FACE=(${force.join(", ")},)`,
+		nodal.length && `FORCE_NODALE=(${nodal.join(", ")},)`,
+		pres.length && `PRES_REP=(${pres.join(", ")},)`,
+		grav
+	].filter(Boolean);
+	const hasCh = chParts.length > 0 && (c.analysis === "static" || c.analysis === "dynamic");
+	if (hasCh) C.push(`CH = AFFE_CHAR_MECA(MODELE=MO, ${chParts.join(", ")})`);
+	if (ddlAmp.length) C.push(`BCA = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddlAmp.join(", ")},))`);
+	const supports = c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? [`'${ld.group}'`] : []);
+	if (c.dynamic) {
+		const D = c.dynamic;
+		const dt = D.dt ?? stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({
+			group: b.group,
+			...b.material
+		})) : [{
+			group: "SOLID",
+			...c.material
+		}]).dt;
+		const n = Math.ceil(D.duration / dt - 1e-9), every = Math.max(1, Math.round(n / D.frames));
+		const vale = D.amplitude.flatMap(([t, v]) => [num(t), num(v)]);
+		C.push(`F1 = DEFI_FONCTION(NOM_PARA='INST', VALE=(${vale.join(", ")}), PROL_DROITE='CONSTANT', PROL_GAUCHE='CONSTANT')`);
+		C.push(`LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=${num(D.duration)}, NOMBRE=${n}))`);
+		const excit = [
+			"_F(CHARGE=BC)",
+			hasCh && "_F(CHARGE=CH, FONC_MULT=F1)",
+			ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)"
+		].filter(Boolean).join(", ");
+		const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
+		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${explicit ? " MASS_DIAG='OUI'," : ""} EXCIT=(${excit},), COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
+	} else if (c.analysis === "modal") C.push("ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM, CHARGE=BC, NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))", `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes}))`, "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
+	else if (!nl) C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH)," : ""}))`);
+	else {
+		const rel = nl.plasticity ? "VMIS_ISOT_LINE" : "ELAS";
+		const def = nl.geometry ? nl.plasticity ? "GDEF_LOG" : "GREEN_LAGRANGE" : "PETIT";
+		C.push("RAMPE = DEFI_FONCTION(NOM_PARA='INST', VALE=(0., 0., 1., 1.))", `LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=1., NOMBRE=${nl.increments}))`, "LINST = DEFI_LIST_INST(DEFI_LIST=_F(LIST_INST=LR), ECHEC=_F(EVENEMENT='ERREUR', ACTION='DECOUPE', SUBD_METHODE='MANUEL', SUBD_PAS=4, SUBD_NIVEAU=5))", `RES = STAT_NON_LINE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH, FONC_MULT=RAMPE)," : ""}), COMPORTEMENT=_F(RELATION='${rel}', DEFORMATION='${def}', TOUT='OUI'), INCREMENT=_F(LIST_INST=LINST), NEWTON=_F(REAC_ITER=1), CONVERGENCE=_F(ITER_GLOB_MAXI=25))`);
+	}
+	if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
+	else if (c.dynamic) C.push("RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',))");
+	C.push("TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
+	if (c.analysis === "static" || c.dynamic) {
+		C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
+		if (supports.length && !c.dynamic) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
+		if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
+	}
+	C.push("IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES))", "FIN()");
+	return {
+		files: {
+			"mesh.mail": mail,
+			"job.comm": C.join("\n") + "\n",
+			"job.export": [
+				"P actions make_etude",
+				"P time_limit 1800",
+				"P memory_limit 4096",
+				"P ncpus 1",
+				"P mpi_nbcpu 1",
+				"P mode interactif",
+				"F comm job.comm D 1",
+				"F mail mesh.mail D 20",
+				"F mess job.mess R 6",
+				"F resu job.resu R 8",
+				"F rmed job.rmed R 80",
+				"F libr u.tab R 38",
+				"F libr vm.tab R 39",
+				"F libr freq.tab R 40",
+				"F libr reac.tab R 41",
+				"F libr peeq.tab R 42"
+			].join("\n") + "\n"
+		},
+		nodeOrder,
+		warnings
+	};
+}
+/** Tabela de IMPR_TABLE (FORMAT='TABLEAU'): linhas de comentário com "#", cabeçalho e valores. */
+function parseAsterTable(text) {
+	const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+	if (!lines.length) return [];
+	const head = lines[0].split(/\s+/);
+	return lines.slice(1).map((l) => {
+		const v = l.split(/\s+/);
+		return Object.fromEntries(head.map((h, i) => [h, v[i] ?? ""]));
+	}).filter((r) => Object.keys(r).length === head.length);
+}
+/** Tag Gmsh de um nó da tabela: nome "N<tag>" ou, nas versões que numeram, o índice (1…) na ordem escrita. */
+const asterNode = (s, order) => /^N\d+$/.test(s) ? Number(s.slice(1)) : order[Number(s) - 1];
+/** Resultado (mesmo formato do CalculiX) a partir das tabelas escritas pelo .comm deste adaptador. */
+function asterResult(c, m, t, nodeOrder) {
+	const nodal = (text, name, cols) => {
+		const byOrder = /* @__PURE__ */ new Map();
+		for (const row of parseAsterTable(text ?? "")) {
+			const ord = Number(row.NUME_ORDRE ?? 1);
+			if (c.nonlinear && c.analysis === "static" && Number(row.INST) === 0) continue;
+			let b = byOrder.get(ord);
+			if (!b) {
+				b = {
+					name,
+					value: c.analysis === "static" && c.nonlinear || c.dynamic ? Number(row.INST ?? 1) : ord,
+					components: cols,
+					data: /* @__PURE__ */ new Map()
+				};
+				byOrder.set(ord, b);
+			}
+			const tag = asterNode(row.NOEUD ?? "", nodeOrder);
+			if (tag !== void 0) b.data.set(tag, cols.map((k) => Number(row[k])));
+		}
+		return [...byOrder].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
+	};
+	const blocks = [
+		...nodal(t.u, "DISP", [
+			"DX",
+			"DY",
+			"DZ"
+		]),
+		...nodal(t.vm, "VMIS", ["VMIS"]),
+		...nodal(t.peeq, "PE", ["V1"])
+	];
+	const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite);
+	const reactionHistory = parseAsterTable(t.reac ?? "").map((r) => ({
+		time: c.nonlinear ? Number(r.INST ?? 1) : 1,
+		f: [
+			Number(r.DX),
+			Number(r.DY),
+			Number(r.DZ)
+		]
+	})).filter((r) => r.f.every(Number.isFinite) && !(c.nonlinear && r.time === 0));
+	const res = femResultFrom(c, m, blocks, {
+		frequencies,
+		buckling: [],
+		reactions: reactionHistory.length ? [reactionHistory.at(-1).f] : [],
+		reactionHistory
+	});
+	return {
+		...res,
+		hypotheses: [...res.hypotheses, "Calculado com o code_aster (EDF, GPL-3.0); adaptador verificado com o code_aster 18.1 nos casos analíticos de referência (consola, pressão, modal, plasticidade uniaxial, elástica, montagem colada)"]
+	};
+}
+// tools/cad-runner-fem.ts
+/** Confere os grupos da malha com as faces do CAD (centroide médio dos triângulos de cada grupo). */
+function checkGroups(c, m) {
+	const out = [];
+	const diag = Math.hypot(...c.bbox.max.map((x, i) => x - c.bbox.min[i]));
+	for (const [name, tags] of Object.entries(c.groups)) {
+		const faces = c.faces.filter((f) => tags.includes(f.tag));
+		const A = faces.reduce((s, f) => s + f.area, 0);
+		const want = [
+			0,
+			1,
+			2
+		].map((k) => faces.reduce((s, f) => s + f.center[k] * f.area, 0) / A);
+		let a = 0;
+		const got = [
+			0,
+			0,
+			0
+		];
+		for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
+			const P = nodes.map((t) => m.nodes.get(t));
+			const fi = faceIntegrals(type, P);
+			a += fi.area;
+			fi.nodal.forEach((w, i) => {
+				for (let q = 0; q < 3; q++) got[q] += w * P[i][q];
+			});
+		}
+		if (!a) {
+			out.push(`Grupo ${name}: sem faces na malha`);
+			continue;
+		}
+		const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
+		if (d > .02 * diag || Math.abs(a - A) > .05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
+	}
+	for (const b of c.bodies ?? []) {
+		const lo = [
+			Infinity,
+			Infinity,
+			Infinity
+		], hi = [
+			-Infinity,
+			-Infinity,
+			-Infinity
+		];
+		for (const bl of physicalBlocks(m, b.group)) for (const t of bl.conn) {
+			const p = m.nodes.get(t);
+			for (let q = 0; q < 3; q++) {
+				lo[q] = Math.min(lo[q], p[q]);
+				hi[q] = Math.max(hi[q], p[q]);
+			}
+		}
+		const dev = Math.max(...[
+			0,
+			1,
+			2
+		].map((q) => Math.max(Math.abs(lo[q] - b.bbox.min[q]), Math.abs(hi[q] - b.bbox.max[q]))));
+		if (!Number.isFinite(dev) || dev > .02 * diag) out.push(`Corpo ${b.name} (${b.group}): o volume da malha não corresponde ao corpo do CAD`);
+	}
+	for (const cv of c.mesh.curves ?? []) {
+		const box = m.entityBox.get(`1:${cv.tag}`);
+		if ((box ? Math.max(...[
+			0,
+			1,
+			2
+		].map((q) => Math.max(Math.abs(box[q] - cv.box.min[q]), Math.abs(box[q + 3] - cv.box.max[q])))) : Infinity) > .001 * diag + 1e-6) {
+			out.push(`Aresta ${cv.tag}: a curva do Gmsh não corresponde à aresta do CAD (numeração diferente) — as seeds não podem ser aplicadas`);
+			break;
+		}
+	}
+	return out;
+}
+/**
+* Traduz os erros habituais do `log.gmsh` para uma mensagem legível (com as superfícies em causa);
+* `null` se não reconhecer nada. As faces do Gmsh têm a numeração do núcleo (o BREP é o mesmo).
+*/
+function gmshError(logText) {
+	const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim());
+	if (!errs.length) return null;
+	const all = errs.join("\n");
+	const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
+	const where = faces.length ? ` (faces ${faces.join(", ")})` : "";
+	if (/self[- ]?intersect|intersecting facets|overlapping facets|PLC Error|invalid PLC/i.test(all)) return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
+	if (/boundary recovery|could not recover/i.test(all)) return `O gerador 3D não conseguiu respeitar a malha das faces${where}. Normalmente é uma face muito fina ou um ângulo muito agudo; tente um tamanho de elemento menor nessa zona.`;
+	if (/no (volume|elements) in|not closed|unable to recover the volume|no tetrahedra/i.test(all)) return `A geometria não forma um volume fechado${where}. Verifique se o sólido é estanque (sem faces em falta).`;
+	if (/degenerat|small edge|too small|zero length/i.test(all)) return `Há arestas ou faces degeneradas/minúsculas${where}. Remova detalhes muito pequenos ou aumente o tamanho mínimo.`;
+	return `O Gmsh falhou: ${errs[errs.length - 1]}`;
+}
+const ALGO_NAMES = {
+	1: "Delaunay",
+	4: "Frontal",
+	10: "HXT"
+};
+/**
+* Gera a malha com o Gmsh. Ao regenerar tenta em cascata Delaunay → HXT (paralelo) → Frontal sem
+* otimização de ordem 2 → (FEM) com reparação OCC, cada tentativa com limite de tempo; a reparação só
+* é aceite se os grupos continuarem a bater certo. Devolve a malha lida (FEM) ou `undefined` (SU2).
+*/
+async function gmshMesh(c, dir, log, o) {
+	const t = tools();
+	if (!t.gmsh) throw new Error("Gmsh não encontrado (instale o Gmsh ou defina CAD_GMSH)");
+	const geo = join(dir, "mesh.geo");
+	const nt = String(Math.max(1, cpus().length));
+	const args = (n) => o.kind === "fem" ? [
+		"mesh.geo",
+		"-3",
+		"-o",
+		"mesh.msh",
+		"-nt",
+		n
+	] : [
+		"mesh.geo",
+		"-3",
+		"-format",
+		"su2",
+		"-o",
+		"mesh.su2",
+		"-nt",
+		n
+	];
+	const write = (g) => writeFileSync(geo, o.kind === "fem" ? femGeo(c, g) : su2Geo(c, g));
+	const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : void 0;
+	const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
+	if (!o.regenerate && existsSync(geo)) {
+		try {
+			await run(t.gmsh.path, args(nt), dir, "log.gmsh", log, void 0, { timeoutSec });
+		} catch (e) {
+			throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? e.message);
+		}
+		return read();
+	}
+	const attempts = [
+		{ algorithm3D: 1 },
+		{ algorithm3D: 10 },
+		{
+			algorithm3D: 4,
+			optimizeHO: false
+		}
+	];
+	if (o.kind === "fem") attempts.push({
+		algorithm3D: 4,
+		optimizeHO: false,
+		heal: true
+	});
+	const start = Date.now();
+	let last, diag = null;
+	for (const [k, g] of attempts.entries()) {
+		if (k > 0 && Date.now() - start > 2 * timeoutSec * 1e3) {
+			log(`Malha: tempo total esgotado, sem mais tentativas.`);
+			break;
+		}
+		write(g);
+		log(`Malha: tentativa ${k + 1}/${attempts.length} — ${ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
+		try {
+			await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, void 0, { timeoutSec });
+			const msh = read();
+			if (g.heal && msh) {
+				const w = checkGroups(c, msh);
+				if (w.length) {
+					last = /* @__PURE__ */ new Error(`A reparação da geometria alterou as faces das condições:\n${w.join("\n")}`);
+					continue;
+				}
+			}
+			if (k > 0) log(`Malha: obtida na tentativa ${k + 1} (${ALGO_NAMES[g.algorithm3D ?? 1]}).`);
+			return msh;
+		} catch (e) {
+			if (e instanceof CancelledError) throw e;
+			last = e;
+			diag ??= gmshError(logOf(dir));
+			log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
+		}
+	}
+	throw new Error(diag ?? last?.message ?? "A malha falhou");
+}
+const logOf = (dir) => {
+	try {
+		return readFileSync(join(dir, "log.gmsh"), "utf8");
+	} catch {
+		return "";
+	}
+};
+/** Descrição curta dos elementos da malha (resumo). */
+const meshKind = (c) => c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`;
+/** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
+async function runAster(c, dir, log, regenerate) {
+	const t = tools();
+	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+	if (!t.code_aster) throw new Error("code_aster (run_aster) não encontrado (https://code-aster.org, ou defina CAD_ASTER)");
+	const msh = await gmshMesh(c, dir, log, {
+		kind: "fem",
+		regenerate
+	});
+	const warnings = checkGroups(c, msh);
+	if (warnings.length) throw new Error(warnings.join("\n"));
+	const ac = asterCase(c, msh);
+	warnings.push(...ac.warnings);
+	for (const [p, text] of Object.entries(ac.files)) writeFileSync(join(dir, p), text);
+	await run(t.code_aster.path, ["job.export"], dir, "log.aster", log);
+	const rd = (f) => existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : void 0;
+	const u = rd("u.tab");
+	if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
+	const fem = asterResult(c, msh, {
+		u,
+		vm: rd("vm.tab"),
+		freq: rd("freq.tab"),
+		reac: rd("reac.tab"),
+		peeq: rd("peeq.tab")
+	}, ac.nodeOrder);
+	const elements = [...elementsOf(solidBlocks(msh, c.bodies))].length;
+	return {
+		ok: true,
+		physics: "fem",
+		solver: "code_aster",
+		summary: [["Malha", `${ac.nodeOrder.length} nós · ${elements} ${meshKind(c)}`], ...fem.summary],
+		warnings,
+		fem,
+		view: femView(fem),
+		metrics: fem.metrics,
+		cells: elements,
+		log: tail(join(dir, "job.mess"))
+	};
+}
+/**
+* OpenRadioss (OpenCourant): Starter e Engine sobre a malha Gmsh, animações convertidas em VTK pelo
+* anim_to_vtk e lidas como blocos nodais (deslocamento, von Mises) para o mesmo resultado dinâmico.
+*/
+async function runRadioss(c, dir, log, regenerate) {
+	const t = tools();
+	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+	const r = t.openradioss;
+	if (!r) throw new Error("OpenRadioss/OpenCourant não encontrado (https://github.com/OpenCourant/OpenCourant/releases: descompacte e defina CAD_RADIOSS_DIR)");
+	const msh = await gmshMesh(c, dir, log, {
+		kind: "fem",
+		regenerate
+	});
+	const warnings = checkGroups(c, msh);
+	if (warnings.length) throw new Error(warnings.join("\n"));
+	const deck = radiossDeck(c, msh);
+	warnings.push(...deck.warnings);
+	writeFileSync(join(dir, `${deck.name}_0000.rad`), deck.starter);
+	writeFileSync(join(dir, `${deck.name}_0001.rad`), deck.engine);
+	const plat = process.platform === "win32" ? "win64" : "linux64";
+	const libs = [
+		join(r.dir, "extlib", "hm_reader", plat),
+		join(r.dir, "extlib", "h3d", "lib", plat),
+		...plat === "win64" ? [join(r.dir, "extlib", "intelOneAPI_runtime", "win64")] : []
+	];
+	const env = {
+		RAD_CFG_PATH: join(r.dir, "hm_cfg_files"),
+		RAD_H3D_PATH: libs[1],
+		OMP_NUM_THREADS: "1",
+		KMP_STACKSIZE: "400m",
+		OMP_STACKSIZE: "400m",
+		...process.platform === "win32" ? { PATH_PREPEND: libs.join(";") } : { LD_LIBRARY_PATH: [...libs, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }
+	};
+	await run(r.starter, [
+		"-i",
+		`${deck.name}_0000.rad`,
+		"-np",
+		"1",
+		"-nt",
+		"1"
+	], dir, "log.starter", log, env);
+	const out0 = existsSync(join(dir, `${deck.name}_0000.out`)) ? readFileSync(join(dir, `${deck.name}_0000.out`), "utf8") : "";
+	const nerr = /(\d+)\s+ERROR\(S\)/.exec(out0);
+	if (!/NORMAL TERMINATION/i.test(out0) || !nerr || Number(nerr[1]) > 0) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
+	await run(r.engine, [
+		"-i",
+		`${deck.name}_0001.rad`,
+		"-nt",
+		"1"
+	], dir, "log.engine", log, env);
+	const out1 = existsSync(join(dir, `${deck.name}_0001.out`)) ? readFileSync(join(dir, `${deck.name}_0001.out`), "utf8") : "";
+	if (!/NORMAL TERMINATION/i.test(out1)) throw new Error(`Engine do OpenRadioss não terminou normalmente:\n${tail(join(dir, `${deck.name}_0001.out`), 40)}`);
+	const anims = readdirSync(dir).filter((f) => new RegExp(`^${deck.name}A\\d+$`).test(f)).sort();
+	if (!anims.length) throw new Error("O OpenRadioss não escreveu animações");
+	const frames = [];
+	for (const a of anims) {
+		const res = spawnSync(r.animToVtk, [a], {
+			cwd: dir,
+			env: withEnv(env),
+			encoding: "utf8",
+			maxBuffer: 1 << 30
+		});
+		if (res.status !== 0 || !res.stdout.includes("UNSTRUCTURED_GRID")) throw new Error(`anim_to_vtk falhou em ${a}: ${(res.stderr || res.stdout).slice(-400)}`);
+		frames.push(parseVtk(res.stdout));
+	}
+	const fem = femResultFrom(c, msh, radiossBlocks(frames), {
+		frequencies: [],
+		buckling: [],
+		reactions: [],
+		reactionHistory: []
+	});
+	const dtm = /TIME STEP\s*[:=]?\s*([\d.Ee+-]+)/.exec(out1) ?? /DT\s*=\s*([\d.Ee+-]+)/.exec(out1);
+	return {
+		ok: true,
+		physics: "fem",
+		solver: "OpenRadioss (OpenCourant)",
+		summary: [
+			["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`],
+			["Integração no tempo", `explícita (OpenRadioss), passo estável do Engine${dtm ? ` ≈ ${(Number(dtm[1]) / 1e3).toExponential(3)} s` : ""}, ${frames.length} animações`],
+			...fem.summary
+		],
+		warnings,
+		fem,
+		view: femView(fem),
+		metrics: fem.metrics,
+		cells: deck.elements,
+		log: tail(join(dir, `${deck.name}_0001.out`))
+	};
+}
+async function runFem(c, dir, log, regenerate) {
+	if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
+	if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
+	const t = tools();
+	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
+	if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
+	const msh = await gmshMesh(c, dir, log, {
+		kind: "fem",
+		regenerate
+	});
+	const warnings = checkGroups(c, msh);
+	if (warnings.length) throw new Error(warnings.join("\n"));
+	const deck = calculixDeck(c, msh);
+	warnings.push(...deck.warnings);
+	writeFileSync(join(dir, "job.inp"), deck.inp);
+	log(`malha: ${deck.nodes} nós, ${deck.elements} elementos`);
+	await run(t.calculix.path, ["-i", "job"], dir, "log.ccx", log, { OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "2" });
+	const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "", deck.supportLoad);
+	const summary = [["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`], ...fem.summary];
+	if (deck.dynamic) {
+		summary.splice(1, 0, ["Integração no tempo", `${c.dynamic.scheme === "explicit" ? "explícita" : "implícita"}, passo ${deck.dynamic.dt.toExponential(3)} s${deck.dynamic.stable ? " (estável da malha)" : ""}, ${deck.dynamic.increments} incrementos`]);
+		const lg = existsSync(join(dir, "log.ccx")) ? readFileSync(join(dir, "log.ccx"), "utf8") : "";
+		const sc = /Scaling factor of time increment:\s*([\d.Ee+-]+)/.exec(lg);
+		if (/Selective Mass Scaling is active/.test(lg) || sc && Number(sc[1]) > 1.0001) warnings.push(`O passo pedido passa o limite de estabilidade: o CalculiX escalou a massa (fator ${sc?.[1] ?? "?"} no passo) — os modos altos ficam alterados; deixe o passo em branco para usar o estável`);
+	}
+	return {
+		ok: true,
+		physics: "fem",
+		solver: `CalculiX ${t.calculix.version ?? ""}`.trim(),
+		summary,
+		warnings,
+		fem,
+		view: femView(fem),
+		metrics: fem.metrics,
+		cells: deck.elements,
+		log: tail(join(dir, "log.ccx"))
+	};
 }
 // src/sim/openfoam.ts
 const head = (cls, object, location) => `/*--------------------------------*- C++ -*----------------------------------*\\
@@ -2962,328 +4223,6 @@ function su2Config(c) {
 		""
 	].join("\n");
 }
-// src/sim/aster.ts
-const num$1 = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
-/** Nó da malha mais próximo de cada força pontual (ordem das condições `pointForce`), com a distância ao ponto pedido. */
-function pointNodes(c, m, nodes) {
-	return c.loads.flatMap((ld) => {
-		if (ld.kind !== "pointForce") return [];
-		let best = -1, bd = Infinity;
-		for (const t of nodes) {
-			const q = m.nodes.get(t);
-			const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2;
-			if (d < bd) {
-				bd = d;
-				best = t;
-			}
-		}
-		return [{
-			node: best,
-			dist: Math.sqrt(bd)
-		}];
-	});
-}
-/** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
-function asterMesh(c, m) {
-	if (!solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
-	const L = [
-		"TITRE",
-		` ${c.title.replace(/[^\x20-\x7e]/g, "_").slice(0, 70)}`,
-		"FINSF",
-		"%"
-	];
-	const used = /* @__PURE__ */ new Set();
-	const cells = [];
-	const bodyCells = {};
-	for (const g of c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"]) {
-		bodyCells[g] = [];
-		for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
-			const st = SOLIDS[e.type];
-			const n = st.toAster.map((i) => e.nodes[i]);
-			n.forEach((x) => used.add(x));
-			cells.push({
-				name: `M${cells.length + 1}`,
-				type: st.aster,
-				nodes: n
-			});
-			bodyCells[g].push(cells.at(-1).name);
-		}
-	}
-	const nodeOrder = [...used].sort((a, b) => a - b);
-	L.push("COOR_3D");
-	for (const t of nodeOrder) L.push(`N${t} ${m.nodes.get(t).map(num$1).join(" ")}`);
-	L.push("FINSF", "%");
-	const section = (list) => {
-		for (const type of [...new Set(list.map((x) => x.type))]) {
-			L.push(type);
-			for (const e of list) if (e.type === type) for (let k = 0; k < e.nodes.length; k += 8) L.push(`${k ? "  " : `${e.name} `}${e.nodes.slice(k, k + 8).map((x) => `N${x}`).join(" ")}`);
-			L.push("FINSF", "%");
-		}
-	};
-	section(cells);
-	const faceGroups = {};
-	const nodeGroups = {};
-	const areas = {};
-	const faces = [];
-	for (const name of Object.keys(c.groups)) {
-		faceGroups[name] = [];
-		const ns = /* @__PURE__ */ new Set();
-		let A = 0;
-		for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
-			nodes.forEach((x) => ns.add(x));
-			A += faceIntegrals(type, nodes.map((x) => m.nodes.get(x))).area;
-			const id = `F${faces.length + 1}`;
-			faces.push({
-				name: id,
-				type: FACES[type].aster,
-				nodes: FACES[type].toAster.map((i) => nodes[i])
-			});
-			faceGroups[name].push(id);
-		}
-		nodeGroups[name] = [...ns].sort((a, b) => a - b);
-		areas[name] = A;
-	}
-	section(faces);
-	const block = (kw, name, ids) => {
-		L.push(kw, name);
-		for (let k = 0; k < ids.length; k += 10) L.push(ids.slice(k, k + 10).join(" "));
-		L.push("FINSF", "%");
-	};
-	block("GROUP_MA", "SOLID", cells.map((e) => e.name));
-	for (const [g, ids] of Object.entries(bodyCells)) if (g !== "SOLID") block("GROUP_MA", g, ids);
-	for (const [g, ids] of Object.entries(faceGroups)) if (ids.length) block("GROUP_MA", g, ids);
-	pointNodes(c, m, nodeOrder).forEach((n, k) => {
-		if (n.node >= 0) nodeGroups[`PF${k + 1}`] = [n.node];
-	});
-	for (const [g, ns] of Object.entries(nodeGroups)) if (ns.length) block("GROUP_NO", g, ns.map((x) => `N${x}`));
-	const supportNodes = new Set(c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? nodeGroups[ld.group] ?? [] : []));
-	for (const t of c.ties ?? []) {
-		const ns = (nodeGroups[t.slave] ?? []).filter((x) => !supportNodes.has(x));
-		if (ns.length) block("GROUP_NO", `${t.slave}_L`, ns.map((x) => `N${x}`));
-	}
-	block("GROUP_NO", "NALL", nodeOrder.map((x) => `N${x}`));
-	L.push("FIN");
-	return {
-		mail: L.join("\n") + "\n",
-		nodeOrder,
-		areas
-	};
-}
-/** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
-function asterCase(c, m) {
-	if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
-	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
-	const { mail, nodeOrder, areas } = asterMesh(c, m);
-	const warnings = [];
-	const mat = c.material;
-	const nl = c.analysis === "static" ? c.nonlinear : void 0;
-	const C = [];
-	C.push(`# ${c.title.replace(/[^\x20-\x7e]/g, "_")} -- gerado pelo CAD prototipo (unidades: mm, N, MPa, t, s)`);
-	for (const h of c.hypotheses) C.push(`# ${h.replace(/[^\x20-\x7e]/g, "_")}`);
-	C.push("DEBUT(LANG='FR')", "MA = LIRE_MAILLAGE(FORMAT='ASTER', UNITE=20)");
-	const presGroups = c.loads.flatMap((ld) => ld.kind === "pressure" ? [`'${ld.group}'`] : []);
-	if (presGroups.length) C.push(`MA = MODI_MAILLAGE(reuse=MA, MAILLAGE=MA, ORIE_PEAU=_F(GROUP_MA_PEAU=(${presGroups.join(", ")},)))`);
-	const hex = c.mesh.element === "hex";
-	const explicit = c.dynamic?.scheme === "explicit";
-	const modelisation = hex && c.mesh.integration === "reduced" && !explicit ? "3D_SI" : "3D";
-	if (hex && c.mesh.integration === "reduced" && explicit) warnings.push("code_aster explícito: os hexaedros passam a integração completa (o 3D_SI não tem explícito)");
-	if (hex && c.mesh.order === 1 && c.mesh.integration !== "reduced") warnings.push("code_aster: HEXA8 com integração completa (o code_aster não tem modos incompatíveis como o C3D8I) bloqueia em flexão — use hexaedros de 20 nós ou o CalculiX");
-	C.push(`MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='${modelisation}'))`);
-	const material = (name, m2) => {
-		if (nl?.plasticity && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
-		const plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num$1(m2.tangent ?? 0)}, SY=${num$1(m2.yield)})` : "";
-		const damp = c.dynamic && (c.dynamic.alpha || c.dynamic.beta) ? `, AMOR_ALPHA=${num$1(c.dynamic.beta)}, AMOR_BETA=${num$1(c.dynamic.alpha)}` : "";
-		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num$1(m2.E)}, NU=${num$1(m2.nu)}, RHO=${num$1(m2.density * 1e-9)}${damp})${plast})`);
-	};
-	if (c.bodies?.length) {
-		c.bodies.forEach((b, k) => material(`MAT${k + 1}`, b.material));
-		C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=(${c.bodies.map((b, k) => `_F(GROUP_MA='${b.group}', MATER=MAT${k + 1})`).join(", ")},))`);
-	} else {
-		material("MAT", mat);
-		C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
-	}
-	const ddl = [], ddlAmp = [], force = [], pres = [], nodal = [];
-	let pf = 0;
-	let grav = "";
-	for (const ld of c.loads) switch (ld.kind) {
-		case "fixed":
-			ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.)`);
-			break;
-		case "displacement": {
-			const comps = ld.u.map((u, k) => u === null ? "" : `D${"XYZ"[k]}=${num$1(u)}`).filter(Boolean);
-			if (comps.length) (c.dynamic && ld.u.some((u) => u !== null && u !== 0) ? ddlAmp : ddl).push(`_F(GROUP_NO='${ld.group}', ${comps.join(", ")})`);
-			break;
-		}
-		case "force": {
-			const A = areas[ld.group];
-			if (!(A > 0)) {
-				warnings.push(`Força no grupo ${ld.group} sem área`);
-				break;
-			}
-			force.push(`_F(GROUP_MA='${ld.group}', FX=${num$1(ld.f[0] / A)}, FY=${num$1(ld.f[1] / A)}, FZ=${num$1(ld.f[2] / A)})`);
-			break;
-		}
-		case "pointForce": {
-			const pn = pointNodes(c, m, nodeOrder)[pf++];
-			if (!pn || pn.node < 0) {
-				warnings.push("Força pontual sem nó da malha");
-				break;
-			}
-			nodal.push(`_F(GROUP_NO='PF${pf}', FX=${num$1(ld.f[0])}, FY=${num$1(ld.f[1])}, FZ=${num$1(ld.f[2])})`);
-			warnings.push(`Força pontual aplicada no nó ${pn.node}, a ${pn.dist.toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
-			break;
-		}
-		case "pressure":
-			pres.push(`_F(GROUP_MA='${ld.group}', PRES=${num$1(ld.p)})`);
-			break;
-		case "gravity": {
-			const g = Math.hypot(...ld.g);
-			if (g > 0) grav = `PESANTEUR=_F(GRAVITE=${num$1(g)}, DIRECTION=(${ld.g.map((x) => num$1(x / g)).join(", ")}))`;
-			break;
-		}
-		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
-	}
-	if (!ddl.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
-	const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
-	const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
-	if (!bcParts.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
-	C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
-	const chParts = [
-		force.length && `FORCE_FACE=(${force.join(", ")},)`,
-		nodal.length && `FORCE_NODALE=(${nodal.join(", ")},)`,
-		pres.length && `PRES_REP=(${pres.join(", ")},)`,
-		grav
-	].filter(Boolean);
-	const hasCh = chParts.length > 0 && (c.analysis === "static" || c.analysis === "dynamic");
-	if (hasCh) C.push(`CH = AFFE_CHAR_MECA(MODELE=MO, ${chParts.join(", ")})`);
-	if (ddlAmp.length) C.push(`BCA = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddlAmp.join(", ")},))`);
-	const supports = c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? [`'${ld.group}'`] : []);
-	if (c.dynamic) {
-		const D = c.dynamic;
-		const dt = D.dt ?? stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({
-			group: b.group,
-			...b.material
-		})) : [{
-			group: "SOLID",
-			...c.material
-		}]).dt;
-		const n = Math.ceil(D.duration / dt - 1e-9), every = Math.max(1, Math.round(n / D.frames));
-		const vale = D.amplitude.flatMap(([t, v]) => [num$1(t), num$1(v)]);
-		C.push(`F1 = DEFI_FONCTION(NOM_PARA='INST', VALE=(${vale.join(", ")}), PROL_DROITE='CONSTANT', PROL_GAUCHE='CONSTANT')`);
-		C.push(`LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=${num$1(D.duration)}, NOMBRE=${n}))`);
-		const excit = [
-			"_F(CHARGE=BC)",
-			hasCh && "_F(CHARGE=CH, FONC_MULT=F1)",
-			ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)"
-		].filter(Boolean).join(", ");
-		const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
-		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${explicit ? " MASS_DIAG='OUI'," : ""} EXCIT=(${excit},), COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
-	} else if (c.analysis === "modal") C.push("ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM, CHARGE=BC, NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))", `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes}))`, "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
-	else if (!nl) C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH)," : ""}))`);
-	else {
-		const rel = nl.plasticity ? "VMIS_ISOT_LINE" : "ELAS";
-		const def = nl.geometry ? nl.plasticity ? "GDEF_LOG" : "GREEN_LAGRANGE" : "PETIT";
-		C.push("RAMPE = DEFI_FONCTION(NOM_PARA='INST', VALE=(0., 0., 1., 1.))", `LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=1., NOMBRE=${nl.increments}))`, "LINST = DEFI_LIST_INST(DEFI_LIST=_F(LIST_INST=LR), ECHEC=_F(EVENEMENT='ERREUR', ACTION='DECOUPE', SUBD_METHODE='MANUEL', SUBD_PAS=4, SUBD_NIVEAU=5))", `RES = STAT_NON_LINE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH, FONC_MULT=RAMPE)," : ""}), COMPORTEMENT=_F(RELATION='${rel}', DEFORMATION='${def}', TOUT='OUI'), INCREMENT=_F(LIST_INST=LINST), NEWTON=_F(REAC_ITER=1), CONVERGENCE=_F(ITER_GLOB_MAXI=25))`);
-	}
-	if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
-	else if (c.dynamic) C.push("RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',))");
-	C.push("TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
-	if (c.analysis === "static" || c.dynamic) {
-		C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
-		if (supports.length && !c.dynamic) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
-		if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
-	}
-	C.push("IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES))", "FIN()");
-	return {
-		files: {
-			"mesh.mail": mail,
-			"job.comm": C.join("\n") + "\n",
-			"job.export": [
-				"P actions make_etude",
-				"P time_limit 1800",
-				"P memory_limit 4096",
-				"P ncpus 1",
-				"P mpi_nbcpu 1",
-				"P mode interactif",
-				"F comm job.comm D 1",
-				"F mail mesh.mail D 20",
-				"F mess job.mess R 6",
-				"F resu job.resu R 8",
-				"F rmed job.rmed R 80",
-				"F libr u.tab R 38",
-				"F libr vm.tab R 39",
-				"F libr freq.tab R 40",
-				"F libr reac.tab R 41",
-				"F libr peeq.tab R 42"
-			].join("\n") + "\n"
-		},
-		nodeOrder,
-		warnings
-	};
-}
-/** Tabela de IMPR_TABLE (FORMAT='TABLEAU'): linhas de comentário com "#", cabeçalho e valores. */
-function parseAsterTable(text) {
-	const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-	if (!lines.length) return [];
-	const head = lines[0].split(/\s+/);
-	return lines.slice(1).map((l) => {
-		const v = l.split(/\s+/);
-		return Object.fromEntries(head.map((h, i) => [h, v[i] ?? ""]));
-	}).filter((r) => Object.keys(r).length === head.length);
-}
-/** Tag Gmsh de um nó da tabela: nome "N<tag>" ou, nas versões que numeram, o índice (1…) na ordem escrita. */
-const asterNode = (s, order) => /^N\d+$/.test(s) ? Number(s.slice(1)) : order[Number(s) - 1];
-/** Resultado (mesmo formato do CalculiX) a partir das tabelas escritas pelo .comm deste adaptador. */
-function asterResult(c, m, t, nodeOrder) {
-	const nodal = (text, name, cols) => {
-		const byOrder = /* @__PURE__ */ new Map();
-		for (const row of parseAsterTable(text ?? "")) {
-			const ord = Number(row.NUME_ORDRE ?? 1);
-			if (c.nonlinear && c.analysis === "static" && Number(row.INST) === 0) continue;
-			let b = byOrder.get(ord);
-			if (!b) {
-				b = {
-					name,
-					value: c.analysis === "static" && c.nonlinear || c.dynamic ? Number(row.INST ?? 1) : ord,
-					components: cols,
-					data: /* @__PURE__ */ new Map()
-				};
-				byOrder.set(ord, b);
-			}
-			const tag = asterNode(row.NOEUD ?? "", nodeOrder);
-			if (tag !== void 0) b.data.set(tag, cols.map((k) => Number(row[k])));
-		}
-		return [...byOrder].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
-	};
-	const blocks = [
-		...nodal(t.u, "DISP", [
-			"DX",
-			"DY",
-			"DZ"
-		]),
-		...nodal(t.vm, "VMIS", ["VMIS"]),
-		...nodal(t.peeq, "PE", ["V1"])
-	];
-	const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite);
-	const reactionHistory = parseAsterTable(t.reac ?? "").map((r) => ({
-		time: c.nonlinear ? Number(r.INST ?? 1) : 1,
-		f: [
-			Number(r.DX),
-			Number(r.DY),
-			Number(r.DZ)
-		]
-	})).filter((r) => r.f.every(Number.isFinite) && !(c.nonlinear && r.time === 0));
-	const res = femResultFrom(c, m, blocks, {
-		frequencies,
-		buckling: [],
-		reactions: reactionHistory.length ? [reactionHistory.at(-1).f] : [],
-		reactionHistory
-	});
-	return {
-		...res,
-		hypotheses: [...res.hypotheses, "Calculado com o code_aster (EDF, GPL-3.0); adaptador verificado com o code_aster 18.1 nos casos analíticos de referência (consola, pressão, modal, plasticidade uniaxial, elástica, montagem colada)"]
-	};
-}
 // src/sim/foamfields.ts
 const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").replace(/FoamFile\s*\{[\s\S]*?\}/, "");
 /**
@@ -3517,742 +4456,7 @@ function sliceLayer(name, mesh, origin, normal, fields, visible) {
 		values: fields.map((lf, fi) => lf ? values[fi] : null)
 	};
 }
-// src/sim/result.ts
-/** Resultado FEM como uma camada única (superfície exterior da malha). */
-function femView(r) {
-	return {
-		fields: r.fields.map((f) => ({
-			name: f.name,
-			unit: f.unit
-		})),
-		modes: r.displacements.map((d) => d.label),
-		layers: [{
-			name: "Peça",
-			visible: true,
-			positions: r.positions,
-			triangles: r.triangles,
-			values: r.fields.map((f) => f.values),
-			displacements: r.displacements.map((d) => d.values)
-		}]
-	};
-}
-// src/sim/convergence.ts
-/**
-* GCI de três soluções `f` (fina → grossa) com números de células/elementos `n` (fina → grossa).
-* `Fs` = 1,25 (fator de segurança recomendado para três malhas).
-*/
-function gci(n, f, dim = 3, Fs = 1.25) {
-	const h = n.map((x) => (1 / x) ** (1 / dim));
-	const r21 = h[1] / h[0], r32 = h[2] / h[1];
-	const [f1, f2, f3] = f;
-	const e21 = f2 - f1, e32 = f3 - f2;
-	const notes = [];
-	if (r21 < 1.3 || r32 < 1.3) notes.push(`Razões de refinamento ${r21.toFixed(2)} / ${r32.toFixed(2)} abaixo de 1,3 (recomendado ≥ 1,3)`);
-	if (e21 === 0 || Math.abs(e21) <= 1e-12 * Math.max(Math.abs(f1), 1e-300)) return {
-		r21,
-		r32,
-		p: NaN,
-		extrapolated: f1,
-		ea21: 0,
-		eext21: 0,
-		gciFine: 0,
-		asymptotic: NaN,
-		behaviour: "converged",
-		notes: [...notes, "As duas malhas mais finas dão o mesmo valor"]
-	};
-	const R = e21 / e32;
-	const behaviour = !Number.isFinite(R) ? "divergent" : R < 0 ? "oscillatory" : R > 1 ? "divergent" : "monotonic";
-	const s = Math.sign(e32 / e21);
-	let p = Math.abs(Math.log(Math.abs(e32 / e21))) / Math.log(r21);
-	for (let it = 0; it < 200; it++) {
-		const q = Math.log((r21 ** p - s) / (r32 ** p - s));
-		const next = Math.abs(Math.log(Math.abs(e32 / e21)) + q) / Math.log(r21);
-		if (!Number.isFinite(next)) break;
-		if (Math.abs(next - p) < 1e-12) {
-			p = next;
-			break;
-		}
-		p = next;
-	}
-	const rp = r21 ** p;
-	const extrapolated = (rp * f1 - f2) / (rp - 1);
-	const ea21 = Math.abs((f1 - f2) / f1);
-	const eext21 = Math.abs((extrapolated - f1) / extrapolated);
-	const gciFine = Fs * ea21 / (rp - 1);
-	const asymptotic = Fs * Math.abs((f2 - f3) / f2) / (r32 ** p - 1) / (rp * gciFine);
-	if (behaviour === "oscillatory") notes.push("Convergência oscilatória: o GCI é apenas indicativo");
-	if (behaviour === "divergent") notes.push("As soluções afastam-se ao refinar: a malha não está na gama assintótica (singularidade, malha demasiado grossa ou erro de modelação)");
-	if (behaviour === "monotonic" && Math.abs(asymptotic - 1) > .1) notes.push(`Fora da gama assintótica (razão ${asymptotic.toFixed(2)}; esperado ≈ 1)`);
-	if (p > 6 || p < .5) notes.push(`Ordem aparente ${p.toFixed(2)} pouco plausível para o método (esperado ≈ 1–2 em CFD, 2–3 em tetraedros quadráticos)`);
-	return {
-		r21,
-		r32,
-		p,
-		extrapolated,
-		ea21,
-		eext21,
-		gciFine,
-		asymptotic,
-		behaviour,
-		notes
-	};
-}
-/** As diferenças entre malhas consecutivas mantêm o sinal (sem oscilação) — valores pela ordem do refinamento. */
-function isMonotonic(values) {
-	const d = values.slice(1).map((v, i) => v - values[i]).filter((x) => Math.abs(x) > 1e-12 * Math.max(1, ...values.map(Math.abs)));
-	return d.every((x) => Math.sign(x) === Math.sign(d[0]));
-}
-/** Junta as métricas das três malhas (fina → grossa) num relatório de convergência. */
-function convergenceReport(ratio, meshes) {
-	const [a, b, c] = meshes;
-	const rows = [];
-	for (const m of a.metrics) {
-		const v2 = b.metrics.find((x) => x.key === m.key)?.value, v3 = c.metrics.find((x) => x.key === m.key)?.value;
-		if (v2 === void 0 || v3 === void 0 || ![
-			m.value,
-			v2,
-			v3
-		].every(Number.isFinite)) continue;
-		rows.push({
-			key: m.key,
-			label: m.label,
-			unit: m.unit,
-			values: [
-				m.value,
-				v2,
-				v3
-			],
-			gci: gci([
-				a.cells,
-				b.cells,
-				c.cells
-			], [
-				m.value,
-				v2,
-				v3
-			])
-		});
-	}
-	return {
-		ratio,
-		meshes: meshes.map((m) => ({
-			cells: m.cells,
-			size: m.size
-		})),
-		rows,
-		hypotheses: [
-			"Incerteza numérica da discretização pelo GCI (Celik et al., J. Fluids Eng. 130, 2008; ASME V&V 20-2009), Fs = 1,25, três malhas refinadas de forma sistemática",
-			"h = (1/N)^(1/3) com N células/elementos (domínio igual nas três malhas)",
-			"Não inclui erros de modelação (condições de fronteira, material, turbulência) nem de convergência iterativa",
-			"Máximos locais junto a singularidades geométricas (cantos vivos, cargas pontuais) não convergem: use valores afastados das singularidades"
-		]
-	};
-}
-// src/sim/xfoil.ts
-const num = (x, what, lo, hi) => {
-	const v = Number(x);
-	if (!Number.isFinite(v) || v < lo || v > hi) throw new Error(`${what}: valor inválido (${String(x)}; entre ${lo} e ${hi})`);
-	return v;
-};
-/** Pedido validado (limites físicos e de tamanho); deita fora tudo o que não é número ou código NACA. */
-function checkXfoilRequest(r) {
-	const a = r?.airfoil;
-	let airfoil;
-	if (a && typeof a.naca === "string") {
-		if (!/^\d{4,5}$/.test(a.naca)) throw new Error("Código NACA inválido (4 ou 5 dígitos)");
-		airfoil = { naca: a.naca };
-	} else if (a && Array.isArray(a.coords)) {
-		const coords = a.coords.map((p, i) => {
-			if (!Array.isArray(p) || p.length < 2) throw new Error(`Coordenada ${i + 1} inválida`);
-			return [num(p[0], "x/c", -.1, 1.1), num(p[1], "y/c", -.5, .5)];
-		});
-		if (coords.length < 20 || coords.length > 1e3) throw new Error("O perfil precisa de 20 a 1000 pontos");
-		airfoil = {
-			name: String(a.name ?? "Perfil").replace(/[^\w .+-]/g, "").slice(0, 40) || "Perfil",
-			coords
-		};
-	} else throw new Error("Perfil em falta (código NACA ou coordenadas)");
-	const al = r.alpha ?? {};
-	const from = num(al.from, "α inicial", -30, 30), to = num(al.to, "α final", -30, 30);
-	const step = Math.abs(num(al.step, "passo de α", .05, 10));
-	if (Math.abs(to - from) / step > 200) throw new Error("Demasiados ângulos (máx. 200)");
-	return {
-		airfoil,
-		re: num(r.re, "Reynolds", 1e4, 1e9),
-		mach: num(r.mach ?? 0, "Mach", 0, .7),
-		ncrit: num(r.ncrit ?? 9, "Ncrit", 1, 14),
-		alpha: {
-			from,
-			to,
-			step
-		},
-		xtrTop: num(r.xtrTop ?? 1, "transição no extradorso", 0, 1),
-		xtrBot: num(r.xtrBot ?? 1, "transição no intradorso", 0, 1),
-		iter: Math.round(num(r.iter ?? 150, "iterações", 10, 1e3)),
-		panels: Math.round(num(r.panels ?? 160, "painéis", 60, 400))
-	};
-}
-/** Ficheiro de coordenadas (formato Selig com nome na primeira linha). */
-function airfoilFile(name, coords) {
-	return `${name}\n${coords.map(([x, y]) => ` ${x.toFixed(6)}  ${y.toFixed(6)}`).join("\n")}\n`;
-}
-/**
-* Comandos para o XFOIL (stdin). A varredura começa em α = 0 (ou no ângulo mais próximo) e vai para
-* cada lado separadamente, com a camada-limite reiniciada, porque o XFOIL converge melhor partindo
-* da solução vizinha. Sem gráficos (PLOP G F).
-*/
-function xfoilCommands(req, polarFile = "polar.txt", airfoilPath = "airfoil.dat") {
-	const r = checkXfoilRequest(req);
-	const lo = Math.min(r.alpha.from, r.alpha.to), hi = Math.max(r.alpha.from, r.alpha.to), s = r.alpha.step;
-	const start = lo > 0 ? lo : hi < 0 ? hi : 0;
-	const f = (x) => x.toFixed(3);
-	const lines = [
-		"PLOP",
-		"G F",
-		""
-	];
-	lines.push("naca" in r.airfoil ? `NACA ${r.airfoil.naca}` : `LOAD ${airfoilPath}`);
-	lines.push("PPAR", `N ${r.panels}`, "", "");
-	lines.push("OPER", "VPAR", `N ${r.ncrit}`, `XTR ${r.xtrTop} ${r.xtrBot}`, "");
-	lines.push(`ITER ${r.iter}`, `VISC ${r.re}`, `MACH ${r.mach}`, "PACC", polarFile, "");
-	if (hi >= start) lines.push(`ASEQ ${f(start)} ${f(hi)} ${f(s)}`);
-	if (lo < start) lines.push("INIT", `ASEQ ${f(start - s)} ${f(lo)} ${f(-s)}`);
-	lines.push("PACC", "", "QUIT", "");
-	return {
-		stdin: lines.join("\n"),
-		files: "coords" in r.airfoil ? { [airfoilPath]: airfoilFile(r.airfoil.name, r.airfoil.coords) } : {},
-		request: r
-	};
-}
-/**
-* Segunda passagem para os ângulos que não convergiram: cada um é aproximado a partir do vizinho
-* convergido mais próximo em passos de 0,25° (camada-limite reiniciada), com o dobro das iterações
-* e mais 10 painéis.
-*/
-function xfoilRetryCommands(req, missing, converged, polarFile = "polar2.txt", airfoilPath = "airfoil.dat") {
-	const base = xfoilCommands({
-		...req,
-		iter: Math.min(1e3, (req.iter ?? 150) * 2),
-		panels: Math.min(400, (req.panels ?? 160) + 10)
-	}, polarFile, airfoilPath);
-	const head = base.stdin.split("\n");
-	const cut = head.findIndex((l) => l.startsWith("ASEQ") || l === "INIT");
-	const lines = head.slice(0, cut);
-	const f = (x) => x.toFixed(3);
-	missing.forEach((m, k) => {
-		const near = converged.length ? converged.reduce((b, a) => Math.abs(a - m) < Math.abs(b - m) ? a : b) : 0;
-		const d = m > near ? .25 : -.25;
-		if (k > 0) lines.push("INIT");
-		lines.push(`ALFA ${f(near)}`);
-		if (Math.abs(m - near) > .26) lines.push(`ASEQ ${f(near + d)} ${f(m - d)} ${f(d)}`);
-		lines.push(`ALFA ${f(m)}`);
-	});
-	lines.push("PACC", "", "QUIT", "");
-	return {
-		stdin: lines.join("\n"),
-		files: base.files,
-		request: base.request
-	};
-}
-/** Lê a polar do XFOIL (colunas depois da linha de traços), ordenada por α e sem repetidos. */
-function parsePolar(text) {
-	const lines = text.split(/\r?\n/);
-	const i = lines.findIndex((l) => /^\s*-{5,}/.test(l));
-	if (i < 0) return [];
-	const rows = /* @__PURE__ */ new Map();
-	for (const l of lines.slice(i + 1)) {
-		const v = l.trim().split(/\s+/).map(Number);
-		if (v.length < 7 || v.slice(0, 7).some((x) => !Number.isFinite(x))) continue;
-		rows.set(v[0].toFixed(3), {
-			alpha: v[0],
-			cl: v[1],
-			cd: v[2],
-			cdp: v[3],
-			cm: v[4],
-			xtrTop: v[5],
-			xtrBot: v[6]
-		});
-	}
-	return [...rows.values()].sort((a, b) => a.alpha - b.alpha);
-}
-/** Grandezas de projeto da polar: declive e α0 (mínimos quadrados na zona linear), CLmax, CDmin, L/D. */
-function polarSummary(polar, req) {
-	const missing = [];
-	if (req) {
-		const lo = Math.min(req.alpha.from, req.alpha.to), hi = Math.max(req.alpha.from, req.alpha.to);
-		for (let a = lo; a <= hi + 1e-9; a += Math.abs(req.alpha.step)) if (!polar.some((p) => Math.abs(p.alpha - a) < .001)) missing.push(Math.round(a * 1e3) / 1e3);
-	}
-	if (!polar.length) return {
-		clAlphaDeg: null,
-		clAlphaRad: null,
-		alpha0: null,
-		clMax: null,
-		alphaClMax: null,
-		cdMin: NaN,
-		clAtCdMin: NaN,
-		ldMax: NaN,
-		alphaLdMax: NaN,
-		missing
-	};
-	const near0 = polar.reduce((b, p) => Math.abs(p.cl) < Math.abs(b.cl) ? p : b);
-	const lin = polar.filter((p) => Math.abs(p.alpha - near0.alpha) <= 5);
-	let clAlphaDeg = null, alpha0 = null;
-	if (lin.length >= 3) {
-		const n = lin.length, sx = lin.reduce((s, p) => s + p.alpha, 0), sy = lin.reduce((s, p) => s + p.cl, 0);
-		const sxx = lin.reduce((s, p) => s + p.alpha * p.alpha, 0);
-		const k = (n * lin.reduce((s, p) => s + p.alpha * p.cl, 0) - sx * sy) / (n * sxx - sx * sx), b = (sy - k * sx) / n;
-		clAlphaDeg = k;
-		alpha0 = -b / k;
-	}
-	let iMax = 0;
-	polar.forEach((p, i) => {
-		if (p.cl > polar[iMax].cl) iMax = i;
-	});
-	const interior = iMax < polar.length - 1;
-	const cdBest = polar.reduce((b, p) => p.cd < b.cd ? p : b);
-	const ldBest = polar.reduce((b, p) => p.cl / p.cd > b.cl / b.cd ? p : b);
-	return {
-		clAlphaDeg,
-		clAlphaRad: clAlphaDeg === null ? null : clAlphaDeg * 180 / Math.PI,
-		alpha0,
-		clMax: interior ? polar[iMax].cl : null,
-		alphaClMax: interior ? polar[iMax].alpha : null,
-		cdMin: cdBest.cd,
-		clAtCdMin: cdBest.cl,
-		ldMax: ldBest.cl / ldBest.cd,
-		alphaLdMax: ldBest.alpha,
-		missing
-	};
-}
-const XFOIL_HYPOTHESES = [
-	"Escoamento 2D (perfil de envergadura infinita), subsónico; compressibilidade pela correção de Kármán–Tsien (válida abaixo do Mach crítico).",
-	"Camada-limite integral acoplada ao escoamento potencial (método de painéis); transição pelo método e^n com o Ncrit indicado.",
-	"Fiável na zona linear e até perto do CLmax; depois da perda (separação extensa) o XFOIL tende a sobrestimar CLmax e subestimar CD — confirmar com dados de túnel ou CFD.",
-	"Ângulos que não convergem são omitidos da polar (listados nos avisos).",
-	"Para uma asa finita, corrigir o declive pelo alongamento (cálculo «Asa finita») — resultado de apoio ao projeto, não substitui ensaio nem certificação."
-];
-// tools/cad-runner.ts
-const which = (cmd) => {
-	const r = spawnSync(process.platform === "win32" ? "where" : "which", [cmd], { encoding: "utf8" });
-	return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null;
-};
-const FOAM_RC = [
-	"/usr/lib/openfoam/openfoam2606/etc/bashrc",
-	"/usr/lib/openfoam/openfoam2512/etc/bashrc",
-	"/usr/lib/openfoam/openfoam2506/etc/bashrc",
-	"/opt/openfoam2606/etc/bashrc",
-	"/usr/share/openfoam/etc/bashrc"
-];
-function tools() {
-	const gmsh = process.env.CAD_GMSH ?? which("gmsh");
-	const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
-	const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
-	const home = process.env.HOME ?? "";
-	const condaAster = [
-		process.env.CONDA_PREFIX && `${process.env.CONDA_PREFIX}/bin/run_aster`,
-		`${home}/micromamba/envs/aster/bin/run_aster`,
-		`${home}/miniforge3/envs/aster/bin/run_aster`,
-		"/opt/mamba/root/envs/aster/bin/run_aster",
-		"/opt/conda/envs/aster/bin/run_aster"
-	].find((p) => p && existsSync(p));
-	const aster = process.env.CAD_ASTER ?? which("run_aster") ?? which("as_run") ?? condaAster ?? null;
-	const xfoil = process.env.CAD_XFOIL ?? which("xfoil");
-	const radDir = [
-		process.env.CAD_RADIOSS_DIR,
-		`${home}/OpenCourant`,
-		"/opt/OpenCourant"
-	].find((p) => p && existsSync(join(p, "exec")));
-	const radExe = radDir ? radiossExecutables(radDir) : null;
-	const foamDir = process.env.CAD_FOAM_DIR && existsSync(process.env.CAD_FOAM_DIR) ? process.env.CAD_FOAM_DIR : null;
-	const foamBin = foamDir ? (() => {
-		const pl = join(foamDir, "platforms");
-		const t = existsSync(pl) ? readdirSync(pl).find((d) => existsSync(join(pl, d, "bin"))) : void 0;
-		return t ? join(pl, t, "bin") : null;
-	})() : null;
-	const foamDirect = which("simpleFoam");
-	const foamRc = process.env.CAD_FOAM_BASHRC ?? FOAM_RC.find((p) => existsSync(p)) ?? null;
-	const version = (cmd, args) => {
-		if (!cmd) return null;
-		const r = spawnSync(cmd, args, {
-			encoding: "utf8",
-			timeout: 1e4
-		});
-		return (r.stdout + r.stderr).trim().split(/\r?\n/)[0]?.slice(0, 80) ?? "";
-	};
-	return {
-		gmsh: gmsh ? {
-			path: gmsh,
-			version: version(gmsh, ["--version"])
-		} : null,
-		calculix: ccx ? {
-			path: ccx,
-			version: version(ccx, ["-v"])
-		} : null,
-		openfoam: foamDir && foamBin ? {
-			path: foamBin,
-			version: foamDir.replace(/.*[\\/]/, ""),
-			rc: null,
-			dir: foamDir,
-			bin: foamBin
-		} : foamDirect || foamRc ? {
-			path: foamDirect ?? foamRc,
-			version: foamRc ? foamRc.replace(/\/etc\/bashrc$/, "") : "no PATH",
-			rc: foamRc
-		} : null,
-		su2: su2 ? {
-			path: su2,
-			version: "SU2_CFD"
-		} : null,
-		code_aster: aster ? {
-			path: aster,
-			version: aster.endsWith("as_run") ? "as_run" : "run_aster"
-		} : null,
-		xfoil: xfoil ? {
-			path: xfoil,
-			version: "XFOIL 6.9x",
-			preload: process.env.CAD_XFOIL_PRELOAD ?? null
-		} : null,
-		openradioss: radDir && radExe ? {
-			path: radExe.engine,
-			version: "OpenCourant",
-			dir: radDir,
-			...radExe
-		} : null
-	};
-}
-/** Executáveis da distribuição do OpenCourant: Starter, Engine (sem MPI, dupla precisão) e anim_to_vtk. */
-function radiossExecutables(dir) {
-	const ex = readdirSync(join(dir, "exec"));
-	const pick = (re) => {
-		const f = ex.filter((x) => re.test(x) && !/_sp(\.exe)?$|ompi|impi|msmpi/.test(x)).sort((a, b) => a.length - b.length)[0];
-		return f ? join(dir, "exec", f) : null;
-	};
-	const starter = pick(/^starter_/), engine = pick(/^engine_/), animToVtk = pick(/^anim_to_vtk/);
-	return starter && engine && animToVtk ? {
-		starter,
-		engine,
-		animToVtk
-	} : null;
-}
-/** Ambiente do processo com variáveis extra; `PATH` junta-se ao existente (no Windows a chave é "Path"). */
-function withEnv(extra) {
-	const env = { ...process.env };
-	if (!extra) return env;
-	const { PATH_PREPEND, ...rest } = extra;
-	Object.assign(env, rest);
-	if (PATH_PREPEND) {
-		const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
-		env[key] = `${PATH_PREPEND}${process.platform === "win32" ? ";" : ":"}${env[key] ?? ""}`;
-	}
-	return env;
-}
-function run(cmd, args, cwd, logFile, log, env) {
-	return new Promise((ok, fail) => {
-		log(`$ ${[cmd, ...args].join(" ")}`);
-		const out = [];
-		const script = process.platform === "win32" && /\.(cmd|bat)$/i.test(cmd);
-		if (script && args.some((a) => /["&|<>^%]/.test(a))) {
-			fail(/* @__PURE__ */ new Error(`Argumento inválido para ${cmd}`));
-			return;
-		}
-		const p = script ? spawn(`"${cmd}"`, args.map((a) => `"${a}"`), {
-			cwd,
-			env: withEnv(env),
-			shell: true
-		}) : spawn(cmd, args, {
-			cwd,
-			env: withEnv(env)
-		});
-		const take = (b) => {
-			out.push(b.toString());
-		};
-		p.stdout.on("data", take);
-		p.stderr.on("data", take);
-		p.on("error", (e) => fail(/* @__PURE__ */ new Error(`${cmd}: ${e.message}`)));
-		p.on("close", (code) => {
-			writeFileSync(join(cwd, logFile), out.join(""));
-			if (code === 0) ok();
-			else fail(/* @__PURE__ */ new Error(`${cmd} terminou com o código ${code}:\n${out.join("").split(/\r?\n/).slice(-15).join("\n")}`));
-		});
-	});
-}
-/**
-* Comandos do OpenFOAM: com o ambiente já carregado (WM_PROJECT_DIR) correm diretamente; senão,
-* pelo bashrc da instalação (os executáveis precisam do ambiente para encontrar o diretório etc).
-*/
-function foam(cmd, args, cwd, log) {
-	const t = tools().openfoam;
-	if (!t) throw new Error("OpenFOAM não encontrado (instale a versão openfoam.com ou defina CAD_FOAM_BASHRC)");
-	if ("dir" in t && t.dir) {
-		const version = t.dir.replace(/.*[\\/]OpenFOAM-/, "");
-		return run(join(t.bin, `${cmd}.exe`), args, cwd, `log.${cmd}`, log, {
-			WM_PROJECT: "OpenFOAM",
-			WM_PROJECT_VERSION: version,
-			WM_PROJECT_DIR: t.dir,
-			FOAM_SIGFPE: "1",
-			PATH_PREPEND: t.bin
-		});
-	}
-	if (process.env.WM_PROJECT_DIR || !t.rc) return run(cmd, args, cwd, `log.${cmd}`, log);
-	const quoted = [cmd, ...args].map((a) => `'${a.replace(/'/g, "")}'`).join(" ");
-	return run("bash", ["-c", `. '${t.rc}' >/dev/null 2>&1; exec ${quoted}`], cwd, `log.${cmd}`, log);
-}
-/** Confere os grupos da malha com as faces do CAD (centroide médio dos triângulos de cada grupo). */
-function checkGroups(c, m) {
-	const out = [];
-	const diag = Math.hypot(...c.bbox.max.map((x, i) => x - c.bbox.min[i]));
-	for (const [name, tags] of Object.entries(c.groups)) {
-		const faces = c.faces.filter((f) => tags.includes(f.tag));
-		const A = faces.reduce((s, f) => s + f.area, 0);
-		const want = [
-			0,
-			1,
-			2
-		].map((k) => faces.reduce((s, f) => s + f.center[k] * f.area, 0) / A);
-		let a = 0;
-		const got = [
-			0,
-			0,
-			0
-		];
-		for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
-			const P = nodes.map((t) => m.nodes.get(t));
-			const fi = faceIntegrals(type, P);
-			a += fi.area;
-			fi.nodal.forEach((w, i) => {
-				for (let q = 0; q < 3; q++) got[q] += w * P[i][q];
-			});
-		}
-		if (!a) {
-			out.push(`Grupo ${name}: sem faces na malha`);
-			continue;
-		}
-		const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
-		if (d > .02 * diag || Math.abs(a - A) > .05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
-	}
-	for (const b of c.bodies ?? []) {
-		const lo = [
-			Infinity,
-			Infinity,
-			Infinity
-		], hi = [
-			-Infinity,
-			-Infinity,
-			-Infinity
-		];
-		for (const bl of physicalBlocks(m, b.group)) for (const t of bl.conn) {
-			const p = m.nodes.get(t);
-			for (let q = 0; q < 3; q++) {
-				lo[q] = Math.min(lo[q], p[q]);
-				hi[q] = Math.max(hi[q], p[q]);
-			}
-		}
-		const dev = Math.max(...[
-			0,
-			1,
-			2
-		].map((q) => Math.max(Math.abs(lo[q] - b.bbox.min[q]), Math.abs(hi[q] - b.bbox.max[q]))));
-		if (!Number.isFinite(dev) || dev > .02 * diag) out.push(`Corpo ${b.name} (${b.group}): o volume da malha não corresponde ao corpo do CAD`);
-	}
-	for (const cv of c.mesh.curves ?? []) {
-		const box = m.entityBox.get(`1:${cv.tag}`);
-		if ((box ? Math.max(...[
-			0,
-			1,
-			2
-		].map((q) => Math.max(Math.abs(box[q] - cv.box.min[q]), Math.abs(box[q + 3] - cv.box.max[q])))) : Infinity) > .001 * diag + 1e-6) {
-			out.push(`Aresta ${cv.tag}: a curva do Gmsh não corresponde à aresta do CAD (numeração diferente) — as seeds não podem ser aplicadas`);
-			break;
-		}
-	}
-	return out;
-}
-/** Descrição curta dos elementos da malha (resumo). */
-const meshKind = (c) => c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`;
-/** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
-async function runAster(c, dir, log, regenerate) {
-	const t = tools();
-	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-	if (!t.code_aster) throw new Error("code_aster (run_aster) não encontrado (https://code-aster.org, ou defina CAD_ASTER)");
-	if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-	await run(t.gmsh.path, [
-		"mesh.geo",
-		"-3",
-		"-o",
-		"mesh.msh",
-		"-nt",
-		"1"
-	], dir, "log.gmsh", log);
-	const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
-	const warnings = checkGroups(c, msh);
-	if (warnings.length) throw new Error(warnings.join("\n"));
-	const ac = asterCase(c, msh);
-	warnings.push(...ac.warnings);
-	for (const [p, text] of Object.entries(ac.files)) writeFileSync(join(dir, p), text);
-	await run(t.code_aster.path, ["job.export"], dir, "log.aster", log);
-	const rd = (f) => existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : void 0;
-	const u = rd("u.tab");
-	if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
-	const fem = asterResult(c, msh, {
-		u,
-		vm: rd("vm.tab"),
-		freq: rd("freq.tab"),
-		reac: rd("reac.tab"),
-		peeq: rd("peeq.tab")
-	}, ac.nodeOrder);
-	const elements = [...elementsOf(solidBlocks(msh, c.bodies))].length;
-	return {
-		ok: true,
-		physics: "fem",
-		solver: "code_aster",
-		summary: [["Malha", `${ac.nodeOrder.length} nós · ${elements} ${meshKind(c)}`], ...fem.summary],
-		warnings,
-		fem,
-		view: femView(fem),
-		metrics: fem.metrics,
-		cells: elements,
-		log: tail(join(dir, "job.mess"))
-	};
-}
-/**
-* OpenRadioss (OpenCourant): Starter e Engine sobre a malha Gmsh, animações convertidas em VTK pelo
-* anim_to_vtk e lidas como blocos nodais (deslocamento, von Mises) para o mesmo resultado dinâmico.
-*/
-async function runRadioss(c, dir, log, regenerate) {
-	const t = tools();
-	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-	const r = t.openradioss;
-	if (!r) throw new Error("OpenRadioss/OpenCourant não encontrado (https://github.com/OpenCourant/OpenCourant/releases: descompacte e defina CAD_RADIOSS_DIR)");
-	if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-	await run(t.gmsh.path, [
-		"mesh.geo",
-		"-3",
-		"-o",
-		"mesh.msh",
-		"-nt",
-		"1"
-	], dir, "log.gmsh", log);
-	const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
-	const warnings = checkGroups(c, msh);
-	if (warnings.length) throw new Error(warnings.join("\n"));
-	const deck = radiossDeck(c, msh);
-	warnings.push(...deck.warnings);
-	writeFileSync(join(dir, `${deck.name}_0000.rad`), deck.starter);
-	writeFileSync(join(dir, `${deck.name}_0001.rad`), deck.engine);
-	const plat = process.platform === "win32" ? "win64" : "linux64";
-	const libs = [
-		join(r.dir, "extlib", "hm_reader", plat),
-		join(r.dir, "extlib", "h3d", "lib", plat),
-		...plat === "win64" ? [join(r.dir, "extlib", "intelOneAPI_runtime", "win64")] : []
-	];
-	const env = {
-		RAD_CFG_PATH: join(r.dir, "hm_cfg_files"),
-		RAD_H3D_PATH: libs[1],
-		OMP_NUM_THREADS: "1",
-		KMP_STACKSIZE: "400m",
-		OMP_STACKSIZE: "400m",
-		...process.platform === "win32" ? { PATH_PREPEND: libs.join(";") } : { LD_LIBRARY_PATH: [...libs, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":") }
-	};
-	await run(r.starter, [
-		"-i",
-		`${deck.name}_0000.rad`,
-		"-np",
-		"1",
-		"-nt",
-		"1"
-	], dir, "log.starter", log, env);
-	const out0 = existsSync(join(dir, `${deck.name}_0000.out`)) ? readFileSync(join(dir, `${deck.name}_0000.out`), "utf8") : "";
-	const nerr = /(\d+)\s+ERROR\(S\)/.exec(out0);
-	if (!/NORMAL TERMINATION/i.test(out0) || !nerr || Number(nerr[1]) > 0) throw new Error(`Starter do OpenRadioss com erros:\n${tail(join(dir, `${deck.name}_0000.out`), 40) || tail(join(dir, "log.starter"), 40)}`);
-	await run(r.engine, [
-		"-i",
-		`${deck.name}_0001.rad`,
-		"-nt",
-		"1"
-	], dir, "log.engine", log, env);
-	const out1 = existsSync(join(dir, `${deck.name}_0001.out`)) ? readFileSync(join(dir, `${deck.name}_0001.out`), "utf8") : "";
-	if (!/NORMAL TERMINATION/i.test(out1)) throw new Error(`Engine do OpenRadioss não terminou normalmente:\n${tail(join(dir, `${deck.name}_0001.out`), 40)}`);
-	const anims = readdirSync(dir).filter((f) => new RegExp(`^${deck.name}A\\d+$`).test(f)).sort();
-	if (!anims.length) throw new Error("O OpenRadioss não escreveu animações");
-	const frames = [];
-	for (const a of anims) {
-		const res = spawnSync(r.animToVtk, [a], {
-			cwd: dir,
-			env: withEnv(env),
-			encoding: "utf8",
-			maxBuffer: 1 << 30
-		});
-		if (res.status !== 0 || !res.stdout.includes("UNSTRUCTURED_GRID")) throw new Error(`anim_to_vtk falhou em ${a}: ${(res.stderr || res.stdout).slice(-400)}`);
-		frames.push(parseVtk(res.stdout));
-	}
-	const fem = femResultFrom(c, msh, radiossBlocks(frames), {
-		frequencies: [],
-		buckling: [],
-		reactions: [],
-		reactionHistory: []
-	});
-	const dtm = /TIME STEP\s*[:=]?\s*([\d.Ee+-]+)/.exec(out1) ?? /DT\s*=\s*([\d.Ee+-]+)/.exec(out1);
-	return {
-		ok: true,
-		physics: "fem",
-		solver: "OpenRadioss (OpenCourant)",
-		summary: [
-			["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`],
-			["Integração no tempo", `explícita (OpenRadioss), passo estável do Engine${dtm ? ` ≈ ${(Number(dtm[1]) / 1e3).toExponential(3)} s` : ""}, ${frames.length} animações`],
-			...fem.summary
-		],
-		warnings,
-		fem,
-		view: femView(fem),
-		metrics: fem.metrics,
-		cells: deck.elements,
-		log: tail(join(dir, `${deck.name}_0001.out`))
-	};
-}
-async function runFem(c, dir, log, regenerate) {
-	if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
-	if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
-	const t = tools();
-	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-	if (!t.calculix) throw new Error("CalculiX (ccx) não encontrado (http://www.calculix.de, ou defina CAD_CCX)");
-	if (regenerate || !existsSync(join(dir, "mesh.geo"))) writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-	await run(t.gmsh.path, [
-		"mesh.geo",
-		"-3",
-		"-o",
-		"mesh.msh",
-		"-nt",
-		"1"
-	], dir, "log.gmsh", log);
-	const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
-	const warnings = checkGroups(c, msh);
-	if (warnings.length) throw new Error(warnings.join("\n"));
-	const deck = calculixDeck(c, msh);
-	warnings.push(...deck.warnings);
-	writeFileSync(join(dir, "job.inp"), deck.inp);
-	log(`malha: ${deck.nodes} nós, ${deck.elements} elementos`);
-	await run(t.calculix.path, ["-i", "job"], dir, "log.ccx", log, { OMP_NUM_THREADS: process.env.OMP_NUM_THREADS ?? "2" });
-	const fem = femResult(c, msh, readFileSync(join(dir, "job.frd"), "utf8"), existsSync(join(dir, "job.dat")) ? readFileSync(join(dir, "job.dat"), "utf8") : "", deck.supportLoad);
-	const summary = [["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`], ...fem.summary];
-	if (deck.dynamic) {
-		summary.splice(1, 0, ["Integração no tempo", `${c.dynamic.scheme === "explicit" ? "explícita" : "implícita"}, passo ${deck.dynamic.dt.toExponential(3)} s${deck.dynamic.stable ? " (estável da malha)" : ""}, ${deck.dynamic.increments} incrementos`]);
-		const lg = existsSync(join(dir, "log.ccx")) ? readFileSync(join(dir, "log.ccx"), "utf8") : "";
-		const sc = /Scaling factor of time increment:\s*([\d.Ee+-]+)/.exec(lg);
-		if (/Selective Mass Scaling is active/.test(lg) || sc && Number(sc[1]) > 1.0001) warnings.push(`O passo pedido passa o limite de estabilidade: o CalculiX escalou a massa (fator ${sc?.[1] ?? "?"} no passo) — os modos altos ficam alterados; deixe o passo em branco para usar o estável`);
-	}
-	return {
-		ok: true,
-		physics: "fem",
-		solver: `CalculiX ${t.calculix.version ?? ""}`.trim(),
-		summary,
-		warnings,
-		fem,
-		view: femView(fem),
-		metrics: fem.metrics,
-		cells: deck.elements,
-		log: tail(join(dir, "log.ccx"))
-	};
-}
+// tools/cad-runner-cfd.ts
 /**
 * Camadas do resultado CFD: patches (paredes/corpo, entrada, saída) com a pressão e três cortes
 * pelo centro do corpo com a pressão e |U|. Visíveis por omissão: interno — entrada, saída e o corte
@@ -4448,18 +4652,11 @@ async function runSu2(c, dir, log, regenerate) {
 	const t = tools();
 	if (!t.gmsh) throw new Error("Gmsh não encontrado");
 	if (!t.su2) throw new Error("SU2 não encontrado (https://su2code.github.io, ou defina CAD_SU2)");
-	if (regenerate) {
-		writeFileSync(join(dir, "mesh.geo"), su2Geo(c));
-		writeFileSync(join(dir, "case.cfg"), su2Config(c));
-	}
-	await run(t.gmsh.path, [
-		"mesh.geo",
-		"-3",
-		"-format",
-		"su2",
-		"-o",
-		"mesh.su2"
-	], dir, "log.gmsh", log);
+	if (regenerate) writeFileSync(join(dir, "case.cfg"), su2Config(c));
+	await gmshMesh(c, dir, log, {
+		kind: "su2",
+		regenerate
+	});
 	await run(t.su2.path, ["case.cfg"], dir, "log.su2", log);
 	const hist = existsSync(join(dir, "history.csv")) ? readFileSync(join(dir, "history.csv"), "utf8").trim().split(/\r?\n/) : [];
 	const summary = [["Iterações", String(Math.max(0, hist.length - 1))], ["Re", c.reynolds.toExponential(2)]];
@@ -4507,7 +4704,7 @@ async function runSu2(c, dir, log, regenerate) {
 		log: tail(join(dir, "log.su2"))
 	};
 }
-const tail = (p, n = 25) => existsSync(p) ? readFileSync(p, "utf8").split(/\r?\n/).slice(-n).join("\n") : "";
+// tools/cad-runner.ts
 async function runOnce(c, dir, log, regenerate) {
 	return c.physics === "fem" ? runFem(c, dir, log, regenerate) : c.solver === "openfoam" ? runOpenfoam(c, dir, log, regenerate) : runSu2(c, dir, log, regenerate);
 }
@@ -4557,16 +4754,11 @@ async function previewMesh(dir, log = () => {}) {
 	if (c.format !== "cadp-sim-case" || c.physics !== "fem") throw new Error("A pré-visualização da malha é para estudos FEM");
 	const t = tools();
 	if (!t.gmsh) throw new Error("Gmsh não encontrado (https://gmsh.info, ou defina CAD_GMSH)");
-	writeFileSync(join(dir, "mesh.geo"), femGeo(c));
-	await run(t.gmsh.path, [
-		"mesh.geo",
-		"-3",
-		"-o",
-		"mesh.msh",
-		"-nt",
-		"1"
-	], dir, "log.gmsh", log);
-	const msh = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+	const msh = await gmshMesh(c, dir, log, {
+		kind: "fem",
+		regenerate: true,
+		preview: true
+	});
 	const warnings = checkGroups(c, msh);
 	const p = meshPreview(c, msh);
 	warnings.push(...p.quality.notes);
@@ -4922,6 +5114,19 @@ async function runXfoil(req, log = () => {}) {
 		});
 	}
 }
+/** Pedido da aplicação: o caso, a geometria e (CFD/OpenFOAM) as superfícies STL de cada patch. */
+/** Limites pedidos pelo browser (s): ignora valores inválidos e corta nos máximos (malha 2 h, solve 7 dias). */
+function jobLimits(body) {
+	const lim = (v, max) => {
+		const n = Number(v);
+		return Number.isFinite(n) && n > 0 ? Math.min(n, max) : void 0;
+	};
+	const out = {};
+	const mt = lim(body.meshTimeout, 7200), st = lim(body.solveTimeout, 604800);
+	if (mt !== void 0) out.meshTimeout = mt;
+	if (st !== void 0) out.solveTimeout = st;
+	return out;
+}
 function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 	let busy = false;
 	const server = createServer(async (req, res) => {
@@ -4950,6 +5155,22 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 			});
 			return;
 		}
+		if (req.method === "GET" && req.url === "/job") {
+			send(200, jobState.current ? {
+				busy: true,
+				elapsed: (Date.now() - jobState.current.start) / 1e3,
+				tail: jobState.current.tail.slice(-4e3),
+				cancelled: jobState.current.cancelled
+			} : { busy: false });
+			return;
+		}
+		if (req.method === "POST" && req.url === "/cancel") {
+			send(200, {
+				ok: true,
+				cancelled: cancelJob("Parado pelo utilizador")
+			});
+			return;
+		}
 		if (req.method !== "POST" || req.url !== "/run" && req.url !== "/xfoil" && req.url !== "/mesh") {
 			send(404, { error: "Pedido desconhecido" });
 			return;
@@ -4969,19 +5190,40 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 			chunks.push(ch);
 		}
 		busy = true;
+		const job = {
+			start: Date.now(),
+			tail: ""
+		};
+		jobState.current = job;
+		res.on("close", () => {
+			if (!res.writableFinished && jobState.current === job) cancelJob("Pedido fechado pelo cliente");
+		});
+		const log = (s) => {
+			console.log(s);
+			job.tail = (job.tail + s + "\n").slice(-2e4);
+		};
+		const fail = (e, extra = {}) => e instanceof CancelledError ? send(499, {
+			error: `Cancelado: ${e.message}`,
+			cancelled: true
+		}) : send(500, {
+			error: e.message,
+			...extra
+		});
 		if (req.url === "/xfoil") {
 			try {
-				send(200, await runXfoil(JSON.parse(Buffer.concat(chunks).toString("utf8")), (s) => console.log(s)));
+				send(200, await runXfoil(JSON.parse(Buffer.concat(chunks).toString("utf8")), log));
 			} catch (e) {
-				send(500, { error: e.message });
+				fail(e);
 			} finally {
 				busy = false;
+				jobState.current = null;
 			}
 			return;
 		}
 		const dir = mkdtempSync(join(tmpdir(), "cad-run-"));
 		try {
 			const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+			Object.assign(job, jobLimits(body));
 			if (body.case?.format !== "cadp-sim-case" || typeof body.brep !== "string") throw new Error("Pedido inválido");
 			writeFileSync(join(dir, "case.json"), JSON.stringify(body.case));
 			writeFileSync(join(dir, "model.brep"), body.brep);
@@ -5002,14 +5244,12 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 				maxCells: fin(cv.maxCells),
 				sweep: fin(cv.sweep)
 			} : void 0;
-			send(200, req.url === "/mesh" ? await previewMesh(dir, (s) => console.log(s)) : await runCase(dir, (s) => console.log(s), true, { convergence: conv }));
+			send(200, req.url === "/mesh" ? await previewMesh(dir, log) : await runCase(dir, log, true, { convergence: conv }));
 		} catch (e) {
-			send(500, {
-				error: e.message,
-				log: tail(join(dir, "log.ccx")) || tail(join(dir, "log.gmsh"))
-			});
+			fail(e, { log: tail(join(dir, "log.ccx")) || tail(join(dir, "log.gmsh")) });
 		} finally {
 			busy = false;
+			jobState.current = null;
 			if (!process.env.CAD_KEEP) rmSync(dir, {
 				recursive: true,
 				force: true
@@ -5042,4 +5282,4 @@ if (process.argv[1] && /cad-runner\.(m?js|ts)$/.test(process.argv[1])) {
 		});
 	} else console.log("Uso: node cad-runner.mjs <pasta-do-caso> | --serve [--port 8765] | --status");
 }
-export { coarsened, previewMesh, runCase, runXfoil, serve, tools };
+export { coarsened, gmshError, jobLimits, previewMesh, runCase, runXfoil, serve, tools };

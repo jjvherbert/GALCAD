@@ -107,7 +107,10 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
   if (!(m.nu > -1 && m.nu < 0.5)) add("erro", "material", "Coeficiente de Poisson fora de (−1; 0,5): o material seria instável ou incompressível");
   const needsDensity = s.analysis === "modal" || s.analysis === "dynamic" || s.loads.some((l) => l.kind === "gravity");
   if (needsDensity && !(m.density > 0)) add("erro", "material", "A massa volúmica tem de ser positiva (modal, dinâmica e gravidade usam a massa)");
-  if (thermal && !(num(m.k) && m.k! > 0)) add("aviso", "material", "Sem condutividade térmica k: usa-se 50 W/(m·K)");
+  if (thermal) {
+    const mats = [m, ...(assembly ? Object.values(s.bodyMaterials ?? {}) : [])];
+    for (const x of new Set(mats.filter((x) => !(num(x.k) && x.k! > 0)).map((x) => x.name))) add("erro", "material", `Falta a condutividade térmica k do material ${x}`);
+  }
   if (s.nonlinear?.plasticity && !(m.yield! > 0)) add("erro", "material", "Plasticidade: falta a tensão de cedência do material");
   if (s.nonlinear?.plasticity && !(m.tangent! >= 0 && m.tangent! < m.E)) add("erro", "material", "Plasticidade: o módulo tangente tem de estar entre 0 e E");
 
