@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F2 fatia 5 — aparar splines (PR #53) — F2 fechada
+
+- **Novo `src/sketch/trim-spline.ts`:** `trimSpline(s, id, clique, cortes)` encontra as interseções da spline (Béziers de Catmull-Rom, amostragem + bisseção) com linhas, círculos, arcos e outras splines, e apaga o troço à volta do clique: corte dos dois lados → duas splines (a nova herda a construção), de um só lado → fica o resto, sem interseções → apaga. Cada troço mantém os pontos originais do seu lado, um ponto intermédio no troço cortado e o novo extremo; pontos que deixam de ser usados são apagados.
+- `pointOnCut`: os novos extremos ficam `pointOn` a entidade que cortou, exceto splines (o solver não suporta); corrige também aparar uma linha cortada por uma spline, que antes criava uma restrição inválida.
+- 5 testes em `tests/trim-spline.test.ts`. Unitários 234, tsc, oxlint, build, e2e 12/12 e CI verdes. Só lógica (sem UI nova): usa a ferramenta Aparar (T) existente.
+- **F2 fechada** (fundo sem quadrícula e cota inteligente já estavam feitos). **A seguir:** F3 (`fix/fem-*`, `feat/fem-*`).
+
 ## Atualização: F2 fatia 4 — repetir no esboço (PR #51)
 
 - **Novo `src/sketch/pattern.ts`:** `sketchPattern(s, ids, spec)` com `PatternSpec` = linear `{n, mode:"spacing"|"total", value, dir, flip}` (passo entre cópias ou distância do original à última, ao longo de uma linha do esboço ou H/V, com ⇄ para inverter o sentido) | circular `{n, mode:"full"|"total"|"step", angle, center}` (volta completa 360°/n, ângulo total repartido ou ângulo entre cópias, à volta de um ponto ou da origem). `patternStep`/`patternTransforms` expostos para testes e pré-visualização.
