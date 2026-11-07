@@ -1,5 +1,14 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F3 fatia 1 — FS por corpo, guardas do GCI e k térmico obrigatório (PR #55)
+
+- **Fator de segurança por corpo (`src/sim/calculix-result.ts`, `stressSummary`):** em montagem, cada corpo (grupo `B<k>`) usa a cedência do seu material sobre o σ von Mises máximo dos seus nós; governa o menor FS e o rótulo diz qual (`— nome (material)`), com uma linha por corpo; corpo sem cedência fica identificado e não governa. Peça única: material do estudo sobre o grupo `SOLID`. Antes usava a cedência do material do estudo para todos os corpos.
+- **GCI (`src/sim/convergence.ts`):** comportamento novo «inválida» (NaN e nota) para valores não finitos ou N ≤ 0, malhas fora de ordem de refinamento, valor nulo na malha fina e ordem aparente indefinida; extrapolado nulo dá erro relativo NaN com nota. Rótulo «inválida» no relatório e nos resultados.
+- **Térmico:** a condutividade k em falta ou ≤ 0 deixa de cair nos 50 W/(m·K) escondidos — erro no `checkStudy` (material do estudo e, em montagem, materiais dos corpos) e no deck do CalculiX; k aparece na descrição do material. **Contacto:** Emax = máximo E dos corpos.
+- `public/cad-runner.mjs` reconstruído: não era regenerado desde `226dc9d`, e as alterações de `src/sim` desde então não estavam no agente distribuído.
+- 5 testes em `tests/fem-rigor.test.ts`. Unitários 239, tsc, oxlint, build, e2e 12/12 e CI verdes. Só lógica (sem UI nova).
+- **A seguir (F3):** tensões não-médias / por material no pós-processamento.
+
 ## Atualização: F2 fatia 5 — aparar splines (PR #53) — F2 fechada
 
 - **Novo `src/sketch/trim-spline.ts`:** `trimSpline(s, id, clique, cortes)` encontra as interseções da spline (Béziers de Catmull-Rom, amostragem + bisseção) com linhas, círculos, arcos e outras splines, e apaga o troço à volta do clique: corte dos dois lados → duas splines (a nova herda a construção), de um só lado → fica o resto, sem interseções → apaga. Cada troço mantém os pontos originais do seu lado, um ponto intermédio no troço cortado e o novo extremo; pontos que deixam de ser usados são apagados.
