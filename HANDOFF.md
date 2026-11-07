@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F3 — FS sem tensões e CI do runner gerado (PR #57)
+
+- **FS com σ nula (`stressSummary`):** um corpo sem tensões deixava de ter FS = cedência/1e-12 (número enorme). Agora fica «não aplicável: sem tensões no corpo» e não governa. Com o modelo inteiro sem tensões, a linha global diz «não aplicável: tensões nulas (verifique cargas e apoios)» e não há métrica `fsmin`.
+- **CI:** passo «Ficheiros gerados em dia» depois do build (`git diff --exit-code`). Falha se `public/cad-runner.mjs` não estiver regenerado e com commit. O build do runner é determinístico.
+- 1 teste novo em `tests/fem-rigor.test.ts`; 240 unitários, tsc, oxlint, build, e2e 12/12 e CI verdes.
+- **Registado (ROADMAP, malha):** o «gerador auto» pedido por Juan é a pré-visualização da geometria com as seeds e da malha antes de a gerar, sem gerar/apagar/repetir.
+- **A seguir (F3 fatia 2):** tensões não-médias / por material no pós-processamento.
+
 ## Atualização: F3 fatia 1 — FS por corpo, guardas do GCI e k térmico obrigatório (PR #55)
 
 - **Fator de segurança por corpo (`src/sim/calculix-result.ts`, `stressSummary`):** em montagem, cada corpo (grupo `B<k>`) usa a cedência do seu material sobre o σ von Mises máximo dos seus nós; governa o menor FS e o rótulo diz qual (`— nome (material)`), com uma linha por corpo; corpo sem cedência fica identificado e não governa. Peça única: material do estudo sobre o grupo `SOLID`. Antes usava a cedência do material do estudo para todos os corpos.
