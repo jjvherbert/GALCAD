@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F2 fatia 4 — repetir no esboço (PR #51)
+
+- **Novo `src/sketch/pattern.ts`:** `sketchPattern(s, ids, spec)` com `PatternSpec` = linear `{n, mode:"spacing"|"total", value, dir, flip}` (passo entre cópias ou distância do original à última, ao longo de uma linha do esboço ou H/V, com ⇄ para inverter o sentido) | circular `{n, mode:"full"|"total"|"step", angle, center}` (volta completa 360°/n, ângulo total repartido ou ângulo entre cópias, à volta de um ponto ou da origem). `patternStep`/`patternTransforms` expostos para testes e pré-visualização.
+- Ferramenta `skpattern` (tecla **N**, "Repetir"): Shift+clique para selecionar; clique simples numa linha = repetição linear, num ponto = circular. Pedido com número de instâncias, seletor de modo e segundo valor (`SketchPatternUI.tsx`); últimos valores lembrados.
+- Correção: o pedido de valor (filete/chanfro/deslocar/repetir) passa a receber o foco logo depois do clique no desenho, para o **Enter** aplicar sem ter de clicar primeiro no campo.
+- Testes novos em `tests/pattern.test.ts`. Unitários 229, tsc, oxlint, build, e2e 12/12 e CI verdes; ui-check 1440 confirma cópias lineares e circulares e o Enter, 390 sem overflow nem erros.
+- **A seguir (F2):** aparar splines em `feat/sketch-trim-spline`.
+
 ## Atualização: F2 fatia 3 — modos de chanfro (PR #50)
 
 - **`src/sketch/chamfer.ts`:** `ChamferSpec` = `{mode:"equal",d}` | `{mode:"angle",d,angle}` | `{mode:"two",d1,d2}`. `chamferGeometry` calcula os pontos de corte (modo ângulo pela lei dos senos); `sketchChamfer(s, canto, spec|número, flip)` mantém a chamada antiga com número. No modo ângulo fica cotada a distância na primeira linha e o ângulo entre essa linha e o chanfro.
