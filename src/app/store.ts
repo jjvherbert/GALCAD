@@ -26,6 +26,8 @@ export { externalParts } from "./store-features.ts";
 import { defaultFeature } from "./defaults.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
 import { applyTheme } from "./theme.ts";
+import { loadMaterials, saveMaterials } from "./material-library.ts";
+import type { SimMaterial } from "../doc/study.ts";
 
 /** App de ambiente de trabalho (GALCAD para Windows): agente embutido, com endereço e token próprios. */
 export const desktopAgent = (): { url: string; token: string } | null => (globalThis as { cadDesktop?: { agent: { url: string; token: string } | null } }).cadDesktop?.agent ?? null;
@@ -80,9 +82,9 @@ export class Store {
     this.state = {
       project, active: { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
       edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, kernelBusy: false, rebuildPending: false, error: null, message: null,
-      pickTarget: null, selection: [], selectedFeature: null, showVariables: false, showSettings: false, fileName: project.name, dirty: false,
+      pickTarget: null, selection: [], selectedFeature: null, showVariables: false, showSettings: false, showMaterials: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings, lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
+      settings, userMaterials: loadMaterials(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
       workspace: "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: settings.agentUrl, token: "" },
     };
@@ -311,6 +313,12 @@ export class Store {
     saveSettings(settings);
     applyTheme(settings.theme);
     this.set({ settings });
+  }
+
+  /** Substitui a biblioteca de materiais do utilizador e guarda-a no browser. */
+  updateMaterials(userMaterials: SimMaterial[]) {
+    saveMaterials(userMaterials);
+    this.set({ userMaterials });
   }
 
   /** Endereço do agente (browser): usa-o já e guarda-o nas Definições se for válido; o token fica só em memória. */

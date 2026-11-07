@@ -183,6 +183,7 @@ export const COMMANDS: Command[] = [
     id: `sim.add.${kind}`, label, short, group: "Simulação", icon, run: () => { if (store.state.workspace !== "fem") setWorkspace("fem"); addCondition(kind); },
   })),
   { id: "sim.add.probe", label: "Sonda (grandeza média em faces ou num ponto)", short: "Sonda", group: "Simulação", icon: "⌖", run: () => { if (store.state.workspace !== "fem") setWorkspace("fem"); addProbe(); } },
+  { id: "sim.materials", label: "Materiais… (biblioteca do utilizador)", short: "Materiais…", group: "Simulação", icon: "▤", run: () => store.set({ showMaterials: true }) },
   ...SIM_MATERIALS.map((m, i): Command => ({
     id: `sim.material.${i}`, label: `Material: ${m.name}`, short: m.name.replace(/^Alumínio EN AW-/, "Al ").replace(/^Aço inox AISI /, "Inox ").replace(/^Aço /, "Aço ").replace(/ \(.*$/, ""), group: "Simulação", icon: "◧", run: () => setStudyMaterial(m.name),
   })),

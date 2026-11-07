@@ -291,8 +291,29 @@ kbd { font: 11px ui-monospace, monospace; padding: 0 4px; border: 1px solid var(
 .seg label.on { background: var(--accent); color: #fff; }
 .seg label:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
 .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.modal.materials { width: min(860px, calc(100vw - 32px)); }
+.modal.materials h3 { margin: 10px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.mat-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px; border-top: 1px solid var(--line); margin-top: 8px; }
+.mat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mat-list ul { list-style: none; margin: 0; padding: 0; }
+.mat-list li { display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 2px 4px; }
+.mat-list li.on { background: var(--accent-soft); }
+.mat-pick { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: 4px 2px; }
+button.mat-pick { border: 0; background: none; }
+.mat-pick b { font-weight: 600; overflow-wrap: anywhere; }
+.mat-pick small { color: var(--muted); font-size: 11px; }
+.mat-form .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 200px); gap: 8px; align-items: center; margin: 6px 0; }
+.mat-form .row > input, .mat-form .unit input { width: 100%; min-width: 0; }
+.mat-form .unit { display: grid; grid-template-columns: minmax(0, 1fr) 54px; gap: 6px; align-items: center; }
+.mat-form .unit small { color: var(--muted); font-size: 11px; }
+.mat-errors { color: var(--bad); margin: 6px 0; padding-left: 18px; font-size: 13px; }
+.mat-select { display: flex; gap: 6px; align-items: center; }
+/* width:0 — sem isto o select mede pela opção mais longa e o fieldset (min-width: min-content) alarga o painel */
+.mat-select select { flex: 1 1 0; width: 0; min-width: 0; }
 @media (max-width: 480px) {
   .modal.settings .row { grid-template-columns: 1fr; gap: 4px; }
+  .mat-body { grid-template-columns: 1fr; }
+  .mat-form .row { grid-template-columns: 1fr; gap: 4px; }
 }
 
 /* desenhos */
