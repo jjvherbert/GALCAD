@@ -7,7 +7,7 @@ import { sketchMirror } from "../sketch/mirror.ts";
 import { type HitOpts, placePoint } from "./sketch-hit.ts";
 import { type RefGroup } from "./sketch-ref.ts";
 import { type Draw, type DimMode, type Snap, type Tool } from "./sketch-types.ts";
-import type { ChamferMode, LastValues, Prompt } from "./sketch-cmd.ts";
+import { type ChamferMode, type LastValues, type Prompt, patternPrompt } from "./sketch-cmd.ts";
 import type { allEntities } from "../sketch/geometry.ts";
 
 /** Contexto dos cliques: estado do editor e as ações que cada ferramenta usa. */
@@ -86,6 +86,19 @@ export function handleClick(c: ClickCtx, sx: number, sy: number, additive: boole
     if (!additive && sel.length && !sel.includes(id) && ents[id]?.type === "line") {
       const r = sketchMirror(data(), sel, id, { keep: c.mirrorKeep });
       if (r) { if (commit(r, "Espelhar")) setSel([]); return; }
+    }
+    if (id === "H" || id === "V" || id === "O") return;
+    setSel(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]);
+    return;
+  }
+  if (tool === "skpattern") {
+    // clique simples numa linha (ou H/V) = repetição linear; num ponto (ou origem) = circular; Shift junta à seleção
+    const id = hitAt(sx, sy);
+    if (!id) { setMsg("Selecione as entidades (Shift+clique) e depois clique na linha (repetição linear) ou no ponto central (circular)"); return; }
+    const t = ents[id]?.type;
+    if (!additive && sel.length && !sel.includes(id) && (t === "line" || t === "point")) {
+      setPrompt(patternPrompt(t === "line" ? "linear" : "circular", [sx, sy], sel, id, lastValue.current));
+      return;
     }
     if (id === "H" || id === "V" || id === "O") return;
     setSel(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]);
