@@ -1,5 +1,13 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F2 fatia 2 — espelhar no esboço (PR #49)
+
+- **Novo `src/sketch/mirror.ts`:** `sketchMirror(s, ids, eixo, {keep})` espelha linhas, círculos, arcos (sentido invertido) e splines em relação a uma linha do esboço ou aos eixos H/V. Cada ponto novo fica preso ao original por `symmetric [p, imagem, eixo]`; pontos sobre o eixo são partilhados; círculos/arcos levam `equal`. Com `keep:false` os originais (não partilhados) são apagados.
+- Ferramenta `skmirror` (tecla **M**, "Espelhar"): Shift+clique para selecionar, clique simples na linha de simetria. Caixa "Manter original" (ligada por defeito) na barra do esboço.
+- CSS: botões da barra do esboço com `flex-shrink: 0` (a 390 o rótulo do botão ativo transbordava).
+- 6 testes em `tests/mirror.test.ts`. Unitários 219, tsc, oxlint, build, e2e 12/12 e CI verdes; ui-check 1440 confirma a cópia espelhada no eixo V, 390 sem overflow nem erros.
+- **A seguir (F2):** modos de chanfro (distância+ângulo 45° por defeito, duas distâncias) em `feat/sketch-chamfer-modes`; repetir linear (n + passo ou n + comprimento total) e circular (n + ângulo, 360° ou parcial) em `feat/sketch-pattern`; aparar splines.
+
 ## Atualização: F2 fatia 1 — chanfro de canto no esboço (PR #48)
 
 - **Novo `src/sketch/chamfer.ts`:** `sketchChamfer(s, canto, d)` corta as duas linhas do canto à distância `d`, liga-as com uma linha nova e fixa cada ponto com uma cota ponto–ponto (`comprimento − d`). Devolve `null` se o canto não tiver exatamente 2 linhas, se `d ≤ 0` ou se `d` ≥ comprimento de uma delas.
