@@ -3,6 +3,7 @@
 import type { SketchConstraint, SketchEntity } from "../doc/types.ts";
 import { type P2, add, allEntities, arcSweep, cross, dist, dot, entityPoints, len, mul, pt, sampleEntity, sub } from "./geometry.ts";
 import { type SketchData, addConstraint, addEntity, addPoint, deleteItems, mergePoints } from "./ops.ts";
+import { pointOnCut, trimSpline } from "./trim-spline.ts";
 
 type Line = Extract<SketchEntity, { type: "line" }>;
 type Arc = Extract<SketchEntity, { type: "arc" }>;
@@ -17,7 +18,7 @@ const wrap = (a: number) => ((a % TAU) + TAU) % TAU;
 // ---------------------------------------------------------------------------
 
 /** Peças geométricas elementares de uma entidade (para interseções). */
-type Piece = { k: "seg"; a: P2; b: P2 } | { k: "circ"; c: P2; r: number; a0?: number; sw?: number };
+export type Piece = { k: "seg"; a: P2; b: P2 } | { k: "circ"; c: P2; r: number; a0?: number; sw?: number };
 
 function pieces(ents: Record<string, SketchEntity>, id: string): Piece[] {
   const e = ents[id];
@@ -92,8 +93,9 @@ function keepConstraintsFor(s: SketchData, id: string, drop: (c: SketchConstrain
 export function trim(s0: SketchData, id: string, click: P2): SketchData {
   const ents = allEntities(s0);
   const e = ents[id];
-  if (!e || e.type === "point" || e.type === "spline") return e?.type === "spline" ? deleteItems(s0, [id]) : s0;
+  if (!e || e.type === "point") return s0;
   const others = cutters(ents, id);
+  if (e.type === "spline") return trimSpline(s0, id, click, others.flatMap((by) => pieces(ents, by).map((pc) => ({ by, pc }))));
 
   if (e.type === "line") {
     const a = pt(ents, e.p1), b = pt(ents, e.p2), d = sub(b, a);
@@ -113,8 +115,8 @@ export function trim(s0: SketchData, id: string, click: P2): SketchData {
       const pb = addPoint(s, at(hi.t)); s = pb.s;
       s.entities[id] = { ...e, p2: pa.id };
       const nl = addEntity(s, "l", { type: "line", p1: pb.id, p2: e.p2, ...(e.construction ? { construction: true } : {}) }); s = nl.s;
-      s = addConstraint(s, "pointOn", [pa.id, lo.by]).s;
-      s = addConstraint(s, "pointOn", [pb.id, hi.by]).s;
+      s = pointOnCut(s, pa.id, lo.by);
+      s = pointOnCut(s, pb.id, hi.by);
       s = addConstraint(s, "collinear", [id, nl.id]).s;
       // o extremo p2 passa a pertencer à nova linha: as restrições do tipo H/V copiam-se
       for (const c of s.constraints.filter((c) => c.refs.length === 1 && c.refs[0] === id && (c.type === "horizontal" || c.type === "vertical"))) s = addConstraint(s, c.type, [nl.id]).s;
@@ -124,7 +126,7 @@ export function trim(s0: SketchData, id: string, click: P2): SketchData {
     const cut = lo ?? hi!;
     const np = addPoint(s, at(cut.t)); s = np.s;
     s.entities[id] = keepFrom === "p1" ? { ...e, p2: np.id } : { ...e, p1: np.id };
-    s = addConstraint(s, "pointOn", [np.id, cut.by]).s;
+    s = pointOnCut(s, np.id, cut.by);
     return dropOrphans(s, [keepFrom === "p1" ? e.p2 : e.p1]);
   }
 
@@ -153,8 +155,8 @@ export function trim(s0: SketchData, id: string, click: P2): SketchData {
     const ps = addPoint(s, at(hi)); s = ps.s;
     const pe = addPoint(s, at(lo)); s = pe.s;
     s.entities[id] = { type: "arc", c: e.c, s: ps.id, e: pe.id, r: e.r, a0: wrap(a0 + hi), a1: wrap(a0 + lo), ...(e.construction ? { construction: true } : {}) };
-    s = addConstraint(s, "pointOn", [ps.id, byOf(hi)]).s;
-    s = addConstraint(s, "pointOn", [pe.id, byOf(lo)]).s;
+    s = pointOnCut(s, ps.id, byOf(hi));
+    s = pointOnCut(s, pe.id, byOf(lo));
     return s;
   }
 
@@ -167,8 +169,8 @@ export function trim(s0: SketchData, id: string, click: P2): SketchData {
     const pb = addPoint(s, at(hi.u)); s = pb.s;
     s.entities[id] = { ...e, e: pa.id, a1: wrap(a0 + lo.u) };
     const na = addEntity(s, "a", { type: "arc", c: e.c, s: pb.id, e: e.e, r: e.r, a0: wrap(a0 + hi.u), a1: e.a1, ...(e.construction ? { construction: true } : {}) }); s = na.s;
-    s = addConstraint(s, "pointOn", [pa.id, lo.by]).s;
-    s = addConstraint(s, "pointOn", [pb.id, hi.by]).s;
+    s = pointOnCut(s, pa.id, lo.by);
+    s = pointOnCut(s, pb.id, hi.by);
     s = addConstraint(s, "equal", [id, na.id]).s;
     return s;
   }
@@ -176,7 +178,7 @@ export function trim(s0: SketchData, id: string, click: P2): SketchData {
   const np = addPoint(s, at(cut.u)); s = np.s;
   if (lo) s.entities[id] = { ...e, e: np.id, a1: wrap(a0 + cut.u) };
   else s.entities[id] = { ...e, s: np.id, a0: wrap(a0 + cut.u) };
-  s = addConstraint(s, "pointOn", [np.id, cut.by]).s;
+  s = pointOnCut(s, np.id, cut.by);
   return dropOrphans(s, [lo ? e.e : e.s]);
 }
 
@@ -210,7 +212,7 @@ export function extend(s0: SketchData, id: string, click: P2): SketchData | null
     let pid = moving;
     if (shared) { const np = addPoint(s, target); s = np.s; pid = np.id; s.entities[id] = fromEnd ? { ...e, p2: pid } : { ...e, p1: pid }; }
     else s.entities[moving] = { ...(s.entities[moving] as Extract<SketchEntity, { type: "point" }>), x: target[0], y: target[1] };
-    return addConstraint(s, "pointOn", [pid, best.by]).s;
+    return pointOnCut(s, pid, best.by);
   }
   if (e?.type === "arc") {
     const c = pt(ents, e.c);
@@ -227,7 +229,7 @@ export function extend(s0: SketchData, id: string, click: P2): SketchData | null
     let s: SketchData = { entities: { ...s0.entities }, constraints: s0.constraints };
     s.entities[moving] = { ...(s.entities[moving] as Extract<SketchEntity, { type: "point" }>), x: target[0], y: target[1] };
     s.entities[id] = atEnd ? { ...e, a1: best.ang } : { ...e, a0: best.ang };
-    s = addConstraint(s, "pointOn", [moving, best.by]).s;
+    s = pointOnCut(s, moving, best.by);
     return s;
   }
   return null;
