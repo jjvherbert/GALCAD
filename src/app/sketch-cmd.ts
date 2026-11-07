@@ -1,10 +1,23 @@
 // Aplicar o valor de filete/deslocamento e gravar cotas editadas do editor de esboço 2D.
 import { evalExpr } from "../doc/expr.ts";
-import { sketchChamfer } from "../sketch/chamfer.ts";
+import { type ChamferSpec, sketchChamfer } from "../sketch/chamfer.ts";
 import { offset, sketchFillet } from "../sketch/modify.ts";
 import type { SketchData } from "../sketch/ops.ts";
 
-type Prompt = { kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[] };
+export type ChamferMode = ChamferSpec["mode"];
+/** Pedido de valor: raio do filete, distância(s)/ângulo do chanfro ou distância do deslocamento. */
+export type Prompt = { kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[]; mode?: ChamferMode; text2?: string; flip?: boolean };
+/** Últimos valores usados, para pré-preencher o próximo pedido. */
+export type LastValues = { fillet: string; chamfer: string; offset: string; chamfer2: string; chamferAng: string; chamferMode: ChamferMode };
+export const LAST_DEFAULTS: LastValues = { fillet: "5", chamfer: "5", offset: "5", chamfer2: "5", chamferAng: "45", chamferMode: "equal" };
+
+/** Especificação do chanfro a partir do pedido (o segundo valor é o ângulo ou a segunda distância). */
+export function chamferSpecOf(p: Prompt, scope: (n: string) => number | undefined): ChamferSpec {
+  const d = Math.abs(evalExpr(p.text, scope));
+  if (p.mode === "angle") return { mode: "angle", d, angle: Math.abs(evalExpr(p.text2 ?? "45", scope)) };
+  if (p.mode === "two") return { mode: "two", d1: d, d2: Math.abs(evalExpr(p.text2 ?? p.text, scope)) };
+  return { mode: "equal", d };
+}
 
 /** Contexto dos comandos: estado do editor e as ações que usam. */
 export type CmdCtx = {
@@ -14,7 +27,7 @@ export type CmdCtx = {
   scope: (n: string) => number | undefined;
   data: () => SketchData;
   commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => boolean;
-  lastValue: { current: { fillet: string; chamfer: string; offset: string } };
+  lastValue: { current: LastValues };
   setMsg: (m: string | null) => void;
   setPrompt: (p: Prompt | null) => void;
   setSel: (s: string[]) => void;
@@ -24,16 +37,22 @@ export type CmdCtx = {
 export function applyPromptIn(c: CmdCtx) {
   const { prompt, scope, data, commit, lastValue, setMsg, setPrompt, setSel } = c;
   if (!prompt) return;
-  let v: number;
-  try { v = evalExpr(prompt.text, scope); } catch (e) { setMsg((e as Error).message); return; }
+  let v: number, spec: ChamferSpec | null = null;
+  try {
+    v = evalExpr(prompt.text, scope);
+    if (prompt.kind === "chamfer") spec = chamferSpecOf(prompt, scope);
+  } catch (e) { setMsg((e as Error).message); return; }
   lastValue.current[prompt.kind] = prompt.text;
   if (prompt.kind === "fillet") {
     const r = sketchFillet(data(), prompt.target[0], Math.abs(v));
     if (!r) { setMsg("Raio demasiado grande para as linhas do canto"); return; }
     if (commit(r, "Filete de canto")) setPrompt(null);
-  } else if (prompt.kind === "chamfer") {
-    const r = sketchChamfer(data(), prompt.target[0], Math.abs(v));
-    if (!r) { setMsg("Distância demasiado grande para as linhas do canto"); return; }
+  } else if (spec) {
+    lastValue.current.chamferMode = spec.mode;
+    if (spec.mode === "angle") lastValue.current.chamferAng = prompt.text2 ?? "45";
+    if (spec.mode === "two") lastValue.current.chamfer2 = prompt.text2 ?? prompt.text;
+    const r = sketchChamfer(data(), prompt.target[0], spec, prompt.flip);
+    if (!r) { setMsg(spec.mode === "angle" ? "O chanfro não cabe com esta distância e ângulo" : "Distância demasiado grande para as linhas do canto"); return; }
     if (commit(r, "Chanfro de canto")) setPrompt(null);
   } else {
     if (commit(offset(data(), prompt.target, v), "Deslocar")) { setPrompt(null); setSel([]); }

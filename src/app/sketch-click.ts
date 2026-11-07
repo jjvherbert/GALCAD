@@ -7,6 +7,7 @@ import { sketchMirror } from "../sketch/mirror.ts";
 import { type HitOpts, placePoint } from "./sketch-hit.ts";
 import { type RefGroup } from "./sketch-ref.ts";
 import { type Draw, type DimMode, type Snap, type Tool } from "./sketch-types.ts";
+import type { ChamferMode, LastValues, Prompt } from "./sketch-cmd.ts";
 import type { allEntities } from "../sketch/geometry.ts";
 
 /** Contexto dos cliques: estado do editor e as ações que cada ferramenta usa. */
@@ -25,12 +26,14 @@ export type ClickCtx = {
   commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => boolean;
   data: () => SketchData;
   W: (sx: number, sy: number) => P2;
-  lastValue: { current: { fillet: string; chamfer: string; offset: string } };
+  lastValue: { current: LastValues };
   /** Espelhar: manter as entidades originais (por defeito) ou ficar só com a cópia. */
   mirrorKeep: boolean;
+  /** Chanfro: distância igual, distância + ângulo ou duas distâncias. */
+  chamferMode: ChamferMode;
   setSel: (s: string[]) => void;
   setMsg: (m: string | null) => void;
-  setPrompt: (p: { kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[] } | null) => void;
+  setPrompt: (p: Prompt | null) => void;
   setDrawing: (d: Draw | null) => void;
   setDimEdit: (d: { id: string; text: string } | null) => void;
 };
@@ -66,7 +69,8 @@ export function handleClick(c: ClickCtx, sx: number, sy: number, additive: boole
   }
   if (tool === "skchamfer") {
     const id = hitAt(sx, sy, { curves: false });
-    if (id && isLineCorner(data(), id)) setPrompt({ kind: "chamfer", at: [sx, sy], text: lastValue.current.chamfer, target: [id] });
+    const mode = c.chamferMode, lv = lastValue.current;
+    if (id && isLineCorner(data(), id)) setPrompt({ kind: "chamfer", at: [sx, sy], text: lv.chamfer, target: [id], mode, text2: mode === "angle" ? lv.chamferAng : lv.chamfer2, flip: false });
     else setMsg("Clique num canto entre duas linhas");
     return;
   }
