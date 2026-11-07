@@ -97,6 +97,38 @@ test("chanfro de canto num retângulo: perfil fechado e área correta", () => {
   assert.equal(sketchChamfer(r.s, r.points[2], 0), null);
 });
 
+function chamferArea(c: SketchData | null) {
+  assert.ok(c);
+  const sol = solveSketch(c);
+  assert.ok(sol.ok, sol.message ?? "");
+  const pr = findProfiles(sol.entities);
+  assert.deepEqual(pr.errors, []);
+  return { area: Math.abs(pr.regions[0].outer.area), ents: sol.entities };
+}
+
+test("chanfro com duas distâncias e troca de lado", () => {
+  const r = addRectangle(empty(), [0, 0], [40, 20]);
+  const a = chamferArea(sketchChamfer(r.s, r.points[2], { mode: "two", d1: 8, d2: 4 }));
+  assert.ok(Math.abs(a.area - (800 - 16)) < 1e-6);
+  const b = chamferArea(sketchChamfer(r.s, r.points[2], { mode: "two", d1: 8, d2: 4 }, true));
+  assert.ok(Math.abs(b.area - (800 - 16)) < 1e-6);
+  // a troca muda qual das linhas leva os 8: os pontos de corte não são os mesmos
+  const xs = (e: typeof a.ents) => Object.values(e).filter((p) => p.type === "point").map((p) => (p as { x: number }).x).sort((m, n) => m - n).join();
+  assert.notEqual(xs(a.ents), xs(b.ents));
+  assert.equal(sketchChamfer(r.s, r.points[2], { mode: "two", d1: 30, d2: 30 }), null);
+});
+
+test("chanfro com distância e ângulo: 45° iguala as distâncias, 30° dá d·tan30", () => {
+  const r = addRectangle(empty(), [0, 0], [40, 20]);
+  const a = chamferArea(sketchChamfer(r.s, r.points[2], { mode: "angle", d: 6, angle: 45 }));
+  assert.ok(Math.abs(a.area - (800 - 18)) < 1e-6);
+  const b = chamferArea(sketchChamfer(r.s, r.points[2], { mode: "angle", d: 6, angle: 30 }));
+  assert.ok(Math.abs(b.area - (800 - 18 * Math.tan(Math.PI / 6))) < 1e-6);
+  const c = sketchChamfer(r.s, r.points[2], { mode: "angle", d: 6, angle: 30 })!;
+  assert.ok(c.constraints.some((k) => k.type === "angle" && k.value === 30));
+  assert.equal(sketchChamfer(r.s, r.points[2], { mode: "angle", d: 6, angle: 90 }), null); // ângulo impossível num canto reto
+});
+
 test("deslocar um retângulo para fora e um círculo", () => {
   const r = addRectangle(empty(), [0, 0], [40, 20]);
   const o = offset(r.s, r.lines, 5);

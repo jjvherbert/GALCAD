@@ -5,7 +5,8 @@ import { projTolOf, refEdgesOf, refGroupsOf } from "./sketch-ref.ts";
 import { type HitOpts, hitAtIn, hitRefIn, snapIn } from "./sketch-hit.ts";
 import { finishSplineIn, handleClick } from "./sketch-click.ts";
 import { convertEdges } from "./sketch-convert.ts";
-import { applyPromptIn, saveDimIn } from "./sketch-cmd.ts";
+import { type ChamferMode, type LastValues, type Prompt, LAST_DEFAULTS, applyPromptIn, saveDimIn } from "./sketch-cmd.ts";
+import { ChamferModeSelect, ChamferPreview, PromptBox, withChamferMode } from "./SketchChamferUI.tsx";
 import { pathOf, previewOf } from "./sketch-draw.tsx";
 import { History } from "../doc/history.ts";
 import { type P2, allEntities, entityPoints, isImplicit, measure, pt } from "../sketch/geometry.ts";
@@ -30,14 +31,15 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const [tool, setTool] = useState<Tool>("select");
   const [dimMode, setDimMode] = useState<DimMode>("auto");
   const [mirrorKeep, setMirrorKeep] = useState(true);
+  const [chamferMode, setChamferMode] = useState<ChamferMode>("equal");
   const [sel, setSel] = useState<string[]>([]);
   const [hover, setHover] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<Draw | null>(null);
   const [mouse, setMouse] = useState<P2 | null>(null);
   const [dimEdit, setDimEdit] = useState<{ id: string; text: string } | null>(null);
   /** Pedido de valor para filete de canto (raio) ou deslocamento (distância). */
-  const [prompt, setPrompt] = useState<{ kind: "fillet" | "chamfer" | "offset"; at: [number, number]; text: string; target: string[] } | null>(null);
-  const lastValue = useRef<{ fillet: string; chamfer: string; offset: string }>({ fillet: "5", chamfer: "5", offset: "5" });
+  const [prompt, setPrompt] = useState<Prompt | null>(null);
+  const lastValue = useRef<LastValues>({ ...LAST_DEFAULTS });
   const [info, setInfo] = useState<SolveResult | null>(null);
   const [free, setFree] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState<string | null>(null);
@@ -236,7 +238,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   }
 
   // --- cliques por ferramenta ---------------------------------------------------------
-  const clickCtx = () => ({ tool, sel, drawing, dimMode, draft, ents, hitAt, snap, hitRef, refGroups, convert, commit, data, W, lastValue, mirrorKeep, setSel, setMsg, setPrompt, setDrawing, setDimEdit });
+  const clickCtx = () => ({ tool, sel, drawing, dimMode, draft, ents, hitAt, snap, hitRef, refGroups, convert, commit, data, W, lastValue, mirrorKeep, chamferMode, setSel, setMsg, setPrompt, setDrawing, setDimEdit });
   const click = (sx: number, sy: number, additive: boolean, dbl: boolean) => handleClick(clickCtx(), sx, sy, additive, dbl);
   const finishSpline = (pts: string[]) => finishSplineIn(clickCtx(), pts);
 
@@ -311,6 +313,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
         {tool === "skmirror" && (
           <label class="sk-opt" title="Desmarcado: apaga as entidades originais e fica só a cópia espelhada"><input type="checkbox" checked={mirrorKeep} onChange={(e) => setMirrorKeep((e.target as HTMLInputElement).checked)} /> Manter original</label>
         )}
+        {tool === "skchamfer" && <ChamferModeSelect mode={chamferMode} onChange={(m) => { setChamferMode(m); setPrompt(withChamferMode(prompt, m, lastValue.current)); }} />}
         {tool === "convert" && refGroups.some((g) => g.inPlane) && (
           <button title="Converter todas as arestas do modelo que estão no plano do esboço" onClick={() => convert(refGroups.filter((g) => g.inPlane))}>Contorno no plano</button>
         )}
@@ -353,6 +356,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           <line class={`axis v ${hover === "V" || sel.includes("V") ? "hover" : ""}`} y1={0} y2={size[1]} x1={v.tx} x2={v.tx} />
           {curves.map(([id, e]) => <path key={id} d={path(id, e)} class={cls(id, e)} />)}
           {preview}
+          <ChamferPreview prompt={prompt} data={data()} scope={scope} S={S} />
           <Constraints constraints={draft.constraints} ents={ents} S={S} sel={sel} conflicts={conflicts} onSelect={(id, add) => setSel(add ? [...sel, id] : [id])} />
           <Dimensions constraints={draft.constraints} ents={ents} S={S} W={W} sel={sel} conflicts={conflicts} scope={scope}
             onEdit={(c) => setDimEdit({ id: c.id, text: String(c.value ?? roundDim(measure(ents, c))) })}
@@ -364,15 +368,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           })}
           <circle cx={v.tx} cy={v.ty} r={4} class={`origin ${hover === "O" || sel.includes("O") ? "hover" : ""}`} />
         </svg>
-        {prompt && (
-          <div class="dim-input" style={{ left: `${prompt.at[0]}px`, top: `${prompt.at[1]}px` }}>
-            <input autoFocus value={prompt.text} aria-label={prompt.kind === "fillet" ? "Raio do filete" : prompt.kind === "chamfer" ? "Distância do chanfro" : "Distância (negativa para o outro lado)"}
-              onInput={(e) => setPrompt({ ...prompt, text: (e.target as HTMLInputElement).value })}
-              onKeyDown={(e) => { if (e.key === "Enter") applyPrompt(); if (e.key === "Escape") setPrompt(null); }} />
-            <button onClick={applyPrompt} title="Aplicar">✓</button>
-            <button onClick={() => setPrompt(null)} title="Fechar">✕</button>
-          </div>
-        )}
+        {prompt && <PromptBox prompt={prompt} setPrompt={setPrompt} apply={applyPrompt} />}
         {dimEdit && (() => {
           const c = draft.constraints.find((x) => x.id === dimEdit.id);
           if (!c) return null;
