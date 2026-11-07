@@ -12,6 +12,7 @@ import { PropertyPanel } from "./PropertyPanel.tsx";
 import { SketchEditor } from "./SketchEditor.tsx";
 import { PlaneChooser, VariablesDialog } from "./Dialogs.tsx";
 import { SettingsDialog } from "./SettingsDialog.tsx";
+import { MaterialsDialog } from "./MaterialsDialog.tsx";
 import { MassBlock, SheetsBlock, StatusBlock } from "./InfoPanel.tsx";
 import { describeName } from "./forms.tsx";
 import { handleKey, runCommand, setCommandViewport } from "./commands.ts";
@@ -62,7 +63,7 @@ function App() {
     "project", "active", "doc", "result", "asmResult", "simResult", "interference", "analysis", "dirty", "settings",
     "edit", "sketch", "choosingPlane", "confirmed", "pickTarget", "selection", "selectedFeature", "hoverFeature",
     "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy",
-    "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings",
+    "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
     "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden",
   );
   const host = useRef<HTMLDivElement>(null);
@@ -174,7 +175,7 @@ function App() {
       if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.tagName === "SELECT") return;
       // no esboço, o editor trata as suas teclas; aqui só as de ficheiro
       if (store.state.sketch && !((e.ctrlKey || e.metaKey) && ["s", "o", "n", ","].includes(e.key.toLowerCase()))) return;
-      if (store.state.showVariables || store.state.showSettings) return;
+      if (store.state.showVariables || store.state.showSettings || store.state.showMaterials) return;
       handleKey(e);
     };
     addEventListener("keydown", onKey);
@@ -267,6 +268,7 @@ function App() {
       </footer>
       {st.showVariables && <VariablesDialog />}
       {st.showSettings && <SettingsDialog />}
+      {st.showMaterials && <MaterialsDialog />}
       {showProps && <PartPropertiesDialog onClose={() => setShowProps(false)} />}
       {(st.contextMenu || st.shortcutBar || st.orientationMenu) && <div class="overlay-catcher" onPointerDown={() => store.closeOverlays()} onContextMenu={(e) => { e.preventDefault(); store.closeOverlays(); }} />}
       {st.contextMenu && <ContextMenu />}

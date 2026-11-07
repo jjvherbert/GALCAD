@@ -1,7 +1,8 @@
 // Editores de pré-processamento do painel de simulação: FEM (cargas, conjuntos, dinâmica, malha, montagem) e CFD.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS, SIM_MATERIALS } from "../doc/study.ts";
+import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS } from "../doc/study.ts";
+import { allMaterials } from "./material-library.ts";
 import { type SimSection, store, useStoreKeys } from "./store.ts";
 import type { FemSet } from "../doc/study.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, newLoad } from "./sim-actions.ts";
@@ -36,8 +37,9 @@ function Vec3Input({ label, unit, value, onChange }: { label: string; unit: stri
 
 /** Montagem: material de cada corpo (instância) e modo de contacto entre corpos. */
 export function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
-  const st = useStoreKeys("asmResult");
+  const st = useStoreKeys("asmResult", "userMaterials");
   const inst = st.asmResult?.instances ?? [];
+  const lib = allMaterials(st.userMaterials);
   const mats = s.bodyMaterials ?? {};
   return (
     <>
@@ -54,13 +56,13 @@ export function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStud
             <td>{i.name}</td>
             <td>
               <select aria-label={`Material de ${i.name}`} value={mats[i.path]?.name ?? ""} onChange={(e) => {
-                const m = SIM_MATERIALS.find((x) => x.name === (e.target as HTMLSelectElement).value);
+                const m = lib.find((x) => x.name === (e.target as HTMLSelectElement).value);
                 const next = { ...mats };
                 if (m) next[i.path] = { ...m }; else delete next[i.path];
                 up({ bodyMaterials: next });
               }}>
                 <option value="">Material do estudo</option>
-                {SIM_MATERIALS.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
+                {lib.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
               </select>
             </td>
           </tr>
@@ -73,7 +75,8 @@ export function AssemblyBodies({ s, up }: { s: FemStudy; up: (p: Partial<FemStud
 }
 
 export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: Partial<FemStudy>) => void; assembly?: boolean; section: SimSection }) {
-  const st = useStoreKeys("simFocus");
+  const st = useStoreKeys("simFocus", "userMaterials");
+  const lib = allMaterials(st.userMaterials);
   const thermal = s.analysis === "thermal";
   const kinds = thermal ? THERM : STRUCT;
   const setLoad = (i: number, l: FemLoad) => up({ loads: s.loads.map((x, k) => (k === i ? l : x)) });
@@ -102,10 +105,13 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
       </>}
       {section === "material" && <fieldset class="checklist">
         <legend class="field-label">Material</legend>
-        <select aria-label="Material de referência" value={SIM_MATERIALS.some((x) => x.name === m.name) ? m.name : ""} onChange={(e) => { const x = SIM_MATERIALS.find((y) => y.name === (e.target as HTMLSelectElement).value); if (x) up({ material: { ...x } }); }}>
-          <option value="">Personalizado</option>
-          {SIM_MATERIALS.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
-        </select>
+        <div class="mat-select">
+          <select aria-label="Material da biblioteca" value={lib.some((x) => x.name === m.name) ? m.name : ""} onChange={(e) => { const x = lib.find((y) => y.name === (e.target as HTMLSelectElement).value); if (x) up({ material: { ...x } }); }}>
+            <option value="">Personalizado</option>
+            {lib.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
+          </select>
+          <button class="small" title="Gerir os seus materiais" onClick={() => store.set({ showMaterials: true })}>Materiais…</button>
+        </div>
         <div class="row3">
           <Field label="E (MPa)"><input type="number" value={m.E} onChange={(e) => up({ material: { ...m, name: "Personalizado", E: Number((e.target as HTMLInputElement).value) } })} /></Field>
           <Field label="ν"><input type="number" step="0.01" value={m.nu} onChange={(e) => up({ material: { ...m, name: "Personalizado", nu: Number((e.target as HTMLInputElement).value) } })} /></Field>

@@ -1,9 +1,10 @@
 // Ações dos estudos de simulação partilhadas pela barra do espaço de trabalho, pela árvore do modelo e
 // pelo painel: estudos da peça ou da montagem ativa, criar, gravar, calcular e pré-visualizar a malha.
 import { loadFaces } from "../doc/study.ts";
-import { type ConvergenceConfig, DEFAULT_CONVERGENCE, type StoredConvergence, type FemLoad, type FemStudy, type SimMesh, type Study, SIM_MATERIALS, newCfdStudy, newFemStudy } from "../doc/study.ts";
+import { type ConvergenceConfig, DEFAULT_CONVERGENCE, type StoredConvergence, type FemLoad, type FemStudy, type SimMesh, type Study, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
+import { allMaterials } from "./material-library.ts";
 import { CancelledError, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
 
 /** Estudos do documento ativo (peça ou montagem), opcionalmente só de uma física. */
@@ -39,7 +40,7 @@ export function addStudy(kind: "fem" | "cfd", patch: Partial<Study> = {}): strin
   const ns = { ...(kind === "fem" ? newFemStudy(`s${n}`, n) : newCfdStudy(`s${n}`, n)), ...patch } as Study;
   if (ns.physics === "fem") {
     if (st.doc.properties?.material && !asm) {
-      const m = SIM_MATERIALS.find((x) => x.name === st.doc.properties!.material);
+      const m = allMaterials(st.userMaterials).find((x) => x.name === st.doc.properties!.material);
       if (m) ns.material = { ...m };
     }
     if (asm) ns.contact = { mode: "bonded" };
@@ -187,10 +188,10 @@ export function addProbe() {
   store.set({ simStudy: s.id, simSection: "probes", pickTarget: { field: `probe${probes.length}`, accept: ["face"] } });
 }
 
-/** Material de referência no estudo FEM ativo. */
+/** Material da biblioteca (referência ou do utilizador) no estudo FEM ativo. */
 export function setStudyMaterial(name: string) {
   const s = femStudy();
-  const m = SIM_MATERIALS.find((x) => x.name === name);
+  const m = allMaterials(store.state.userMaterials).find((x) => x.name === name);
   if (!s || !m) return;
   updateStudy(s.id, { material: { ...m } });
   store.set({ simStudy: s.id, simSection: "material", message: `Material: ${m.name}` });

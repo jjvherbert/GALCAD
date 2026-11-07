@@ -3,6 +3,7 @@ import type { AxisRef, Feature, GeoHint, PlaneRef, SketchFeature, StdAxis, Vec3 
 import type { CadProject, DocRef, Mate, PartDoc } from "../doc/project.ts";
 import type { AssemblyResponse, InterferenceResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, RebuildResponse } from "../kernel/protocol.ts";
 import type { Settings } from "./settings.ts";
+import type { SimMaterial } from "../doc/study.ts";
 
 /** Análise de superfície ativa no 3D (separador Avaliar). */
 export type Analysis =
@@ -83,6 +84,7 @@ export interface State {
   selectedFeature: string | null;
   showVariables: boolean;
   showSettings: boolean;
+  showMaterials: boolean;
   fileName: string;
   dirty: boolean;
   /** Sobreposições da interface (posições em coordenadas do ecrã). */
@@ -94,6 +96,8 @@ export interface State {
   /** Feature sob o rato na árvore (realçada no 3D). */
   hoverFeature: string | null;
   settings: Settings;
+  /** Biblioteca de materiais do utilizador (guardada no browser). */
+  userMaterials: SimMaterial[];
   /** Último comando executado (Enter repete). */
   lastCommand: string | null;
   analysis: Analysis | null;
@@ -160,8 +164,8 @@ export const SESSION_KEYS = [
   "lastCommand", "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy", "simSection", "drawingTool", "drawingSel",
 ] as const satisfies readonly (keyof State)[];
 export const UI_KEYS = [
-  "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings",
-  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "pmiView", "simView", "simHidden",
+  "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
+  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "userMaterials", "pmiView", "simView", "simHidden",
   "agent", "simBusy", "simProgress",
 ] as const satisfies readonly (keyof State)[];
 export type DocKey = (typeof DOC_KEYS)[number];

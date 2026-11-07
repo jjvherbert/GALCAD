@@ -76,7 +76,7 @@ const FEM_TABS: Tab[] = [
     { title: "Estudo", ids: ["sim.section.study", "sim.section.run"] },
   ] },
   { id: "property", label: "Propriedades", groups: [
-    { title: "Material", ids: ["sim.section.material"] },
+    { title: "Material", ids: ["sim.section.material", "sim.materials"] },
     { title: "Biblioteca", ids: SIM_MATERIALS.map((_, i) => `sim.material.${i}`) },
   ] },
   { id: "loads", label: "Cargas e apoios", groups: [
