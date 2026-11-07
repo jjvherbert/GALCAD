@@ -1,5 +1,12 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F3 fatia 2 — tensões não-médias investigadas e descartadas (sem código)
+
+- **Premissa caiu:** os corpos de uma montagem não partilham nós (malha do Gmsh por corpo, decks do CalculiX e do code_aster), por isso a média nodal das tensões nunca mistura materiais diferentes. Não havia nada a corrigir.
+- **ERR do CalculiX (`S,ERR`) testado e rejeitado:** é a diferença máx−mín da 1.ª tensão principal nos pontos de Gauss à volta de um nó, a dividir pela maior (o manual diz que não é bem um estimador de erro). Só dá valores em C3D10 (zero em C3D4). Consola em balanço com h = 4 / 2 / 1,2 mm: a meio vão, onde o von Mises já é os 150 MPa exatos, o ERR dá 16,4 → 8,4 → 4,7 %. Na raiz singular, onde o von Mises máximo não converge (302 → 309 → 376 MPa), fica em ~18 → 11,6 → 10,7 %. Mede a variação da tensão e não deteta a singularidade, e por isso enganaria o utilizador.
+- **Para mais tarde (ROADMAP):** um estimador a sério (Zienkiewicz–Zhu, como o ERZ1 do code_aster) ligado ao refinamento adaptativo e ao «gerador auto». Até lá, a malha avalia-se com o estudo de convergência (GCI).
+- Só documentação. **A seguir (F3 fatia 3):** diálogo da biblioteca de materiais.
+
 ## Atualização: F3 — FS sem tensões e CI do runner gerado (PR #57)
 
 - **FS com σ nula (`stressSummary`):** um corpo sem tensões deixava de ter FS = cedência/1e-12 (número enorme). Agora fica «não aplicável: sem tensões no corpo» e não governa. Com o modelo inteiro sem tensões, a linha global diz «não aplicável: tensões nulas (verifique cargas e apoios)» e não há métrica `fsmin`.
