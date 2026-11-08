@@ -81,7 +81,7 @@ const FEM_TABS: Tab[] = [
   ] },
   { id: "loads", label: "Cargas e apoios", groups: [
     { title: "Apoios", ids: ["sim.add.fixed", "sim.add.displacement", "sim.add.symmetry", "sim.add.spring"] },
-    { title: "Cargas", ids: ["sim.add.force", "sim.add.pointForce", "sim.add.pressure", "sim.add.gravity"] },
+    { title: "Cargas", ids: ["sim.add.force", "sim.add.pointForce", "sim.add.pressure", "sim.add.gravity", "sim.add.mass"] },
     { title: "Térmicas", ids: ["sim.add.temperature", "sim.add.convection", "sim.add.heatFlux"] },
     { title: "Interações", ids: ["sim.section.contact"] },
     { title: "Lista", ids: ["sim.section.conditions"] },

@@ -255,7 +255,9 @@ Pedido de Juan: desenho a imitar o SolidWorks (rato, animações, transições, 
   - ✅ **Força pontual** no nó mais próximo de um ponto (verificado contra Timoshenko a meio vão nos dois solvers; aviso de tensões locais).
   - ✅ **Estudo de convergência da malha configurado no estudo** (`ConvergencePanel.tsx`, `src/sim/convreport.ts`): secção «Convergência» na árvore e na barra (modo 3 malhas, varrimento ±n níveis ou automático até ao GCI alvo; razão, níveis, grandeza seguida; tamanhos e elementos previstos antes de correr); corre com o cálculo (F5) ou no botão; o relatório traz **todas as malhas com todas as grandezas** e o tempo de cada uma, fica **guardado no estudo** (últimos 6, com escolha entre eles) e extrai-se em **tabelas** (malhas, GCI por grandeza, erro vs. extrapolado), **gráficos** (grandeza vs. tamanho com extrapolado e faixa do GCI, grandezas normalizadas, erro em escala log) e **exportações** CSV, XLSX (várias folhas), JSON, SVG, PNG e relatório HTML/PDF com hipóteses e limites. Os resultados do cálculo e a qualidade da malha também se extraem (CSV/JSON).
   - ✅ **Cargas e apoios em arestas** (F3 passo 5, #64).
-  - Por fazer (F3): **molas** e **massas pontuais**, **acoplamentos** (RBE2/RBE3), **referenciais locais**, **passos múltiplos** (casos de carga em sequência). Feito: conjuntos de arestas e de corpos (#73).
+  - ✅ **Molas à terra** em faces ou arestas (CalculiX SPRING1 e code_aster DIS_T, #75).
+  - ✅ **Massas pontuais** em faces ou arestas (CalculiX MASS e code_aster DIS_T com M_T_D_N; peso com a gravidade; estático, modal e dinâmico).
+  - Por fazer (F3): **acoplamentos** (RBE2/RBE3), **referenciais locais**, **passos múltiplos** (casos de carga em sequência). Feito: conjuntos de arestas e de corpos (#73).
 - **R5 — Fabrico (CAM)**: espaço de maquinagem.
 
 ## Otimização e scripts (módulo seguinte, por fazer)

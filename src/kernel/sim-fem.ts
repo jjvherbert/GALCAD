@@ -80,6 +80,12 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
         loads.push({ kind: "spring", group: g, k });
         break;
       }
+      case "mass": {
+        const m = evalParam(l.m, sc, "Massa");
+        if (m < 0) throw new Error(`Condição ${i + 1} (massa): a massa não pode ser negativa`);
+        loads.push({ kind: "mass", group: g, m: m / 1000 }); // kg → t
+        break;
+      }
       case "pressure": loads.push({ kind: "pressure", group: g, p: evalParam(l.p, sc, "Pressão") }); break;
       case "temperature": loads.push({ kind: "temperature", group: g, t: evalParam(l.t, sc, "Temperatura") }); break;
       case "convection": loads.push({ kind: "convection", group: g, h: evalParam(l.h, sc, "Coeficiente h"), tInf: evalParam(l.tInf, sc, "Temperatura do fluido") }); break;

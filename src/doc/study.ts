@@ -76,6 +76,8 @@ export type FemLoad =
   | { kind: "force"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; f: [Expr, Expr, Expr] }
   /** Mola à terra (fundação elástica): rigidez total (N/mm) por direção global, distribuída pela área das faces ou pelo comprimento das arestas. */
   | { kind: "spring"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; k: [Expr, Expr, Expr] }
+  /** Massa pontual (kg) acrescentada ao modelo, repartida pela área das faces ou pelo comprimento das arestas (sem rigidez: equipamento, lastro). */
+  | { kind: "mass"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; m: Expr }
   /** Força (N) concentrada no nó da malha mais próximo de um ponto (mm). Dá tensões locais irreais: ver só a resposta global. */
   | { kind: "pointForce"; point: [Expr, Expr, Expr]; f: [Expr, Expr, Expr] }
   /** Pressão (MPa), positiva a empurrar contra a face. */

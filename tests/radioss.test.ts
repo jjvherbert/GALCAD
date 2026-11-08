@@ -92,6 +92,7 @@ test("OpenRadioss: Starter e Engine (unidades kg–mm–ms, colunas fixas, forç
   assert.ok(d.starter.trimEnd().endsWith("/END"));
   // molas à terra: ainda não neste adaptador
   assert.throws(() => radiossDeck({ ...c, loads: [...c.loads, { kind: "spring", group: "L1_FIXED", k: [10, 10, 10] }] }, m), /molas ainda não estão/);
+  assert.throws(() => radiossDeck({ ...c, loads: [...c.loads, { kind: "mass", group: "L1_FIXED", m: 0.01 }] }, m), /massas pontuais ainda não estão/);
   // quadráticos recusados (o explícito quer elementos lineares)
   const q = await solve(doc, study(face, { mesh: { size: 5, order: 2, curvature: 0, element: "hex" } }));
   spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: q.dir });

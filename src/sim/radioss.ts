@@ -94,6 +94,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
   let bcs = 0, loads = 0;
   for (const ld of c.loads) {
     if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
+    if (ld.kind === "mass") throw new Error("OpenRadioss: as massas pontuais ainda não estão neste adaptador (use o CalculiX)");
     if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
     if (ld.kind === "fixed" || ld.kind === "displacement") {
       const fix = ld.kind === "fixed" ? [true, true, true] : ld.u.map((u) => u !== null);

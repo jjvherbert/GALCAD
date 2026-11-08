@@ -201,6 +201,24 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       }
     });
   });
+  // massas acrescentadas: um elemento MASS por nó (fora do EALL), massa m·w com os mesmos pesos nodais;
+  // as de igual valor partilham o *MASS. O peso delas entra na gravidade como forças nodais (abaixo)
+  const massW = new Map<number, Map<number, number>>();
+  c.loads.forEach((ld, j) => {
+    if (ld.kind !== "mass") return;
+    if (thermal) { warnings.push(`Massa ${ld.group}: ignorada na análise térmica`); return; }
+    const w = springWeights(lines[ld.group] ?? tris[ld.group] ?? []);
+    if (!w.size) { warnings.push(`Massa ${ld.group}: grupo sem nós na malha`); return; }
+    if (!(ld.m > 0)) return;
+    massW.set(j, w);
+    const byM = new Map<string, number[]>();
+    for (const [n, wi] of w) { const s = fmt(ld.m * wi); byM.set(s, [...(byM.get(s) ?? []), n]); }
+    let q = 0;
+    for (const [s, ns] of byM) {
+      const set = `MS${j + 1}_${++q}`;
+      L.push(`*ELEMENT, TYPE=MASS, ELSET=${set}`, ...ns.map((n) => `${++eid}, ${n}`), `*MASS, ELSET=${set}`, s);
+    }
+  });
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 
   const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [];
@@ -244,6 +262,15 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       case "gravity": {
         const g = Math.hypot(...ld.g);
         if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt(g)}, ${ld.g.map((x) => fmt(x / g)).join(", ")}`);
+        // o GRAV só atua no EALL: o peso das massas acrescentadas vai como forças nodais m·wᵢ·g
+        c.loads.forEach((mb, j) => {
+          if (mb.kind !== "mass") return;
+          for (const [n, wi] of massW.get(j) ?? []) {
+            const acc = cload.get(n) ?? [0, 0, 0];
+            for (let k = 0; k < 3; k++) acc[k] += mb.m * wi * ld.g[k];
+            cload.set(n, acc);
+          }
+        });
         break;
       }
       case "convection":
@@ -256,6 +283,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         break;
       // molas: elementos SPRING1 nos dados do modelo (acima)
       case "spring": break;
+      case "mass": break;
     }
   }
   // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses

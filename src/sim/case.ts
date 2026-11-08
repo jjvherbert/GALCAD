@@ -19,7 +19,9 @@ export type FemCaseLoad =
   | { kind: "convection"; group: string; h: number; tInf: number }
   | { kind: "heatFlux"; group: string; q: number }
   /** Mola à terra: rigidez total (N/mm) por direção global, repartida pelos nós do grupo como uma força distribuída. */
-  | { kind: "spring"; group: string; k: V3 };
+  | { kind: "spring"; group: string; k: V3 }
+  /** Massa acrescentada (t) repartida pelos nós do grupo como uma força distribuída (entra na inércia e no peso). */
+  | { kind: "mass"; group: string; m: number };
 
 /**
  * Malha de um caso FEM (resolvida pelo núcleo; o Gmsh só a executa). Curvas e superfícies pelas

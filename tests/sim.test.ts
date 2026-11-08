@@ -164,6 +164,21 @@ test("caso FEM: molas à terra (grupo, rigidez, arestas, contam como apoio, k ne
   await assert.rejects(solve(doc, fem({ loads: [{ kind: "spring", faces: [face(0, 0)], k: [-1, 0, 0] }] })), /rigidez não pode ser negativa/);
 });
 
+test("caso FEM: massas pontuais (kg → t, arestas, não contam como apoio, m negativa recusada)", async () => {
+  const { doc, face, edge } = await bar();
+  const { sim } = await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "mass", faces: [face(0, 100)], m: 10 }] }));
+  const c = JSON.parse(String(sim.files["case.json"]));
+  assert.equal(c.loads[1].kind, "mass");
+  near(c.loads[1].m, 0.01, 1e-12);
+  assert.equal(c.groups[c.loads[1].group].length, 1);
+  const { sim: only } = await solve(doc, fem({ loads: [{ kind: "mass", faces: [face(0, 100)], m: 10 }] }));
+  assert.ok(only.warnings.some((w) => /Sem apoios/.test(w)), JSON.stringify(only.warnings));
+  const { sim: e } = await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "mass", faces: [], edges: [edge(1, [100, 0])], m: 5 }] }));
+  const ce = JSON.parse(String(e.files["case.json"]));
+  assert.equal(ce.edgeGroups[ce.loads[1].group].length, 1);
+  await assert.rejects(solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "mass", faces: [face(0, 100)], m: -1 }] })), /massa não pode ser negativa/);
+});
+
 test("CalculiX: consola — flecha (Timoshenko), reações e pressão", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
   const { doc, face } = await bar();
   const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
@@ -309,6 +324,20 @@ test("CalculiX: molas à terra em série com a barra (tração axial)", { skip: 
   const at = (x: number) => { const u = f.positions.reduce<number[]>((acc, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - x) < 1e-6 ? [...acc, f.displacements[0].values[i]] : acc), []); return u.reduce((a, b) => a + b, 0) / u.length; };
   near(at(0), F / k, 0.01);
   near(at(100), F / k + (F * L) / (E * A), 0.01);
+});
+
+test("CalculiX: massa pontual na ponta da consola (peso na reação e frequência mais baixa)", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
+  const { doc, face } = await bar();
+  // 10 kg na face da ponta: reação vertical = (ρ·V + m)·g; no modal, a massa na ponta baixa f₁ para
+  // perto de f = (1/2π)·√(3EI/L³ / (m + 0,24·ρAL)) (Rayleigh)
+  const E = 210000, I = (10 * 10 ** 3) / 12, L = 100, rhoA = 7.85e-9 * 100, m = 0.01, g = 9810;
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "mass", faces: [face(0, 100)], m: 10 }];
+  const r = await (await solve(doc, fem({ loads: [...loads, { kind: "gravity", g: [0, 0, -g] }] }))).run();
+  assert.ok(r.ok, JSON.stringify(r));
+  near(r.fem!.reactions[0][2], (rhoA * L + m) * g, 1e-4);
+  const md = await (await solve(doc, fem({ analysis: "modal", modes: 2, loads }))).run();
+  assert.ok(md.ok, JSON.stringify(md));
+  near(md.fem!.frequencies[0], Math.sqrt((3 * E * I) / L ** 3 / (m + 0.24 * rhoA * L)) / (2 * Math.PI), 0.05);
 });
 
 test("CalculiX: sondas (média na face, ponto) e refinamento automático até ao GCI alvo", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
