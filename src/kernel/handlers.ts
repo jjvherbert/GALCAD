@@ -28,6 +28,7 @@ export function makeHandlers(s: HandlerService): Handlers {
     },
     snapshot: async (r) => none(await s.snapshot(r.doc, r.parts, r.feature)),
     studyCase: async (r) => none(await s.studyCase(r.doc, r.parts, r.study)),
+    meshSeeds: async (r) => none(await s.meshSeeds(r.doc, r.parts, r.study)),
     panels: async (r) => none(await s.panels(r.doc, r.parts, r.faces)),
     assemblyStudyCase: async (r) => none(await s.assemblyStudyCase(r.project, r.assembly, r.study)),
     curvature: async (r) => {

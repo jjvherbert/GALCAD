@@ -28,6 +28,8 @@ import * as mouse from "./viewport-mouse.ts";
 import * as nav from "./viewport-nav.ts";
 import * as layers from "./viewport-layers.ts";
 import * as hover from "./viewport-hover.ts";
+import { type SeedLabel, buildSeedMarks, placeSeedLabels } from "./viewport-seeds.ts";
+import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { mouseHostOf } from "./viewport-host.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
@@ -121,15 +123,36 @@ export class Viewport {
     cv.addEventListener("pointermove", (e) => this.onMove(e));
     cv.addEventListener("pointerup", (e) => this.onUp(e));
     cv.addEventListener("pointerleave", () => { if (!this.mouse.drag) this.setHover(null); });
-    cv.addEventListener("wheel", (e) => this.onWheel(e), { passive: false });
+    cv.addEventListener("wheel", (e) => { if (e.shiftKey && this.onSeedWheel?.(e.deltaY < 0 ? 1 : -1)) e.preventDefault(); else this.onWheel(e); }, { passive: false });
     cv.addEventListener("contextmenu", (e) => e.preventDefault());
     cv.addEventListener("dblclick", (e) => this.onDblClick(e));
     cv.addEventListener("auxclick", (e) => e.preventDefault());
     this.pmiSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     this.pmiSvg.setAttribute("class", "pmi-leaders");
     this.pmiEl = Object.assign(document.createElement("div"), { className: "pmi-layer" });
-    el.append(this.pmiSvg, this.pmiEl);
-    this.renderer.setAnimationLoop(() => { this.stepAnim(); this.stepFlash(); this.renderer.render(this.scene, this.camera); this.placePmi(); });
+    this.seedEl = Object.assign(document.createElement("div"), { className: "pmi-layer seed-layer" });
+    el.append(this.pmiSvg, this.pmiEl, this.seedEl);
+    this.renderer.setAnimationLoop(() => {
+      this.stepAnim(); this.stepFlash(); this.renderer.render(this.scene, this.camera); this.placePmi();
+      placeSeedLabels(this.seedLabels, this.camera, this.renderer.domElement);
+    });
+  }
+
+  // --- seeds da malha ----------------------------------------------------------------
+
+  private seedGroup = new THREE.Group();
+  private seedEl: HTMLDivElement;
+  private seedLabels: SeedLabel[] = [];
+  /** Shift+roda no 3D: devolve true se consumiu o evento (há uma seed ativa a editar). */
+  onSeedWheel: ((step: 1 | -1) => boolean) | null = null;
+
+  /** Nós de cada aresta (pré-visualização sem Gmsh); null apaga. */
+  setSeedMarks(p: SeedPreview | null) {
+    this.disposeGroup(this.seedGroup);
+    if (!this.seedGroup.parent) this.scene.add(this.seedGroup);
+    const r = buildSeedMarks(this.seedGroup, this.seedEl, p);
+    this.seedLabels = r.labels;
+    this.el.dataset.seeds = p ? String(r.nodes) : "";
   }
 
   // --- PMI 3D ------------------------------------------------------------------------

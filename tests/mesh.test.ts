@@ -13,6 +13,7 @@ import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
 import { type FemStudy, SIM_MATERIALS, newFemStudy } from "../src/doc/study.ts";
 import { studyCase } from "../src/kernel/sim.ts";
+import { seedFractions, seedPreview } from "../src/kernel/sim-fem.ts";
 import { namedEdges } from "../src/kernel/naming.ts";
 import type { FemCase } from "../src/sim/case.ts";
 import { elementsOf, parseMsh, solidBlocks } from "../src/sim/msh.ts";
@@ -109,6 +110,42 @@ test("plano da malha: classes de arestas opostas, seeds e distribuição", async
   assert.match(geo, /Transfinite Volume\{1\};/);
   assert.match(geo, /Recombine Surface\{/);
   assert.ok(c.hypotheses.some((h) => /hexaedros estruturados/.test(h) && /C3D8I/.test(h)));
+});
+
+test("pré-visualização das seeds: nós por aresta sem Gmsh (seed, propagadas, automáticas e distribuição)", async () => {
+  const { doc, face, edge } = await bar();
+  const r = await new Engine().rebuild(doc);
+  const p = seedPreview(r.ctx, fem({ mesh: { size: 5, order: 1, element: "hex", seeds: [{ edges: [edge(0, [0, 0])], mode: "count", value: 40, bias: 4, biasAt: "start" }] }, loads: [{ kind: "fixed", faces: [face(0, 0)] }] }));
+  assert.deepEqual(p.warnings, []);
+  assert.equal(p.edges.length, 12);
+  const along = p.edges.filter((e) => Math.abs(e.points[0] - e.points[e.points.length - 3]) > 50);
+  assert.deepEqual(along.map((e) => e.n), [40, 40, 40, 40]);
+  assert.deepEqual(along.map((e) => e.kind).sort(), ["propagated", "propagated", "propagated", "user"]);
+  for (const e of along) {
+    assert.equal(e.points.length, 41 * 3);
+    // pontas nos vértices (x = 0 e x = 100) e razão maior/menor elemento = bias
+    assert.deepEqual([e.points[0], e.points[120]].map((x) => Math.round(x)).sort((a, b) => a - b), [0, 100]);
+    const dx = Array.from({ length: 40 }, (_, i) => Math.abs(e.points[3 * i + 3] - e.points[3 * i]));
+    near(Math.max(...dx) / Math.min(...dx), 4, 1e-3);
+  }
+  assert.ok(p.edges.filter((e) => !along.includes(e)).every((e) => e.n === 2 && e.points.length === 9));
+  // sem seeds e malha livre: tudo automático, n = comprimento / tamanho
+  const q = seedPreview(r.ctx, fem({ mesh: { size: 5, order: 1 }, loads: [] }));
+  assert.ok(q.edges.every((e) => e.kind === "auto"));
+  assert.deepEqual([...new Set(q.edges.map((e) => e.n))].sort((a, b) => a - b), [2, 20]);
+  // seed inválida não rebenta: vira aviso
+  const w = seedPreview(r.ctx, fem({ mesh: { size: 5, order: 1, seeds: [{ edges: [], mode: "count", value: 4 }] }, loads: [] }));
+  assert.ok(w.warnings.length > 0);
+  assert.equal(w.edges.length, 12);
+});
+
+test("frações dos nós: uniforme, progressão e bump simétrico", () => {
+  assert.deepEqual(seedFractions(4), [0, 0.25, 0.5, 0.75, 1]);
+  const g = seedFractions(3, { progression: 2 });
+  [0, 1 / 7, 3 / 7, 1].forEach((x, i) => near(g[i], x, 1e-9));
+  const b = seedFractions(10, { bump: 0.25 });
+  for (let i = 0; i <= 10; i++) near(b[i] + b[10 - i], 1, 1e-6);
+  assert.ok(b[1] - b[0] < b[6] - b[5]);
 });
 
 test("Gmsh: hexaedros estruturados com seeds (contagem, distribuição e numeração das arestas)", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {

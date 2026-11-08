@@ -400,6 +400,14 @@ a.button { text-decoration: none; display: inline-block; padding: 3px 8px; borde
 .pmi-label.pmi-gdt { letter-spacing: 0.02em; }
 .pmi-label.error { border-color: var(--bad); color: var(--bad); }
 .pmi-label.on { outline: 2px solid #2563eb; }
+/* seeds da malha (pré-visualização ao vivo no espaço FEM) */
+.seed-label { position: absolute; left: 0; top: 0; pointer-events: none; white-space: nowrap; font: 11px/1.2 ui-monospace, "SF Mono", Menlo, monospace; padding: 1px 4px; border: 1px solid currentColor; border-radius: 2px; background: color-mix(in srgb, var(--bg, #fff) 92%, transparent); }
+.seed-label.seed-user { color: #dc2626; }
+.seed-label.seed-propagated { color: #f59e0b; }
+.seed-hud { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 16px); display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px; padding: 6px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 8px; background: color-mix(in srgb, var(--bg, #fff) 94%, transparent); box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); font-size: 12px; z-index: 5; }
+.seed-hud-n { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.seed-hud-n > span { min-width: 64px; text-align: center; }
+@media (max-width: 600px) { .seed-hud { flex-wrap: nowrap; gap: 6px; padding: 4px 6px; white-space: nowrap; } .seed-hud-hint { display: none; } .seed-hud-n > span { min-width: 52px; } }
 .pmi-panel .pmi-head { text-align: left; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pmi-panel .pmi-kind { color: var(--muted, #6b7280); font-size: 11px; }
 .pmi-panel .tabs-small .on { background: var(--accent-soft); }

@@ -21,6 +21,8 @@ import { BomPanel } from "./BomPanel.tsx";
 import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { SimPanel } from "./SimPanel.tsx";
 import { conditionAtFace, conditionFaceColors } from "./sim-actions.ts";
+import { activeSeedIndex, handleSeedKey, scheduleSeedPreview, stepSeed } from "./seed-actions.ts";
+import { SeedHud } from "./SeedHud.tsx";
 import { SimBrowser } from "./SimBrowser.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
 import { DrawingEditor } from "./DrawingEditor.tsx";
@@ -102,6 +104,7 @@ function App() {
     };
     v.onPoleSelect = (i, j) => store.set({ poleSel: [i, j] });
     v.onPoleMoved = (i, j, d) => store.movePole(i, j, d);
+    v.onSeedWheel = (s) => (activeSeedIndex() != null ? (stepSeed(s), true) : false);
     vp.current = v;
     setCommandViewport(v);
   }, []);
@@ -135,6 +138,8 @@ function App() {
   useEffect(() => { if (st.confirmed) vp.current?.flashFeature(st.confirmed.id); }, [st.confirmed]);
   // espaços FEM/CFD: o modelo mostra as faces com condições (apoios, cargas, entrada/saída)
   useEffect(() => { vp.current?.setConditionFaces(conditionFaceColors()); }, [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result, st.asmResult]);
+  // espaço FEM: nós das seeds da malha (meshPlan no worker, sem Gmsh), atualizados ao vivo
+  useEffect(() => scheduleSeedPreview((p) => vp.current?.setSeedMarks(p)), [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
   // resultados de simulação (FEM) no 3D
   useEffect(() => {
@@ -176,6 +181,7 @@ function App() {
       // no esboço, o editor trata as suas teclas; aqui só as de ficheiro
       if (store.state.sketch && !((e.ctrlKey || e.metaKey) && ["s", "o", "n", ","].includes(e.key.toLowerCase()))) return;
       if (store.state.showVariables || store.state.showSettings || store.state.showMaterials) return;
+      if (handleSeedKey(e)) return;
       handleKey(e);
     };
     addEventListener("keydown", onKey);
@@ -247,6 +253,7 @@ function App() {
           {st.analysis && !st.sketch && <AnalysisPanel />}
           {st.sketch && <SketchEditor key={st.sketch.id} result={r} />}
           {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[a]).join(" / ")} · Esc para terminar</div>}
+          {!st.sketch && /^seed\d+$/.test(st.pickTarget?.field ?? "") && <SeedHud />}
         </section>
         {simWs && kind !== "drawing" && <aside class="side side-right ws-side" key={`ws-r-${st.workspace}`}><SimPanel /></aside>}
       </div>

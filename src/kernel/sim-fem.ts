@@ -3,8 +3,8 @@ import { type FemStudy, loadEdges, loadFaces, plasticCurveErrors } from "../doc/
 import { evalParam } from "../doc/variables.ts";
 import { type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges } from "./context.ts";
-import { meshPlan } from "./meshplan.ts";
-import { bbox, explore } from "./occ.ts";
+import { type PlanInput, meshPlan } from "./meshplan.ts";
+import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
 import { edgeProps } from "./occ-props.ts";
 import { type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, loadGroup } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, tagsOf, n3 } from "./sim-common.ts";
@@ -159,4 +159,111 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       "Apoio à decisão de engenharia: não é certificação nem decisão de uma autoridade ou de um organismo notificado",
     ],
   };
+}
+
+/** Nós de uma aresta na pré-visualização das seeds (malha ao vivo, sem Gmsh). */
+export interface SeedEdge { tag: number; n: number; kind: "user" | "propagated" | "auto"; progression?: number; bump?: number; points: number[] }
+export interface SeedPreview { edges: SeedEdge[]; warnings: string[]; notes: string[] }
+
+/**
+ * Frações (0..1, ao longo do comprimento) dos n+1 nós de uma aresta com a distribuição do Gmsh:
+ * Progression r = elementos de comprimento r^i a partir do início; Bump b aproximado por um tamanho
+ * 1 + (1/b − 1)·4x(1−x) (b < 1: refinado nas pontas; b > 1: no centro).
+ */
+export function seedFractions(n: number, d: { progression?: number; bump?: number } = {}): number[] {
+  if (d.progression && d.progression !== 1) {
+    const l = Array.from({ length: n }, (_, i) => d.progression! ** i);
+    const tot = l.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    return [0, ...l.map((x) => (acc += x) / tot)].map((x, i) => (i === n ? 1 : x));
+  }
+  if (d.bump && d.bump !== 1) {
+    // densidade 1/tamanho integrada numericamente e invertida
+    const m = 400, k = 1 / d.bump - 1, cum = [0];
+    for (let i = 0; i < m; i++) { const x = (i + 0.5) / m; cum.push(cum[i] + 1 / (1 + k * 4 * x * (1 - x))); }
+    const out = [0];
+    for (let j = 1, i = 0; j < n; j++) {
+      const target = (cum[m] * j) / n;
+      while (cum[i + 1] < target) i++;
+      out.push((i + (target - cum[i]) / (cum[i + 1] - cum[i])) / m);
+    }
+    return [...out, 1];
+  }
+  return Array.from({ length: n + 1 }, (_, i) => i / n);
+}
+
+/** Pontos às frações dadas do comprimento da aresta (amostragem do parâmetro e interpolação por arco). */
+function pointsAlong(edge: TopoDS_Shape, fr: number[]): number[] {
+  const s = sampleEdge(edge, 200), cum = [0];
+  for (let i = 1; i < s.length; i++) cum.push(cum[i - 1] + Math.hypot(s[i].p[0] - s[i - 1].p[0], s[i].p[1] - s[i - 1].p[1], s[i].p[2] - s[i - 1].p[2]));
+  const L = cum[cum.length - 1] || 1, out: number[] = [];
+  let i = 0;
+  for (const f of fr) {
+    const target = f * L;
+    while (i < s.length - 2 && cum[i + 1] < target) i++;
+    const u = cum[i + 1] > cum[i] ? Math.min(1, Math.max(0, (target - cum[i]) / (cum[i + 1] - cum[i]))) : 0;
+    for (let k = 0; k < 3; k++) out.push(s[i].p[k] + (s[i + 1].p[k] - s[i].p[k]) * u);
+  }
+  return out;
+}
+
+/**
+ * Pré-visualização das seeds de um estudo FEM: n.º e posição dos nós em todas as arestas do corpo,
+ * calculados pelo mesmo plano da malha que vai para o Gmsh (seeds, propagação pelas arestas opostas
+ * das faces mapeadas e tamanho global/local nas restantes). Tolerante: entradas inválidas viram avisos.
+ */
+export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
+  const report: StepReport = { warnings: [] };
+  const warnings: string[] = [];
+  const solid = bodyOf(ctx);
+  const faces = caseFaces(ctx, solid);
+  const allFaces = explore(solid, "face"), allEdges = explore(solid, "edge");
+  const sc = ctx.scope;
+  const tryDo = <T,>(f: () => T, fallback: T): T => { try { return f(); } catch (e) { warnings.push((e as Error).message); return fallback; } };
+  const edgeTags = (refs: TopoRef[], what: string) => {
+    if (!refs.length) throw new Error(`${what}: escolha as arestas`);
+    return resolveEdges(ctx, refs, report).map((ne) => allEdges.findIndex((e) => e.IsSame(ne.edge)) + 1).filter((t) => t > 0);
+  };
+  let size = tryDo(() => evalParam(s.mesh.size, sc, "Tamanho da malha"), NaN);
+  if (!(size > 0)) {
+    const b = bbox(solid);
+    size = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 10 || 1;
+    warnings.push(`Tamanho da malha inválido: pré-visualização com ${+size.toPrecision(3)} mm`);
+  }
+  const localSize = new Map<number, number>();
+  (s.mesh.local ?? []).forEach((l, i) => tryDo(() => {
+    const v = evalParam(l.size, sc, "Tamanho local");
+    if (v > 0) for (const t of tagsOf(ctx, faces, solid, l.faces, `Refinamento ${i + 1}`, report)) localSize.set(t, Math.min(v, localSize.get(t) ?? Infinity));
+  }, undefined));
+  const seeds = (s.mesh.seeds ?? []).flatMap((sd, i) => tryDo(() => {
+    const value = evalParam(sd.value, sc, `Seed ${i + 1}`);
+    const bias = sd.bias === undefined || sd.bias === "" ? 1 : evalParam(sd.bias, sc, `Seed ${i + 1}: razão`);
+    if (!(value > 0) || !(bias >= 1)) throw new Error(`Seed ${i + 1}: valor positivo e razão ≥ 1`);
+    return [{ tags: edgeTags(sd.edges, `Seed ${i + 1}`), mode: sd.mode, value, bias, biasAt: sd.biasAt ?? "start" as const }];
+  }, []));
+  const mapped = s.mesh.mapped?.length ? tryDo(() => tagsOf(ctx, faces, solid, s.mesh.mapped!, "Faces mapeadas", report), []) : [];
+  const input: PlanInput = { solids: [solid], faces: allFaces, edges: allEdges, size, localSize, element: s.mesh.element ?? "tet", hexMethod: s.mesh.hexMethod ?? "auto", seeds, mapped };
+  let plan: ReturnType<typeof meshPlan> | null = null;
+  try { plan = meshPlan(input); } catch (e) {
+    warnings.push((e as Error).message);
+    plan = tryDo(() => meshPlan({ ...input, hexMethod: "auto", mapped: mapped.filter((f) => { try { meshPlan({ ...input, hexMethod: "auto", mapped: [f] }); return true; } catch { return false; } }) }), null);
+  }
+  warnings.push(...(plan?.warnings ?? []), ...report.warnings);
+  const curves = new Map((plan?.curves ?? []).map((c) => [c.tag, c]));
+  // tamanho efetivo das arestas sem curva: o menor entre o global e os locais das faces vizinhas
+  const near = new Map<number, number>();
+  allFaces.forEach((f, i) => {
+    const ls = localSize.get(i + 1);
+    if (ls !== undefined) for (const e of explore(f, "edge")) { const t = allEdges.findIndex((x) => x.IsSame(e)) + 1; if (t) near.set(t, Math.min(ls, near.get(t) ?? Infinity)); }
+  });
+  const edges = allEdges.map((e, i): SeedEdge => {
+    const tag = i + 1, c = curves.get(tag);
+    if (c) {
+      const d = { progression: c.progression, bump: c.bump };
+      return { tag, n: c.n, kind: c.user ? "user" : "propagated", ...(c.progression ? { progression: c.progression } : {}), ...(c.bump ? { bump: c.bump } : {}), points: pointsAlong(e, seedFractions(c.n, d)) };
+    }
+    const n = Math.max(1, Math.ceil(edgeProps(e).length / Math.min(size, near.get(tag) ?? Infinity) - 1e-9));
+    return { tag, n, kind: "auto", points: pointsAlong(e, seedFractions(n)) };
+  });
+  return { edges, warnings: [...new Set(warnings)], notes: plan?.notes ?? [] };
 }
