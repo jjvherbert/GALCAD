@@ -293,18 +293,18 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
           <div class="kw-item" key={i}>
             <div class="row">
               <Select label="Por" value={sd.mode} options={[["count", "N.º de elementos"], ["size", "Tamanho (mm)"]]} onChange={(mode) => setSeed(i, { mode })} />
-              <ExprInput label={sd.mode === "count" ? "Elementos" : "Tamanho"} value={sd.value} onChange={(value) => setSeed(i, { value: value ?? 1 })} />
+              <ExprInput label={sd.mode === "count" ? "Elementos" : "Tamanho"} unit={sd.mode === "count" ? "" : "mm"} value={sd.value} onChange={(value) => setSeed(i, { value: value ?? 1 })} />
               <button class="icon" aria-label={`Retirar seed ${i + 1}`} onClick={() => set({ seeds: seeds.filter((_, k) => k !== i) })}>✕</button>
             </div>
             <div class="row">
-              <ExprInput label="Razão maior/menor" allowEmpty value={sd.bias} onChange={(bias) => setSeed(i, { bias })} />
+              <ExprInput label="Razão maior/menor" unit="" allowEmpty value={sd.bias} onChange={(bias) => setSeed(i, { bias })} />
               <Select label="Elementos pequenos" value={sd.biasAt ?? "start"} options={SEED_AT} onChange={(biasAt) => setSeed(i, { biasAt })} />
             </div>
             <RefList field={`seed${i}`} label="Arestas" accept={["edge", "face"]} refs={sd.edges} onChange={(edges) => setSeed(i, { edges })} />
           </div>
         ))}
-        <button class="small" onClick={() => set({ seeds: [...seeds, { edges: [], mode: "count", value: 10 }] })}>+ seed</button>
-        <p class="field-hint">Uma face escolhida conta como as suas arestas. Nas malhas mapeadas o n.º de elementos passa às arestas opostas; a distribuição também, no mesmo sentido. Confira o resultado na pré-visualização.</p>
+        <button class="small" onClick={() => { set({ seeds: [...seeds, { edges: [], mode: "count", value: 10 }] }); store.set({ pickTarget: { field: `seed${seeds.length}`, accept: ["edge", "face"] } }); }}>+ seed</button>
+        <p class="field-hint">Com a seleção de arestas ligada, clique nas arestas no 3D e ajuste ao vivo: +/− ou Shift+roda mudam o n.º (ou o tamanho), B muda a distribuição. Uma face escolhida conta como as suas arestas. Nas malhas mapeadas o n.º de elementos passa às arestas opostas; a distribuição também, no mesmo sentido. Confira o resultado na pré-visualização.</p>
       </fieldset>
       <RefList field="mesh.mapped" label="Faces mapeadas (4 arestas)" accept={["face"]} refs={m.mapped ?? []} onChange={(mapped) => set({ mapped })} />
       <fieldset class="checklist">

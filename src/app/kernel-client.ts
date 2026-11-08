@@ -4,7 +4,7 @@
 import type { CadDocument } from "../doc/types.ts";
 import type { CadProject, PartDoc } from "../doc/project.ts";
 import type {
-  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, NormalsResponse, PanelsResponse, SnapshotResponse, StudyCaseResponse, DrawingResponse, ExportFormat, ExportResponse,
+  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, NormalsResponse, PanelsResponse, SnapshotResponse, StudyCaseResponse, MeshSeedsResponse, DrawingResponse, ExportFormat, ExportResponse,
   InterferenceResponse, RebuildResponse, Request, Response, SignatureResponse,
 } from "../kernel/protocol.ts";
 
@@ -190,6 +190,10 @@ export class KernelClient {
 
   panels(doc: PartDoc, parts: PartDoc[], faces: string[]): Promise<PanelsResponse> {
     return this.call<PanelsResponse>({ type: "panels", doc, parts, faces });
+  }
+
+  meshSeeds(doc: PartDoc, parts: PartDoc[], study: string): Promise<MeshSeedsResponse> {
+    return this.call<MeshSeedsResponse>({ type: "meshSeeds", doc, parts, study });
   }
 
   assemblyStudyCase(project: CadProject, assembly: string, study: string): Promise<StudyCaseResponse> {

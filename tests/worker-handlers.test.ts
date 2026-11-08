@@ -9,7 +9,7 @@ import type { RequestOf, RequestType } from "../src/kernel/protocol.ts";
 
 const TYPES: RequestType[] = [
   "rebuild", "snapshot", "studyCase", "assemblyStudyCase", "panels", "export", "curvature", "deviation",
-  "continuity", "normals", "combs", "assembly", "interference", "drawing", "signatures",
+  "continuity", "normals", "combs", "assembly", "interference", "drawing", "signatures", "meshSeeds",
 ];
 
 const mesh = (): MeshData => ({
@@ -68,7 +68,7 @@ test("assembly, interference, export, curvature e normals transferem os seus buf
 
 test("os restantes tipos não transferem nada e devolvem o resultado do serviço", async () => {
   const { svc } = fake();
-  for (const t of ["snapshot", "studyCase", "assemblyStudyCase", "panels", "deviation", "continuity", "combs", "drawing", "signatures"] as const) {
+  for (const t of ["snapshot", "studyCase", "assemblyStudyCase", "panels", "deviation", "continuity", "combs", "drawing", "signatures", "meshSeeds"] as const) {
     const r = await run(svc, { type: t });
     assert.deepEqual(r.transfer, [], t);
     assert.deepEqual(r.result, { tag: t }, t);
@@ -96,6 +96,7 @@ test("cada handler passa os argumentos do pedido ao serviço", async () => {
   await run(svc, { type: "assembly", project, asmId: "a1", force: true });
   await run(svc, { type: "drawing", project, drawingId: "d1", force: false });
   await run(svc, { type: "signatures", project });
+  await run(svc, { type: "meshSeeds", doc, parts, study: "s1" });
   assert.deepEqual(calls, [
     ["rebuild", [doc, true, parts]],
     ["snapshot", [doc, parts, "f1"]],
@@ -108,5 +109,6 @@ test("cada handler passa os argumentos do pedido ao serviço", async () => {
     ["assembly", [project, "a1", true]],
     ["drawing", [project, "d1", false]],
     ["signatures", [project]],
+    ["meshSeeds", [doc, parts, "s1"]],
   ]);
 });
