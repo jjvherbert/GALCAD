@@ -1710,10 +1710,15 @@ function springWeights(items) {
 	});
 	const s = [...w.values()].reduce((a, b) => a + b, 0);
 	if (!(s > 0)) return /* @__PURE__ */ new Map();
-	for (const [n, v] of w) w.set(n, v / s);
+	for (const [n, v] of w) if (v / s > 1e-12) w.set(n, v / s);
+	else w.delete(n);
 	return new Map([...w].sort((a, b) => a[0] - b[0]));
 }
-const fmt = (x) => Number.isInteger(x) ? String(x) : x.toPrecision(10).replace(/\.?0+(e|$)/, "$1");
+const trimNum = (s) => {
+	const [mt, ex] = s.split("e");
+	return (mt.includes(".") ? mt.replace(/\.?0+$/, "") : mt) + (ex ? `e${ex}` : "");
+};
+const fmt = (x) => Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10));
 function calculixDeck(c, m) {
 	const warnings = [];
 	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
@@ -3083,7 +3088,7 @@ function radiossBlocks(frames) {
 	return out;
 }
 // src/sim/aster.ts
-const num = (x) => Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1");
+const num = (x) => Number.isInteger(x) ? `${x}.` : trimNum(x.toPrecision(12));
 /** Nó da malha mais próximo de cada força pontual (ordem das condições `pointForce`), com a distância ao ponto pedido. */
 function pointNodes(c, m, nodes) {
 	return c.loads.flatMap((ld) => {

@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { asterCase, asterMesh, asterNode, asterResult, parseAsterTable } from "../src/sim/aster.ts";
-import { calculixDeck, springWeights } from "../src/sim/calculix.ts";
+import { calculixDeck, springWeights, trimNum } from "../src/sim/calculix.ts";
 import { parseMsh } from "../src/sim/msh.ts";
 import type { FemCase } from "../src/sim/case.ts";
 import { SIM_MATERIALS } from "../src/doc/study.ts";
@@ -183,6 +183,8 @@ test("Molas à terra: pesos nodais normalizados, só os positivos", () => {
   assert.deepEqual([...w.keys()], [1, 2, 3]);
   assert.deepEqual([...w.values()], [1 / 6, 4 / 6, 1 / 6]);
   assert.equal(springWeights([{ n: [1, 2], nodal: [-1, 0] }]).size, 0);
+  // pesos de ruído (cantos dos triângulos de 2.ª ordem) saem
+  assert.deepEqual([...springWeights([{ n: [1, 2], nodal: [1, 1e-20] }]).keys()], [1]);
   assert.equal(springWeights([]).size, 0);
 });
 
@@ -247,4 +249,12 @@ test("code_aster: massa pontual → POI1 em DIS_T com M_T_D_N e peso em FORCE_NO
   // sem massas a PESANTEUR fica em todo o modelo
   assert.ok(!/GROUP_MA='SOLID'\)/.test(asterCase({ ...base, loads: [{ kind: "fixed", group: "L1_FIXED" }, gravity] }, m).files["job.comm"]));
   assert.throws(() => asterCase({ ...massCase, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m), /massas só estão/);
+});
+
+test("trimNum: tira zeros só da mantissa (o expoente fica intacto)", () => {
+  assert.equal(trimNum((2.5e-20).toPrecision(10)), "2.5e-20");
+  assert.equal(trimNum((3e-30).toPrecision(10)), "3e-30");
+  assert.equal(trimNum((0.01).toPrecision(10)), "0.01");
+  assert.equal(trimNum((100.5).toPrecision(10)), "100.5");
+  assert.equal(trimNum("1200"), "1200");
 });

@@ -52,11 +52,14 @@ export function springWeights(items: { n: number[]; nodal: number[] }[]): Map<nu
   for (const t of items) t.n.forEach((n, i) => { if (t.nodal[i] > 0) w.set(n, (w.get(n) ?? 0) + t.nodal[i]); });
   const s = [...w.values()].reduce((a, b) => a + b, 0);
   if (!(s > 0)) return new Map();
-  for (const [n, v] of w) w.set(n, v / s);
+  // nós com peso desprezável (ruído de arredondamento nos cantos dos triângulos de 2.ª ordem) saem
+  for (const [n, v] of w) if (v / s > 1e-12) w.set(n, v / s); else w.delete(n);
   return new Map([...w].sort((a, b) => a[0] - b[0]));
 }
 
-const fmt = (x: number) => (Number.isInteger(x) ? String(x) : x.toPrecision(10).replace(/\.?0+(e|$)/, "$1"));
+// tira os zeros finais só da mantissa (num regex sobre o número inteiro, «2.5e-20» virava «2.5e-2»)
+export const trimNum = (s: string) => { const [mt, ex] = s.split("e"); return (mt.includes(".") ? mt.replace(/\.?0+$/, "") : mt) + (ex ? `e${ex}` : ""); };
+const fmt = (x: number) => (Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10)));
 
 export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];

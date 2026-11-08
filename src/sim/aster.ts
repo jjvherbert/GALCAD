@@ -13,8 +13,8 @@ import type { FemCase } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
-import { type FemResult, type FrdBlock, femResultFrom, springWeights } from "./calculix.ts";
-const num = (x: number) => (Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1"));
+import { type FemResult, type FrdBlock, femResultFrom, springWeights, trimNum } from "./calculix.ts";
+const num = (x: number) => (Number.isInteger(x) ? `${x}.` : trimNum(x.toPrecision(12)));
 
 export interface AsterFiles {
   /** Ficheiros do caso (malha, comandos, export). */
