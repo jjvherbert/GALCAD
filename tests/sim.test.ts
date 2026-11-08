@@ -12,7 +12,7 @@ import { edgeProps, faceProps } from "../src/kernel/occ.ts";
 import { namedEdges } from "../src/kernel/naming.ts";
 import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
-import type { FemStudy, CfdStudy, Study } from "../src/doc/study.ts";
+import type { FemLoad, FemStudy, CfdStudy, Study } from "../src/doc/study.ts";
 import { SIM_MATERIALS, newCfdStudy, newFemStudy } from "../src/doc/study.ts";
 import { studyCase } from "../src/kernel/sim.ts";
 import { parseMsh, physicalBlocks } from "../src/sim/msh.ts";
@@ -410,6 +410,36 @@ test("CalculiX: deslocamento em referencial local na ponta da consola", { skip: 
   for (const i of r45.nodes) assert.ok(Math.abs(s * (r45.u[i + 1] + r45.u[i + 2]) - d) < 1e-6, `u·ex ${s * (r45.u[i + 1] + r45.u[i + 2])}`);
   near(r45.R[0]!, -g.R[1]!, 0.03);
   assert.ok(r45.f.summary.some(([k]) => /local/.test(k)));
+});
+
+test("CalculiX: passos de carga múltiplos na consola (A, depois A+B)", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
+  const { doc, face } = await bar();
+  const tipNodes = (f: NonNullable<Awaited<ReturnType<Awaited<ReturnType<typeof solve>>["run"]>>["fem"]>) =>
+    f.positions.reduce<number[]>((acc, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...acc, i] : acc), []);
+  const tip = (r: Awaited<ReturnType<Awaited<ReturnType<typeof solve>>["run"]>>, c: 1 | 2) => {
+    const f = r.fem!, u = f.displacements[0].values, n = tipNodes(f);
+    return n.reduce((s, i) => s + u[i + c], 0) / n.length;
+  };
+  const fixed: FemLoad = { kind: "fixed", faces: [face(0, 0)] };
+  const fz: FemLoad = { kind: "force", faces: [face(0, 100)], f: [0, 0, -100] };
+  const fy: FemLoad = { kind: "force", faces: [face(0, 100)], f: [0, -50, 0] };
+  const one = async (loads: FemStudy["loads"]) => { const r = await (await solve(doc, fem({ loads }))).run(); assert.ok(r.ok, JSON.stringify(r)); return r; };
+  const a = await one([fixed, fz]), b = await one([fixed, fy]);
+  // dois passos: o apoio e a força em Z nos dois, a força em Y só no segundo → o resultado final é a sobreposição
+  const s = await (await solve(doc, fem({ steps: [{ id: "p1", name: "Só Z" }, { id: "p2", name: "Z + Y" }], loads: [fixed, { ...fz, steps: ["p1", "p2"] }, { ...fy, steps: ["p2"] }] }))).run();
+  assert.ok(s.ok, JSON.stringify(s));
+  near(tip(s, 2), tip(a, 2), 1e-3);
+  near(tip(s, 1), tip(b, 1), 1e-3);
+  // reações do último passo: equilíbrio com as duas forças
+  const R = s.fem!.groupReactions!.find((g) => g.group === "L1_FIXED")!.f;
+  near(R[1]!, 50, 1e-3);
+  near(R[2]!, 100, 1e-3);
+  // um resumo por passo, e o primeiro passo só com a flecha em Z
+  const st = s.fem!.steps!;
+  assert.deepEqual(st.map((x) => x.name), ["Só Z", "Z + Y"]);
+  near(st[0].maxU, Math.abs(tip(a, 2)), 0.05);
+  assert.ok(st[1].maxU > st[0].maxU);
+  assert.ok(s.summary.some(([k]) => /Passo 1: Só Z/.test(k)), JSON.stringify(s.summary));
 });
 
 test("CalculiX: sondas (média na face, ponto) e refinamento automático até ao GCI alvo", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {

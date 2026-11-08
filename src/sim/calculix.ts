@@ -3,7 +3,7 @@
 //
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
-import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, csysAxes, csysToLocal } from "./case.ts";
+import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, csysAxes, csysToLocal } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
@@ -38,6 +38,8 @@ export interface Deck {
    * CalculiX é a força interna, e a reação verdadeira é RF − esta parcela (f_int = f_ext + R).
    */
   supportLoad: [number, number, number];
+  /** Vários passos de carga: a parcela das cargas nos apoios em cada passo (a do último é `supportLoad`). */
+  stepSupport?: [number, number, number][];
   warnings: string[];
   /** Dinâmica: passo (s), n.º de incrementos, de quantos em quantos se guarda, e se o passo é o estável da malha. */
   dynamic?: { dt: number; increments: number; frequency: number; stable: boolean };
@@ -267,111 +269,120 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   });
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 
-  const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [];
-  const cload = new Map<number, [number, number, number]>();
-  const moments: string[] = [];
-  for (const ld of c.loads) {
-    switch (ld.kind) {
-      case "fixed": bcs.push(`N_${ld.group}, 1, 3`); break;
-      // na dinâmica, os deslocamentos impostos não nulos seguem a amplitude
-      case "displacement": ld.u.forEach((u, k) => { if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`); }); break;
-      case "temperature": bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`); break;
-      case "pointForce": {
-        // nó da malha mais próximo do ponto (só nós que pertencem a elementos)
-        let best = -1, bd = Infinity;
-        for (const t of used) { const q = m.nodes.get(t); if (!q) continue; const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2; if (d < bd) { bd = d; best = t; } }
-        if (best < 0) { warnings.push("Força pontual sem nó da malha"); break; }
-        const acc = cload.get(best) ?? [0, 0, 0];
-        for (let k = 0; k < 3; k++) acc[k] += ld.f[k];
-        cload.set(best, acc);
-        warnings.push(`Força pontual aplicada no nó ${best}, a ${Math.sqrt(bd).toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
-        break;
-      }
-      case "force": {
-        // tração uniforme t = F/A → forças nodais consistentes ∫Nᵢ t dA (tri3: A/3 por canto; tri6:
-        // A/3 por nó intermédio; quad8: −A/12 nos cantos e A/3 nos intermédios)
-        // em arestas: carga por unidade de comprimento F/L (line2: L/2 por nó; line3: L/6 nas pontas e 2L/3 no meio)
-        const edge = !!lines[ld.group];
-        const A = edge ? groupLength[ld.group] : groupArea[ld.group];
-        if (!(A > 0)) { warnings.push(`Força no grupo ${ld.group} sem ${edge ? "comprimento" : "área"}`); break; }
-        for (const t of edge ? lines[ld.group] : tris[ld.group]) t.n.forEach((n, i) => {
-          if (t.nodal[i] === 0) return;
-          const acc = cload.get(n) ?? [0, 0, 0];
-          for (let k = 0; k < 3; k++) acc[k] += (ld.f[k] * t.nodal[i]) / A;
-          cload.set(n, acc);
-        });
-        break;
-      }
-      case "pressure":
-        loads.push("*DLOAD");
-        for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
-        break;
-      case "gravity": {
-        const g = Math.hypot(...ld.g);
-        if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt(g)}, ${ld.g.map((x) => fmt(x / g)).join(", ")}`);
-        // o GRAV só atua no EALL: o peso das massas acrescentadas vai como forças nodais m·wᵢ·g
-        c.loads.forEach((mb, j) => {
-          if (mb.kind !== "mass") return;
-          for (const [n, wi] of massW.get(j) ?? []) {
+  // cartões de um passo de carga (k = índice em `c.steps`; undefined = um só passo, todas as cargas):
+  // apoios, cargas e a parcela das cargas que cai nos nós dos apoios
+  const stepCards = (k?: number) => {
+    const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [];
+    const cload = new Map<number, [number, number, number]>();
+    const moments: string[] = [];
+    for (const ld of c.loads) {
+      if (k !== undefined && !activeIn(ld, k)) continue;
+      switch (ld.kind) {
+        case "fixed": bcs.push(`N_${ld.group}, 1, 3`); break;
+        // na dinâmica, os deslocamentos impostos não nulos seguem a amplitude
+        case "displacement": ld.u.forEach((u, k) => { if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`); }); break;
+        case "temperature": bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`); break;
+        case "pointForce": {
+          // nó da malha mais próximo do ponto (só nós que pertencem a elementos)
+          let best = -1, bd = Infinity;
+          for (const t of used) { const q = m.nodes.get(t); if (!q) continue; const d = (q[0] - ld.point[0]) ** 2 + (q[1] - ld.point[1]) ** 2 + (q[2] - ld.point[2]) ** 2; if (d < bd) { bd = d; best = t; } }
+          if (best < 0) { warnings.push("Força pontual sem nó da malha"); break; }
+          const acc = cload.get(best) ?? [0, 0, 0];
+          for (let k = 0; k < 3; k++) acc[k] += ld.f[k];
+          cload.set(best, acc);
+          warnings.push(`Força pontual aplicada no nó ${best}, a ${Math.sqrt(bd).toFixed(2)} mm do ponto pedido: tensões locais irreais, só a resposta global é válida`);
+          break;
+        }
+        case "force": {
+          // tração uniforme t = F/A → forças nodais consistentes ∫Nᵢ t dA (tri3: A/3 por canto; tri6:
+          // A/3 por nó intermédio; quad8: −A/12 nos cantos e A/3 nos intermédios)
+          // em arestas: carga por unidade de comprimento F/L (line2: L/2 por nó; line3: L/6 nas pontas e 2L/3 no meio)
+          const edge = !!lines[ld.group];
+          const A = edge ? groupLength[ld.group] : groupArea[ld.group];
+          if (!(A > 0)) { warnings.push(`Força no grupo ${ld.group} sem ${edge ? "comprimento" : "área"}`); break; }
+          for (const t of edge ? lines[ld.group] : tris[ld.group]) t.n.forEach((n, i) => {
+            if (t.nodal[i] === 0) return;
             const acc = cload.get(n) ?? [0, 0, 0];
-            for (let k = 0; k < 3; k++) acc[k] += mb.m * wi * ld.g[k];
+            for (let k = 0; k < 3; k++) acc[k] += (ld.f[k] * t.nodal[i]) / A;
             cload.set(n, acc);
-          }
-        });
-        break;
+          });
+          break;
+        }
+        case "pressure":
+          loads.push("*DLOAD");
+          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
+          break;
+        case "gravity": {
+          const g = Math.hypot(...ld.g);
+          if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt(g)}, ${ld.g.map((x) => fmt(x / g)).join(", ")}`);
+          // o GRAV só atua no EALL: o peso das massas acrescentadas vai como forças nodais m·wᵢ·g
+          c.loads.forEach((mb, j) => {
+            if (mb.kind !== "mass") return;
+            for (const [n, wi] of massW.get(j) ?? []) {
+              const acc = cload.get(n) ?? [0, 0, 0];
+              for (let k = 0; k < 3; k++) acc[k] += mb.m * wi * ld.g[k];
+              cload.set(n, acc);
+            }
+          });
+          break;
+        }
+        case "convection":
+          loads.push("*FILM");
+          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt(ld.tInf)}, ${fmt(ld.h * 1e-3)}`);
+          break;
+        case "heatFlux":
+          loads.push("*DFLUX");
+          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * 1e-3)}`);
+          break;
+        // molas: elementos SPRING1 nos dados do modelo (acima)
+        case "spring": break;
+        case "mass": break;
+        // acoplamento: força no nó de referência; momento no nó de rotação (rígido) ou nos graus 4–6
+        case "coupling": {
+          const p = cpl.get(ld);
+          if (!p) break;
+          const add = (n: number, v: V3) => { const acc = cload.get(n) ?? [0, 0, 0]; for (let k = 0; k < 3; k++) acc[k] += v[k]; cload.set(n, acc); };
+          add(p.r, ld.f);
+          if (p.q) add(p.q, ld.mo);
+          else ld.mo.forEach((x, k) => { if (Math.abs(x) > 0) moments.push(`${p.r}, ${k + 4}, ${fmt(x)}`); });
+          break;
+        }
       }
-      case "convection":
-        loads.push("*FILM");
-        for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt(ld.tInf)}, ${fmt(ld.h * 1e-3)}`);
-        break;
-      case "heatFlux":
-        loads.push("*DFLUX");
-        for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * 1e-3)}`);
-        break;
-      // molas: elementos SPRING1 nos dados do modelo (acima)
-      case "spring": break;
-      case "mass": break;
-      // acoplamento: força no nó de referência; momento no nó de rotação (rígido) ou nos graus 4–6
-      case "coupling": {
-        const p = cpl.get(ld);
-        if (!p) break;
-        const add = (n: number, v: V3) => { const acc = cload.get(n) ?? [0, 0, 0]; for (let k = 0; k < 3; k++) acc[k] += v[k]; cload.set(n, acc); };
-        add(p.r, ld.f);
-        if (p.q) add(p.q, ld.mo);
-        else ld.mo.forEach((x, k) => { if (Math.abs(x) > 0) moments.push(`${p.r}, ${k + 4}, ${fmt(x)}`); });
-        break;
+    }
+    // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses
+    // nós, uma fração mínima da massa, não entra)
+    // (todos os nós dos conjuntos N_R*, também os de apoios inativos neste passo: aí o RF é a carga externa)
+    const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => (tris[n.slice(2)] ?? lines[n.slice(2)])?.flatMap((t) => t.n) ?? [])));
+    const supportLoad: [number, number, number] = [0, 0, 0];
+    for (const [n, f] of cload) for (let k = 0; k < 3; k++) if (dofNodes[k].has(n)) supportLoad[k] += f[k];
+    for (const ld of c.loads) {
+      if (ld.kind !== "pressure" || (k !== undefined && !activeIn(ld, k))) continue;
+      for (const t of tris[ld.group]) {
+        if (!t.face) continue;
+        // normal para fora do elemento (afastada do centro dos cantos)
+        const el = elems[t.face[0] - 1];
+        const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x)!);
+        const ce = [0, 1, 2].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
+        const A = m.nodes.get(t.n[0])!;
+        const nv = t.vec.reduce((s, v) => [s[0] + v[0], s[1] + v[1], s[2] + v[2]], [0, 0, 0]);
+        const sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
+        t.n.forEach((nd, i) => { for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += -ld.p * sgn * t.vec[i][k]; });
       }
     }
-  }
-  // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses
-  // nós, uma fração mínima da massa, não entra)
-  const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => (tris[n.slice(2)] ?? lines[n.slice(2)])?.flatMap((t) => t.n) ?? [])));
-  const supportLoad: [number, number, number] = [0, 0, 0];
-  for (const [n, f] of cload) for (let k = 0; k < 3; k++) if (dofNodes[k].has(n)) supportLoad[k] += f[k];
-  for (const ld of c.loads) {
-    if (ld.kind !== "pressure") continue;
-    for (const t of tris[ld.group]) {
-      if (!t.face) continue;
-      // normal para fora do elemento (afastada do centro dos cantos)
-      const el = elems[t.face[0] - 1];
-      const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x)!);
-      const ce = [0, 1, 2].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
-      const A = m.nodes.get(t.n[0])!;
-      const nv = t.vec.reduce((s, v) => [s[0] + v[0], s[1] + v[1], s[2] + v[2]], [0, 0, 0]);
-      const sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
-      t.n.forEach((nd, i) => { for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += -ld.p * sgn * t.vec[i][k]; });
+    if (cload.size) {
+      loads.push("*CLOAD");
+      for (const [n, fg] of cload) {
+        // num nó transformado, as componentes do CLOAD são as locais
+        const cs = nodeCs.get(n), ax = cs && csysAxes(cs, m.nodes.get(n)!);
+        const f = ax ? csysToLocal(ax, fg) : fg;
+        f.forEach((x, k) => { if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`); });
+      }
     }
-  }
-  if (cload.size) {
-    loads.push("*CLOAD");
-    for (const [n, fg] of cload) {
-      // num nó transformado, as componentes do CLOAD são as locais
-      const cs = nodeCs.get(n), ax = cs && csysAxes(cs, m.nodes.get(n)!);
-      const f = ax ? csysToLocal(ax, fg) : fg;
-      f.forEach((x, k) => { if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`); });
-    }
-  }
-  if (moments.length) loads.push("*CLOAD", ...moments);
+    if (moments.length) loads.push("*CLOAD", ...moments);
+    return { bcs, bcsAmp, loads, supportLoad };
+  };
+  const nSteps = c.analysis === "static" && (c.steps?.length ?? 0) > 1 ? c.steps!.length : 1;
+  const cards = nSteps > 1 ? c.steps!.map((_, k) => stepCards(k)) : [stepCards()];
 
   const nl = c.analysis === "static" ? c.nonlinear : undefined;
   const contact = (c.ties ?? []).some((t) => t.kind === "contact");
@@ -386,42 +397,56 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     dyn = { dt, increments, frequency: Math.max(1, Math.round(increments / D.frames)), stable: !!st };
     L.push("*AMPLITUDE, NAME=A1");
     for (let k = 0; k < D.amplitude.length; k += 4) L.push(D.amplitude.slice(k, k + 4).flatMap(([t, v]) => [fmt(t), fmt(v)]).join(", "));
-    for (let i = 0; i < loads.length; i++) if (/^\*(CLOAD|DLOAD|DFLUX|FILM)$/.test(loads[i])) loads[i] += ", AMPLITUDE=A1";
+    const ld0 = cards[0].loads;
+    for (let i = 0; i < ld0.length; i++) if (/^\*(CLOAD|DLOAD|DFLUX|FILM)$/.test(ld0[i])) ld0[i] += ", AMPLITUDE=A1";
   }
   if (contact && c.analysis !== "static") throw new Error("Contacto com atrito: só em análises estáticas (use contacto colado nas modais/encurvadura/térmicas)");
-  if (dyn) {
-    L.push(`*STEP, INC=${dyn.increments + 100}`, c.dynamic!.scheme === "explicit" ? "*DYNAMIC, EXPLICIT, DIRECT" : "*DYNAMIC, DIRECT", `${fmt(dyn.dt)}, ${fmt(c.dynamic!.duration)}`);
-  } else if (nl || contact) {
-    const n = nl?.increments ?? 10, inc = 1 / n;
-    L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
-  } else if (c.analysis === "static") L.push("*STEP", "*STATIC");
-  else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
-  else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
-  else L.push("*STEP", "*HEAT TRANSFER, STEADY STATE");
-  if (bcs.length) L.push("*BOUNDARY", ...bcs);
-  if (bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...bcsAmp);
-  if (c.analysis !== "modal") L.push(...loads);
+  // passos seguintes: OP=NEW substitui os apoios e as cargas do passo anterior (o estado de partida é
+  // o final do anterior; os cartões vazios retiram o que deixou de estar ativo)
+  const cardsOf = (cd: (typeof cards)[number], k: number) => {
+    if (k === 0) {
+      if (cd.bcs.length) L.push("*BOUNDARY", ...cd.bcs);
+      if (cd.bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...cd.bcsAmp);
+      if (c.analysis !== "modal") L.push(...cd.loads);
+      return;
+    }
+    L.push("*BOUNDARY, OP=NEW", ...cd.bcs);
+    for (const kw of ["*CLOAD", "*DLOAD"]) if (cards.slice(0, k + 1).some((x) => x.loads.includes(kw))) L.push(`${kw}, OP=NEW`);
+    L.push(...cd.loads);
+  };
   // com referenciais locais, os totais das reações pedem-se em componentes globais
   const glob = nodeCs.size ? ", GLOBAL=YES" : "";
-  if (thermal) L.push("*NODE FILE", "NT");
-  else if (dyn) {
-    // instantes guardados (o CalculiX usa a mesma frequência em todos os ficheiros)
-    const f = `, FREQUENCY=${dyn.frequency}`;
-    L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
-    dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF"); });
-  } else {
-    L.push("*NODE FILE", "U");
-    if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
-    // reações nos apoios (verificação do equilíbrio)
-    if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF"); });
-    // reações por apoio (ex.: força de atrito transmitida a uma face com deslocamento imposto)
-    // (num referencial local pede-se nó a nó, em componentes globais: o CalculiX soma os totais sempre
-    // em componentes globais, e num cilíndrico a soma das componentes locais depende do nó)
-    if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, ${ld.kind === "displacement" && ld.csys ? "GLOBAL=YES" : `TOTALS=ONLY${glob}`}`, "RF");
-  }
-  L.push("*END STEP");
+  cards.forEach((cd, k) => {
+    if (dyn) {
+      L.push(`*STEP, INC=${dyn.increments + 100}`, c.dynamic!.scheme === "explicit" ? "*DYNAMIC, EXPLICIT, DIRECT" : "*DYNAMIC, DIRECT", `${fmt(dyn.dt)}, ${fmt(c.dynamic!.duration)}`);
+    } else if (nl || contact) {
+      const n = nl?.increments ?? 10, inc = 1 / n;
+      L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
+    } else if (c.analysis === "static") L.push("*STEP", "*STATIC", ...(nSteps > 1 ? ["1., 1., 1e-05, 1."] : []));
+    else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
+    else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
+    else L.push("*STEP", "*HEAT TRANSFER, STEADY STATE");
+    cardsOf(cd, k);
+    if (thermal) L.push("*NODE FILE", "NT");
+    else if (dyn) {
+      // instantes guardados (o CalculiX usa a mesma frequência em todos os ficheiros)
+      const f = `, FREQUENCY=${dyn.frequency}`;
+      L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
+      dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF"); });
+    } else {
+      L.push("*NODE FILE", "U");
+      if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
+      // reações nos apoios (verificação do equilíbrio)
+      if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF"); });
+      // reações por apoio (ex.: força de atrito transmitida a uma face com deslocamento imposto)
+      // (num referencial local pede-se nó a nó, em componentes globais: o CalculiX soma os totais sempre
+      // em componentes globais, e num cilíndrico a soma das componentes locais depende do nó)
+      if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, ${ld.kind === "displacement" && ld.csys ? "GLOBAL=YES" : `TOTALS=ONLY${glob}`}`, "RF");
+    }
+    L.push("*END STEP");
+  });
   if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "spring")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
-  return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, groupLength, supportLoad, warnings, dynamic: dyn };
+  return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, groupLength, supportLoad: cards[cards.length - 1].supportLoad, ...(nSteps > 1 ? { stepSupport: cards.map((x) => x.supportLoad) } : {}), warnings: [...new Set(warnings)], dynamic: dyn };
 }
 
 // Resultados: em calculix-result.ts

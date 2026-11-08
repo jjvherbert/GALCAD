@@ -123,6 +123,8 @@ export interface FemResult {
   history: { time: number; umax: number; reaction: [number, number, number] | null }[];
   /** Dinâmica: instantes (s) e séries (deslocamento máx. e sondas) para as curvas no tempo. */
   timeHistory?: { times: number[]; series: { key: string; label: string; unit: string; values: number[] }[] };
+  /** Vários passos de carga: o deslocamento máx. (mm) e a tensão máx. na superfície (MPa) no fim de cada passo calculado. */
+  steps?: { name: string; maxU: number; vmMax?: number }[];
   hypotheses: string[];
 }
 
@@ -161,10 +163,17 @@ export function exteriorSurface(m: Msh, bodies?: { group: string }[]): { positio
 }
 
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
-export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportLoad: [number, number, number] = [0, 0, 0]): FemResult {
+export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportLoad: [number, number, number] = [0, 0, 0], stepSupport?: [number, number, number][]): FemResult {
   const d = parseDat(dat);
-  // reação = força interna (RF) − carga aplicada nos graus restringidos (proporcional ao tempo nos incrementais)
-  for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= supportLoad[k] * (c.dynamic ? amplitudeAt(c, h.time) : h.time);
+  // reação = força interna (RF) − carga aplicada nos graus restringidos (proporcional ao tempo nos incrementais;
+  // com vários passos, o passo j vai em rampa da carga do passo anterior à sua, entre t = j e t = j + 1)
+  const applied = (t: number, k: number) => {
+    if (c.dynamic) return supportLoad[k] * amplitudeAt(c, t);
+    if (!stepSupport) return supportLoad[k] * t;
+    const j = Math.min(stepSupport.length - 1, Math.max(0, Math.ceil(t - 1e-9) - 1)), prev = j ? stepSupport[j - 1][k] : 0;
+    return prev + (stepSupport[j][k] - prev) * (t - j);
+  };
+  for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
   if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1)!.f];
   return femResultFrom(c, m, parseFrd(frd).blocks, d);
 }
@@ -221,6 +230,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
   const sameT = (a: number, b: number) => Math.abs(a - b) <= 1e-5 * Math.max(Math.abs(a), Math.abs(b), 1e-30);
   const atTime = (name: string, t: number) => r.blocks.find((b) => b.name === name && sameT(b.value, t));
   let timeHistory: FemResult["timeHistory"];
+  let steps: FemResult["steps"];
   if (c.analysis === "dynamic") {
     const frames = allDisp.filter((b) => b.data.size);
     const times = frames.map((b) => b.value);
@@ -277,6 +287,21 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       }
       summary.unshift(["Deslocamento máx.", `${max(U).toFixed(4)} mm`]);
       metrics.unshift({ key: "umax", label: "Deslocamento máx.", unit: "mm", value: max(U) });
+    }
+    // vários passos de carga: o passo k acaba em t = k + 1; os campos mostrados são os do último
+    if (c.analysis === "static" && (c.steps?.length ?? 0) > 1) {
+      steps = [];
+      c.steps!.forEach((name, k) => {
+        const b = allDisp.filter((x) => sameT(x.value, k + 1)).at(-1);
+        if (!b) { summary.push([`Passo ${k + 1}: ${name}`, "não calculado — a corrida parou antes deste passo"]); return; }
+        const u = max(field(b, (v) => Math.hypot(v[0], v[1], v[2])));
+        const sB = [...r.blocks].reverse().find((x) => (x.name === "STRESS" || x.name === "VMIS") && sameT(x.value, k + 1));
+        const vm = sB ? max(field(sB, (v) => (sB.name === "VMIS" ? v[0] : vmOf(v)))) : undefined;
+        steps!.push({ name, maxU: u, ...(vm !== undefined ? { vmMax: vm } : {}) });
+        summary.push([`Passo ${k + 1}: ${name}`, `deslocamento máx. ${u.toFixed(4)} mm${vm !== undefined ? `; von Mises máx. ${vm.toFixed(2)} MPa (superfície)` : ""}`]);
+        metrics.push({ key: `umax_p${k + 1}`, label: `Deslocamento máx. — passo ${k + 1}`, unit: "mm", value: u });
+      });
+      summary.push(["Resultados mostrados", `os do último passo calculado (${steps.at(-1)?.name ?? "—"})`]);
     }
     if (c.analysis === "modal") d.frequencies.slice(0, c.modes).forEach((f, k) => { summary.push([`Frequência ${k + 1}`, `${f.toFixed(2)} Hz`]); metrics.push({ key: `f${k + 1}`, label: `Frequência ${k + 1}`, unit: "Hz", value: f }); });
     if (c.analysis === "buckling") d.buckling.forEach((f, k) => { summary.push([`Fator de encurvadura ${k + 1}`, f.toFixed(3)]); metrics.push({ key: `lambda${k + 1}`, label: `Fator de encurvadura ${k + 1}`, unit: "", value: f }); });
@@ -375,5 +400,5 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
   }
   const isLocal = (g: string) => c.loads.some((l) => l.kind === "displacement" && l.group === g && !!l.csys);
   if (groupReactions.length > 1) for (const g of groupReactions) if (!isLocal(g.group)) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
-  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, groupReactions, summary, metrics, history, timeHistory, hypotheses: c.hypotheses };
+  return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, groupReactions, summary, metrics, history, timeHistory, ...(steps ? { steps } : {}), hypotheses: c.hypotheses };
 }

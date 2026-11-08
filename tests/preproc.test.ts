@@ -155,6 +155,32 @@ test("verificação: condição sem faces, material impossível, sem apoios e an
   assert.ok(checkStudy(cylF).some((i) => i.level === "erro" && /só aceita um referencial retangular/.test(i.text)));
 });
 
+test("passos de carga: índices no caso, verificação e compatibilidade por solver", async () => {
+  const { doc, face } = await beam(10);
+  const fix = { kind: "fixed" as const, faces: [face(0, 0)] }, push = { kind: "force" as const, faces: [face(0, 100)], f: [0, 0, -100] as [number, number, number] };
+  const st = base({ steps: [{ id: "a", name: "A" }, { id: "b", name: "B" }], loads: [fix, { ...push, steps: ["b"] }] });
+  // no caso: nomes dos passos e índices (ativa em todos → sem `steps`)
+  const { c } = await solve(doc, st);
+  assert.deepEqual(c.steps, ["A", "B"]);
+  assert.equal(c.loads[0].steps, undefined);
+  assert.deepEqual(c.loads[1].steps, [1]);
+  assert.ok(c.hypotheses.some((h) => /2 passos de carga/.test(h)));
+  assert.equal(countLevel(checkStudy(st), "aviso"), 0);
+  assert.ok(usedFeatures(st).includes("Passos de carga múltiplos"));
+  assert.deepEqual(["calculix", "code_aster", "openradioss"].map((x) => solverVerdict(st, x as FemStudy["solver"]).support), ["sim", "nao", "nao"]);
+  assert.ok(checkStudy({ ...st, solver: "code_aster" }).some((i) => i.level === "erro" && /Passos de carga múltiplos: não suportado/.test(i.text)));
+  // condição sem passo válido e passo sem apoios
+  const bad = checkStudy({ ...st, loads: [{ ...fix, steps: ["b"] }, { ...push, steps: ["x"] }] });
+  assert.ok(bad.some((i) => i.level === "aviso" && /Condição 2 .*nenhum passo/.test(i.text)));
+  assert.ok(bad.some((i) => i.level === "aviso" && /Passo 1 \(A\): sem apoios ativos/.test(i.text)));
+  // fora da estática: aviso no estudo e um só passo no caso
+  const modal = base({ ...st, analysis: "modal" });
+  assert.ok(checkStudy(modal).some((i) => i.where === "study" && /só se aplicam à estática/.test(i.text)));
+  const m = (await solve(doc, modal)).c;
+  assert.equal(m.steps, undefined);
+  assert.ok(m.loads.every((l) => l.steps === undefined));
+});
+
 test("compatibilidade por solver: veredito, características usadas e consistência da matriz", async () => {
   const { face } = await beam(10);
   const s = base({ mesh: { size: 5, order: 2, curvature: 0 }, loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -100] }] });

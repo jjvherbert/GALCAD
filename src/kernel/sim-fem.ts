@@ -50,7 +50,19 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   const groups: Record<string, number[]> = {};
   const edgeGroups: Record<string, number[]> = {}, edgeLength: Record<string, number> = {};
   const loads: FemCaseLoad[] = [];
+  // passos de carga (só estática): índice de cada id; as condições recebem os índices onde estão ativas
+  const multi = (s.steps?.length ?? 0) > 1;
+  if (multi && s.analysis !== "static") report.warnings.push("Passos de carga: só na análise estática — ignorados (um só passo)");
+  const stepIdx = new Map((multi && s.analysis === "static" ? s.steps! : []).map((st, k) => [st.id, k]));
   s.loads.forEach((l, i) => {
+    const n0 = loads.length;
+    loadCase(l, i);
+    if (!stepIdx.size || !l.steps || l.kind === "spring" || l.kind === "mass") return;
+    const ks = l.steps.map((id) => stepIdx.get(id)).filter((k): k is number => k !== undefined).sort((a, b) => a - b);
+    if (!ks.length) report.warnings.push(`Condição ${i + 1}: não está ativa em nenhum passo`);
+    if (ks.length < stepIdx.size) for (let j = n0; j < loads.length; j++) loads[j].steps = ks;
+  });
+  function loadCase(l: FemStudy["loads"][number], i: number) {
     if (l.kind === "gravity") { loads.push({ kind: "gravity", g: n3(l.g, sc, "Gravidade") }); return; }
     if (l.kind === "pointForce") { loads.push({ kind: "pointForce", point: n3(l.point, sc, `Condição ${i + 1}: ponto`), f: n3(l.f, sc, `Condição ${i + 1}: força`) }); return; }
     const g = loadGroup(i, l.kind);
@@ -115,7 +127,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       case "convection": loads.push({ kind: "convection", group: g, h: evalParam(l.h, sc, "Coeficiente h"), tInf: evalParam(l.tInf, sc, "Temperatura do fluido") }); break;
       case "heatFlux": loads.push({ kind: "heatFlux", group: g, q: evalParam(l.q, sc, "Fluxo de calor") }); break;
     }
-  });
+  }
   const local = (s.mesh.local ?? []).map((l, i) => {
     const g = `R${i + 1}`;
     groups[g] = tags(l.faces, `Refinamento ${i + 1}`);
@@ -178,7 +190,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     : !nl ? FEM_HYP[s.analysis]
     : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && `plasticidade de von Mises com encruamento isotrópico ${curve?.length ? "multilinear" : "bilinear"}`].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
-    format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, dynamic, probes: probes.length ? probes : undefined,
+    format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, dynamic, ...(stepIdx.size ? { steps: s.steps!.map((st, k) => st.name || `Passo ${k + 1}`) } : {}), probes: probes.length ? probes : undefined,
     material: s.material, groups, ...(Object.keys(edgeGroups).length ? { edgeGroups, edgeLength } : {}), faces, loads, bbox: box,
     mesh: {
       size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local,
@@ -190,6 +202,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
+      ...(stepIdx.size ? [`${stepIdx.size} passos de carga sequenciais: cada passo parte do estado final do anterior (deslocamentos e, com plasticidade, deformações permanentes); molas e massas ativas em todos`] : []),
       ...(Object.keys(edgeGroups).length ? ["Condições em arestas: força distribuída uniformemente pelo comprimento, apoio nos nós da aresta; a tensão junto à aresta é singular (depende da malha) — ler os resultados a uma distância de alguns elementos"] : []),
       ...(s.loads.some((l) => l.kind === "symmetry") ? ["Simetria: modelo parcial — geometria, apoios e cargas têm de ser simétricos em relação ao plano; as cargas são as da parte modelada (metade da total) e os resultados só valem nessa parte"] : []),
       "Apoio à decisão de engenharia: não é certificação nem decisão de uma autoridade ou de um organismo notificado",

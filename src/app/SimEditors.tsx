@@ -114,6 +114,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
           {(s.nonlinear?.geometry || s.nonlinear?.plasticity) && <Field label="Incrementos de carga"><input type="number" min="1" max="200" value={s.nonlinear?.increments ?? 10} onChange={(e) => up({ nonlinear: { ...s.nonlinear, increments: Number((e.target as HTMLInputElement).value) || 10 } })} /></Field>}
         </fieldset>
       )}
+      {s.analysis === "static" && <StepsEditor s={s} up={up} />}
       {s.analysis === "dynamic" && <DynamicEditor d={s.dynamic ?? { scheme: "implicit", duration: 0.01, load: "step" }} onChange={(dynamic) => up({ dynamic })} />}
       {(s.analysis === "modal" || s.analysis === "buckling") && <Field label="N.º de modos"><input type="number" min="1" max="50" value={s.modes ?? 6} onChange={(e) => up({ modes: Number((e.target as HTMLInputElement).value) || 6 })} /></Field>}
       </>}
@@ -190,6 +191,15 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
               <p class="field-hint">Aplicada no nó da malha mais próximo: dá tensões locais irreais junto ao ponto (singularidade); a resposta global (flechas longe do ponto, reações) é válida.</p>
             </>
           )}
+          {(s.steps?.length ?? 0) > 1 && s.analysis === "static" && l.kind !== "spring" && l.kind !== "mass" && (
+            <div class="set-chips" aria-label={`Passos em que a condição ${i + 1} está ativa`}>
+              {s.steps!.map((p) => {
+                const on = !l.steps || l.steps.includes(p.id);
+                const next = on ? s.steps!.filter((x) => x.id !== p.id && (!l.steps || l.steps.includes(x.id))).map((x) => x.id) : s.steps!.filter((x) => x.id === p.id || l.steps!.includes(x.id)).map((x) => x.id);
+                return <button key={p.id} class={`chip ${on ? "on" : ""}`} aria-pressed={on} title={on ? "Ativa neste passo" : "Inativa neste passo"} onClick={() => setLoad(i, { ...l, steps: next.length === s.steps!.length ? undefined : next } as FemLoad)}>{on ? "✓ " : "+ "}{p.name || p.id}</button>;
+              })}
+            </div>
+          )}
           {l.kind === "pressure" && <ExprInput label="Pressão (MPa)" unit="MPa" value={l.p} onChange={(p) => setLoad(i, { ...l, p: p ?? 0 })} />}
           {l.kind === "gravity" && <Vec3Input label="g" unit="mm/s²" value={l.g} onChange={(g) => setLoad(i, { ...l, g })} />}
           {l.kind === "temperature" && <ExprInput label="Temperatura" unit="°C" value={l.t} onChange={(t) => setLoad(i, { ...l, t: t ?? 0 })} />}
@@ -228,7 +238,39 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
   );
 }
 
-const nextSetId = (s: FemStudy) => `g${(s.sets ?? []).reduce((m, g) => Math.max(m, Number(g.id.slice(1)) || 0), 0) + 1}`;
+/**
+ * Passos de carga da estática (como os *STEP do CalculiX): cada condição fica ativa nos passos escolhidos
+ * e o estado (deslocamentos, plasticidade) passa de um passo para o seguinte.
+ */
+function StepsEditor({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
+  const steps = s.steps ?? [];
+  const nextId = () => `p${steps.reduce((m, x) => Math.max(m, Number(x.id.slice(1)) || 0), 0) + 1}`;
+  const add = () => {
+    if (!steps.length) { up({ steps: [{ id: "p1", name: "Passo 1" }, { id: "p2", name: "Passo 2" }] }); return; }
+    up({ steps: [...steps, { id: nextId(), name: `Passo ${steps.length + 1}` }] });
+  };
+  const remove = (id: string) => {
+    const rest = steps.filter((x) => x.id !== id);
+    // com um só passo volta ao estudo simples: todas as condições ativas
+    if (rest.length < 2) { up({ steps: undefined, loads: s.loads.map((l) => ({ ...l, steps: undefined }) as FemLoad) }); return; }
+    up({ steps: rest, loads: s.loads.map((l) => { if (!l.steps) return l; const k = l.steps.filter((x) => x !== id); return { ...l, steps: k.length === rest.length ? undefined : k } as FemLoad; }) });
+  };
+  return (
+    <fieldset class="checklist">
+      <legend class="field-label">Passos de carga</legend>
+      {steps.map((p, k) => (
+        <div class="row" key={p.id}>
+          <input aria-label={`Nome do passo ${k + 1}`} value={p.name} onChange={(e) => up({ steps: steps.map((x) => (x.id === p.id ? { ...x, name: (e.target as HTMLInputElement).value } : x)) })} />
+          <button class="icon" aria-label={`Retirar passo ${k + 1}`} onClick={() => remove(p.id)}>✕</button>
+        </div>
+      ))}
+      <button class="small" onClick={add}>{steps.length ? "+ passo" : "Dividir em passos"}</button>
+      <p class="field-hint">{steps.length ? "Em cada condição escolha os passos em que está ativa. O estado de um passo é o ponto de partida do seguinte; os resultados mostrados são os do último passo, com |u| e σ máximos de cada passo no resumo." : "Um só passo: todas as condições atuam em conjunto. Divida em passos para aplicar cargas em sequência (pré-esforço e depois serviço, por exemplo)."} Só CalculiX.</p>
+    </fieldset>
+  );
+}
+
+const nextSetId = (s: FemStudy) =>`g${(s.sets ?? []).reduce((m, g) => Math.max(m, Number(g.id.slice(1)) || 0), 0) + 1}`;
 
 /**
  * Conjuntos nomeados (como os sets do Abaqus): faces ou arestas que se usam em várias condições, e
