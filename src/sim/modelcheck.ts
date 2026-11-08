@@ -133,6 +133,8 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
     if (l.kind === "mass" && solver === "code_aster" && (s.nonlinear?.geometry || s.nonlinear?.plasticity || (s.analysis === "dynamic" && s.dynamic?.scheme === "explicit"))) add("erro", "conditions", `${name}: no code_aster as massas pontuais só entram em análises lineares — use o CalculiX`);
     if (l.kind === "coupling" && l.mode === "distributing" && ne) add("erro", "conditions", `${name}: o acoplamento distribuído (RBE3) só aceita faces — use faces ou o rígido`);
     if (l.kind === "coupling" && solver !== "calculix") add("erro", "conditions", `${name}: os acoplamentos só estão no CalculiX — mude o solver`);
+    if ((l.kind === "displacement" || l.kind === "spring") && l.csys && solver !== "calculix") add("erro", "conditions", `${name}: os referenciais locais só estão no CalculiX — mude o solver ou use o global`);
+    if (l.kind === "force" && l.csys?.type === "cyl") add("erro", "conditions", `${name}: a força só aceita um referencial retangular (para cargas radiais use uma pressão)`);
     if (l.kind === "coupling" && [...(l.f ?? []), ...(l.mo ?? [])].every((x) => !num(x))) add("info", "conditions", `${name}: sem força nem momento no ponto (só liga as faces)`);
     if (l.kind === "pressure" && num(l.p) === 0) add("aviso", "conditions", `${name}: pressão nula`);
     if (l.kind === "gravity" && l.g.every((x) => num(x) === 0)) add("aviso", "conditions", `${name}: gravidade nula`);

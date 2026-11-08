@@ -194,6 +194,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
   if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
   if (c.loads.some((l) => l.kind === "coupling")) throw new Error("code_aster: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
+  if (c.loads.some((l) => (l.kind === "displacement" || l.kind === "spring") && l.csys)) throw new Error("code_aster: os referenciais locais (deslocamentos e molas) ainda não estão neste adaptador (use o CalculiX)");
   const { mail, nodeOrder, areas, edgeNodes, springs, masses, warnings } = asterMesh(c, m);
   const mat = c.material;
   const nl = c.analysis === "static" ? c.nonlinear : undefined;

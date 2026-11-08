@@ -66,16 +66,24 @@ export interface FemSet {
 
 export const setKind = (g: FemSet): "face" | "edge" | "body" => g.kind ?? "face";
 
+/**
+ * Referencial local de uma condição (mm, coordenadas globais): retangular (`a` = ponto no eixo X
+ * local, `b` = ponto no plano XY local, a partir da origem) ou cilíndrico (`a` e `b` = dois pontos
+ * do eixo; componentes radial, tangencial e axial). Sem referencial: direções globais.
+ */
+export type LoadCsys = { type: "rect" | "cyl"; a: [Expr, Expr, Expr]; b: [Expr, Expr, Expr] };
+
 export type FemLoad =
   /** Encastramento das faces ou, em alternativa, das arestas (`edges`). */
   | { kind: "fixed"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[] }
-  | { kind: "displacement"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; ux?: Expr; uy?: Expr; uz?: Expr }
+  /** Deslocamento imposto (mm) por direção, global ou no referencial local (`csys`). */
+  | { kind: "displacement"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; ux?: Expr; uy?: Expr; uz?: Expr; csys?: LoadCsys }
   /** Simetria: impede o deslocamento normal ao plano (faces planas alinhadas com X, Y ou Z); permite deslizar no plano. */
   | { kind: "symmetry"; faces: TopoRef[]; sets?: string[] }
   /** Força total (N) distribuída uniformemente pela área das faces ou pelo comprimento das arestas (`edges`). */
-  | { kind: "force"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; f: [Expr, Expr, Expr] }
-  /** Mola à terra (fundação elástica): rigidez total (N/mm) por direção global, distribuída pela área das faces ou pelo comprimento das arestas. */
-  | { kind: "spring"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; k: [Expr, Expr, Expr] }
+  | { kind: "force"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; f: [Expr, Expr, Expr]; csys?: LoadCsys }
+  /** Mola à terra (fundação elástica): rigidez total (N/mm) por direção (global ou local), distribuída pela área das faces ou pelo comprimento das arestas. */
+  | { kind: "spring"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; k: [Expr, Expr, Expr]; csys?: LoadCsys }
   /** Massa pontual (kg) acrescentada ao modelo, repartida pela área das faces ou pelo comprimento das arestas (sem rigidez: equipamento, lastro). */
   | { kind: "mass"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; m: Expr }
   /**

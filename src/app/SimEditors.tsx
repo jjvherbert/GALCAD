@@ -1,7 +1,7 @@
 // Editores de pré-processamento do painel de simulação: FEM (cargas, conjuntos, dinâmica, malha, montagem) e CFD.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemDynamic, type FemLoad, type FemSet, type FemStudy, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS, loadEdges, loadFaces, setKind } from "../doc/study.ts";
+import { type CfdStudy, type FemDynamic, type FemLoad, type LoadCsys, type FemSet, type FemStudy, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS, loadEdges, loadFaces, setKind } from "../doc/study.ts";
 import { allMaterials } from "./material-library.ts";
 import { type SimSection, store, useStoreKeys } from "./store.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, newLoad } from "./sim-actions.ts";
@@ -33,6 +33,19 @@ function Vec3Input({ label, unit, value, onChange }: { label: string; unit: stri
     <div class="row3">
       {[0, 1, 2].map((k) => <ExprInput key={k} label={`${label} ${"XYZ"[k]}`} unit={unit} value={value[k]} onChange={(x) => { const n = [...value] as [Expr, Expr, Expr]; n[k] = x ?? 0; onChange(n); }} />)}
     </div>
+  );
+}
+
+/** Referencial das componentes: global, retangular (a = ponto no eixo X, b = ponto no plano XY) ou cilíndrico (a, b = pontos do eixo). */
+function CsysInput({ value, rectOnly, onChange }: { value?: LoadCsys; rectOnly?: boolean; onChange: (c: LoadCsys | undefined) => void }) {
+  const opts: [string, string][] = [["global", "Global"], ["rect", "Local retangular"], ...(rectOnly ? [] : [["cyl", "Local cilíndrico"] as [string, string]])];
+  return (
+    <>
+      <Select label="Referencial" value={value?.type ?? "global"} options={opts} onChange={(t) => onChange(t === "global" ? undefined : { type: t as LoadCsys["type"], a: value?.a ?? (t === "cyl" ? [0, 0, 0] : [1, 0, 0]), b: value?.b ?? (t === "cyl" ? [0, 0, 1] : [0, 1, 0]) })} />
+      {value && <Vec3Input label={value.type === "rect" ? "Eixo X" : "Eixo A"} unit="mm" value={value.a} onChange={(a) => onChange({ ...value, a })} />}
+      {value && <Vec3Input label={value.type === "rect" ? "Plano XY" : "Eixo B"} unit="mm" value={value.b} onChange={(b) => onChange({ ...value, b })} />}
+      {value && <p class="field-hint">{value.type === "rect" ? "Eixos rodados (origem global): X aponta para o ponto «Eixo X»; o ponto «Plano XY» fixa Y. Componentes ux, uy, uz nesses eixos." : "Eixo pelos pontos A e B: componentes radial (ux), tangencial (uy) e axial (uz) em cada nó."} Só CalculiX.</p>}
+    </>
   );
 }
 
@@ -155,8 +168,9 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
           {"faces" in l && l.faces.length > 0 && <button class="small" title="Guarda as faces desta condição como conjunto para as reutilizar" onClick={() => { const id = nextSetId(s); up({ sets: [...(s.sets ?? []), { id, name: `${LOAD_LABELS[l.kind]} ${(s.sets?.length ?? 0) + 1}`, faces: l.faces }], loads: s.loads.map((x, k) => (k === i && "faces" in x ? { ...x, faces: [], sets: [...(x.sets ?? []), id] } as FemLoad : x)) }); }}>→ guardar faces como conjunto</button>}
           {edgeLoad(l) && (l.edges?.length ?? 0) > 0 && <button class="small" title="Guarda as arestas desta condição como conjunto para as reutilizar" onClick={() => { const id = nextSetId(s); up({ sets: [...(s.sets ?? []), { id, name: `${LOAD_LABELS[l.kind]} ${(s.sets?.length ?? 0) + 1} (arestas)`, kind: "edge", faces: [], edges: l.edges }], loads: s.loads.map((x, k) => (k === i && edgeLoad(x) ? { ...x, edges: undefined, sets: [...(x.sets ?? []), id] } as FemLoad : x)) }); }}>→ guardar arestas como conjunto</button>}
           {l.kind === "displacement" && <div class="row3">{(["ux", "uy", "uz"] as const).map((k) => <ExprInput key={k} label={k} allowEmpty value={l[k]} onChange={(x) => setLoad(i, { ...l, [k]: x })} />)}</div>}
-          {l.kind === "force" && <Vec3Input label="F" unit="N" value={l.f} onChange={(f) => setLoad(i, { ...l, f })} />}
-          {l.kind === "spring" && <><Vec3Input label="k" unit="N/mm" value={l.k} onChange={(k) => setLoad(i, { ...l, k })} /><p class="field-hint">Mola à terra: rigidez total por direção global, repartida pela área das faces (ou comprimento das arestas). 0 = livre nessa direção. CalculiX e code_aster (linear, modal, dinâmica implícita).</p></>}
+          {l.kind === "displacement" && <CsysInput value={l.csys} onChange={(csys) => setLoad(i, { ...l, csys })} />}
+          {l.kind === "force" && <><Vec3Input label="F" unit="N" value={l.f} onChange={(f) => setLoad(i, { ...l, f })} /><CsysInput rectOnly value={l.csys} onChange={(csys) => setLoad(i, { ...l, csys })} /></>}
+          {l.kind === "spring" && <><Vec3Input label="k" unit="N/mm" value={l.k} onChange={(k) => setLoad(i, { ...l, k })} /><p class="field-hint">Mola à terra: rigidez total por direção (global ou do referencial escolhido), repartida pela área das faces (ou comprimento das arestas). 0 = livre nessa direção. CalculiX e code_aster (linear, modal, dinâmica implícita).</p><CsysInput value={l.csys} onChange={(csys) => setLoad(i, { ...l, csys })} /></>}
           {l.kind === "mass" && <><ExprInput label="m" unit="kg" value={l.m} onChange={(m) => setLoad(i, { ...l, m: m ?? 0 })} /><p class="field-hint">Massa concentrada (motor, lastro, equipamento): massa total repartida pela área das faces (ou comprimento das arestas). Sem rigidez; entra na gravidade, no modal e na dinâmica. CalculiX e code_aster (linear, modal, dinâmica implícita).</p></>}
           {l.kind === "coupling" && (
             <>

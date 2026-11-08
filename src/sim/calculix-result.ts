@@ -347,9 +347,13 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
     const v = d.setTotals?.[`N_${ld.group}`.toUpperCase()];
     if (!v) continue;
     const f = [0, 1, 2].map((k) => (ld.kind === "fixed" || ld.u[k] !== null ? v[k] : null));
+    // num referencial local, a reação vem em componentes locais
+    const loc = ld.kind === "displacement" && !!ld.csys;
     groupReactions.push({ group: ld.group, f });
-    f.forEach((x, k) => { if (x !== null) metrics.push({ key: `R_${ld.group}_${"xyz"[k]}`, label: `Reação ${ld.group} ${"XYZ"[k]}`, unit: "N", value: x }); });
+    f.forEach((x, k) => { if (x !== null) metrics.push({ key: `R_${ld.group}_${"xyz"[k]}`, label: `Reação ${ld.group} ${"XYZ"[k]}${loc ? " (local)" : ""}`, unit: "N", value: x }); });
+    if (loc) summary.push([`Reação ${ld.group} local (N)`, f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
   }
-  if (groupReactions.length > 1) for (const g of groupReactions) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
+  const isLocal = (g: string) => c.loads.some((l) => l.kind === "displacement" && l.group === g && !!l.csys);
+  if (groupReactions.length > 1) for (const g of groupReactions) if (!isLocal(g.group)) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
   return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, groupReactions, summary, metrics, history, timeHistory, hypotheses: c.hypotheses };
 }

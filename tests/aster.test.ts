@@ -272,6 +272,38 @@ test("code_aster: acoplamentos recusados (só no CalculiX)", () => {
   assert.throws(() => asterCase({ ...cplCase("rigid"), solver: "code_aster" }, parseMsh(MSH)), /acoplamentos/);
 });
 
+// referencial retangular rodado 90° em torno de Z: ex = global Y, ey = −global X, ez = global Z
+const csR = { type: "rect" as const, a: [0, 1, 0] as [number, number, number], b: [-1, 0, 0] as [number, number, number] };
+const csCase = (extra: FemCase["loads"] = []): FemCase => ({ ...base, solver: "calculix", loads: [{ kind: "displacement", group: "L1_FIXED", u: [0, null, null], csys: csR }, { kind: "force", group: "L2_FORCE", f: [-9, 0, 0] }, ...extra] });
+
+test("CalculiX: deslocamento em referencial local (*TRANSFORM, CLOAD local, reações locais)", () => {
+  const m = parseMsh(MSH);
+  const { inp, warnings } = calculixDeck(csCase(), m);
+  assert.match(inp, /\*TRANSFORM, NSET=N_L1_FIXED, TYPE=R\n0, 1, 0, -1, 0, 0\n/);
+  assert.match(inp, /N_L1_FIXED, 1, 1, 0\n/);
+  // o deslocamento local não entra nos conjuntos das reações globais; sai por apoio, em componentes locais
+  assert.ok(!/NSET=N_R[XYZ]/.test(inp));
+  assert.match(inp, /\*NODE PRINT, NSET=N_L1_FIXED, TOTALS=ONLY, GLOBAL=NO\n/);
+  // força global −X: nos nós transformados (1, 3) vira +Y local; no nó 2 fica global
+  assert.match(inp, /\*CLOAD\n1, 2, 3\n2, 1, -3\n3, 2, 3\n/);
+  assert.deepEqual(warnings, []);
+  const fx = calculixDeck(csCase([{ kind: "fixed", group: "L2_FORCE" }]), m).inp;
+  assert.match(fx, /\*NODE PRINT, NSET=N_RX, TOTALS=ONLY, GLOBAL=YES\n/);
+  // uma mola global a partilhar nós com o grupo local: aviso
+  const sp = calculixDeck(csCase([{ kind: "spring", group: "L2_FORCE", k: [10, 10, 10] }]), m);
+  assert.ok(sp.warnings.some((w) => /L2_FORCE: partilha nós com um grupo em referencial local/.test(w)), JSON.stringify(sp.warnings));
+  // dois referenciais diferentes no mesmo nó: erro
+  assert.throws(() => calculixDeck(csCase([{ kind: "spring", group: "L2_FORCE", k: [10, 10, 10], csys: { type: "cyl", a: [0, 0, 0], b: [0, 0, 1] } }]), m), /um nó só pode ter um/);
+  // cilíndrico: TYPE=C e aviso dos nós sobre o eixo (1 e 4 estão em x = y = 0)
+  const cy = calculixDeck({ ...base, solver: "calculix", loads: [{ kind: "displacement", group: "L1_FIXED", u: [0, null, null], csys: { type: "cyl", a: [0, 0, 0], b: [0, 0, 1] } }] }, m);
+  assert.match(cy.inp, /\*TRANSFORM, NSET=N_L1_FIXED, TYPE=C\n0, 0, 0, 0, 0, 1\n/);
+  assert.ok(cy.warnings.includes("Referencial cilíndrico de L1_FIXED: 2 nó(s) sobre o eixo, sem direção radial definida"), JSON.stringify(cy.warnings));
+});
+
+test("code_aster: referenciais locais recusados (só no CalculiX)", () => {
+  assert.throws(() => asterCase({ ...csCase(), solver: "code_aster" }, parseMsh(MSH)), /referenciais locais/);
+});
+
 test("trimNum: tira zeros só da mantissa (o expoente fica intacto)", () => {
   assert.equal(trimNum((2.5e-20).toPrecision(10)), "2.5e-20");
   assert.equal(trimNum((3e-30).toPrecision(10)), "3e-30");

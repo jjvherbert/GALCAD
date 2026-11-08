@@ -146,6 +146,13 @@ test("verificação: condição sem faces, material impossível, sem apoios e an
   assert.ok(checkStudy({ ...ok, solver: "code_aster", analysis: "buckling" }).some((i) => /Encurvadura linear: não suportado/.test(i.text)));
   // encurvadura sem carga de referência
   assert.ok(checkStudy({ ...ok, analysis: "buckling", loads: [ok.loads[0]] }).some((i) => i.level === "erro" && /carga de referência/.test(i.text)));
+  // referenciais locais: só no CalculiX; a força não aceita o cilíndrico
+  const cs = { type: "rect" as const, a: [0, 1, 0] as [number, number, number], b: [-1, 0, 0] as [number, number, number] };
+  const local = { ...ok, loads: [{ kind: "displacement" as const, faces: [face(0, 0)], ux: 0, uy: 0, uz: 0, csys: cs }, ok.loads[1]] };
+  assert.equal(countLevel(checkStudy(local), "erro"), 0);
+  assert.ok(checkStudy({ ...local, solver: "code_aster" }).some((i) => i.level === "erro" && /referenciais locais só estão no CalculiX/.test(i.text)));
+  const cylF = { ...ok, loads: [ok.loads[0], { kind: "force" as const, faces: [face(0, 100)], f: [-100, 0, 0] as [number, number, number], csys: { ...cs, type: "cyl" as const } }] };
+  assert.ok(checkStudy(cylF).some((i) => i.level === "erro" && /só aceita um referencial retangular/.test(i.text)));
 });
 
 test("compatibilidade por solver: veredito, características usadas e consistência da matriz", async () => {

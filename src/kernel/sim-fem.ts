@@ -1,12 +1,12 @@
 // Estudos: caso FEM de uma peça (apoios, cargas, malha e hipóteses).
-import { type FemStudy, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
+import { type FemStudy, type LoadCsys, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
 import { type Expr, type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges } from "./context.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
 import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
 import { edgeProps } from "./occ-props.ts";
-import { type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, loadGroup } from "../sim/case.ts";
+import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, tagsOf, n3 } from "./sim-common.ts";
 
 const FEM_HYP: Record<FemStudy["analysis"], string> = {
@@ -34,6 +34,14 @@ export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
   return buildFemCase(s, ctx.scope, faces, (refs, what) => tagsOf(ctx, faces, solid, refs, what, report), { min: b.min as V3, max: b.max as V3 }, report, geo);
 }
 
+
+/** Referencial local de uma condição: avaliado e conferido (erro se degenerado). */
+function loadCsys(c: LoadCsys | undefined, sc: Ctx["scope"], i: number): CaseCsys | undefined {
+  if (!c) return undefined;
+  const r: CaseCsys = { type: c.type, a: n3(c.a, sc, `Condição ${i + 1}: referencial (a)`), b: n3(c.b, sc, `Condição ${i + 1}: referencial (b)`) };
+  try { csysAxes(r); } catch (e) { throw new Error(`Condição ${i + 1}: ${(e as Error).message}`); }
+  return r;
+}
 
 /** Caso FEM a partir das faces com tag e de um resolvedor de referências (peça ou montagem). */
 const HEX_NAME = (order: 1 | 2, integ: FemStudy["mesh"]["integration"]) => order === 2 ? (integ === "full" ? "C3D20 / HEXA20" : "C3D20R / HEXA20 (integração reduzida)") : integ === "full" ? "C3D8 / HEXA8 (integração completa)" : integ === "reduced" ? "C3D8R / HEXA8 (integração reduzida, controlo de hourglass)" : "C3D8I (modos incompatíveis) / HEXA8";
@@ -72,12 +80,22 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     }
     switch (l.kind) {
       case "fixed": loads.push({ kind: "fixed", group: g }); break;
-      case "displacement": loads.push({ kind: "displacement", group: g, u: [l.ux, l.uy, l.uz].map((x, k) => (x === undefined || x === "" ? null : evalParam(x, sc, `Deslocamento ${"XYZ"[k]}`))) }); break;
-      case "force": loads.push({ kind: "force", group: g, f: n3(l.f, sc, "Força") }); break;
+      case "displacement": {
+        const csys = loadCsys(l.csys, sc, i);
+        loads.push({ kind: "displacement", group: g, u: [l.ux, l.uy, l.uz].map((x, k) => (x === undefined || x === "" ? null : evalParam(x, sc, `Deslocamento ${"XYZ"[k]}`))), ...(csys && { csys }) });
+        break;
+      }
+      case "force": {
+        const csys = loadCsys(l.csys, sc, i), f = n3(l.f, sc, "Força");
+        if (csys?.type === "cyl") throw new Error(`Condição ${i + 1} (força): a força total só aceita um referencial retangular (para cargas radiais use uma pressão)`);
+        // força total num referencial retangular: as mesmas componentes globais em todos os nós
+        loads.push({ kind: "force", group: g, f: csys ? csysToGlobal(csysAxes(csys)!, f) : f });
+        break;
+      }
       case "spring": {
-        const k = n3(l.k, sc, "Rigidez da mola");
+        const k = n3(l.k, sc, "Rigidez da mola"), csys = loadCsys(l.csys, sc, i);
         if (k.some((x) => x < 0)) throw new Error(`Condição ${i + 1} (mola): a rigidez não pode ser negativa`);
-        loads.push({ kind: "spring", group: g, k });
+        loads.push({ kind: "spring", group: g, k, ...(csys && { csys }) });
         break;
       }
       case "mass": {

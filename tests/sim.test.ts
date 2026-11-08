@@ -193,6 +193,23 @@ test("caso FEM: acoplamentos (grupo, momento por omissão, arestas só no rígid
   assert.ok(only.warnings.some((w) => /Sem apoios/.test(w)), JSON.stringify(only.warnings));
 });
 
+test("caso FEM: referenciais locais (csys no caso, força retangular convertida para global, cilíndrica recusada)", async () => {
+  const { doc, face } = await bar();
+  const cs = { type: "rect" as const, a: [0, 1, 0] as [number, number, number], b: [-1, 0, 0] as [number, number, number] };
+  const { sim } = await solve(doc, fem({ loads: [
+    { kind: "displacement", faces: [face(0, 0)], ux: 0, uy: 0, uz: 0, csys: cs },
+    { kind: "spring", faces: [face(0, 100)], k: [5, 0, 0], csys: { type: "cyl", a: [0, 5, 5], b: [100, 5, 5] } },
+    { kind: "force", faces: [face(0, 100)], f: [10, 0, 0], csys: cs },
+  ] }));
+  const c = JSON.parse(String(sim.files["case.json"]));
+  assert.deepEqual(c.loads[0].csys, cs);
+  assert.deepEqual(c.loads[1].csys, { type: "cyl", a: [0, 5, 5], b: [100, 5, 5] });
+  assert.equal(c.loads[2].csys, undefined);
+  c.loads[2].f.forEach((v: number, i: number) => assert.ok(Math.abs(v - [0, 10, 0][i]) < 1e-9, JSON.stringify(c.loads[2].f)));
+  await assert.rejects(solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [10, 0, 0], csys: { ...cs, type: "cyl" } }] })), /retangular/);
+  await assert.rejects(solve(doc, fem({ loads: [{ kind: "displacement", faces: [face(0, 0)], ux: 0, csys: { type: "rect", a: [1, 0, 0], b: [2, 0, 0] } }] })), /plano/);
+});
+
 test("CalculiX: consola — flecha (Timoshenko), reações e pressão", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
   const { doc, face } = await bar();
   const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
@@ -370,6 +387,29 @@ test("CalculiX: acoplamento rígido na ponta da consola", { skip: !hasFem && "Gm
     near(-tipW(r.fem!), d, 0.04);
     near(r.fem!.reactions[0][2], F, 1e-3);
   }
+});
+
+test("CalculiX: deslocamento em referencial local na ponta da consola", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
+  const { doc, face } = await bar();
+  const d = 0.5, s = Math.SQRT1_2;
+  const run = async (tip: FemStudy["loads"][number]) => {
+    const r = await (await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, tip] }))).run();
+    assert.ok(r.ok, JSON.stringify(r));
+    const f = r.fem!, u = f.displacements[0].values;
+    const nodes = f.positions.reduce<number[]>((acc, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...acc, i] : acc), []);
+    return { f, nodes, u, R: f.groupReactions!.find((g) => g.group === "L2_DISPLACEMENT")!.f };
+  };
+  // ex local = Y global: o mesmo que impor uy no global
+  const g = await run({ kind: "displacement", faces: [face(0, 100)], uy: -d });
+  const l = await run({ kind: "displacement", faces: [face(0, 100)], ux: -d, csys: { type: "rect", a: [0, 1, 0], b: [-1, 0, 0] } });
+  for (const i of l.nodes) assert.ok(Math.abs(l.u[i + 1] + d) < 1e-6, `uy ${l.u[i + 1]}`);
+  near(l.R[0]!, g.R[1]!, 1e-3);
+  assert.deepEqual([l.R[1], l.R[2]], [null, null]);
+  // ex local a 45° no plano YZ: cada nó da ponta desloca-se d segundo ex; secção quadrada → a mesma rigidez
+  const r45 = await run({ kind: "displacement", faces: [face(0, 100)], ux: d, csys: { type: "rect", a: [0, 1, 1], b: [0, -1, 1] } });
+  for (const i of r45.nodes) assert.ok(Math.abs(s * (r45.u[i + 1] + r45.u[i + 2]) - d) < 1e-6, `u·ex ${s * (r45.u[i + 1] + r45.u[i + 2])}`);
+  near(r45.R[0]!, -g.R[1]!, 0.03);
+  assert.ok(r45.f.summary.some(([k]) => /local/.test(k)));
 });
 
 test("CalculiX: sondas (média na face, ponto) e refinamento automático até ao GCI alvo", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
