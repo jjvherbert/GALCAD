@@ -1232,6 +1232,7 @@ function parseDat(text) {
 	const lines = text.split(/\r?\n/);
 	const frequencies = [], buckling = [];
 	const sets = /* @__PURE__ */ new Map();
+	const nodeForces = {};
 	for (let i = 0; i < lines.length; i++) {
 		const l = lines[i];
 		if (/E I G E N V A L U E\s+O U T P U T/.test(l)) for (let j = i + 1; j < lines.length; j++) {
@@ -1244,7 +1245,24 @@ function parseDat(text) {
 			if (v.length === 2 && Number.isInteger(v[0]) && Number.isFinite(v[1])) buckling.push(v[1]);
 			else if (buckling.length && lines[j].trim() === "") break;
 		}
-		else if (/total force/.test(l)) {
+		else if (/^\s*forces \(fx,fy,fz\) for set/.test(l)) {
+			const m = /for set (\S+) and time\s+(\S+)/.exec(l);
+			if (!m) continue;
+			const set = m[1].toUpperCase(), t = Number(m[2]), nf = /* @__PURE__ */ new Map();
+			for (let j = i + 1; j < lines.length; j++) {
+				const v = lines[j].trim().split(/\s+/).map(Number);
+				if (v.length === 4 && Number.isInteger(v[0]) && v.every(Number.isFinite)) nf.set(v[0], [
+					v[1],
+					v[2],
+					v[3]
+				]);
+				else if (nf.size || lines[j].trim() !== "" && j > i + 2) break;
+			}
+			if (!(nodeForces[set]?.time > t)) nodeForces[set] = {
+				time: t,
+				f: nf
+			};
+		} else if (/total force/.test(l)) {
 			const v = lines[i + 2]?.trim().split(/\s+/).map(Number);
 			if (!v || v.length < 3 || !v.every(Number.isFinite)) continue;
 			const m = /for set (\S+) and time\s+(\S+)/.exec(l);
@@ -1291,7 +1309,8 @@ function parseDat(text) {
 		buckling,
 		reactions: reactionHistory.length ? [reactionHistory.at(-1).f] : [],
 		reactionHistory,
-		setTotals
+		setTotals,
+		nodeForces: Object.fromEntries(Object.entries(nodeForces).map(([k, v]) => [k, v.f]))
 	};
 }
 /**
@@ -1701,14 +1720,30 @@ function femResultFrom(c, m, blocks, d) {
 	const groupReactions = [];
 	for (const ld of c.loads) {
 		if (ld.kind !== "fixed" && ld.kind !== "displacement") continue;
-		const v = d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+		const cs = ld.kind === "displacement" ? ld.csys : void 0, loc = !!cs;
+		let v = cs ? void 0 : d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+		const nf = cs && d.nodeForces?.[`N_${ld.group}`.toUpperCase()];
+		if (cs && nf?.size) {
+			v = [
+				0,
+				0,
+				0
+			];
+			for (const [n, fg] of nf) {
+				const ax = csysAxes(cs, m.nodes.get(n) ?? [
+					0,
+					0,
+					0
+				]), fl = ax ? csysToLocal(ax, fg) : fg;
+				for (let k = 0; k < 3; k++) v[k] += fl[k];
+			}
+		}
 		if (!v) continue;
 		const f = [
 			0,
 			1,
 			2
 		].map((k) => ld.kind === "fixed" || ld.u[k] !== null ? v[k] : null);
-		const loc = ld.kind === "displacement" && !!ld.csys;
 		groupReactions.push({
 			group: ld.group,
 			f
@@ -2210,7 +2245,7 @@ function calculixDeck(c, m) {
 			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF");
 		});
 		if (c.analysis === "static") {
-			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY${ld.kind === "displacement" && ld.csys ? ", GLOBAL=NO" : glob}`, "RF");
+			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, ${ld.kind === "displacement" && ld.csys ? "GLOBAL=YES" : `TOTALS=ONLY${glob}`}`, "RF");
 		}
 	}
 	L.push("*END STEP");

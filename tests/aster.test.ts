@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { asterCase, asterMesh, asterNode, asterResult, parseAsterTable } from "../src/sim/aster.ts";
 import { calculixDeck, springWeights, trimNum } from "../src/sim/calculix.ts";
 import { parseMsh } from "../src/sim/msh.ts";
+import { parseDat } from "../src/sim/calculix-result.ts";
 import type { FemCase } from "../src/sim/case.ts";
 import { SIM_MATERIALS } from "../src/doc/study.ts";
 
@@ -283,7 +284,13 @@ test("CalculiX: deslocamento em referencial local (*TRANSFORM, CLOAD local, rea�
   assert.match(inp, /N_L1_FIXED, 1, 1, 0\n/);
   // o deslocamento local não entra nos conjuntos das reações globais; sai por apoio, em componentes locais
   assert.ok(!/NSET=N_R[XYZ]/.test(inp));
-  assert.match(inp, /\*NODE PRINT, NSET=N_L1_FIXED, TOTALS=ONLY, GLOBAL=NO\n/);
+  // reação local: nó a nó em componentes globais (o CalculiX soma os totais sempre em globais)
+  assert.match(inp, /\*NODE PRINT, NSET=N_L1_FIXED, GLOBAL=YES\nRF\n/);
+  // leitura: soma nó a nó convertida para o referencial local (ex = global Y)
+  const dat = " forces (fx,fy,fz) for set N_L1_FIXED and time  0.1000000E+01\n\n         1 -2.000000E+00  5.000000E+00  0.000000E+00\n         3 -1.000000E+00  1.000000E+00  0.000000E+00\n\n total force (fx,fy,fz) for set N_L1_FIXED and time  0.1000000E+01\n\n       -3.000000E+00  6.000000E+00  0.000000E+00\n";
+  const pd = parseDat(dat);
+  assert.deepEqual([...pd.nodeForces!.N_L1_FIXED!], [[1, [-2, 5, 0]], [3, [-1, 1, 0]]]);
+  assert.deepEqual(pd.setTotals!.N_L1_FIXED, [-3, 6, 0]);
   // força global −X: nos nós transformados (1, 3) vira +Y local; no nó 2 fica global
   assert.match(inp, /\*CLOAD\n1, 2, 3\n2, 1, -3\n3, 2, 3\n/);
   assert.deepEqual(warnings, []);

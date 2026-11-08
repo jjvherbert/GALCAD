@@ -415,8 +415,9 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     // reações nos apoios (verificação do equilíbrio)
     if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF"); });
     // reações por apoio (ex.: força de atrito transmitida a uma face com deslocamento imposto)
-    // (no referencial local, em componentes locais)
-    if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY${ld.kind === "displacement" && ld.csys ? ", GLOBAL=NO" : glob}`, "RF");
+    // (num referencial local pede-se nó a nó, em componentes globais: o CalculiX soma os totais sempre
+    // em componentes globais, e num cilíndrico a soma das componentes locais depende do nó)
+    if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, ${ld.kind === "displacement" && ld.csys ? "GLOBAL=YES" : `TOTALS=ONLY${glob}`}`, "RF");
   }
   L.push("*END STEP");
   if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "spring")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
