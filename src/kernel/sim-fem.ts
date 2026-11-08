@@ -74,6 +74,12 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       case "fixed": loads.push({ kind: "fixed", group: g }); break;
       case "displacement": loads.push({ kind: "displacement", group: g, u: [l.ux, l.uy, l.uz].map((x, k) => (x === undefined || x === "" ? null : evalParam(x, sc, `Deslocamento ${"XYZ"[k]}`))) }); break;
       case "force": loads.push({ kind: "force", group: g, f: n3(l.f, sc, "Força") }); break;
+      case "spring": {
+        const k = n3(l.k, sc, "Rigidez da mola");
+        if (k.some((x) => x < 0)) throw new Error(`Condição ${i + 1} (mola): a rigidez não pode ser negativa`);
+        loads.push({ kind: "spring", group: g, k });
+        break;
+      }
       case "pressure": loads.push({ kind: "pressure", group: g, p: evalParam(l.p, sc, "Pressão") }); break;
       case "temperature": loads.push({ kind: "temperature", group: g, t: evalParam(l.t, sc, "Temperatura") }); break;
       case "convection": loads.push({ kind: "convection", group: g, h: evalParam(l.h, sc, "Coeficiente h"), tInf: evalParam(l.tInf, sc, "Temperatura do fluido") }); break;
@@ -110,7 +116,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     : `Malha: tetraedros de ordem ${s.mesh.order} (Gmsh), tamanho máx. ${size} mm${plan?.notes.length ? `; ${plan.notes.join("; ")}` : ""} — confirmar a convergência refinando`;
   const thermal = s.analysis === "thermal";
   if (thermal && !s.loads.some((l) => l.kind === "temperature" || l.kind === "convection")) report.warnings.push("Térmica sem temperatura nem convecção imposta: o problema não tem solução única");
-  if (!thermal && s.analysis !== "modal" && !s.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) report.warnings.push("Sem apoios: movimento de corpo rígido");
+  if (!thermal && s.analysis !== "modal" && !s.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "symmetry" || l.kind === "spring")) report.warnings.push("Sem apoios: movimento de corpo rígido");
   const nl = s.analysis === "static" && (s.nonlinear?.geometry || s.nonlinear?.plasticity)
     ? { geometry: !!s.nonlinear.geometry, plasticity: !!s.nonlinear.plasticity, increments: Math.max(1, Math.round(s.nonlinear.increments ?? 10)) } : undefined;
   const m = s.material;

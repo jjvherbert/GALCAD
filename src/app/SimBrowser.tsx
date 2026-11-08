@@ -11,7 +11,7 @@ import { checkStudy, checkSummary } from "../sim/modelcheck.ts";
 import { loadEdges, loadFaces } from "../doc/study.ts";
 
 const LOAD_SHORT: Record<FemLoad["kind"], string> = {
-  fixed: "Encastramento", displacement: "Deslocamento", symmetry: "Simetria", pointForce: "Força pontual", force: "Força", pressure: "Pressão", gravity: "Gravidade",
+  fixed: "Encastramento", displacement: "Deslocamento", symmetry: "Simetria", pointForce: "Força pontual", force: "Força", pressure: "Pressão", gravity: "Gravidade", spring: "Mola",
   temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
 };
 const ANALYSIS: Record<FemStudy["analysis"], string> = { static: "Estática", modal: "Modal", buckling: "Encurvadura", dynamic: "Dinâmica", thermal: "Térmica" };

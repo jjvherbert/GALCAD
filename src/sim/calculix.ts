@@ -43,6 +43,19 @@ export interface Deck {
   dynamic?: { dt: number; increments: number; frequency: number; stable: boolean };
 }
 
+/**
+ * Pesos da mola por nó (somam 1): integrais nodais ∫Nᵢ dA (ou dL) de faces ou linhas, só as
+ * positivas (os cantos do quad8, negativos, ficam sem mola).
+ */
+export function springWeights(items: { n: number[]; nodal: number[] }[]): Map<number, number> {
+  const w = new Map<number, number>();
+  for (const t of items) t.n.forEach((n, i) => { if (t.nodal[i] > 0) w.set(n, (w.get(n) ?? 0) + t.nodal[i]); });
+  const s = [...w.values()].reduce((a, b) => a + b, 0);
+  if (!(s > 0)) return new Map();
+  for (const [n, v] of w) w.set(n, v / s);
+  return new Map([...w].sort((a, b) => a[0] - b[0]));
+}
+
 const fmt = (x: number) => (Number.isInteger(x) ? String(x) : x.toPrecision(10).replace(/\.?0+(e|$)/, "$1"));
 
 export function calculixDeck(c: FemCase, m: Msh): Deck {
@@ -169,6 +182,25 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face![0]}, S${x.face![1]}`));
     L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
   }
+  // molas à terra: um SPRING1 por nó e direção (fora do EALL), rigidez k·w com os pesos nodais
+  // normalizados do grupo (os negativos dos cantos do quad8 contam 0); as de igual rigidez partilham o *SPRING
+  let eid = elems.length;
+  c.loads.forEach((ld, j) => {
+    if (ld.kind !== "spring") return;
+    if (thermal) { warnings.push(`Mola ${ld.group}: ignorada na análise térmica`); return; }
+    const w = springWeights(lines[ld.group] ?? tris[ld.group] ?? []);
+    if (!w.size) { warnings.push(`Mola ${ld.group}: grupo sem nós na malha`); return; }
+    ld.k.forEach((k, d) => {
+      if (!(k > 0)) return;
+      const byK = new Map<string, number[]>();
+      for (const [n, wi] of w) { const s = fmt(k * wi); byK.set(s, [...(byK.get(s) ?? []), n]); }
+      let q = 0;
+      for (const [s, ns] of byK) {
+        const set = `SP${j + 1}${"XYZ"[d]}${++q}`;
+        L.push(`*ELEMENT, TYPE=SPRING1, ELSET=${set}`, ...ns.map((n) => `${++eid}, ${n}`), `*SPRING, ELSET=${set}`, String(d + 1), s);
+      }
+    });
+  });
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 
   const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [];
@@ -222,6 +254,8 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         loads.push("*DFLUX");
         for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * 1e-3)}`);
         break;
+      // molas: elementos SPRING1 nos dados do modelo (acima)
+      case "spring": break;
     }
   }
   // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses
@@ -291,7 +325,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
   }
   L.push("*END STEP");
-  if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
+  if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "spring")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
   return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, groupLength, supportLoad, warnings, dynamic: dyn };
 }
 

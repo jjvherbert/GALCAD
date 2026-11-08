@@ -138,7 +138,7 @@ export function runConvergence() {
   void runActiveStudy(false);
 }
 
-export const STRUCT_LOADS: FemLoad["kind"][] = ["fixed", "displacement", "symmetry", "force", "pointForce", "pressure", "gravity"];
+export const STRUCT_LOADS: FemLoad["kind"][] = ["fixed", "displacement", "symmetry", "force", "pointForce", "pressure", "gravity", "spring"];
 export const THERMAL_LOADS: FemLoad["kind"][] = ["temperature", "convection", "heatFlux"];
 
 export function newLoad(kind: FemLoad["kind"]): FemLoad {
@@ -153,6 +153,7 @@ export function newLoad(kind: FemLoad["kind"]): FemLoad {
     case "temperature": return { kind, faces: [], t: 100 };
     case "convection": return { kind, faces: [], h: 10, tInf: 20 };
     case "heatFlux": return { kind, faces: [], q: 1000 };
+    case "spring": return { kind, faces: [], k: [0, 0, 1000] };
   }
 }
 
@@ -207,7 +208,7 @@ export function patchMesh(f: (m: SimMesh) => Partial<SimMesh>) {
 
 /** Cores das condições no 3D (apoios em azul, cargas em âmbar/vermelho, térmicas em laranja/ciano; CFD: entrada verde, saída vermelha). */
 export const CONDITION_COLORS: Record<FemLoad["kind"] | "inlet" | "outlet", number> = {
-  fixed: 0x2563eb, pointForce: 0xf59e0b, symmetry: 0x7c3aed, displacement: 0x0891b2, force: 0xf59e0b, pressure: 0xdc2626, gravity: 0xf59e0b,
+  fixed: 0x2563eb, pointForce: 0xf59e0b, symmetry: 0x7c3aed, displacement: 0x0891b2, force: 0xf59e0b, pressure: 0xdc2626, gravity: 0xf59e0b, spring: 0x059669,
   temperature: 0xef4444, convection: 0x06b6d4, heatFlux: 0xf97316, inlet: 0x16a34a, outlet: 0xdc2626,
 };
 

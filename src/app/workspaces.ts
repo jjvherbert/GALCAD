@@ -80,7 +80,7 @@ const FEM_TABS: Tab[] = [
     { title: "Biblioteca", ids: SIM_MATERIALS.map((_, i) => `sim.material.${i}`) },
   ] },
   { id: "loads", label: "Cargas e apoios", groups: [
-    { title: "Apoios", ids: ["sim.add.fixed", "sim.add.displacement", "sim.add.symmetry"] },
+    { title: "Apoios", ids: ["sim.add.fixed", "sim.add.displacement", "sim.add.symmetry", "sim.add.spring"] },
     { title: "Cargas", ids: ["sim.add.force", "sim.add.pointForce", "sim.add.pressure", "sim.add.gravity"] },
     { title: "Térmicas", ids: ["sim.add.temperature", "sim.add.convection", "sim.add.heatFlux"] },
     { title: "Interações", ids: ["sim.section.contact"] },
