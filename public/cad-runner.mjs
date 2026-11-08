@@ -500,6 +500,65 @@ function faceIntegrals(type, pts) {
 		vec
 	};
 }
+/** Linhas da malha nas arestas: line2 (Gmsh 1) e line3 (Gmsh 8, nós [ponta 0, ponta 1, meio]). */
+const LINES = {
+	1: {
+		nodes: 2,
+		aster: "SEG2"
+	},
+	8: {
+		nodes: 3,
+		aster: "SEG3"
+	}
+};
+const isLineType = (t) => t in LINES;
+/**
+* Integrais de uma linha (nós pela ordem Gmsh): comprimento e comprimento nodal consistente ∫Nᵢ ds
+* (a fração de uma força uniforme por comprimento que vai para cada nó). Linear: L/2 em cada ponta;
+* quadrática reta: L/6 nas pontas e 2L/3 no meio (isoparamétrica nas curvas, Gauss de 3 pontos).
+*/
+function lineIntegrals(type, pts) {
+	if (type === 1) {
+		const L = Math.hypot(...sub$1(pts[1], pts[0]));
+		return {
+			length: L,
+			nodal: [L / 2, L / 2]
+		};
+	}
+	if (type !== 8) throw new Error(`Linha do tipo Gmsh ${type} sem funções de forma`);
+	const nodal = [
+		0,
+		0,
+		0
+	];
+	let length = 0;
+	for (const [x, w] of G3) {
+		const N = [
+			x * (x - 1) / 2,
+			x * (x + 1) / 2,
+			1 - x * x
+		], D = [
+			x - .5,
+			x + .5,
+			-2 * x
+		];
+		const t = [
+			0,
+			0,
+			0
+		];
+		pts.forEach((p, i) => {
+			for (let k = 0; k < 3; k++) t[k] += D[i] * p[k];
+		});
+		const J = Math.hypot(t[0], t[1], t[2]);
+		length += w * J;
+		N.forEach((Ni, i) => nodal[i] += w * Ni * J);
+	}
+	return {
+		length,
+		nodal
+	};
+}
 // src/sim/msh.ts
 const NODES_PER = {
 	1: 2,
@@ -623,6 +682,8 @@ function solidBlocks(m, bodies) {
 }
 /** Blocos de faces de fronteira (triângulos e quadriláteros) de um grupo físico. */
 const faceBlocks = (m, name) => physicalBlocks(m, name).filter((b) => isFaceType(b.type));
+/** Blocos de linhas (line2/line3) de um grupo físico de arestas. */
+const edgeBlocks = (m, name) => physicalBlocks(m, name).filter((b) => isLineType(b.type));
 /** Elementos (nós pela ordem Gmsh) de uma lista de blocos, com o tipo de cada um. */
 function* elementsOf(blocks) {
 	for (const b of blocks) {
@@ -1680,6 +1741,17 @@ function calculixDeck(c, m) {
 		if (!tris[name].length) warnings.push(`O grupo ${name} não tem faces na malha`);
 		if (tris[name].some((t) => !t.face)) warnings.push(`Grupo ${name}: faces sem face de elemento correspondente`);
 	}
+	const lines = {};
+	const groupLength = {};
+	for (const name of Object.keys(c.edgeGroups ?? {})) {
+		lines[name] = [...elementsOf(edgeBlocks(m, name))].map(({ type, nodes }) => ({
+			n: nodes,
+			...lineIntegrals(type, nodes.map((t) => m.nodes.get(t)))
+		}));
+		groupLength[name] = lines[name].reduce((s, l) => s + l.length, 0);
+		if (!lines[name].length) warnings.push(`O grupo ${name} não tem linhas na malha`);
+		if (lines[name].some((l) => l.n.some((x) => !used.has(x)))) warnings.push(`Grupo ${name}: nós das arestas fora dos elementos de volume`);
+	}
 	const L = [];
 	L.push("*HEADING", `${c.title} — gerado pelo CAD protótipo`);
 	for (const h of c.hypotheses) L.push(`** ${h}`);
@@ -1690,7 +1762,10 @@ function calculixDeck(c, m) {
 		if (i === 0 || elems[i - 1].type !== e.type) L.push(`*ELEMENT, TYPE=${e.type}, ELSET=EALL`);
 		L.push(e.n.length > 15 ? `${i + 1}, ${e.n.slice(0, 15).join(", ")},\n${e.n.slice(15).join(", ")}` : `${i + 1}, ${e.n.join(", ")}`);
 	});
-	for (const [name, list] of Object.entries(tris)) {
+	for (const [name, list] of Object.entries({
+		...tris,
+		...lines
+	})) {
 		const ns = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b);
 		L.push(`*NSET, NSET=N_${name}`);
 		for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
@@ -1794,12 +1869,13 @@ function calculixDeck(c, m) {
 			break;
 		}
 		case "force": {
-			const A = groupArea[ld.group];
+			const edge = !!lines[ld.group];
+			const A = edge ? groupLength[ld.group] : groupArea[ld.group];
 			if (!(A > 0)) {
-				warnings.push(`Força no grupo ${ld.group} sem área`);
+				warnings.push(`Força no grupo ${ld.group} sem ${edge ? "comprimento" : "área"}`);
 				break;
 			}
-			for (const t of tris[ld.group]) t.n.forEach((n, i) => {
+			for (const t of edge ? lines[ld.group] : tris[ld.group]) t.n.forEach((n, i) => {
 				if (t.nodal[i] === 0) return;
 				const acc = cload.get(n) ?? [
 					0,
@@ -1828,7 +1904,7 @@ function calculixDeck(c, m) {
 			loads.push("*DFLUX");
 			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * .001)}`);
 	}
-	const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => tris[n.slice(2)]?.flatMap((t) => t.n) ?? [])));
+	const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => (tris[n.slice(2)] ?? lines[n.slice(2)])?.flatMap((t) => t.n) ?? [])));
 	const supportLoad = [
 		0,
 		0,
@@ -1929,6 +2005,7 @@ function calculixDeck(c, m) {
 		nodes: used.size,
 		elements: elems.length,
 		groupArea,
+		groupLength,
 		supportLoad,
 		warnings,
 		dynamic: dyn
@@ -2563,6 +2640,7 @@ function femGeo(c, o = {}) {
 	if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
 	else out.push(`Physical Volume("SOLID") = Volume{:};`);
 	for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
+	for (const [name, tags] of Object.entries(c.edgeGroups ?? {})) out.push(`Physical Curve("${name}") = ${list(tags)};`);
 	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${minSizeFloor(c)};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${c.mesh.order};`, `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = 0;`, `Mesh.SaveAll = 0;`);
 	for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
 	out.push(...meshControls(c));
@@ -2627,6 +2705,7 @@ const ids = (list) => {
 function radiossDeck(c, m) {
 	if (c.analysis !== "dynamic" || c.dynamic?.scheme !== "explicit") throw new Error("OpenRadioss: só dinâmica explícita (escolha «Dinâmica transitória» e «Explícita»)");
 	if ((c.ties ?? []).length) throw new Error("OpenRadioss: montagens com contacto ainda não estão neste adaptador (use uma peça)");
+	if (Object.keys(c.edgeGroups ?? {}).length) throw new Error("OpenRadioss: condições em arestas ainda não estão neste adaptador (escolha faces)");
 	const warnings = [];
 	const D = c.dynamic;
 	const name = "galcad";
@@ -3006,6 +3085,29 @@ function asterMesh(c, m) {
 		areas[name] = A;
 	}
 	section(faces);
+	const warnings = [];
+	const edgeNodes = {};
+	const forceEdges = new Set(c.loads.flatMap((ld) => ld.kind === "force" ? [ld.group] : []));
+	Object.keys(c.edgeGroups ?? {}).forEach((name, k) => {
+		const w = /* @__PURE__ */ new Map();
+		let len = 0;
+		for (const { type, nodes } of elementsOf(edgeBlocks(m, name))) {
+			const li = lineIntegrals(type, nodes.map((x) => m.nodes.get(x)));
+			len += li.length;
+			nodes.forEach((x, i) => w.set(x, (w.get(x) ?? 0) + li.nodal[i]));
+		}
+		if (!w.size) warnings.push(`O grupo ${name} não tem linhas na malha`);
+		if ([...w.keys()].some((x) => !used.has(x))) warnings.push(`Grupo ${name}: nós das arestas fora dos elementos de volume`);
+		const ns = [...w.keys()].filter((x) => used.has(x)).sort((a, b) => a - b);
+		nodeGroups[name] = ns;
+		if (forceEdges.has(name) && len > 0) {
+			edgeNodes[name] = ns.map((x, i) => ({
+				group: `E${k + 1}_${i + 1}`,
+				w: w.get(x) / len
+			}));
+			ns.forEach((x, i) => nodeGroups[`E${k + 1}_${i + 1}`] = [x]);
+		}
+	});
 	const block = (kw, name, ids) => {
 		L.push(kw, name);
 		for (let k = 0; k < ids.length; k += 10) L.push(ids.slice(k, k + 10).join(" "));
@@ -3028,15 +3130,16 @@ function asterMesh(c, m) {
 	return {
 		mail: L.join("\n") + "\n",
 		nodeOrder,
-		areas
+		areas,
+		edgeNodes,
+		warnings
 	};
 }
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 function asterCase(c, m) {
 	if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
 	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
-	const { mail, nodeOrder, areas } = asterMesh(c, m);
-	const warnings = [];
+	const { mail, nodeOrder, areas, edgeNodes, warnings } = asterMesh(c, m);
 	const mat = c.material;
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;
 	const C = [];
@@ -3085,6 +3188,15 @@ function asterCase(c, m) {
 			break;
 		}
 		case "force": {
+			if (c.edgeGroups?.[ld.group]) {
+				const en = edgeNodes[ld.group];
+				if (!en?.length) {
+					warnings.push(`Força no grupo ${ld.group} sem comprimento`);
+					break;
+				}
+				for (const { group, w } of en) nodal.push(`_F(GROUP_NO='${group}', FX=${num(w * ld.f[0])}, FY=${num(w * ld.f[1])}, FZ=${num(w * ld.f[2])})`);
+				break;
+			}
 			const A = areas[ld.group];
 			if (!(A > 0)) {
 				warnings.push(`Força no grupo ${ld.group} sem área`);
@@ -3287,6 +3399,13 @@ function checkGroups(c, m) {
 		}
 		const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
 		if (d > .02 * diag || Math.abs(a - A) > .05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
+	}
+	for (const name of Object.keys(c.edgeGroups ?? {})) {
+		let len = 0;
+		for (const { type, nodes } of elementsOf(edgeBlocks(m, name))) len += lineIntegrals(type, nodes.map((t) => m.nodes.get(t))).length;
+		const L = c.edgeLength?.[name];
+		if (!len) out.push(`Grupo ${name}: sem linhas na malha`);
+		else if (L && Math.abs(len - L) > .05 * L) out.push(`Grupo ${name}: a malha não corresponde às arestas do CAD (comprimento ${len.toFixed(1)} vs ${L.toFixed(1)} mm)`);
 	}
 	for (const b of c.bodies ?? []) {
 		const lo = [
