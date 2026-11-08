@@ -311,6 +311,29 @@ test("code_aster: referenciais locais recusados (só no CalculiX)", () => {
   assert.throws(() => asterCase({ ...csCase(), solver: "code_aster" }, parseMsh(MSH)), /referenciais locais/);
 });
 
+const stepsCase: FemCase = { ...base, solver: "calculix", steps: ["A", "B"], loads: [{ kind: "fixed", group: "L1_FIXED" }, { kind: "force", group: "L2_FORCE", f: [0, 0, -10], steps: [1] }] };
+
+test("CalculiX: passos de carga múltiplos → um *STEP por passo, OP=NEW e reações por passo", () => {
+  const { inp, stepSupport } = calculixDeck(stepsCase, parseMsh(MSH));
+  const steps = inp.split("*STEP\n").slice(1);
+  assert.equal(steps.length, 2);
+  assert.doesNotMatch(steps[0], /\*CLOAD/);
+  assert.match(steps[1], /\*BOUNDARY, OP=NEW/);
+  assert.match(steps[1], /\*CLOAD, OP=NEW\n\*CLOAD\n\d+, 3, -/);
+  assert.match(steps[0], /\*STATIC\n1\., 1\., 1e-05, 1\./);
+  assert.equal(stepSupport?.length, 2);
+  // fora da estática os passos são ignorados: um só passo com todas as condições
+  const modal = calculixDeck({ ...stepsCase, analysis: "modal" }, parseMsh(MSH));
+  assert.equal(modal.inp.split("*STEP\n").length, 2);
+  assert.equal(modal.stepSupport, undefined);
+  // um só passo → deck igual ao de sempre
+  assert.equal(calculixDeck({ ...stepsCase, steps: ["A"], loads: base.loads }, parseMsh(MSH)).inp, calculixDeck({ ...base, solver: "calculix" }, parseMsh(MSH)).inp);
+});
+
+test("code_aster: passos de carga múltiplos recusados (só no CalculiX)", () => {
+  assert.throws(() => asterCase({ ...stepsCase, solver: "code_aster" }, parseMsh(MSH)), /passos de carga/);
+});
+
 test("trimNum: tira zeros só da mantissa (o expoente fica intacto)", () => {
   assert.equal(trimNum((2.5e-20).toPrecision(10)), "2.5e-20");
   assert.equal(trimNum((3e-30).toPrecision(10)), "3e-30");

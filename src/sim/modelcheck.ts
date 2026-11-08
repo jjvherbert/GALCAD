@@ -32,6 +32,7 @@ export const CAPABILITIES: Capability[] = [
   { group: "Análise", feature: "Dinâmica implícita", calculix: "sim", code_aster: "sim", openradioss: "nao" },
   { group: "Análise", feature: "Dinâmica explícita", calculix: "sim", code_aster: "parcial", openradioss: "sim", note: "code_aster explícito é lento e só com integração completa; OpenRadioss é o indicado para impacto" },
   { group: "Não linear", feature: "Grandes deslocamentos", calculix: "sim", code_aster: "sim", openradioss: "nao" },
+  { group: "Análise", feature: "Passos de carga múltiplos", calculix: "sim", code_aster: "nao", openradioss: "nao", note: "só na estática; code_aster ainda sem adaptador de passos" },
   { group: "Não linear", feature: "Plasticidade (von Mises bilinear)", calculix: "sim", code_aster: "sim", openradioss: "nao" },
   { group: "Elementos", feature: "Tetraedros lineares (4 nós)", calculix: "sim", code_aster: "sim", openradioss: "sim" },
   { group: "Elementos", feature: "Tetraedros quadráticos (10 nós)", calculix: "sim", code_aster: "sim", openradioss: "nao", note: "o explícito do OpenRadioss usa elementos lineares" },
@@ -61,6 +62,7 @@ export function usedFeatures(s: FemStudy): string[] {
   used.push({ static: "Estática linear", modal: "Modal (frequências próprias)", buckling: "Encurvadura linear", thermal: "Térmica em regime permanente", dynamic: dyn?.scheme === "explicit" ? "Dinâmica explícita" : "Dinâmica implícita" }[s.analysis]);
   if (s.analysis === "static" && s.nonlinear?.geometry) used.push("Grandes deslocamentos");
   if (s.analysis === "static" && s.nonlinear?.plasticity) used.push("Plasticidade (von Mises bilinear)");
+  if (s.analysis === "static" && (s.steps?.length ?? 0) > 1) used.push("Passos de carga múltiplos");
   const hex = s.mesh.element === "hex";
   used.push(hex ? (s.mesh.order === 1 ? "Hexaedros lineares (8 nós)" : "Hexaedros quadráticos (20 nós)") : (s.mesh.order === 1 ? "Tetraedros lineares (4 nós)" : "Tetraedros quadráticos (10 nós)"));
   for (const l of s.loads) {
@@ -144,6 +146,21 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
     if (thermalKind && !thermal) add("erro", "conditions", `${name}: condição térmica num estudo ${s.analysis === "static" ? "estrutural" : s.analysis}`);
     if (!thermalKind && thermal) add("erro", "conditions", `${name}: condição estrutural num estudo térmico`);
   });
+  // passos de carga
+  const steps = s.steps ?? [];
+  if (steps.length > 1 && s.analysis !== "static") add("aviso", "study", `Os passos de carga só se aplicam à estática: num estudo ${s.analysis} são ignorados e todas as condições ficam ativas`);
+  if (steps.length > 1 && s.analysis === "static") {
+    const ids = new Set(steps.map((x) => x.id));
+    s.loads.forEach((l, i) => {
+      if (!l.steps || l.kind === "spring" || l.kind === "mass") return;
+      const name = `Condição ${i + 1} (${LOAD_LABEL[l.kind]})`;
+      if (!l.steps.some((id) => ids.has(id))) add("aviso", "conditions", `${name}: não está ativa em nenhum passo`);
+    });
+    steps.forEach((st, k) => {
+      const on = s.loads.filter((l) => !l.steps || l.steps.includes(st.id));
+      if (!assembly && !on.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "symmetry" || l.kind === "spring")) add("aviso", "conditions", `Passo ${k + 1} (${st.name || "sem nome"}): sem apoios ativos — a matriz de rigidez fica singular`);
+    });
+  }
   const supports = s.loads.filter((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "symmetry" || l.kind === "spring").length;
   const loads = s.loads.filter((l) => l.kind === "force" || l.kind === "pointForce" || l.kind === "pressure" || l.kind === "gravity" || l.kind === "coupling").length;
   if (!thermal && s.analysis !== "modal" && !supports && !assembly) add("aviso", "conditions", "Sem apoios: o modelo pode mover-se como corpo rígido (a matriz de rigidez fica singular)");

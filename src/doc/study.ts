@@ -73,7 +73,11 @@ export const setKind = (g: FemSet): "face" | "edge" | "body" => g.kind ?? "face"
  */
 export type LoadCsys = { type: "rect" | "cyl"; a: [Expr, Expr, Expr]; b: [Expr, Expr, Expr] };
 
-export type FemLoad =
+/**
+ * Condição de fronteira ou carga. `steps`: ids dos passos (`FemStudy.steps`) em que está ativa
+ * (omitido = todos); molas e massas ficam sempre ativas.
+ */
+export type FemLoad = (
   /** Encastramento das faces ou, em alternativa, das arestas (`edges`). */
   | { kind: "fixed"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[] }
   /** Deslocamento imposto (mm) por direção, global ou no referencial local (`csys`). */
@@ -103,7 +107,11 @@ export type FemLoad =
   /** Convecção: coeficiente (W/(m²·K)) e temperatura do fluido (°C). */
   | { kind: "convection"; faces: TopoRef[]; sets?: string[]; h: Expr; tInf: Expr }
   /** Fluxo de calor (W/m²) a entrar nas faces. */
-  | { kind: "heatFlux"; faces: TopoRef[]; sets?: string[]; q: Expr };
+  | { kind: "heatFlux"; faces: TopoRef[]; sets?: string[]; q: Expr }
+) & { steps?: string[] };
+
+/** Passo de carga da estática (as condições ativas mudam de passo para passo; o tempo acumula). */
+export interface FemStep { id: string; name: string }
 
 export interface SimMesh {
   /** Tamanho máximo dos elementos (mm). */
@@ -230,6 +238,11 @@ export interface FemStudy {
   dynamic?: FemDynamic;
   material: SimMaterial;
   loads: FemLoad[];
+  /**
+   * Estática: passos de carga sequenciais (CalculiX `*STEP`), cada um com as suas condições ativas;
+   * o estado (deformação, plasticidade) passa de um passo para o seguinte. Omitido = um só passo.
+   */
+  steps?: FemStep[];
   convergence?: ConvergenceConfig;
   convergenceRuns?: StoredConvergence[];
   /** Conjuntos de faces nomeados, usados pelas condições (`sets`). */

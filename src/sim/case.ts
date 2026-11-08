@@ -11,7 +11,8 @@ export interface CaseFace { tag: number; name: string; center: V3; area: number;
 /** Referencial local (CalculiX `*TRANSFORM`): retangular (a = ponto no eixo X, b = ponto no plano XY) ou cilíndrico (a, b = pontos do eixo). */
 export type CaseCsys = { type: "rect" | "cyl"; a: V3; b: V3 };
 
-export type FemCaseLoad =
+/** Carga do caso; `steps` = índices dos passos (`FemCase.steps`) em que está ativa (omitido = todos). */
+export type FemCaseLoad = (
   | { kind: "fixed"; group: string }
   /** Deslocamento imposto; com `csys`, componentes no referencial local. */
   | { kind: "displacement"; group: string; u: (number | null)[]; csys?: CaseCsys }
@@ -27,7 +28,11 @@ export type FemCaseLoad =
   /** Massa acrescentada (t) repartida pelos nós do grupo como uma força distribuída (entra na inércia e no peso). */
   | { kind: "mass"; group: string; m: number }
   /** Acoplamento rígido (RBE2) ou distribuído (RBE3) do grupo a um ponto de referência, com força (N) e momento (N·mm) nesse ponto. */
-  | { kind: "coupling"; group: string; point: V3; mode: "rigid" | "distributing"; f: V3; mo: V3 };
+  | { kind: "coupling"; group: string; point: V3; mode: "rigid" | "distributing"; f: V3; mo: V3 }
+) & { steps?: number[] };
+
+/** A carga está ativa no passo k (sem `steps`: em todos). */
+export const activeIn = (l: { steps?: number[] }, k: number) => !l.steps || l.steps.includes(k);
 
 /**
  * Malha de um caso FEM (resolvida pelo núcleo; o Gmsh só a executa). Curvas e superfícies pelas
@@ -73,6 +78,8 @@ export interface FemCase {
   dynamic?: { scheme: "implicit" | "explicit"; duration: number; dt?: number; amplitude: [number, number][]; alpha: number; beta: number; frames: number };
   /** Estática não linear: geometria (grandes deslocamentos), plasticidade bilinear, incrementos. */
   nonlinear?: { geometry: boolean; plasticity: boolean; increments: number };
+  /** Estática com vários passos de carga (nomes); omitido = um só passo. */
+  steps?: string[];
   modes: number;
   material: SimMaterial;
   /** Grupo físico → tags das faces. */
