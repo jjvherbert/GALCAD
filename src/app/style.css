@@ -534,7 +534,7 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .sim-node.st-ok .ic { color: var(--ws-accent); }
 .sim-node .st { position: absolute; right: 8px; top: 8px; width: 16px; height: 16px; border-radius: 50%; background: var(--warn); color: #fff; font-size: 11px; display: grid; place-items: center; font-weight: 700; }
 .sim-leaves { margin: 0 0 4px 30px; border-left: 2px solid var(--line); }
-.sim-leaves li { padding: 1px 8px; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; gap: 6px; }
+.sim-leaves li { padding: 1px 8px; font-size: 12px; cursor: pointer; user-select: none; display: flex; justify-content: space-between; gap: 6px; }
 .sim-leaves li:hover { color: var(--ws-accent); }
 .sim-leaves .dt { color: var(--muted); }
 .sim-leaves .sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: 0; }
