@@ -1,7 +1,7 @@
 // Estudos: caso FEM de uma peça (apoios, cargas, malha e hipóteses).
 import { type FemStudy, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
-import { type TopoRef } from "../doc/types.ts";
+import { type Expr, type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges } from "./context.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
 import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
@@ -84,6 +84,12 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
         const m = evalParam(l.m, sc, "Massa");
         if (m < 0) throw new Error(`Condição ${i + 1} (massa): a massa não pode ser negativa`);
         loads.push({ kind: "mass", group: g, m: m / 1000 }); // kg → t
+        break;
+      }
+      case "coupling": {
+        if (l.mode === "distributing" && edges.length) throw new Error(`Condição ${i + 1} (acoplamento distribuído): escolha faces (as arestas só aceitam o acoplamento rígido)`);
+        const z = (v?: [Expr, Expr, Expr], w = "") => (v ? n3(v, sc, `Condição ${i + 1}: ${w}`) : [0, 0, 0] as V3);
+        loads.push({ kind: "coupling", group: g, point: n3(l.point, sc, `Condição ${i + 1}: ponto`), mode: l.mode, f: z(l.f, "força"), mo: z(l.mo, "momento") });
         break;
       }
       case "pressure": loads.push({ kind: "pressure", group: g, p: evalParam(l.p, sc, "Pressão") }); break;

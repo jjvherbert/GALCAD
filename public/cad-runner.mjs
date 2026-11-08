@@ -1898,9 +1898,37 @@ function calculixDeck(c, m) {
 			L.push(`*ELEMENT, TYPE=MASS, ELSET=${set}`, ...ns.map((n) => `${++eid}, ${n}`), `*MASS, ELSET=${set}`, s);
 		}
 	});
+	const cpl = /* @__PURE__ */ new Map();
+	let nid = 0;
+	for (const k of m.nodes.keys()) if (k > nid) nid = k;
+	c.loads.forEach((ld, j) => {
+		if (ld.kind !== "coupling") return;
+		if (thermal) {
+			warnings.push(`Acoplamento ${ld.group}: ignorado na análise térmica`);
+			return;
+		}
+		const faces = (tris[ld.group] ?? []).filter((t) => t.face);
+		if (!(lines[ld.group]?.length || tris[ld.group]?.length)) {
+			warnings.push(`Acoplamento ${ld.group}: grupo sem nós na malha`);
+			return;
+		}
+		const r = ++nid, q = ld.mode === "rigid" ? ++nid : void 0;
+		L.push(`*NODE, NSET=NREF${j + 1}`, `${r}, ${ld.point.map(fmt).join(", ")}`);
+		if (q) L.push(`${q}, ${ld.point.map(fmt).join(", ")}`, `*RIGID BODY, NSET=N_${ld.group}, REF NODE=${r}, ROT NODE=${q}`);
+		else {
+			if (!faces.length) throw new Error(`Acoplamento distribuído ${ld.group}: precisa de faces da malha`);
+			L.push(`*SURFACE, NAME=SC${j + 1}, TYPE=ELEMENT`, ...faces.map((t) => `${t.face[0]}, S${t.face[1]}`));
+			L.push(`*COUPLING, REF NODE=${r}, SURFACE=SC${j + 1}, CONSTRAINT NAME=CP${j + 1}`, "*DISTRIBUTING", "1, 6");
+		}
+		cpl.set(ld, {
+			r,
+			q
+		});
+	});
 	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 	const bcs = [], loads = [], bcsAmp = [];
 	const cload = /* @__PURE__ */ new Map();
+	const moments = [];
 	for (const ld of c.loads) switch (ld.kind) {
 		case "fixed":
 			bcs.push(`N_${ld.group}, 1, 3`);
@@ -1985,6 +2013,28 @@ function calculixDeck(c, m) {
 		case "heatFlux":
 			loads.push("*DFLUX");
 			for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * .001)}`);
+			break;
+		case "spring": break;
+		case "mass": break;
+		case "coupling": {
+			const p = cpl.get(ld);
+			if (!p) break;
+			const add = (n, v) => {
+				const acc = cload.get(n) ?? [
+					0,
+					0,
+					0
+				];
+				for (let k = 0; k < 3; k++) acc[k] += v[k];
+				cload.set(n, acc);
+			};
+			add(p.r, ld.f);
+			if (p.q) add(p.q, ld.mo);
+			else ld.mo.forEach((x, k) => {
+				if (Math.abs(x) > 0) moments.push(`${p.r}, ${k + 4}, ${fmt(x)}`);
+			});
+			break;
+		}
 	}
 	const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => (tris[n.slice(2)] ?? lines[n.slice(2)])?.flatMap((t) => t.n) ?? [])));
 	const supportLoad = [
@@ -2026,6 +2076,7 @@ function calculixDeck(c, m) {
 			if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`);
 		});
 	}
+	if (moments.length) loads.push("*CLOAD", ...moments);
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;
 	const contact = (c.ties ?? []).some((t) => t.kind === "contact");
 	let dyn;
@@ -2857,6 +2908,7 @@ function radiossDeck(c, m) {
 	let bcs = 0, loads = 0;
 	for (const ld of c.loads) {
 		if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
+		if (ld.kind === "coupling") throw new Error("OpenRadioss: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "mass") throw new Error("OpenRadioss: as massas pontuais ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
 		if (ld.kind === "fixed" || ld.kind === "displacement") {
@@ -3312,6 +3364,7 @@ function asterMesh(c, m) {
 function asterCase(c, m) {
 	if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
 	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
+	if (c.loads.some((l) => l.kind === "coupling")) throw new Error("code_aster: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
 	const { mail, nodeOrder, areas, edgeNodes, springs, masses, warnings } = asterMesh(c, m);
 	const mat = c.material;
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;
@@ -3409,7 +3462,8 @@ function asterCase(c, m) {
 			break;
 		}
 		case "spring":
-		case "mass": break;
+		case "mass":
+		case "coupling": break;
 		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
 	}
 	if (!ddl.length && !springs.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");

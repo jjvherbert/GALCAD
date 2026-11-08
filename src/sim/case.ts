@@ -21,7 +21,9 @@ export type FemCaseLoad =
   /** Mola à terra: rigidez total (N/mm) por direção global, repartida pelos nós do grupo como uma força distribuída. */
   | { kind: "spring"; group: string; k: V3 }
   /** Massa acrescentada (t) repartida pelos nós do grupo como uma força distribuída (entra na inércia e no peso). */
-  | { kind: "mass"; group: string; m: number };
+  | { kind: "mass"; group: string; m: number }
+  /** Acoplamento rígido (RBE2) ou distribuído (RBE3) do grupo a um ponto de referência, com força (N) e momento (N·mm) nesse ponto. */
+  | { kind: "coupling"; group: string; point: V3; mode: "rigid" | "distributing"; f: V3; mo: V3 };
 
 /**
  * Malha de um caso FEM (resolvida pelo núcleo; o Gmsh só a executa). Curvas e superfícies pelas

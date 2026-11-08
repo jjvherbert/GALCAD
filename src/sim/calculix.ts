@@ -3,7 +3,7 @@
 //
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
-import type { FemCase } from "./case.ts";
+import type { FemCase, FemCaseLoad, V3 } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
@@ -222,10 +222,31 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       L.push(`*ELEMENT, TYPE=MASS, ELSET=${set}`, ...ns.map((n) => `${++eid}, ${n}`), `*MASS, ELSET=${set}`, s);
     }
   });
+  // acoplamentos: nó de referência (e de rotação, no rígido) fora da malha. Rígido (RBE2): *RIGID BODY
+  // do conjunto de nós; distribuído (RBE3): *COUPLING + *DISTRIBUTING nas faces (não enrijece)
+  const cpl = new Map<FemCaseLoad, { r: number; q?: number }>();
+  let nid = 0;
+  for (const k of m.nodes.keys()) if (k > nid) nid = k;
+  c.loads.forEach((ld, j) => {
+    if (ld.kind !== "coupling") return;
+    if (thermal) { warnings.push(`Acoplamento ${ld.group}: ignorado na análise térmica`); return; }
+    const faces = (tris[ld.group] ?? []).filter((t) => t.face);
+    if (!(lines[ld.group]?.length || tris[ld.group]?.length)) { warnings.push(`Acoplamento ${ld.group}: grupo sem nós na malha`); return; }
+    const r = ++nid, q = ld.mode === "rigid" ? ++nid : undefined;
+    L.push(`*NODE, NSET=NREF${j + 1}`, `${r}, ${ld.point.map(fmt).join(", ")}`);
+    if (q) L.push(`${q}, ${ld.point.map(fmt).join(", ")}`, `*RIGID BODY, NSET=N_${ld.group}, REF NODE=${r}, ROT NODE=${q}`);
+    else {
+      if (!faces.length) throw new Error(`Acoplamento distribuído ${ld.group}: precisa de faces da malha`);
+      L.push(`*SURFACE, NAME=SC${j + 1}, TYPE=ELEMENT`, ...faces.map((t) => `${t.face![0]}, S${t.face![1]}`));
+      L.push(`*COUPLING, REF NODE=${r}, SURFACE=SC${j + 1}, CONSTRAINT NAME=CP${j + 1}`, "*DISTRIBUTING", "1, 6");
+    }
+    cpl.set(ld, { r, q });
+  });
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 
   const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [];
   const cload = new Map<number, [number, number, number]>();
+  const moments: string[] = [];
   for (const ld of c.loads) {
     switch (ld.kind) {
       case "fixed": bcs.push(`N_${ld.group}, 1, 3`); break;
@@ -287,6 +308,16 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       // molas: elementos SPRING1 nos dados do modelo (acima)
       case "spring": break;
       case "mass": break;
+      // acoplamento: força no nó de referência; momento no nó de rotação (rígido) ou nos graus 4–6
+      case "coupling": {
+        const p = cpl.get(ld);
+        if (!p) break;
+        const add = (n: number, v: V3) => { const acc = cload.get(n) ?? [0, 0, 0]; for (let k = 0; k < 3; k++) acc[k] += v[k]; cload.set(n, acc); };
+        add(p.r, ld.f);
+        if (p.q) add(p.q, ld.mo);
+        else ld.mo.forEach((x, k) => { if (Math.abs(x) > 0) moments.push(`${p.r}, ${k + 4}, ${fmt(x)}`); });
+        break;
+      }
     }
   }
   // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses
@@ -312,6 +343,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     loads.push("*CLOAD");
     for (const [n, f] of cload) f.forEach((x, k) => { if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`); });
   }
+  if (moments.length) loads.push("*CLOAD", ...moments);
 
   const nl = c.analysis === "static" ? c.nonlinear : undefined;
   const contact = (c.ties ?? []).some((t) => t.kind === "contact");

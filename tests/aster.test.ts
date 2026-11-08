@@ -251,6 +251,27 @@ test("code_aster: massa pontual → POI1 em DIS_T com M_T_D_N e peso em FORCE_NO
   assert.throws(() => asterCase({ ...massCase, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m), /massas só estão/);
 });
 
+const cplCase = (mode: "rigid" | "distributing"): FemCase => ({ ...base, solver: "calculix", loads: [{ kind: "fixed", group: "L1_FIXED" }, { kind: "coupling", group: "L2_FORCE", point: [1, 1, 1], mode, f: [0, 0, -10], mo: [5, 0, 0] }] });
+
+test("CalculiX: acoplamento rígido (RIGID BODY) e distribuído (COUPLING/DISTRIBUTING) com nó de referência novo", () => {
+  const m = parseMsh(MSH);
+  const rg = calculixDeck(cplCase("rigid"), m).inp;
+  // nós 5 (referência) e 6 (rotação) a seguir ao maior id da malha; força no 5, momento no 6
+  assert.match(rg, /\*NODE, NSET=NREF2\n5, 1, 1, 1\n6, 1, 1, 1\n\*RIGID BODY, NSET=N_L2_FORCE, REF NODE=5, ROT NODE=6\n/);
+  assert.match(rg, /\*CLOAD\n5, 3, -10\n6, 1, 5\n/);
+  const ds = calculixDeck(cplCase("distributing"), m).inp;
+  assert.match(ds, /\*NODE, NSET=NREF2\n5, 1, 1, 1\n\*SURFACE, NAME=SC2, TYPE=ELEMENT\n1, S1\n\*COUPLING, REF NODE=5, SURFACE=SC2, CONSTRAINT NAME=CP2\n\*DISTRIBUTING\n1, 6\n/);
+  assert.match(ds, /\*CLOAD\n5, 3, -10\n\*CLOAD\n5, 4, 5\n/);
+  assert.ok(!/RIGID BODY/.test(ds));
+  const th = calculixDeck({ ...cplCase("rigid"), analysis: "thermal" }, m);
+  assert.ok(th.warnings.includes("Acoplamento L2_FORCE: ignorado na análise térmica"), JSON.stringify(th.warnings));
+  assert.ok(!/RIGID BODY|NREF/.test(th.inp));
+});
+
+test("code_aster: acoplamentos recusados (só no CalculiX)", () => {
+  assert.throws(() => asterCase({ ...cplCase("rigid"), solver: "code_aster" }, parseMsh(MSH)), /acoplamentos/);
+});
+
 test("trimNum: tira zeros só da mantissa (o expoente fica intacto)", () => {
   assert.equal(trimNum((2.5e-20).toPrecision(10)), "2.5e-20");
   assert.equal(trimNum((3e-30).toPrecision(10)), "3e-30");

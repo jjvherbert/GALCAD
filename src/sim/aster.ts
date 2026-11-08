@@ -193,6 +193,7 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
 export function asterCase(c: FemCase, m: Msh): AsterFiles {
   if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
   if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
+  if (c.loads.some((l) => l.kind === "coupling")) throw new Error("code_aster: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
   const { mail, nodeOrder, areas, edgeNodes, springs, masses, warnings } = asterMesh(c, m);
   const mat = c.material;
   const nl = c.analysis === "static" ? c.nonlinear : undefined;
@@ -291,7 +292,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
         if (g > 0) for (const x of masses) nodal.push(`_F(GROUP_NO='${x.nodes}', FX=${num(x.m * ld.g[0])}, FY=${num(x.m * ld.g[1])}, FZ=${num(x.m * ld.g[2])})`);
         break;
       }
-      case "spring": case "mass": break;
+      case "spring": case "mass": case "coupling": break;
       default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
     }
   }

@@ -179,6 +179,20 @@ test("caso FEM: massas pontuais (kg → t, arestas, não contam como apoio, m ne
   await assert.rejects(solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "mass", faces: [face(0, 100)], m: -1 }] })), /massa não pode ser negativa/);
 });
 
+test("caso FEM: acoplamentos (grupo, momento por omissão, arestas só no rígido, não contam como apoio)", async () => {
+  const { doc, face, edge } = await bar();
+  const { sim } = await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "coupling", faces: [face(0, 100)], point: [120, 5, 5], mode: "rigid", f: [0, 0, -100] }] }));
+  const c = JSON.parse(String(sim.files["case.json"]));
+  assert.deepEqual([c.loads[1].kind, c.loads[1].mode, c.loads[1].point, c.loads[1].mo], ["coupling", "rigid", [120, 5, 5], [0, 0, 0]]);
+  assert.equal(c.groups[c.loads[1].group].length, 1);
+  const { sim: e } = await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "coupling", faces: [], edges: [edge(1, [100, 0])], point: [100, 5, 0], mode: "rigid", f: [0, 0, -1] }] }));
+  const ce = JSON.parse(String(e.files["case.json"]));
+  assert.equal(ce.edgeGroups[ce.loads[1].group].length, 1);
+  await assert.rejects(solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "coupling", faces: [], edges: [edge(1, [100, 0])], point: [100, 5, 0], mode: "distributing", f: [0, 0, -1] }] })), /distribuído/);
+  const { sim: only } = await solve(doc, fem({ loads: [{ kind: "coupling", faces: [face(0, 100)], point: [100, 5, 5], mode: "rigid", f: [0, 0, -1] }] }));
+  assert.ok(only.warnings.some((w) => /Sem apoios/.test(w)), JSON.stringify(only.warnings));
+});
+
 test("CalculiX: consola — flecha (Timoshenko), reações e pressão", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
   const { doc, face } = await bar();
   const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
@@ -338,6 +352,24 @@ test("CalculiX: massa pontual na ponta da consola (peso na reação e frequênci
   const md = await (await solve(doc, fem({ analysis: "modal", modes: 2, loads }))).run();
   assert.ok(md.ok, JSON.stringify(md));
   near(md.fem!.frequencies[0], Math.sqrt((3 * E * I) / L ** 3 / (m + 0.24 * rhoA * L)) / (2 * Math.PI), 0.05);
+});
+
+test("CalculiX: acoplamento rígido na ponta da consola", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
+  const { doc, face } = await bar();
+  // força no ponto de referência (centro da ponta) ligada à face por RBE2 ≈ força na face (Timoshenko,
+  // a face fica plana); um ponto a 20 mm além da ponta acrescenta o momento F·20 (flecha +F·a·L²/2EI)
+  const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
+  const delta = (F * L ** 3) / (3 * E * I) + (F * L) / ((5 / 6) * G * A);
+  const tipW = (f: NonNullable<Awaited<ReturnType<typeof runCase>>["fem"]>) => {
+    const w = f.positions.reduce<number[]>((acc, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...acc, f.displacements[0].values[i + 2]] : acc), []);
+    return w.reduce((a, b) => a + b, 0) / w.length;
+  };
+  for (const [mode, x, d] of [["rigid", 100, delta], ["distributing", 100, delta], ["rigid", 120, delta + (F * 20 * L ** 2) / (2 * E * I)]] as const) {
+    const r = await (await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "coupling", faces: [face(0, 100)], point: [x, 5, 5], mode, f: [0, 0, -F] }] }))).run();
+    assert.ok(r.ok, JSON.stringify(r));
+    near(-tipW(r.fem!), d, 0.04);
+    near(r.fem!.reactions[0][2], F, 1e-3);
+  }
 });
 
 test("CalculiX: sondas (média na face, ponto) e refinamento automático até ao GCI alvo", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
