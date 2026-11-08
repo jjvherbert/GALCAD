@@ -151,8 +151,8 @@ async function main() {
       check("Pressão: 1 clique na barra + 1 na face", (await p.$$(".sim-panel .kw-item")).length === n0 + 1 && /1 face/.test(await p.textContent(".sim-node:has-text('Cargas e apoios')") + await p.textContent(".sim-leaves")));
       // R4: conjuntos, simetria, verificação do modelo e compatibilidade por solver
       await p.click(".sim-node:has-text('Cargas e apoios')");
-      await p.click(`.sim-panel .kw-item:has-text('Força total') button:has-text('guardar como conjunto')`);
-      check("→ conjunto: a condição passa a usar o conjunto", (await p.$$(".sim-panel .set-chips .chip.on")).length === 1 && /Conjuntos de faces \(1\)/.test(await p.textContent(".sim-panel .sets-box summary")));
+      await p.click(`.sim-panel .kw-item:has-text('Força total') button:has-text('guardar faces como conjunto')`);
+      check("→ conjunto: a condição passa a usar o conjunto", (await p.$$(".sim-panel .set-chips .chip.on")).length === 1 && /Conjuntos \(1\)/.test(await p.textContent(".sim-panel .sets-box summary")));
       await p.click(".tabs button:has-text('Cargas e apoios')");
       await p.click(".cmd:has-text('Simetria')");
       await p.keyboard.press("Escape");
