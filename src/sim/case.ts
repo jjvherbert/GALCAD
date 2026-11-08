@@ -67,6 +67,13 @@ export interface FemCase {
   material: SimMaterial;
   /** Grupo físico → tags das faces. */
   groups: Record<string, number[]>;
+  /**
+   * Grupo físico → tags das arestas (curvas Gmsh): apoios e forças em arestas. Uma carga cujo grupo
+   * está aqui (e não em `groups`) atua nas linhas da malha dessas arestas.
+   */
+  edgeGroups?: Record<string, number[]>;
+  /** Grupo de arestas → comprimento no CAD (mm), para conferir a malha. */
+  edgeLength?: Record<string, number>;
   faces: CaseFace[];
   loads: FemCaseLoad[];
   mesh: FemCaseMesh;

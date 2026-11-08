@@ -52,12 +52,13 @@ export function plasticCurveErrors(m: SimMaterial): string[] {
 export interface FemSet { id: string; name: string; faces: TopoRef[] }
 
 export type FemLoad =
-  | { kind: "fixed"; faces: TopoRef[]; sets?: string[] }
-  | { kind: "displacement"; faces: TopoRef[]; sets?: string[]; ux?: Expr; uy?: Expr; uz?: Expr }
+  /** Encastramento das faces ou, em alternativa, das arestas (`edges`). */
+  | { kind: "fixed"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[] }
+  | { kind: "displacement"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; ux?: Expr; uy?: Expr; uz?: Expr }
   /** Simetria: impede o deslocamento normal ao plano (faces planas alinhadas com X, Y ou Z); permite deslizar no plano. */
   | { kind: "symmetry"; faces: TopoRef[]; sets?: string[] }
-  /** Força total (N) distribuída uniformemente pela área das faces. */
-  | { kind: "force"; faces: TopoRef[]; sets?: string[]; f: [Expr, Expr, Expr] }
+  /** Força total (N) distribuída uniformemente pela área das faces ou pelo comprimento das arestas (`edges`). */
+  | { kind: "force"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; f: [Expr, Expr, Expr] }
   /** Força (N) concentrada no nó da malha mais próximo de um ponto (mm). Dá tensões locais irreais: ver só a resposta global. */
   | { kind: "pointForce"; point: [Expr, Expr, Expr]; f: [Expr, Expr, Expr] }
   /** Pressão (MPa), positiva a empurrar contra a face. */
@@ -286,6 +287,9 @@ export function loadFaces(s: FemStudy, l: FemLoad): TopoRef[] {
   for (const id of l.sets ?? []) for (const f of s.sets?.find((x) => x.id === id)?.faces ?? []) if (!out.some((o) => o.name === f.name)) out.push(f);
   return out;
 }
+
+/** Arestas de uma condição (apoios e forças em arestas, em vez de faces). */
+export const loadEdges = (l: FemLoad): TopoRef[] => ("edges" in l && l.edges) || [];
 
 /** Todas as referências a faces de um estudo (para dependências e validação). */
 export function studyFaces(s: Study): TopoRef[] {

@@ -169,3 +169,31 @@ export function faceIntegrals(type: number, pts: P3[]): { area: number; nodal: n
   }
   return { area, nodal, vec };
 }
+
+/** Linhas da malha nas arestas: line2 (Gmsh 1) e line3 (Gmsh 8, nós [ponta 0, ponta 1, meio]). */
+export const LINES: Record<number, { nodes: number; aster: string }> = { 1: { nodes: 2, aster: "SEG2" }, 8: { nodes: 3, aster: "SEG3" } };
+export const isLineType = (t: number) => t in LINES;
+
+/**
+ * Integrais de uma linha (nós pela ordem Gmsh): comprimento e comprimento nodal consistente ∫Nᵢ ds
+ * (a fração de uma força uniforme por comprimento que vai para cada nó). Linear: L/2 em cada ponta;
+ * quadrática reta: L/6 nas pontas e 2L/3 no meio (isoparamétrica nas curvas, Gauss de 3 pontos).
+ */
+export function lineIntegrals(type: number, pts: P3[]): { length: number; nodal: number[] } {
+  if (type === 1) {
+    const L = Math.hypot(...sub(pts[1], pts[0]));
+    return { length: L, nodal: [L / 2, L / 2] };
+  }
+  if (type !== 8) throw new Error(`Linha do tipo Gmsh ${type} sem funções de forma`);
+  const nodal = [0, 0, 0];
+  let length = 0;
+  for (const [x, w] of G3) {
+    const N = [(x * (x - 1)) / 2, (x * (x + 1)) / 2, 1 - x * x], D = [x - 0.5, x + 0.5, -2 * x];
+    const t: P3 = [0, 0, 0];
+    pts.forEach((p, i) => { for (let k = 0; k < 3; k++) t[k] += D[i] * p[k]; });
+    const J = Math.hypot(t[0], t[1], t[2]);
+    length += w * J;
+    N.forEach((Ni, i) => (nodal[i] += w * Ni * J));
+  }
+  return { length, nodal };
+}

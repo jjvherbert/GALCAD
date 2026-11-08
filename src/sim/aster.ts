@@ -10,8 +10,8 @@
 // escrava presos ao volume do corpo mestre).
 // Unidades: mm, N, MPa, t, s (como no CalculiX).
 import type { FemCase } from "./case.ts";
-import { type Msh, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
-import { FACES, SOLIDS, faceIntegrals } from "./elements.ts";
+import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
+import { FACES, SOLIDS, faceIntegrals, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
 import { type FemResult, type FrdBlock, femResultFrom } from "./calculix.ts";
 const num = (x: number) => (Number.isInteger(x) ? `${x}.` : x.toPrecision(12).replace(/\.?0+(e|$)/, "$1"));
@@ -35,7 +35,7 @@ function pointNodes(c: FemCase, m: Msh, nodes: number[]): { node: number; dist: 
 }
 
 /** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
-export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number[]; areas: Record<string, number> } {
+export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number[]; areas: Record<string, number>; edgeNodes: Record<string, { group: string; w: number }[]>; warnings: string[] } {
   if (!solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
   const L: string[] = ["TITRE", ` ${c.title.replace(/[^\x20-\x7e]/g, "_").slice(0, 70)}`, "FINSF", "%"];
   const used = new Set<number>();
@@ -85,6 +85,28 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
     areas[name] = A;
   }
   section(faces);
+  // condições em arestas: só os nós (GROUP_NO); nas forças, um grupo por nó com a fração consistente
+  // ∫Nᵢ ds / L da força total (FORCE_NODALE), como no CLOAD do CalculiX
+  const warnings: string[] = [];
+  const edgeNodes: Record<string, { group: string; w: number }[]> = {};
+  const forceEdges = new Set(c.loads.flatMap((ld) => (ld.kind === "force" ? [ld.group] : [])));
+  Object.keys(c.edgeGroups ?? {}).forEach((name, k) => {
+    const w = new Map<number, number>();
+    let len = 0;
+    for (const { type, nodes } of elementsOf(edgeBlocks(m, name))) {
+      const li = lineIntegrals(type, nodes.map((x) => m.nodes.get(x)!));
+      len += li.length;
+      nodes.forEach((x, i) => w.set(x, (w.get(x) ?? 0) + li.nodal[i]));
+    }
+    if (!w.size) warnings.push(`O grupo ${name} não tem linhas na malha`);
+    if ([...w.keys()].some((x) => !used.has(x))) warnings.push(`Grupo ${name}: nós das arestas fora dos elementos de volume`);
+    const ns = [...w.keys()].filter((x) => used.has(x)).sort((a, b) => a - b);
+    nodeGroups[name] = ns;
+    if (forceEdges.has(name) && len > 0) {
+      edgeNodes[name] = ns.map((x, i) => ({ group: `E${k + 1}_${i + 1}`, w: w.get(x)! / len }));
+      ns.forEach((x, i) => (nodeGroups[`E${k + 1}_${i + 1}`] = [x]));
+    }
+  });
   const block = (kw: string, name: string, ids: string[]) => {
     L.push(kw, name);
     for (let k = 0; k < ids.length; k += 10) L.push(ids.slice(k, k + 10).join(" "));
@@ -106,15 +128,14 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
   // todos os nós (o POST_RELEVE_T de extração pede GROUP_NO)
   block("GROUP_NO", "NALL", nodeOrder.map((x) => `N${x}`));
   L.push("FIN");
-  return { mail: L.join("\n") + "\n", nodeOrder, areas };
+  return { mail: L.join("\n") + "\n", nodeOrder, areas, edgeNodes, warnings };
 }
 
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 export function asterCase(c: FemCase, m: Msh): AsterFiles {
   if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
   if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
-  const { mail, nodeOrder, areas } = asterMesh(c, m);
-  const warnings: string[] = [];
+  const { mail, nodeOrder, areas, edgeNodes, warnings } = asterMesh(c, m);
   const mat = c.material;
   const nl = c.analysis === "static" ? c.nonlinear : undefined;
   const C: string[] = [];
@@ -172,6 +193,12 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
         break;
       }
       case "force": {
+        if (c.edgeGroups?.[ld.group]) {
+          const en = edgeNodes[ld.group];
+          if (!en?.length) { warnings.push(`Força no grupo ${ld.group} sem comprimento`); break; }
+          for (const { group, w } of en) nodal.push(`_F(GROUP_NO='${group}', FX=${num(w * ld.f[0])}, FY=${num(w * ld.f[1])}, FZ=${num(w * ld.f[2])})`);
+          break;
+        }
         const A = areas[ld.group];
         if (!(A > 0)) { warnings.push(`Força no grupo ${ld.group} sem área`); break; }
         force.push(`_F(GROUP_MA='${ld.group}', FX=${num(ld.f[0] / A)}, FY=${num(ld.f[1] / A)}, FZ=${num(ld.f[2] / A)})`);

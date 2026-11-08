@@ -41,6 +41,8 @@ export function femGeo(c: FemCase, o: GeoOpts = {}): string {
   if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
   else out.push(`Physical Volume("SOLID") = Volume{:};`);
   for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
+  // condições em arestas: com SaveAll = 0 só saem as linhas das curvas num grupo físico
+  for (const [name, tags] of Object.entries(c.edgeGroups ?? {})) out.push(`Physical Curve("${name}") = ${list(tags)};`);
   out.push(
     `Mesh.MeshSizeMax = ${c.mesh.size};`,
     `Mesh.MeshSizeMin = ${minSizeFloor(c)};`,

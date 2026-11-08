@@ -1,6 +1,6 @@
 // Ações dos estudos de simulação partilhadas pela barra do espaço de trabalho, pela árvore do modelo e
 // pelo painel: estudos da peça ou da montagem ativa, criar, gravar, calcular e pré-visualizar a malha.
-import { loadFaces } from "../doc/study.ts";
+import { loadEdges, loadFaces } from "../doc/study.ts";
 import { type ConvergenceConfig, DEFAULT_CONVERGENCE, type StoredConvergence, type FemLoad, type FemStudy, type SimMesh, type Study, newCfdStudy, newFemStudy } from "../doc/study.ts";
 import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
@@ -211,7 +211,7 @@ export const CONDITION_COLORS: Record<FemLoad["kind"] | "inlet" | "outlet", numb
   temperature: 0xef4444, convection: 0x06b6d4, heatFlux: 0xf97316, inlet: 0x16a34a, outlet: 0xdc2626,
 };
 
-/** Faces (nome no 3D) → cor da condição, para o estudo ativo do espaço FEM/CFD. */
+/** Faces (nome no 3D) e arestas (`edge:nome`) → cor da condição, para o estudo ativo do espaço FEM/CFD. */
 export function conditionFaceColors(): Map<string, number> | null {
   const st = store.state;
   if (st.workspace !== "fem" && st.workspace !== "cfd") return null;
@@ -222,7 +222,10 @@ export function conditionFaceColors(): Map<string, number> | null {
   const key = (n: string) => (asm ? n.replace(/\/(?=[^/]*$)/, "|") : n);
   const out = new Map<string, number>();
   if (s.physics === "fem") {
-    for (const l of s.loads) for (const f of loadFaces(s, l)) out.set(key(f.name), CONDITION_COLORS[l.kind]);
+    for (const l of s.loads) {
+      for (const f of loadFaces(s, l)) out.set(key(f.name), CONDITION_COLORS[l.kind]);
+      for (const e of loadEdges(l)) out.set(`edge:${e.name}`, CONDITION_COLORS[l.kind]);
+    }
   } else {
     for (const f of s.inlet?.faces ?? []) out.set(key(f.name), CONDITION_COLORS.inlet);
     for (const f of s.outlet?.faces ?? []) out.set(key(f.name), CONDITION_COLORS.outlet);
@@ -230,16 +233,17 @@ export function conditionFaceColors(): Map<string, number> | null {
   return out;
 }
 
-/** Duplo clique numa face dos espaços de simulação: abre (e destaca) a condição que a usa; sem condição, não faz nada. */
+/** Duplo clique numa face (ou aresta) dos espaços de simulação: abre (e destaca) a condição que a usa; sem condição, não faz nada. */
 export function conditionAtFace(p: { kind: string; name?: string; component?: string }) {
-  if (p.kind !== "face" || !p.name) return;
+  if ((p.kind !== "face" && p.kind !== "edge") || !p.name) return;
   const st = store.state;
   const s = activeStudy(st.workspace === "cfd" ? "cfd" : "fem");
   if (!s) return;
   const names = new Set([p.name, p.component ? `${p.component}/${p.name}` : p.name]);
   let index = -1;
-  if (s.physics === "fem") index = s.loads.findIndex((l) => loadFaces(s, l).some((f) => names.has(f.name)));
-  else index = [s.inlet?.faces ?? [], s.outlet?.faces ?? []].findIndex((fs) => fs.some((f) => names.has(f.name)));
-  if (index < 0) { store.set({ message: "Esta face não tem condições (um clique escolhe faces quando a seleção está ativa)" }); return; }
+  const edge = p.kind === "edge";
+  if (s.physics === "fem") index = s.loads.findIndex((l) => (edge ? loadEdges(l) : loadFaces(s, l)).some((f) => names.has(f.name)));
+  else if (!edge) index = [s.inlet?.faces ?? [], s.outlet?.faces ?? []].findIndex((fs) => fs.some((f) => names.has(f.name)));
+  if (index < 0) { store.set({ message: edge ? "Esta aresta não tem condições (um clique escolhe arestas quando a seleção está ativa)" : "Esta face não tem condições (um clique escolhe faces quando a seleção está ativa)" }); return; }
   store.set({ simStudy: s.id, simSection: "conditions", pickTarget: null, simFocus: { index, n: (st.simFocus?.n ?? 0) + 1 } });
 }

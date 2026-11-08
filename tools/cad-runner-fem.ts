@@ -5,8 +5,8 @@ import { cpus } from "node:os";
 import { join } from "node:path";
 import type { CfdCase, FemCase, SimCase } from "../src/sim/case.ts";
 import { type Algo3D, femGeo, type GeoOpts, su2Geo } from "../src/sim/gmsh.ts";
-import { elementsOf, faceBlocks, parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
-import { faceIntegrals } from "../src/sim/elements.ts";
+import { edgeBlocks, elementsOf, faceBlocks, parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
+import { faceIntegrals, lineIntegrals } from "../src/sim/elements.ts";
 import { type VtkFrame, parseVtk, radiossBlocks, radiossDeck } from "../src/sim/radioss.ts";
 import { calculixDeck, femResult, femResultFrom } from "../src/sim/calculix.ts";
 import { asterCase, asterResult } from "../src/sim/aster.ts";
@@ -38,6 +38,14 @@ export function checkGroups(c: FemCase, m: Msh): string[] {
     if (!a) { out.push(`Grupo ${name}: sem faces na malha`); continue; }
     const d = Math.hypot(...got.map((x, q) => x / a - want[q]));
     if (d > 0.02 * diag || Math.abs(a - A) > 0.05 * A) out.push(`Grupo ${name}: a malha não corresponde às faces do CAD (desvio ${d.toFixed(2)} mm, área ${a.toFixed(1)} vs ${A.toFixed(1)} mm²)`);
+  }
+  // arestas: comprimento das linhas da malha contra o do CAD
+  for (const name of Object.keys(c.edgeGroups ?? {})) {
+    let len = 0;
+    for (const { type, nodes } of elementsOf(edgeBlocks(m, name))) len += lineIntegrals(type, nodes.map((t) => m.nodes.get(t)!)).length;
+    const L = c.edgeLength?.[name];
+    if (!len) out.push(`Grupo ${name}: sem linhas na malha`);
+    else if (L && Math.abs(len - L) > 0.05 * L) out.push(`Grupo ${name}: a malha não corresponde às arestas do CAD (comprimento ${len.toFixed(1)} vs ${L.toFixed(1)} mm)`);
   }
   // montagens: cada volume da malha tem de cair na caixa do corpo correspondente
   for (const b of c.bodies ?? []) {

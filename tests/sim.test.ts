@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SketchBuilder, initKernel } from "./helpers.ts";
 import { Engine } from "../src/kernel/rebuild.ts";
-import { faceProps } from "../src/kernel/occ.ts";
+import { edgeProps, faceProps } from "../src/kernel/occ.ts";
+import { namedEdges } from "../src/kernel/naming.ts";
 import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
 import type { FemStudy, CfdStudy, Study } from "../src/doc/study.ts";
@@ -92,7 +93,7 @@ test("FRD/DAT: blocos de resultados e valores próprios", () => {
 });
 
 /** Barra 100 × 10 × 10 mm ao longo de X (esboço no XY, extrusão em Z). */
-async function bar(): Promise<{ doc: CadDocument; face: (axis: 0 | 1 | 2, v: number) => TopoRef }> {
+async function bar(): Promise<{ doc: CadDocument; face: (axis: 0 | 1 | 2, v: number) => TopoRef; edge: (axis: 0 | 1 | 2, at: [number, number]) => TopoRef }> {
   const s = new SketchBuilder();
   s.rect(0, 0, 100, 10, 100, 10);
   let doc = newDocument();
@@ -103,7 +104,13 @@ async function bar(): Promise<{ doc: CadDocument; face: (axis: 0 | 1 | 2, v: num
     const f = r.ctx.body!.faces.find((x) => { const p = faceProps(x.face); return p.normal && Math.abs(Math.abs(p.normal[axis]) - 1) < 1e-9 && Math.abs(p.center[axis] - v) < 1e-6; })!;
     return { kind: "face", name: f.name };
   };
-  return { doc, face };
+  // aresta paralela ao eixo `axis`, com o ponto médio em `at` nas outras duas coordenadas
+  const edge = (axis: 0 | 1 | 2, at: [number, number]): TopoRef => {
+    const [i, j] = [0, 1, 2].filter((k) => k !== axis);
+    const e = namedEdges(r.ctx.body!).find((x) => { const p = edgeProps(x.edge); return Math.abs(p.mid[i] - at[0]) < 1e-6 && Math.abs(p.mid[j] - at[1]) < 1e-6 && Math.abs(p.end[axis] - p.start[axis]) > 1; })!;
+    return { kind: "edge", name: e.name };
+  };
+  return { doc, face, edge };
 }
 
 async function solve(doc: CadDocument, study: Study) {
@@ -130,6 +137,21 @@ test("caso FEM: ficheiros, grupos e hipóteses (sem solver)", async () => {
   assert.match(String(sim.files["LEIA-ME.txt"]), /gmsh mesh.geo -3 -o mesh.msh/);
 });
 
+test("caso FEM: condições em arestas (grupos de curvas, comprimento, hipótese)", async () => {
+  const { doc, face, edge } = await bar();
+  const { sim } = await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [], edges: [edge(1, [100, 10])], f: [0, 0, -100] }] }));
+  assert.match(String(sim.files["mesh.geo"]), /Physical Curve\("L2_FORCE"\) = \{\d+\};/);
+  const c = JSON.parse(String(sim.files["case.json"]));
+  assert.equal(c.edgeGroups.L2_FORCE.length, 1);
+  near(c.edgeLength.L2_FORCE, 10, 1e-9);
+  assert.equal(c.groups.L2_FORCE, undefined);
+  assert.ok(c.hypotheses.some((h: string) => /Condições em arestas/.test(h)));
+  // sem arestas o caso não leva os campos novos
+  const { sim: plain } = await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }] }));
+  assert.equal(JSON.parse(String(plain.files["case.json"])).edgeGroups, undefined);
+  await assert.rejects(solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)], edges: [edge(1, [0, 10])] }] })), /faces ou arestas, não ambas/);
+});
+
 test("CalculiX: consola — flecha (Timoshenko), reações e pressão", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
   const { doc, face } = await bar();
   const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
@@ -148,6 +170,28 @@ test("CalculiX: consola — flecha (Timoshenko), reações e pressão", { skip: 
   near(p.fem!.reactions[0][2], 1000, 1e-4);
   assert.deepEqual(p.warnings, []);
   assert.ok(p.summary.some(([k]) => /von Mises/.test(k)));
+});
+
+test("CalculiX: consola com força numa aresta e apoio numa aresta", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
+  const { doc, face, edge } = await bar();
+  const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
+  const delta = (F * L ** 3) / (3 * E * I) + (F * L) / ((5 / 6) * G * A);
+  // força na aresta de topo da ponta (ao longo de Y, x = 100, z = 10): a resultante é exata e a flecha
+  // média da ponta aproxima a da força na face (a diferença é local, perto da aresta)
+  const r = await (await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [], edges: [edge(1, [100, 10])], f: [0, 0, -F] }] }))).run();
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.deepEqual(r.warnings, []);
+  const f = r.fem!;
+  const tip = f.positions.reduce<number[]>((acc, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...acc, f.displacements[0].values[i + 2]] : acc), []);
+  near(-tip.reduce((a, b) => a + b, 0) / tip.length, delta, 0.05);
+  near(f.reactions[0][2], F, 1e-3);
+  // apoio na aresta de baixo da ponta + pressão de 1 MPa no topo: a reação total continua a ser 1000 N
+  const p = await (await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "fixed", faces: [], edges: [edge(1, [100, 0])] }, { kind: "pressure", faces: [face(2, 10)], p: 1 }] }))).run();
+  assert.ok(p.ok, JSON.stringify(p));
+  assert.deepEqual(p.warnings, []);
+  near(p.fem!.reactions[0][2], 1000, 1e-4);
+  const w = p.fem!.positions.reduce((m, _, i) => (i % 3 === 0 && Math.abs(p.fem!.positions[i] - 100) < 1e-6 && Math.abs(p.fem!.positions[i + 2]) < 1e-6 ? Math.max(m, Math.abs(p.fem!.displacements[0].values[i + 2])) : m), 0);
+  assert.ok(w < 1e-9, `aresta apoiada mexeu-se: ${w}`);
 });
 
 test("CalculiX: frequência própria da consola e condução térmica 1D", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {

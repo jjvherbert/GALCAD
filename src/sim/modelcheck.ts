@@ -4,7 +4,7 @@
 // análise que o solver não faz, material impossível, apoios em falta). `erro` bloqueia o cálculo,
 // `aviso` não; os rótulos do que cada solver faz vêm do que os adaptadores deste repositório
 // implementam e estão verificados, não do que o solver em geral sabe fazer.
-import { type CfdStudy, type FemLoad, type FemStudy, type Study, loadFaces, plasticCurveErrors } from "../doc/study.ts";
+import { type CfdStudy, type FemLoad, type FemStudy, type Study, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 
 export type CheckLevel = "erro" | "aviso" | "info";
 /** Secção do modelo onde se corrige (as mesmas da árvore). */
@@ -118,7 +118,11 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
   // condições
   s.loads.forEach((l, i) => {
     const name = `Condição ${i + 1} (${LOAD_LABEL[l.kind]})`;
-    if ("faces" in l && loadFaces(s, l).length === 0) add("erro", "conditions", `${name}: sem faces — escolha as faces no 3D`);
+    const nf = loadFaces(s, l).length, ne = loadEdges(l).length;
+    if (ne && nf) add("erro", "conditions", `${name}: escolha faces ou arestas, não ambas`);
+    else if (ne && s.solver === "openradioss") add("erro", "conditions", `${name}: o OpenRadioss não aceita condições em arestas — use faces`);
+    else if (ne && assembly) add("erro", "conditions", `${name}: arestas só num estudo de uma peça — numa montagem use faces`);
+    else if ("faces" in l && !nf && !ne) add("erro", "conditions", `${name}: sem ${"edges" in l || l.kind === "fixed" || l.kind === "displacement" || l.kind === "force" ? "faces nem arestas" : "faces"} — escolha-as no 3D`);
     if ((l.kind === "force" || l.kind === "pointForce") && l.f.every((x) => num(x) === 0)) add("aviso", "conditions", `${name}: força nula`);
     if (l.kind === "pressure" && num(l.p) === 0) add("aviso", "conditions", `${name}: pressão nula`);
     if (l.kind === "gravity" && l.g.every((x) => num(x) === 0)) add("aviso", "conditions", `${name}: gravidade nula`);

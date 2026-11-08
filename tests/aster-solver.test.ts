@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SketchBuilder, initKernel } from "./helpers.ts";
 import { Engine } from "../src/kernel/rebuild.ts";
-import { faceProps } from "../src/kernel/occ.ts";
+import { edgeProps, faceProps } from "../src/kernel/occ.ts";
+import { namedEdges } from "../src/kernel/naming.ts";
 import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
 import { type FemStudy, SIM_MATERIALS, newFemStudy } from "../src/doc/study.ts";
@@ -19,7 +20,7 @@ const T = tools();
 const has = !!(T.gmsh && T.code_aster);
 const near = (a: number, b: number, tol: number) => assert.ok(Math.abs(a - b) <= tol * Math.abs(b), `${a} ≉ ${b} (±${tol * 100}%)`);
 
-async function bar(): Promise<{ doc: CadDocument; face: (axis: 0 | 1 | 2, v: number) => TopoRef }> {
+async function bar(): Promise<{ doc: CadDocument; face: (axis: 0 | 1 | 2, v: number) => TopoRef; edge: (axis: 0 | 1 | 2, at: [number, number]) => TopoRef }> {
   const s = new SketchBuilder();
   s.rect(0, 0, 100, 10, 100, 10);
   let doc = newDocument();
@@ -30,7 +31,12 @@ async function bar(): Promise<{ doc: CadDocument; face: (axis: 0 | 1 | 2, v: num
     const f = r.ctx.body!.faces.find((x) => { const p = faceProps(x.face); return p.normal && Math.abs(Math.abs(p.normal[axis]) - 1) < 1e-9 && Math.abs(p.center[axis] - v) < 1e-6; })!;
     return { kind: "face", name: f.name };
   };
-  return { doc, face };
+  const edge = (axis: 0 | 1 | 2, at: [number, number]): TopoRef => {
+    const [i, j] = [0, 1, 2].filter((k) => k !== axis);
+    const e = namedEdges(r.ctx.body!).find((x) => { const p = edgeProps(x.edge); return Math.abs(p.mid[i] - at[0]) < 1e-6 && Math.abs(p.mid[j] - at[1]) < 1e-6 && Math.abs(p.end[axis] - p.start[axis]) > 1; })!;
+    return { kind: "edge", name: e.name };
+  };
+  return { doc, face, edge };
 }
 
 async function run(doc: CadDocument, s: FemStudy) {
@@ -54,6 +60,24 @@ test("code_aster: consola — flecha de Timoshenko, von Mises e reação", { ski
   assert.equal(r.solver, "code_aster");
   near(-tipMean(r.fem!, 2), delta, 0.03);
   near(r.fem!.reactions[0][2], F, 1e-3);
+});
+
+test("code_aster: consola com força numa aresta e apoio numa aresta", { skip: !has && "code_aster não instalado", timeout: 600000 }, async () => {
+  const { doc, face, edge } = await bar();
+  const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
+  const delta = (F * L ** 3) / (3 * E * I) + (F * L) / ((5 / 6) * G * A);
+  // força na aresta de topo da ponta (FORCE_NODALE consistente): resultante exata, flecha média ≈ Timoshenko
+  const r = await run(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [], edges: [edge(1, [100, 10])], f: [0, 0, -F] }] }));
+  assert.equal(r.solver, "code_aster");
+  assert.deepEqual(r.warnings.filter((x) => /aresta|grupo|comprimento/i.test(x)), []);
+  near(-tipMean(r.fem!, 2), delta, 0.05);
+  near(r.fem!.reactions[0][2], F, 1e-3);
+  // apoio na aresta de baixo da ponta (DDL_IMPO no GROUP_NO) + pressão de 1 MPa: reação total 1000 N
+  const p = await run(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "fixed", faces: [], edges: [edge(1, [100, 0])] }, { kind: "pressure", faces: [face(2, 10)], p: 1 }] }));
+  assert.deepEqual(p.warnings.filter((x) => /aresta|grupo|comprimento/i.test(x)), []);
+  near(p.fem!.reactions[0][2], 1000, 1e-3);
+  const w = p.fem!.positions.reduce((m, _, i) => (i % 3 === 0 && Math.abs(p.fem!.positions[i] - 100) < 1e-6 && Math.abs(p.fem!.positions[i + 2]) < 1e-6 ? Math.max(m, Math.abs(p.fem!.displacements[0].values[i + 2])) : m), 0);
+  assert.ok(w < 1e-9, `aresta apoiada mexeu-se: ${w}`);
 });
 
 test("code_aster: pressão (reação = p·A) e frequências próprias da consola", { skip: !has && "code_aster não instalado", timeout: 600000 }, async () => {
