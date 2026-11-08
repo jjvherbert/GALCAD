@@ -32,7 +32,7 @@ function femNodes(s: FemStudy, asm: boolean, hasResult: boolean): Node[] {
       section: "conditions", icon: "⤓", label: "Cargas e apoios", detail: `${loads.length} condição(ões)`,
       state: structural && !supports && s.analysis !== "modal" ? "warn" : loads.length ? "ok" : "todo",
       children: loads.map((l) => {
-        const edges = loadEdges(l).length;
+        const edges = loadEdges(s, l).length;
         return { label: LOAD_SHORT[l.kind], detail: edges ? `${edges} aresta(s)` : "faces" in l ? `${loadFaces(s, l).length} face(s)` : "", color: CONDITION_COLORS[l.kind], edges: edges > 0 };
       }),
     },

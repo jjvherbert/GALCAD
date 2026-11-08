@@ -48,8 +48,23 @@ export function plasticCurveErrors(m: SimMaterial): string[] {
   return e;
 }
 
-/** Conjunto nomeado de faces (como os «sets» do Abaqus e os grupos do Femap): reutilizável em várias condições. */
-export interface FemSet { id: string; name: string; faces: TopoRef[] }
+/**
+ * Conjunto nomeado (como os «sets» do Abaqus e os grupos do Femap): de faces (por omissão) ou de arestas,
+ * reutilizável em várias condições, ou de corpos de uma montagem (caminhos das instâncias), com um
+ * material comum.
+ */
+export interface FemSet {
+  id: string;
+  name: string;
+  kind?: "face" | "edge" | "body";
+  faces: TopoRef[];
+  edges?: TopoRef[];
+  bodies?: string[];
+  /** Conjuntos de corpos: material dos corpos que não têm um material próprio em `bodyMaterials`. */
+  material?: SimMaterial;
+}
+
+export const setKind = (g: FemSet): "face" | "edge" | "body" => g.kind ?? "face";
 
 export type FemLoad =
   /** Encastramento das faces ou, em alternativa, das arestas (`edges`). */
@@ -284,12 +299,27 @@ export function newCfdStudy(id: string, n: number): CfdStudy {
 export function loadFaces(s: FemStudy, l: FemLoad): TopoRef[] {
   if (!("faces" in l)) return [];
   const out = [...l.faces];
-  for (const id of l.sets ?? []) for (const f of s.sets?.find((x) => x.id === id)?.faces ?? []) if (!out.some((o) => o.name === f.name)) out.push(f);
+  for (const id of l.sets ?? []) {
+    const g = s.sets?.find((x) => x.id === id);
+    if (g && setKind(g) === "face") for (const f of g.faces) if (!out.some((o) => o.name === f.name)) out.push(f);
+  }
   return out;
 }
 
-/** Arestas de uma condição (apoios e forças em arestas, em vez de faces). */
-export const loadEdges = (l: FemLoad): TopoRef[] => ("edges" in l && l.edges) || [];
+/** Arestas de uma condição (apoios e forças em arestas, em vez de faces): as escolhidas e as dos conjuntos de arestas. */
+export function loadEdges(s: FemStudy, l: FemLoad): TopoRef[] {
+  const out = [...(("edges" in l && l.edges) || [])];
+  if ("sets" in l) for (const id of l.sets ?? []) {
+    const g = s.sets?.find((x) => x.id === id);
+    if (g && setKind(g) === "edge") for (const e of g.edges ?? []) if (!out.some((o) => o.name === e.name)) out.push(e);
+  }
+  return out;
+}
+
+/** Material de um corpo da montagem: o próprio, senão o do primeiro conjunto de corpos que o contém, senão o do estudo. */
+export function bodyMaterial(s: FemStudy, path: string): SimMaterial {
+  return s.bodyMaterials?.[path] ?? s.sets?.find((g) => setKind(g) === "body" && g.material && g.bodies?.includes(path))?.material ?? s.material;
+}
 
 /** Todas as referências a faces de um estudo (para dependências e validação). */
 export function studyFaces(s: Study): TopoRef[] {

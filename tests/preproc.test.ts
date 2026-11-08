@@ -12,7 +12,7 @@ import { Engine } from "../src/kernel/rebuild.ts";
 import { faceProps } from "../src/kernel/occ.ts";
 import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
-import { type FemStudy, SIM_MATERIALS, loadFaces, newCfdStudy, newFemStudy } from "../src/doc/study.ts";
+import { type FemStudy, SIM_MATERIALS, bodyMaterial, loadEdges, loadFaces, newCfdStudy, newFemStudy } from "../src/doc/study.ts";
 import { studyCase } from "../src/kernel/sim.ts";
 import type { FemCase } from "../src/sim/case.ts";
 import { CAPABILITIES, checkStudy, countLevel, solverVerdict, usedFeatures } from "../src/sim/modelcheck.ts";
@@ -64,6 +64,28 @@ test("conjuntos: as condições com `sets` dão o mesmo caso que com as faces di
   // união sem repetir: faces diretas + conjunto com a mesma face
   const dup = base({ sets: [{ id: "g1", name: "Apoio", faces: [face(0, 0)] }], loads: [{ kind: "fixed", faces: [face(0, 0)], sets: ["g1"] }] });
   assert.equal(loadFaces(dup, dup.loads[0]).length, 1);
+});
+
+test("conjuntos de arestas e de corpos: arestas só nas condições de arestas, material por corpo com precedência", () => {
+  const e1: TopoRef = { kind: "edge", name: "p1/E1" }, e2: TopoRef = { kind: "edge", name: "p1/E2" };
+  const steel = { ...SIM_MATERIALS[0] }, alu = { ...SIM_MATERIALS.find((m) => m.name !== steel.name)! };
+  const s = base({
+    sets: [
+      { id: "g1", name: "Faces", faces: [{ kind: "face", name: "p1/F1" }] },
+      { id: "g2", name: "Arestas", kind: "edge", faces: [], edges: [e1, e2] },
+      { id: "g3", name: "Corpos", kind: "body", faces: [], bodies: ["p1", "p2"], material: alu },
+    ],
+    loads: [{ kind: "fixed", faces: [], edges: [e1], sets: ["g1", "g2", "g3"] }],
+  });
+  const l = s.loads[0];
+  assert.deepEqual(loadFaces(s, l).map((r) => r.name), ["p1/F1"], "conjuntos de arestas e de corpos não dão faces");
+  assert.deepEqual(loadEdges(s, l).map((r) => r.name), ["p1/E1", "p1/E2"], "união sem repetir");
+  assert.equal(bodyMaterial(s, "p2").name, alu.name, "material do conjunto de corpos");
+  assert.equal(bodyMaterial(s, "p3").name, steel.name, "fora do conjunto: material do estudo");
+  assert.equal(bodyMaterial({ ...s, bodyMaterials: { p2: steel } }, "p2").name, steel.name, "o material do corpo prevalece");
+  // condições em arestas de montagens já não são erro na verificação
+  const asm = base({ loads: [{ kind: "fixed", faces: [], edges: [e1] }, { kind: "force", faces: [{ kind: "face", name: "p2/F1" }], f: [0, 0, -1] }] });
+  assert.ok(!checkStudy(asm, true).some((i) => i.level === "erro" && /aresta/i.test(i.text)), JSON.stringify(checkStudy(asm, true)));
 });
 
 test("simetria: faces normais a X, Y ou Z viram deslocamento normal nulo; faces curvas são recusadas", async () => {

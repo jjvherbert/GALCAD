@@ -46,7 +46,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     if (l.kind === "gravity") { loads.push({ kind: "gravity", g: n3(l.g, sc, "Gravidade") }); return; }
     if (l.kind === "pointForce") { loads.push({ kind: "pointForce", point: n3(l.point, sc, `Condição ${i + 1}: ponto`), f: n3(l.f, sc, `Condição ${i + 1}: força`) }); return; }
     const g = loadGroup(i, l.kind);
-    const edges = loadEdges(l);
+    const edges = loadEdges(s, l);
     if (edges.length) {
       if (loadFaces(s, l).length) throw new Error(`Condição ${i + 1}: escolha faces ou arestas, não ambas`);
       edgeGroups[g] = geo.edgeTags(edges, `Condição ${i + 1}`);

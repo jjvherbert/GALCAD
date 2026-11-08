@@ -4,7 +4,7 @@
 // análise que o solver não faz, material impossível, apoios em falta). `erro` bloqueia o cálculo,
 // `aviso` não; os rótulos do que cada solver faz vêm do que os adaptadores deste repositório
 // implementam e estão verificados, não do que o solver em geral sabe fazer.
-import { type CfdStudy, type FemLoad, type FemStudy, type Study, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
+import { type CfdStudy, type FemLoad, type FemStudy, type Study, loadEdges, loadFaces, plasticCurveErrors, setKind } from "../doc/study.ts";
 
 export type CheckLevel = "erro" | "aviso" | "info";
 /** Secção do modelo onde se corrige (as mesmas da árvore). */
@@ -108,7 +108,7 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
   const needsDensity = s.analysis === "modal" || s.analysis === "dynamic" || s.loads.some((l) => l.kind === "gravity");
   if (needsDensity && !(m.density > 0)) add("erro", "material", "A massa volúmica tem de ser positiva (modal, dinâmica e gravidade usam a massa)");
   if (thermal) {
-    const mats = [m, ...(assembly ? Object.values(s.bodyMaterials ?? {}) : [])];
+    const mats = [m, ...(assembly ? [...Object.values(s.bodyMaterials ?? {}), ...(s.sets ?? []).filter((g) => setKind(g) === "body" && g.material).map((g) => g.material!)] : [])];
     for (const x of new Set(mats.filter((x) => !(num(x.k) && x.k! > 0)).map((x) => x.name))) add("erro", "material", `Falta a condutividade térmica k do material ${x}`);
   }
   if (s.nonlinear?.plasticity && !(m.yield! > 0)) add("erro", "material", "Plasticidade: falta a tensão de cedência do material");
@@ -118,10 +118,9 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
   // condições
   s.loads.forEach((l, i) => {
     const name = `Condição ${i + 1} (${LOAD_LABEL[l.kind]})`;
-    const nf = loadFaces(s, l).length, ne = loadEdges(l).length;
+    const nf = loadFaces(s, l).length, ne = loadEdges(s, l).length;
     if (ne && nf) add("erro", "conditions", `${name}: escolha faces ou arestas, não ambas`);
     else if (ne && s.solver === "openradioss") add("erro", "conditions", `${name}: o OpenRadioss não aceita condições em arestas — use faces`);
-    else if (ne && assembly) add("erro", "conditions", `${name}: arestas só num estudo de uma peça — numa montagem use faces`);
     else if ("faces" in l && !nf && !ne) add("erro", "conditions", `${name}: sem ${"edges" in l || l.kind === "fixed" || l.kind === "displacement" || l.kind === "force" ? "faces nem arestas" : "faces"} — escolha-as no 3D`);
     if ((l.kind === "force" || l.kind === "pointForce") && l.f.every((x) => num(x) === 0)) add("aviso", "conditions", `${name}: força nula`);
     if (l.kind === "pressure" && num(l.p) === 0) add("aviso", "conditions", `${name}: pressão nula`);
