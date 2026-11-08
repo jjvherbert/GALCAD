@@ -1,5 +1,14 @@
 # Handoff — Fases 1 a 5 e pré-processador de simulação (F1–F3)
 
+## Atualização: F3 fatia 5 — condições em arestas (PR #64)
+
+- **Modelo:** encastramento (`fixed`), deslocamento (`displacement`) e força (`force`) aceitam `edges`, além das faces. O caso FEM tem `edgeGroups` e `edgeLength`, e o Gmsh escreve os grupos como `Physical Curve`. A força numa aresta é distribuída por cargas nodais consistentes (`lineIntegrals`): SEG2 dá L/2 por nó e SEG3 dá L/6, L/6 e 2L/3. Qualquer outro tipo de elemento é recusado.
+- **Solvers:** no CalculiX, um `NSET` por grupo de arestas com `*BOUNDARY`/`*CLOAD`. No code_aster, `GROUP_NO` com `DDL_IMPO` e `FORCE_NODALE`. A verificação do modelo conta as arestas.
+- **UI:** a árvore mostra «N aresta(s)». Um duplo clique escolhe arestas no 3D (`loadEdgeK`), os editores mostram as arestas e as arestas com condição ficam com a cor da condição. **Ainda não verificado visualmente** (sem ui-check desta parte).
+- **Correção:** `service.ts` passou a exportar `sceneOf` depois do import, o que repara o servidor de dev do Vite (estava partido desde a fatia 21 do passo 4 da F1).
+- **Verificação:** testes do caso, do CalculiX e do code_aster (deck e solver real). O filtro do workflow «Instalador Windows» passou a incluir «numa aresta». tsc, oxlint e 296 testes (254 passam, 42 saltados por não haver solvers aqui) e CI verdes. **A confirmar:** os testes com os solvers reais no Windows. O job «solvers» falhou por HTTP 504 ao descarregar o micromamba das releases do GitHub (falha externa, não do código) e tem de voltar a correr.
+- **A seguir (F3 fatia 6):** diálogos e o resto do R4 (ver ROADMAP, linha F3).
+
 ## Atualização: F3 fatia 4 — plasticidade multilinear (PR #62)
 
 - **Modelo:** `plasticCurve: [σ, εp][]` no material, com σ em MPa e εp a deformação plástica. O 1.º ponto é a cedência (εp = 0). Depois do último ponto o material é perfeitamente plástico. Não pode ser usada ao mesmo tempo que Et (bilinear).
