@@ -16,7 +16,7 @@ Os solvers continuam programas separados (GPL), chamados pelo agente da app. Cad
 textos das licenças e o MANIFEST.json regista versões, origens e SHA-256 (código-fonte: ver
 THIRD_PARTY_NOTICES.md).
 """
-import argparse, hashlib, json, os, re, shutil, subprocess, sys, tarfile, urllib.request, zipfile
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tarfile, time, urllib.request, zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -51,10 +51,42 @@ def sha256(p):
     return h.hexdigest()
 
 
+GH_RELEASE = re.compile(r"https://github\.com/([^/]+/[^/]+)/releases/download/([^/]+)/([^/]+)$")
+
+
+def gh_asset(url):
+    """URL da API para um ficheiro de release do GitHub: a descarga direta (github.com/…/releases/download)
+    tem dado 504 durante horas enquanto a API serve o mesmo ficheiro."""
+    m = GH_RELEASE.match(url)
+    if not m:
+        return None
+    repo, tag, name = m.groups()
+    headers = {"Accept": "application/vnd.github+json"}
+    if os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = "Bearer " + os.environ["GITHUB_TOKEN"]
+    req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/tags/{tag}", headers=headers)
+    with urllib.request.urlopen(req, timeout=60) as r:
+        rel = json.load(r)
+    asset = next(a for a in rel["assets"] if a["name"] == name)
+    return urllib.request.Request(asset["url"], headers={**headers, "Accept": "application/octet-stream"})
+
+
 def fetch(url, dest, digest):
     if not dest.exists():
         print("descarregar", url, flush=True)
-        urllib.request.urlretrieve(url, dest)
+        tmp = dest.with_name(dest.name + ".part")
+        for attempt in range(4):
+            try:
+                req = urllib.request.Request(url) if attempt % 2 == 0 else (gh_asset(url) or urllib.request.Request(url))
+                with urllib.request.urlopen(req, timeout=300) as r, open(tmp, "wb") as f:
+                    shutil.copyfileobj(r, f, 1 << 20)
+                break
+            except OSError as e:  # HTTPError e URLError são OSError
+                print(f"  tentativa {attempt + 1} falhou: {e}", flush=True)
+                if attempt == 3:
+                    raise
+                time.sleep(10 * (attempt + 1))
+        tmp.replace(dest)
     got = sha256(dest)
     if got != digest:
         sys.exit(f"SHA-256 diferente em {dest.name}: {got} (esperado {digest})")
