@@ -1,10 +1,9 @@
 // Editores de pré-processamento do painel de simulação: FEM (cargas, conjuntos, dinâmica, malha, montagem) e CFD.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemDynamic, type FemLoad, type FemStudy, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS } from "../doc/study.ts";
+import { type CfdStudy, type FemDynamic, type FemLoad, type FemSet, type FemStudy, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS, loadEdges, loadFaces, setKind } from "../doc/study.ts";
 import { allMaterials } from "./material-library.ts";
 import { type SimSection, store, useStoreKeys } from "./store.ts";
-import type { FemSet } from "../doc/study.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, newLoad } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
 
@@ -13,6 +12,8 @@ const LOAD_LABELS: Record<FemLoad["kind"], string> = {
   temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
 };
 const STRUCT = STRUCT_LOADS;
+/** Condições que aceitam arestas (apoios e força total). */
+const edgeLoad = (l: FemLoad): l is Extract<FemLoad, { kind: "fixed" | "displacement" | "force" }> => l.kind === "fixed" || l.kind === "displacement" || l.kind === "force";
 const THERM = THERMAL_LOADS;
 
 /** Escolher um ponto clicando numa face do modelo (o ponto da peça mais próximo do clique). */
@@ -82,7 +83,6 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
   const setLoad = (i: number, l: FemLoad) => up({ loads: s.loads.map((x, k) => (k === i ? l : x)) });
   const m = s.material;
   const curve = m.plasticCurve?.length ? m.plasticCurve : undefined;
-  void assembly;
   return (
     <>
       {section === "study" && <>
@@ -131,24 +131,29 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
         {m.source && <p class="muted">{m.source}</p>}
       </fieldset>}
       {section === "conditions" && <>
-      <SetsBox s={s} up={up} />
+      <SetsBox s={s} up={up} assembly={!!assembly} />
       {s.loads.map((l, i) => (
         <div class={`kw-item ${st.simFocus?.index === i ? "focus" : ""}`} key={`${i}:${st.simFocus?.index === i ? st.simFocus.n : 0}`} ref={(el) => { if (el && st.simFocus?.index === i) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }}>
           <div class="row"><b>{LOAD_LABELS[l.kind]}</b><button class="icon" aria-label={`Retirar condição ${i + 1}`} onClick={() => up({ loads: s.loads.filter((_, k) => k !== i) })}>✕</button></div>
           {"faces" in l && <RefList field={`load${i}`} label="Faces" accept={["face"]} refs={l.faces} onChange={(faces) => setLoad(i, { ...l, faces } as FemLoad)} />}
-          {(l.kind === "fixed" || l.kind === "displacement" || l.kind === "force") && <>
+          {edgeLoad(l) && <>
             <RefList field={`loadEdge${i}`} label="Arestas" accept={["edge"]} refs={l.edges ?? []} onChange={(edges) => setLoad(i, { ...l, edges: edges.length ? edges : undefined })} />
-            {(l.edges?.length ?? 0) > 0 && <p class="field-hint">{l.faces.length || l.sets?.length ? "Escolha faces ou arestas, não as duas: retire as faces (ou as arestas) desta condição." : l.kind === "force" ? "Força total repartida pelo comprimento das arestas (CalculiX e code_aster)." : "Apoio nas linhas da malha das arestas (CalculiX e code_aster): concentra tensões junto à aresta."}</p>}
+            {loadEdges(s, l).length > 0 && <p class="field-hint">{loadFaces(s, l).length ? "Escolha faces ou arestas, não as duas: retire as faces (ou as arestas) desta condição." : l.kind === "force" ? "Força total repartida pelo comprimento das arestas (CalculiX e code_aster)." : "Apoio nas linhas da malha das arestas (CalculiX e code_aster): concentra tensões junto à aresta."}</p>}
           </>}
-          {"faces" in l && (s.sets?.length ?? 0) > 0 && (
-            <div class="set-chips" aria-label="Conjuntos desta condição">
-              {s.sets!.map((g) => {
-                const on = !!l.sets?.includes(g.id);
-                return <button key={g.id} class={`chip ${on ? "on" : ""}`} aria-pressed={on} title={`${g.faces.length} face(s)`} onClick={() => setLoad(i, { ...l, sets: on ? (l.sets ?? []).filter((x) => x !== g.id) : [...(l.sets ?? []), g.id] } as FemLoad)}>{on ? "✓ " : "+ "}{g.name}</button>;
-              })}
-            </div>
-          )}
-          {"faces" in l && l.faces.length > 0 && <button class="small" title="Guarda as faces desta condição como conjunto para as reutilizar" onClick={() => { const id = nextSetId(s); up({ sets: [...(s.sets ?? []), { id, name: `${LOAD_LABELS[l.kind]} ${(s.sets?.length ?? 0) + 1}`, faces: l.faces }], loads: s.loads.map((x, k) => (k === i && "faces" in x ? { ...x, faces: [], sets: [...(x.sets ?? []), id] } as FemLoad : x)) }); }}>→ guardar como conjunto</button>}
+          {"faces" in l && (() => {
+            const usable = (s.sets ?? []).filter((g) => setKind(g) === "face" || (setKind(g) === "edge" && edgeLoad(l)));
+            return usable.length > 0 && (
+              <div class="set-chips" aria-label="Conjuntos desta condição">
+                {usable.map((g) => {
+                  const on = !!l.sets?.includes(g.id);
+                  const n = setKind(g) === "edge" ? `${g.edges?.length ?? 0} aresta(s)` : `${g.faces.length} face(s)`;
+                  return <button key={g.id} class={`chip ${on ? "on" : ""}`} aria-pressed={on} title={n} onClick={() => setLoad(i, { ...l, sets: on ? (l.sets ?? []).filter((x) => x !== g.id) : [...(l.sets ?? []), g.id] } as FemLoad)}>{on ? "✓ " : "+ "}{g.name}</button>;
+                })}
+              </div>
+            );
+          })()}
+          {"faces" in l && l.faces.length > 0 && <button class="small" title="Guarda as faces desta condição como conjunto para as reutilizar" onClick={() => { const id = nextSetId(s); up({ sets: [...(s.sets ?? []), { id, name: `${LOAD_LABELS[l.kind]} ${(s.sets?.length ?? 0) + 1}`, faces: l.faces }], loads: s.loads.map((x, k) => (k === i && "faces" in x ? { ...x, faces: [], sets: [...(x.sets ?? []), id] } as FemLoad : x)) }); }}>→ guardar faces como conjunto</button>}
+          {edgeLoad(l) && (l.edges?.length ?? 0) > 0 && <button class="small" title="Guarda as arestas desta condição como conjunto para as reutilizar" onClick={() => { const id = nextSetId(s); up({ sets: [...(s.sets ?? []), { id, name: `${LOAD_LABELS[l.kind]} ${(s.sets?.length ?? 0) + 1} (arestas)`, kind: "edge", faces: [], edges: l.edges }], loads: s.loads.map((x, k) => (k === i && edgeLoad(x) ? { ...x, edges: undefined, sets: [...(x.sets ?? []), id] } as FemLoad : x)) }); }}>→ guardar arestas como conjunto</button>}
           {l.kind === "displacement" && <div class="row3">{(["ux", "uy", "uz"] as const).map((k) => <ExprInput key={k} label={k} allowEmpty value={l[k]} onChange={(x) => setLoad(i, { ...l, [k]: x })} />)}</div>}
           {l.kind === "force" && <Vec3Input label="F" unit="N" value={l.f} onChange={(f) => setLoad(i, { ...l, f })} />}
           {l.kind === "pointForce" && (
@@ -199,25 +204,56 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
 
 const nextSetId = (s: FemStudy) => `g${(s.sets ?? []).reduce((m, g) => Math.max(m, Number(g.id.slice(1)) || 0), 0) + 1}`;
 
-/** Conjuntos de faces nomeados (como os sets do Abaqus): definem-se uma vez e usam-se em várias condições. */
-function SetsBox({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>) => void }) {
+/**
+ * Conjuntos nomeados (como os sets do Abaqus): faces ou arestas que se usam em várias condições, e
+ * nas montagens conjuntos de corpos com um material comum.
+ */
+function SetsBox({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>) => void; assembly: boolean }) {
+  const st = useStoreKeys("asmResult", "userMaterials");
   const sets = s.sets ?? [];
+  const inst = st.asmResult?.instances ?? [];
+  const lib = allMaterials(st.userMaterials);
   const setSet = (i: number, patch: Partial<FemSet>) => up({ sets: sets.map((g, k) => (k === i ? { ...g, ...patch } : g)) });
   const remove = (i: number) => up({ sets: sets.filter((_, k) => k !== i), loads: s.loads.map((l) => ("faces" in l && l.sets?.includes(sets[i].id) ? { ...l, sets: l.sets.filter((x) => x !== sets[i].id) } as FemLoad : l)) });
+  const add = (kind: "face" | "edge" | "body") => {
+    const id = nextSetId(s);
+    const label = kind === "edge" ? "Arestas" : kind === "body" ? "Corpos" : "Conjunto";
+    up({ sets: [...sets, { id, name: `${label} ${sets.length + 1}`, ...(kind === "face" ? {} : { kind }), faces: [], ...(kind === "edge" ? { edges: [] } : kind === "body" ? { bodies: [] } : {}) }] });
+    if (kind !== "body") store.set({ pickTarget: { field: `set${sets.length}`, accept: [kind] } });
+  };
   return (
     <details class="sets-box" open={sets.length > 0}>
-      <summary>Conjuntos de faces ({sets.length})</summary>
-      {sets.map((g, i) => (
-        <div class="kw-item" key={g.id}>
-          <div class="row">
-            <input aria-label={`Nome do conjunto ${i + 1}`} value={g.name} onChange={(e) => setSet(i, { name: (e.target as HTMLInputElement).value })} />
-            <button class="icon" aria-label={`Apagar o conjunto ${g.name}`} onClick={() => remove(i)}>✕</button>
+      <summary>Conjuntos ({sets.length})</summary>
+      {sets.map((g, i) => {
+        const kind = setKind(g);
+        return (
+          <div class="kw-item" key={g.id}>
+            <div class="row">
+              <input aria-label={`Nome do conjunto ${i + 1}`} value={g.name} onChange={(e) => setSet(i, { name: (e.target as HTMLInputElement).value })} />
+              <button class="icon" aria-label={`Apagar o conjunto ${g.name}`} onClick={() => remove(i)}>✕</button>
+            </div>
+            {kind === "face" && <RefList field={`set${i}`} label="Faces" accept={["face"]} refs={g.faces} onChange={(faces) => setSet(i, { faces })} />}
+            {kind === "edge" && <RefList field={`set${i}`} label="Arestas" accept={["edge"]} refs={g.edges ?? []} onChange={(edges) => setSet(i, { edges })} />}
+            {kind === "body" && <>
+              <fieldset class="checklist">
+                <legend class="field-label">Corpos</legend>
+                {inst.map((b) => <Check key={b.path} label={b.name} value={!!g.bodies?.includes(b.path)} onChange={(on) => setSet(i, { bodies: on ? [...(g.bodies ?? []), b.path] : (g.bodies ?? []).filter((x) => x !== b.path) })} />)}
+                {!inst.length && <p class="muted">Sem instâncias resolvidas.</p>}
+              </fieldset>
+              <select aria-label={`Material do conjunto ${g.name}`} value={g.material?.name ?? ""} onChange={(e) => { const m = lib.find((x) => x.name === (e.target as HTMLSelectElement).value); setSet(i, { material: m ? { ...m } : undefined }); }}>
+                <option value="">Material do estudo</option>
+                {lib.map((x) => <option key={x.name} value={x.name}>{x.name}</option>)}
+              </select>
+            </>}
           </div>
-          <RefList field={`set${i}`} label="Faces" accept={["face"]} refs={g.faces} onChange={(faces) => setSet(i, { faces })} />
-        </div>
-      ))}
-      <button class="small" onClick={() => { const id = nextSetId(s); up({ sets: [...sets, { id, name: `Conjunto ${sets.length + 1}`, faces: [] }] }); store.set({ pickTarget: { field: `set${sets.length}`, accept: ["face"] } }); }}>+ conjunto</button>
-      <p class="field-hint">Um conjunto agrupa faces com nome (ex.: «Apoios») e usa-se em várias condições; mudar o conjunto muda todas.</p>
+        );
+      })}
+      <div class="row">
+        <button class="small" onClick={() => add("face")}>+ faces</button>
+        <button class="small" onClick={() => add("edge")}>+ arestas</button>
+        {assembly && <button class="small" onClick={() => add("body")}>+ corpos</button>}
+      </div>
+      <p class="field-hint">Um conjunto agrupa faces ou arestas com nome (ex.: «Apoios») e usa-se em várias condições; mudar o conjunto muda todas.{assembly ? " Um conjunto de corpos dá o mesmo material a vários corpos; o material escolhido num corpo em «Corpos e contacto» prevalece." : ""}</p>
     </details>
   );
 }

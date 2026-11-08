@@ -224,7 +224,7 @@ export function conditionFaceColors(): Map<string, number> | null {
   if (s.physics === "fem") {
     for (const l of s.loads) {
       for (const f of loadFaces(s, l)) out.set(key(f.name), CONDITION_COLORS[l.kind]);
-      for (const e of loadEdges(l)) out.set(`edge:${e.name}`, CONDITION_COLORS[l.kind]);
+      for (const e of loadEdges(s, l)) out.set(`edge:${e.name}`, CONDITION_COLORS[l.kind]);
     }
   } else {
     for (const f of s.inlet?.faces ?? []) out.set(key(f.name), CONDITION_COLORS.inlet);
@@ -242,7 +242,7 @@ export function conditionAtFace(p: { kind: string; name?: string; component?: st
   const names = new Set([p.name, p.component ? `${p.component}/${p.name}` : p.name]);
   let index = -1;
   const edge = p.kind === "edge";
-  if (s.physics === "fem") index = s.loads.findIndex((l) => (edge ? loadEdges(l) : loadFaces(s, l)).some((f) => names.has(f.name)));
+  if (s.physics === "fem") index = s.loads.findIndex((l) => (edge ? loadEdges(s, l) : loadFaces(s, l)).some((f) => names.has(f.name)));
   else if (!edge) index = [s.inlet?.faces ?? [], s.outlet?.faces ?? []].findIndex((fs) => fs.some((f) => names.has(f.name)));
   if (index < 0) { store.set({ message: edge ? "Esta aresta não tem condições (um clique escolhe arestas quando a seleção está ativa)" : "Esta face não tem condições (um clique escolhe faces quando a seleção está ativa)" }); return; }
   store.set({ simStudy: s.id, simSection: "conditions", pickTarget: null, simFocus: { index, n: (st.simFocus?.n ?? 0) + 1 } });

@@ -99,7 +99,7 @@ jobs:
           $env:CAD_ASTER = "$s\code_aster\run_aster.cmd"
           $env:CAD_FOAM_DIR = (Get-ChildItem "$s\openfoam" -Directory | Select-Object -First 1).FullName
           $env:CAD_RADIOSS_DIR = "$s\openradioss"
-          node --test --test-concurrency=1 --test-name-pattern="consola — flecha|plasticidade|frequência própria|atrito|XFOIL real|conduta quadrada laminar|code_aster: consola|code_aster: pressão|hexaedros C3D8I|hexaedros estruturados com seeds|pré-visualização da malha|CalculiX implícito|CalculiX explícito|code_aster implícito|OpenRadioss|numa aresta" tests/sim.test.ts tests/sim-assembly.test.ts tests/calc.test.ts tests/aster-solver.test.ts tests/mesh.test.ts tests/dynamics.test.ts tests/radioss.test.ts
+          node --test --test-concurrency=1 --test-name-pattern="consola — flecha|plasticidade|frequência própria|atrito|XFOIL real|conduta quadrada laminar|code_aster: consola|code_aster: pressão|hexaedros C3D8I|hexaedros estruturados com seeds|pré-visualização da malha|CalculiX implícito|CalculiX explícito|code_aster implícito|OpenRadioss|numa aresta|conjunto de arestas" tests/sim.test.ts tests/sim-assembly.test.ts tests/calc.test.ts tests/aster-solver.test.ts tests/mesh.test.ts tests/dynamics.test.ts tests/radioss.test.ts
       - name: Instalador
         run: npm run dist:win
       - name: Instalar em silêncio e testar a app instalada (agente embutido + consola no CalculiX)

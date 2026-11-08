@@ -149,3 +149,32 @@ test("CalculiX: contacto com atrito — bloco premido e arrastado transmite μ·
   const glued = (await (await solve(pr, pull("bonded"))).run()).fem!.groupReactions!.find((x) => x.group === "L2_DISPLACEMENT")!;
   assert.ok(Math.abs(free.f[2]!) < 1e-3 * Math.abs(glued.f[2]!) && Math.abs(glued.f[2]!) > 1e4, `separação ${free.f[2]} vs colado ${glued.f[2]}`);
 });
+
+for (const solver of ["calculix", "code_aster"] as const) {
+  const ok = solver === "calculix" ? hasFem : !!(T.gmsh && T.code_aster);
+  test(`${solver}: montagem com conjunto de arestas (força na aresta da ponta) e conjunto de corpos (material)`, { skip: !ok && `Gmsh/${solver} não instalados`, timeout: 900000 }, async () => {
+    const { Engine } = await import("../src/kernel/rebuild.ts");
+    const { namedEdges } = await import("../src/kernel/naming.ts");
+    const { edgeProps } = await import("../src/kernel/occ.ts");
+    // consola de duas lâminas coladas; a força vai na aresta de topo da ponta da lâmina de cima
+    const pr = project([0, 0, 5], [[100, 10, 5], [100, 10, 5]]);
+    const ctx = (await new Engine().rebuild(pr.parts[1])).ctx;
+    const tipTop = namedEdges(ctx.body!).find((x) => { const p = edgeProps(x.edge); return Math.abs(p.mid[0] - 100) < 1e-6 && Math.abs(p.mid[2] - 5) < 1e-6 && Math.abs(p.end[1] - p.start[1]) > 1; })!;
+    const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, P = 100, G = E / (2 * (1 + nu));
+    const delta = (P * L ** 3) / (3 * E * I) + (P * L) / ((5 / 6) * G * A);
+    const { run } = await solve(pr, fem({ solver, sets: [
+      { id: "e1", name: "Ponta", kind: "edge", faces: [], edges: [{ kind: "edge", name: `c2/${tipTop.name}` }] },
+      { id: "b1", name: "Lâminas", kind: "body", faces: [], bodies: ["c1", "c2"], material: { ...SIM_MATERIALS[0] } },
+    ], material: { ...SIM_MATERIALS[2] }, loads: [
+      { kind: "fixed", faces: [{ kind: "face", name: `c1/${F.x0}` }, { kind: "face", name: `c2/${F.x0}` }] },
+      { kind: "force", faces: [], sets: ["e1"], f: [0, 0, -P] },
+    ] }));
+    const res = await run();
+    assert.equal(res.solver, solver);
+    const f = res.fem!;
+    const tip = f.positions.reduce<number[]>((a, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...a, f.displacements[0].values[i + 2]] : a), []);
+    // E do aço (conjunto de corpos), não do alumínio do estudo
+    near(-tip.reduce((a, b) => a + b, 0) / tip.length, delta, 0.05);
+    near(f.reactions[0][2], P, 1e-3);
+  });
+}
