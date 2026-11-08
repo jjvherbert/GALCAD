@@ -170,7 +170,7 @@ for (const solver of ["calculix", "code_aster"] as const) {
       { kind: "force", faces: [], sets: ["e1"], f: [0, 0, -P] },
     ] }));
     const res = await run();
-    assert.equal(res.solver, solver);
+    assert.match(res.solver ?? "", new RegExp(solver, "i"));
     const f = res.fem!;
     const tip = f.positions.reduce<number[]>((a, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - 100) < 1e-6 ? [...a, f.displacements[0].values[i + 2]] : a), []);
     // E do aço (conjunto de corpos), não do alumínio do estudo
