@@ -8,12 +8,12 @@ import { STRUCT_LOADS, THERMAL_LOADS, newLoad } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
-  fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria (plano)", pointForce: "Força pontual", force: "Força total", pressure: "Pressão", gravity: "Gravidade", spring: "Mola à terra",
+  fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria (plano)", pointForce: "Força pontual", force: "Força total", pressure: "Pressão", gravity: "Gravidade", spring: "Mola à terra", mass: "Massa pontual",
   temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
 };
 const STRUCT = STRUCT_LOADS;
 /** Condições que aceitam arestas (apoios, força total e molas). */
-const edgeLoad = (l: FemLoad): l is Extract<FemLoad, { kind: "fixed" | "displacement" | "force" | "spring" }> => l.kind === "fixed" || l.kind === "displacement" || l.kind === "force" || l.kind === "spring";
+const edgeLoad = (l: FemLoad): l is Extract<FemLoad, { kind: "fixed" | "displacement" | "force" | "spring" | "mass" }> => l.kind === "fixed" || l.kind === "displacement" || l.kind === "force" || l.kind === "spring" || l.kind === "mass";
 const THERM = THERMAL_LOADS;
 
 /** Escolher um ponto clicando numa face do modelo (o ponto da peça mais próximo do clique). */
@@ -138,7 +138,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
           {"faces" in l && <RefList field={`load${i}`} label="Faces" accept={["face"]} refs={l.faces} onChange={(faces) => setLoad(i, { ...l, faces } as FemLoad)} />}
           {edgeLoad(l) && <>
             <RefList field={`loadEdge${i}`} label="Arestas" accept={["edge"]} refs={l.edges ?? []} onChange={(edges) => setLoad(i, { ...l, edges: edges.length ? edges : undefined })} />
-            {loadEdges(s, l).length > 0 && <p class="field-hint">{loadFaces(s, l).length ? "Escolha faces ou arestas, não as duas: retire as faces (ou as arestas) desta condição." : l.kind === "force" ? "Força total repartida pelo comprimento das arestas (CalculiX e code_aster)." : l.kind === "spring" ? "Rigidez total repartida pelo comprimento das arestas (CalculiX e code_aster)." : "Apoio nas linhas da malha das arestas (CalculiX e code_aster): concentra tensões junto à aresta."}</p>}
+            {loadEdges(s, l).length > 0 && <p class="field-hint">{loadFaces(s, l).length ? "Escolha faces ou arestas, não as duas: retire as faces (ou as arestas) desta condição." : l.kind === "force" ? "Força total repartida pelo comprimento das arestas (CalculiX e code_aster)." : l.kind === "spring" ? "Rigidez total repartida pelo comprimento das arestas (CalculiX e code_aster)." : l.kind === "mass" ? "Massa total repartida pelo comprimento das arestas (CalculiX e code_aster)." : "Apoio nas linhas da malha das arestas (CalculiX e code_aster): concentra tensões junto à aresta."}</p>}
           </>}
           {"faces" in l && (() => {
             const usable = (s.sets ?? []).filter((g) => setKind(g) === "face" || (setKind(g) === "edge" && edgeLoad(l)));
@@ -157,6 +157,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
           {l.kind === "displacement" && <div class="row3">{(["ux", "uy", "uz"] as const).map((k) => <ExprInput key={k} label={k} allowEmpty value={l[k]} onChange={(x) => setLoad(i, { ...l, [k]: x })} />)}</div>}
           {l.kind === "force" && <Vec3Input label="F" unit="N" value={l.f} onChange={(f) => setLoad(i, { ...l, f })} />}
           {l.kind === "spring" && <><Vec3Input label="k" unit="N/mm" value={l.k} onChange={(k) => setLoad(i, { ...l, k })} /><p class="field-hint">Mola à terra: rigidez total por direção global, repartida pela área das faces (ou comprimento das arestas). 0 = livre nessa direção. CalculiX e code_aster (linear, modal, dinâmica implícita).</p></>}
+          {l.kind === "mass" && <><ExprInput label="m" unit="kg" value={l.m} onChange={(m) => setLoad(i, { ...l, m: m ?? 0 })} /><p class="field-hint">Massa concentrada (motor, lastro, equipamento): massa total repartida pela área das faces (ou comprimento das arestas). Sem rigidez; entra na gravidade, no modal e na dinâmica. CalculiX e code_aster (linear, modal, dinâmica implícita).</p></>}
           {l.kind === "pointForce" && (
             <>
               <Vec3Input label="Ponto" unit="mm" value={l.point} onChange={(point) => setLoad(i, { ...l, point })} />

@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { asterCase, asterMesh, asterNode, asterResult, parseAsterTable } from "../src/sim/aster.ts";
-import { calculixDeck, springWeights } from "../src/sim/calculix.ts";
+import { calculixDeck, springWeights, trimNum } from "../src/sim/calculix.ts";
 import { parseMsh } from "../src/sim/msh.ts";
 import type { FemCase } from "../src/sim/case.ts";
 import { SIM_MATERIALS } from "../src/doc/study.ts";
@@ -183,6 +183,8 @@ test("Molas à terra: pesos nodais normalizados, só os positivos", () => {
   assert.deepEqual([...w.keys()], [1, 2, 3]);
   assert.deepEqual([...w.values()], [1 / 6, 4 / 6, 1 / 6]);
   assert.equal(springWeights([{ n: [1, 2], nodal: [-1, 0] }]).size, 0);
+  // pesos de ruído (cantos dos triângulos de 2.ª ordem) saem
+  assert.deepEqual([...springWeights([{ n: [1, 2], nodal: [1, 1e-20] }]).keys()], [1]);
   assert.equal(springWeights([]).size, 0);
 });
 
@@ -214,4 +216,45 @@ test("code_aster: molas à terra → POI1 em DIS_T com K_T_D_N e massa nula", ()
   // só molas, sem apoios: aceite
   assert.doesNotThrow(() => asterCase({ ...springCase, loads: [{ kind: "spring", group: "L2_FORCE", k: [30, 30, 30] }, { kind: "force", group: "L2_FORCE", f: [0, 0, -10] }] }, m));
   assert.throws(() => asterCase({ ...springCase, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m), /molas só estão/);
+});
+
+const massCase: FemCase = { ...base, loads: [{ kind: "fixed", group: "L1_FIXED" }, { kind: "mass", group: "L2_FORCE", m: 0.03 }] };
+const gravity = { kind: "gravity" as const, g: [0, 0, -9810] as [number, number, number] };
+
+test("CalculiX: massa pontual → MASS por nó com m·w (fora do EALL) e peso em forças nodais", () => {
+  const { inp } = calculixDeck({ ...massCase, solver: "calculix" }, parseMsh(MSH));
+  assert.match(inp, /\*ELEMENT, TYPE=MASS, ELSET=MS2_1\n\d+, 1\n\d+, 2\n\d+, 3\n\*MASS, ELSET=MS2_1\n0\.01\n/);
+  assert.ok(!/CLOAD/.test(inp));
+  // com gravidade: GRAV no EALL e m·wᵢ·g nos nós da massa
+  const g = calculixDeck({ ...massCase, solver: "calculix", loads: [...massCase.loads, gravity] }, parseMsh(MSH)).inp;
+  assert.match(g, /EALL, GRAV, 9810, 0, 0, -1\n/);
+  assert.match(g, /\*CLOAD\n1, 3, -98\.1\n2, 3, -98\.1\n3, 3, -98\.1\n/);
+  const th = calculixDeck({ ...massCase, solver: "calculix", analysis: "thermal", loads: [{ kind: "mass", group: "L2_FORCE", m: 0.03 }] }, parseMsh(MSH));
+  assert.ok(th.warnings.includes("Massa L2_FORCE: ignorada na análise térmica"), JSON.stringify(th.warnings));
+  assert.ok(!/TYPE=MASS/.test(th.inp));
+});
+
+test("code_aster: massa pontual → POI1 em DIS_T com M_T_D_N e peso em FORCE_NODALE", () => {
+  const m = parseMsh(MSH);
+  const { mail, masses } = asterMesh(massCase, m);
+  assert.match(mail, /GROUP_MA\nM2_1\n/);
+  assert.match(mail, /GROUP_NO\nMN2_1\n/);
+  assert.deepEqual(masses.map((x) => [x.group, x.nodes, +x.m.toFixed(12)]), [["M2_1", "MN2_1", 0.01]]);
+  const comm = asterCase({ ...massCase, loads: [...massCase.loads, gravity] }, m).files["job.comm"];
+  assert.match(comm, /_F\(GROUP_MA='M2_1', CARA='K_T_D_N', VALE=\(0\., 0\., 0\.\)\)/);
+  assert.match(comm, /_F\(GROUP_MA='M2_1', CARA='M_T_D_N', VALE=0\.01\)/);
+  assert.match(comm, /PESANTEUR=_F\(GRAVITE=9810\., DIRECTION=\(0\., 0\., -1\.\), GROUP_MA='SOLID'\)/);
+  assert.match(comm, /_F\(GROUP_NO='MN2_1', FX=0\., FY=0\., FZ=-98\.1\)/);
+  assert.ok(!/[^\x00-\x7f]/.test(comm));
+  // sem massas a PESANTEUR fica em todo o modelo
+  assert.ok(!/GROUP_MA='SOLID'\)/.test(asterCase({ ...base, loads: [{ kind: "fixed", group: "L1_FIXED" }, gravity] }, m).files["job.comm"]));
+  assert.throws(() => asterCase({ ...massCase, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m), /massas só estão/);
+});
+
+test("trimNum: tira zeros só da mantissa (o expoente fica intacto)", () => {
+  assert.equal(trimNum((2.5e-20).toPrecision(10)), "2.5e-20");
+  assert.equal(trimNum((3e-30).toPrecision(10)), "3e-30");
+  assert.equal(trimNum((0.01).toPrecision(10)), "0.01");
+  assert.equal(trimNum((100.5).toPrecision(10)), "100.5");
+  assert.equal(trimNum("1200"), "1200");
 });

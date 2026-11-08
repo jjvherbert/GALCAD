@@ -52,11 +52,14 @@ export function springWeights(items: { n: number[]; nodal: number[] }[]): Map<nu
   for (const t of items) t.n.forEach((n, i) => { if (t.nodal[i] > 0) w.set(n, (w.get(n) ?? 0) + t.nodal[i]); });
   const s = [...w.values()].reduce((a, b) => a + b, 0);
   if (!(s > 0)) return new Map();
-  for (const [n, v] of w) w.set(n, v / s);
+  // nós com peso desprezável (ruído de arredondamento nos cantos dos triângulos de 2.ª ordem) saem
+  for (const [n, v] of w) if (v / s > 1e-12) w.set(n, v / s); else w.delete(n);
   return new Map([...w].sort((a, b) => a[0] - b[0]));
 }
 
-const fmt = (x: number) => (Number.isInteger(x) ? String(x) : x.toPrecision(10).replace(/\.?0+(e|$)/, "$1"));
+// tira os zeros finais só da mantissa (num regex sobre o número inteiro, «2.5e-20» virava «2.5e-2»)
+export const trimNum = (s: string) => { const [mt, ex] = s.split("e"); return (mt.includes(".") ? mt.replace(/\.?0+$/, "") : mt) + (ex ? `e${ex}` : ""); };
+const fmt = (x: number) => (Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10)));
 
 export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];
@@ -201,6 +204,24 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       }
     });
   });
+  // massas acrescentadas: um elemento MASS por nó (fora do EALL), massa m·w com os mesmos pesos nodais;
+  // as de igual valor partilham o *MASS. O peso delas entra na gravidade como forças nodais (abaixo)
+  const massW = new Map<number, Map<number, number>>();
+  c.loads.forEach((ld, j) => {
+    if (ld.kind !== "mass") return;
+    if (thermal) { warnings.push(`Massa ${ld.group}: ignorada na análise térmica`); return; }
+    const w = springWeights(lines[ld.group] ?? tris[ld.group] ?? []);
+    if (!w.size) { warnings.push(`Massa ${ld.group}: grupo sem nós na malha`); return; }
+    if (!(ld.m > 0)) return;
+    massW.set(j, w);
+    const byM = new Map<string, number[]>();
+    for (const [n, wi] of w) { const s = fmt(ld.m * wi); byM.set(s, [...(byM.get(s) ?? []), n]); }
+    let q = 0;
+    for (const [s, ns] of byM) {
+      const set = `MS${j + 1}_${++q}`;
+      L.push(`*ELEMENT, TYPE=MASS, ELSET=${set}`, ...ns.map((n) => `${++eid}, ${n}`), `*MASS, ELSET=${set}`, s);
+    }
+  });
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 
   const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [];
@@ -244,6 +265,15 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       case "gravity": {
         const g = Math.hypot(...ld.g);
         if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt(g)}, ${ld.g.map((x) => fmt(x / g)).join(", ")}`);
+        // o GRAV só atua no EALL: o peso das massas acrescentadas vai como forças nodais m·wᵢ·g
+        c.loads.forEach((mb, j) => {
+          if (mb.kind !== "mass") return;
+          for (const [n, wi] of massW.get(j) ?? []) {
+            const acc = cload.get(n) ?? [0, 0, 0];
+            for (let k = 0; k < 3; k++) acc[k] += mb.m * wi * ld.g[k];
+            cload.set(n, acc);
+          }
+        });
         break;
       }
       case "convection":
@@ -256,6 +286,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         break;
       // molas: elementos SPRING1 nos dados do modelo (acima)
       case "spring": break;
+      case "mass": break;
     }
   }
   // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses
