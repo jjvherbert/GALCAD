@@ -1699,6 +1699,20 @@ function ccxElement(st, integration, thermal = false) {
 	if (st.order === 2) return integration === "full" ? "C3D20" : "C3D20R";
 	return integration === "full" ? "C3D8" : integration === "reduced" ? "C3D8R" : "C3D8I";
 }
+/**
+* Pesos da mola por nó (somam 1): integrais nodais ∫Nᵢ dA (ou dL) de faces ou linhas, só as
+* positivas (os cantos do quad8, negativos, ficam sem mola).
+*/
+function springWeights(items) {
+	const w = /* @__PURE__ */ new Map();
+	for (const t of items) t.n.forEach((n, i) => {
+		if (t.nodal[i] > 0) w.set(n, (w.get(n) ?? 0) + t.nodal[i]);
+	});
+	const s = [...w.values()].reduce((a, b) => a + b, 0);
+	if (!(s > 0)) return /* @__PURE__ */ new Map();
+	for (const [n, v] of w) w.set(n, v / s);
+	return new Map([...w].sort((a, b) => a[0] - b[0]));
+}
 const fmt = (x) => Number.isInteger(x) ? String(x) : x.toPrecision(10).replace(/\.?0+(e|$)/, "$1");
 function calculixDeck(c, m) {
 	const warnings = [];
@@ -1828,6 +1842,32 @@ function calculixDeck(c, m) {
 		L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
 		L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
 	}
+	let eid = elems.length;
+	c.loads.forEach((ld, j) => {
+		if (ld.kind !== "spring") return;
+		if (thermal) {
+			warnings.push(`Mola ${ld.group}: ignorada na análise térmica`);
+			return;
+		}
+		const w = springWeights(lines[ld.group] ?? tris[ld.group] ?? []);
+		if (!w.size) {
+			warnings.push(`Mola ${ld.group}: grupo sem nós na malha`);
+			return;
+		}
+		ld.k.forEach((k, d) => {
+			if (!(k > 0)) return;
+			const byK = /* @__PURE__ */ new Map();
+			for (const [n, wi] of w) {
+				const s = fmt(k * wi);
+				byK.set(s, [...byK.get(s) ?? [], n]);
+			}
+			let q = 0;
+			for (const [s, ns] of byK) {
+				const set = `SP${j + 1}${"XYZ"[d]}${++q}`;
+				L.push(`*ELEMENT, TYPE=SPRING1, ELSET=${set}`, ...ns.map((n) => `${++eid}, ${n}`), `*SPRING, ELSET=${set}`, String(d + 1), s);
+			}
+		});
+	});
 	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
 	const bcs = [], loads = [], bcsAmp = [];
 	const cload = /* @__PURE__ */ new Map();
@@ -1999,7 +2039,7 @@ function calculixDeck(c, m) {
 		}
 	}
 	L.push("*END STEP");
-	if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
+	if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "spring")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
 	return {
 		inp: L.join("\n") + "\n",
 		nodes: used.size,
@@ -2774,6 +2814,7 @@ function radiossDeck(c, m) {
 	S.push("/FUNCT/1", "amplitude", "#                  X                   Y", ...D.amplitude.map(([t, v]) => `${F(t * 1e3)}${F(v)}`));
 	let bcs = 0, loads = 0;
 	for (const ld of c.loads) {
+		if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
 		if (ld.kind === "fixed" || ld.kind === "displacement") {
 			const fix = ld.kind === "fixed" ? [
@@ -3108,6 +3149,49 @@ function asterMesh(c, m) {
 			ns.forEach((x, i) => nodeGroups[`E${k + 1}_${i + 1}`] = [x]);
 		}
 	});
+	const springs = [];
+	const points = [];
+	const springCells = {};
+	c.loads.forEach((ld, j) => {
+		if (ld.kind !== "spring") return;
+		const ws = [...springWeights(c.edgeGroups?.[ld.group] ? [...elementsOf(edgeBlocks(m, ld.group))].map(({ type, nodes }) => ({
+			n: nodes,
+			nodal: lineIntegrals(type, nodes.map((x) => m.nodes.get(x))).nodal
+		})) : [...elementsOf(faceBlocks(m, ld.group))].map(({ type, nodes }) => ({
+			n: nodes,
+			nodal: faceIntegrals(type, nodes.map((x) => m.nodes.get(x))).nodal
+		})))].filter(([n]) => used.has(n));
+		if (!ws.length) {
+			warnings.push(`Mola ${ld.group}: grupo sem nós na malha`);
+			return;
+		}
+		const byK = /* @__PURE__ */ new Map();
+		for (const [n, wi] of ws) {
+			const k = ld.k.map((x) => x * wi);
+			const key = k.map(num).join(",");
+			if (!byK.has(key)) byK.set(key, {
+				k,
+				cells: []
+			});
+			const id = `S${points.length + 1}`;
+			points.push({
+				name: id,
+				type: "POI1",
+				nodes: [n]
+			});
+			byK.get(key).cells.push(id);
+		}
+		let q = 0;
+		for (const { k, cells: ids } of byK.values()) {
+			const g = `K${j + 1}_${++q}`;
+			springCells[g] = ids;
+			springs.push({
+				group: g,
+				k
+			});
+		}
+	});
+	section(points);
 	const block = (kw, name, ids) => {
 		L.push(kw, name);
 		for (let k = 0; k < ids.length; k += 10) L.push(ids.slice(k, k + 10).join(" "));
@@ -3116,6 +3200,7 @@ function asterMesh(c, m) {
 	block("GROUP_MA", "SOLID", cells.map((e) => e.name));
 	for (const [g, ids] of Object.entries(bodyCells)) if (g !== "SOLID") block("GROUP_MA", g, ids);
 	for (const [g, ids] of Object.entries(faceGroups)) if (ids.length) block("GROUP_MA", g, ids);
+	for (const [g, ids] of Object.entries(springCells)) block("GROUP_MA", g, ids);
 	pointNodes(c, m, nodeOrder).forEach((n, k) => {
 		if (n.node >= 0) nodeGroups[`PF${k + 1}`] = [n.node];
 	});
@@ -3132,6 +3217,7 @@ function asterMesh(c, m) {
 		nodeOrder,
 		areas,
 		edgeNodes,
+		springs,
 		warnings
 	};
 }
@@ -3139,9 +3225,10 @@ function asterMesh(c, m) {
 function asterCase(c, m) {
 	if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
 	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
-	const { mail, nodeOrder, areas, edgeNodes, warnings } = asterMesh(c, m);
+	const { mail, nodeOrder, areas, edgeNodes, springs, warnings } = asterMesh(c, m);
 	const mat = c.material;
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;
+	if (springs.length && (nl || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as molas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
 	const C = [];
 	C.push(`# ${c.title.replace(/[^\x20-\x7e]/g, "_")} -- gerado pelo CAD prototipo (unidades: mm, N, MPa, t, s)`);
 	for (const h of c.hypotheses) C.push(`# ${h.replace(/[^\x20-\x7e]/g, "_")}`);
@@ -3153,7 +3240,10 @@ function asterCase(c, m) {
 	const modelisation = hex && c.mesh.integration === "reduced" && !explicit ? "3D_SI" : "3D";
 	if (hex && c.mesh.integration === "reduced" && explicit) warnings.push("code_aster explícito: os hexaedros passam a integração completa (o 3D_SI não tem explícito)");
 	if (hex && c.mesh.order === 1 && c.mesh.integration !== "reduced") warnings.push("code_aster: HEXA8 com integração completa (o code_aster não tem modos incompatíveis como o C3D8I) bloqueia em flexão — use hexaedros de 20 nós ou o CalculiX");
-	C.push(`MO = AFFE_MODELE(MAILLAGE=MA, AFFE=_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='${modelisation}'))`);
+	const springAffe = springs.length ? `, _F(GROUP_MA=(${springs.map((s) => `'${s.group}'`).join(", ")},), PHENOMENE='MECANIQUE', MODELISATION='DIS_T')` : "";
+	C.push(`MO = AFFE_MODELE(MAILLAGE=MA, AFFE=(_F(TOUT='OUI', PHENOMENE='MECANIQUE', MODELISATION='${modelisation}')${springAffe},))`);
+	if (springs.length) C.push(`CARA = AFFE_CARA_ELEM(MODELE=MO, DISCRET=(${springs.map((s) => `_F(GROUP_MA='${s.group}', CARA='K_T_D_N', VALE=(${s.k.map(num).join(", ")}))`).join(", ")}, _F(GROUP_MA=(${springs.map((s) => `'${s.group}'`).join(", ")},), CARA='M_T_D_N', VALE=0.)))`);
+	const cara = springs.length ? " CARA_ELEM=CARA," : "";
 	const trac = !!nl?.plasticity && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
 	const material = (name, m2) => {
 		if (nl?.plasticity && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
@@ -3223,13 +3313,15 @@ function asterCase(c, m) {
 			if (g > 0) grav = `PESANTEUR=_F(GRAVITE=${num(g)}, DIRECTION=(${ld.g.map((x) => num(x / g)).join(", ")}))`;
 			break;
 		}
+		case "spring": break;
 		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
 	}
-	if (!ddl.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
+	if (!ddl.length && !springs.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
 	const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
 	const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
-	if (!bcParts.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
-	C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
+	if (!bcParts.length && !springs.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
+	const hasBc = bcParts.length > 0;
+	if (hasBc) C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
 	const chParts = [
 		force.length && `FORCE_FACE=(${force.join(", ")},)`,
 		nodal.length && `FORCE_NODALE=(${nodal.join(", ")},)`,
@@ -3254,21 +3346,24 @@ function asterCase(c, m) {
 		C.push(`F1 = DEFI_FONCTION(NOM_PARA='INST', VALE=(${vale.join(", ")}), PROL_DROITE='CONSTANT', PROL_GAUCHE='CONSTANT')`);
 		C.push(`LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=${num(D.duration)}, NOMBRE=${n}))`);
 		const excit = [
-			"_F(CHARGE=BC)",
+			hasBc && "_F(CHARGE=BC)",
 			hasCh && "_F(CHARGE=CH, FONC_MULT=F1)",
 			ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)"
 		].filter(Boolean).join(", ");
 		const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
-		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${explicit ? " MASS_DIAG='OUI'," : ""} EXCIT=(${excit},), COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
-	} else if (c.analysis === "modal") C.push("ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM, CHARGE=BC, NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))", `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes}))`, "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
-	else if (!nl) C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH)," : ""}))`);
-	else {
+		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""} EXCIT=(${excit},), COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
+	} else if (c.analysis === "modal") C.push(`ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM,${cara}${hasBc ? " CHARGE=BC," : ""} NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))`, `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes}))`, "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
+	else if (!nl) {
+		const excit = [hasBc && "_F(CHARGE=BC)", hasCh && "_F(CHARGE=CH)"].filter(Boolean).join(", ");
+		C.push(`RES = MECA_STATIQUE(MODELE=MO, CHAM_MATER=CM,${cara} EXCIT=(${excit},))`);
+	} else {
 		const rel = nl.plasticity ? trac ? "VMIS_ISOT_TRAC" : "VMIS_ISOT_LINE" : "ELAS";
 		const def = nl.geometry ? nl.plasticity ? "GDEF_LOG" : "GREEN_LAGRANGE" : "PETIT";
 		C.push("RAMPE = DEFI_FONCTION(NOM_PARA='INST', VALE=(0., 0., 1., 1.))", `LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=1., NOMBRE=${nl.increments}))`, "LINST = DEFI_LIST_INST(DEFI_LIST=_F(LIST_INST=LR), ECHEC=_F(EVENEMENT='ERREUR', ACTION='DECOUPE', SUBD_METHODE='MANUEL', SUBD_PAS=4, SUBD_NIVEAU=5))", `RES = STAT_NON_LINE(MODELE=MO, CHAM_MATER=CM, EXCIT=(_F(CHARGE=BC),${hasCh ? " _F(CHARGE=CH, FONC_MULT=RAMPE)," : ""}), COMPORTEMENT=_F(RELATION='${rel}', DEFORMATION='${def}', TOUT='OUI'), INCREMENT=_F(LIST_INST=LINST), NEWTON=_F(REAC_ITER=1), CONVERGENCE=_F(ITER_GLOB_MAXI=25))`);
 	}
-	if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
-	else if (c.dynamic) C.push("RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',))");
+	const solidOnly = springs.length ? " GROUP_MA='SOLID'," : "";
+	if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
+	else if (c.dynamic) C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',))`);
 	C.push("TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
 	if (c.analysis === "static" || c.dynamic) {
 		C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");

@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { asterCase, asterMesh, asterNode, asterResult, parseAsterTable } from "../src/sim/aster.ts";
+import { calculixDeck, springWeights } from "../src/sim/calculix.ts";
 import { parseMsh } from "../src/sim/msh.ts";
 import type { FemCase } from "../src/sim/case.ts";
 import { SIM_MATERIALS } from "../src/doc/study.ts";
@@ -175,4 +176,42 @@ test("code_aster: condições numa aresta → GROUP_NO, FORCE_NODALE consistente
   assert.ok(none.warnings.includes("O grupo L4_NONE não tem linhas na malha"), none.warnings.join("; "));
   assert.ok(none.warnings.includes("Força no grupo L4_NONE sem comprimento"), none.warnings.join("; "));
   assert.ok(!/FORCE_NODALE/.test(none.files["job.comm"]));
+});
+
+test("Molas à terra: pesos nodais normalizados, só os positivos", () => {
+  const w = springWeights([{ n: [3, 1, 2], nodal: [1, 1, 2] }, { n: [2, 4], nodal: [2, -1] }]);
+  assert.deepEqual([...w.keys()], [1, 2, 3]);
+  assert.deepEqual([...w.values()], [1 / 6, 4 / 6, 1 / 6]);
+  assert.equal(springWeights([{ n: [1, 2], nodal: [-1, 0] }]).size, 0);
+  assert.equal(springWeights([]).size, 0);
+});
+
+const springCase: FemCase = { ...base, loads: [{ kind: "fixed", group: "L1_FIXED" }, { kind: "spring", group: "L2_FORCE", k: [30, 0, 0] }] };
+
+test("CalculiX: molas à terra → SPRING1 por nó e direção com k·w; as nulas não entram", () => {
+  const { inp, warnings } = calculixDeck({ ...springCase, solver: "calculix" }, parseMsh(MSH));
+  // TRIA3 N1 N2 N3: um terço da rigidez em cada nó, só em X
+  assert.match(inp, /\*ELEMENT, TYPE=SPRING1, ELSET=SP2X1\n\d+, 1\n\d+, 2\n\d+, 3\n\*SPRING, ELSET=SP2X1\n1\n10\n/);
+  assert.ok(!/ELSET=SP2Y|ELSET=SP2Z/.test(inp));
+  assert.ok(!warnings.some((x) => /Mola/.test(x)), warnings.join("; "));
+  const th = calculixDeck({ ...springCase, solver: "calculix", analysis: "thermal", loads: [{ kind: "spring", group: "L2_FORCE", k: [30, 0, 0] }] }, parseMsh(MSH));
+  assert.ok(th.warnings.includes("Mola L2_FORCE: ignorada na análise térmica"), th.warnings.join("; "));
+  assert.ok(!/SPRING1/.test(th.inp));
+});
+
+test("code_aster: molas à terra → POI1 em DIS_T com K_T_D_N e massa nula", () => {
+  const m = parseMsh(MSH);
+  const { mail, springs } = asterMesh(springCase, m);
+  assert.match(mail, /POI1\n/);
+  assert.match(mail, /GROUP_MA\nK2_1\n/);
+  assert.deepEqual(springs.map((s) => s.k), [[10, 0, 0]]);
+  const comm = asterCase(springCase, m).files["job.comm"];
+  assert.match(comm, /MODELISATION='DIS_T'/);
+  assert.match(comm, /CARA='K_T_D_N', VALE=\(10\., 0\., 0\.\)/);
+  assert.match(comm, /CARA='M_T_D_N', VALE=0\./);
+  assert.match(comm, /CARA_ELEM=CARA/);
+  assert.ok(!/[^\x00-\x7f]/.test(comm));
+  // só molas, sem apoios: aceite
+  assert.doesNotThrow(() => asterCase({ ...springCase, loads: [{ kind: "spring", group: "L2_FORCE", k: [30, 30, 30] }, { kind: "force", group: "L2_FORCE", f: [0, 0, -10] }] }, m));
+  assert.throws(() => asterCase({ ...springCase, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m), /molas só estão/);
 });

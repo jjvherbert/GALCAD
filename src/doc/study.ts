@@ -74,6 +74,8 @@ export type FemLoad =
   | { kind: "symmetry"; faces: TopoRef[]; sets?: string[] }
   /** Força total (N) distribuída uniformemente pela área das faces ou pelo comprimento das arestas (`edges`). */
   | { kind: "force"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; f: [Expr, Expr, Expr] }
+  /** Mola à terra (fundação elástica): rigidez total (N/mm) por direção global, distribuída pela área das faces ou pelo comprimento das arestas. */
+  | { kind: "spring"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; k: [Expr, Expr, Expr] }
   /** Força (N) concentrada no nó da malha mais próximo de um ponto (mm). Dá tensões locais irreais: ver só a resposta global. */
   | { kind: "pointForce"; point: [Expr, Expr, Expr]; f: [Expr, Expr, Expr] }
   /** Pressão (MPa), positiva a empurrar contra a face. */

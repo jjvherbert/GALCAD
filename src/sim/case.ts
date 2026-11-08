@@ -17,7 +17,9 @@ export type FemCaseLoad =
   | { kind: "gravity"; g: V3 }
   | { kind: "temperature"; group: string; t: number }
   | { kind: "convection"; group: string; h: number; tInf: number }
-  | { kind: "heatFlux"; group: string; q: number };
+  | { kind: "heatFlux"; group: string; q: number }
+  /** Mola à terra: rigidez total (N/mm) por direção global, repartida pelos nós do grupo como uma força distribuída. */
+  | { kind: "spring"; group: string; k: V3 };
 
 /**
  * Malha de um caso FEM (resolvida pelo núcleo; o Gmsh só a executa). Curvas e superfícies pelas

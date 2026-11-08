@@ -152,6 +152,18 @@ test("caso FEM: condições em arestas (grupos de curvas, comprimento, hipótese
   await assert.rejects(solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)], edges: [edge(1, [0, 10])] }] })), /faces ou arestas, não ambas/);
 });
 
+test("caso FEM: molas à terra (grupo, rigidez, arestas, contam como apoio, k negativo recusado)", async () => {
+  const { doc, face, edge } = await bar();
+  const { sim } = await solve(doc, fem({ loads: [{ kind: "spring", faces: [face(0, 0)], k: [1000, 500, 500] }, { kind: "force", faces: [face(0, 100)], f: [100, 0, 0] }] }));
+  const c = JSON.parse(String(sim.files["case.json"]));
+  assert.deepEqual(c.loads[0], { kind: "spring", group: "L1_SPRING", k: [1000, 500, 500] });
+  assert.equal(c.groups.L1_SPRING.length, 1);
+  assert.ok(!sim.warnings.some((w) => /Sem apoios/.test(w)));
+  const { sim: e } = await solve(doc, fem({ loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "spring", faces: [], edges: [edge(1, [100, 0])], k: [0, 0, 50] }] }));
+  assert.equal(JSON.parse(String(e.files["case.json"])).edgeGroups.L2_SPRING.length, 1);
+  await assert.rejects(solve(doc, fem({ loads: [{ kind: "spring", faces: [face(0, 0)], k: [-1, 0, 0] }] })), /rigidez não pode ser negativa/);
+});
+
 test("CalculiX: consola — flecha (Timoshenko), reações e pressão", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
   const { doc, face } = await bar();
   const E = 210000, nu = 0.3, I = (10 * 10 ** 3) / 12, A = 100, L = 100, F = 100, G = E / (2 * (1 + nu));
@@ -284,6 +296,19 @@ test("CalculiX: grandes deslocamentos (NLGEOM) — consola elástica de Bisshopp
   near(-a.u, 0.0566 * L, 0.08);
   assert.ok(-b.w > 33.3 && Math.abs(b.u) < 1, `linear ${b.w}`);
   assert.equal(nl.fem!.history.length >= 10, true);
+});
+
+test("CalculiX: molas à terra em série com a barra (tração axial)", { skip: !hasFem && "Gmsh/CalculiX não instalados" }, async () => {
+  const { doc, face } = await bar();
+  // molas distribuídas na face x = 0 (k total 1000 N/mm em cada direção) + força axial de 100 N na ponta:
+  // u_ponta = F/k + F·L/(E·A) = 0,1 + 4,76e-4 mm (as molas pesadas pela área dão translação uniforme)
+  const E = 210000, A = 100, L = 100, F = 100, k = 1000;
+  const r = await (await solve(doc, fem({ loads: [{ kind: "spring", faces: [face(0, 0)], k: [k, k, k] }, { kind: "force", faces: [face(0, 100)], f: [F, 0, 0] }] }))).run();
+  assert.ok(r.ok, JSON.stringify(r));
+  const f = r.fem!;
+  const at = (x: number) => { const u = f.positions.reduce<number[]>((acc, _, i) => (i % 3 === 0 && Math.abs(f.positions[i] - x) < 1e-6 ? [...acc, f.displacements[0].values[i]] : acc), []); return u.reduce((a, b) => a + b, 0) / u.length; };
+  near(at(0), F / k, 0.01);
+  near(at(100), F / k + (F * L) / (E * A), 0.01);
 });
 
 test("CalculiX: sondas (média na face, ponto) e refinamento automático até ao GCI alvo", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
