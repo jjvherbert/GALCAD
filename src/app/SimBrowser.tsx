@@ -8,7 +8,7 @@ import { type SimSection, store, useStoreKeys } from "./store.ts";
 import { CONDITION_COLORS, activeStudies, activeStudy, addStudy, deleteStudy, updateStudy } from "./sim-actions.ts";
 import { runCommand } from "./commands.ts";
 import { checkStudy, checkSummary } from "../sim/modelcheck.ts";
-import { loadFaces } from "../doc/study.ts";
+import { loadEdges, loadFaces } from "../doc/study.ts";
 
 const LOAD_SHORT: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento", symmetry: "Simetria", pointForce: "Força pontual", force: "Força", pressure: "Pressão", gravity: "Gravidade",
@@ -17,7 +17,7 @@ const LOAD_SHORT: Record<FemLoad["kind"], string> = {
 const ANALYSIS: Record<FemStudy["analysis"], string> = { static: "Estática", modal: "Modal", buckling: "Encurvadura", dynamic: "Dinâmica", thermal: "Térmica" };
 const SOLVER: Record<string, string> = { calculix: "CalculiX", code_aster: "code_aster", openradioss: "OpenRadioss", openfoam: "OpenFOAM", su2: "SU2" };
 
-interface Node { section: SimSection; icon: string; label: string; detail: string; state?: "ok" | "warn" | "todo"; children?: { label: string; detail?: string; color?: number }[] }
+interface Node { section: SimSection; icon: string; label: string; detail: string; state?: "ok" | "warn" | "todo"; children?: { label: string; detail?: string; color?: number; edges?: boolean }[] }
 
 function femNodes(s: FemStudy, asm: boolean, hasResult: boolean): Node[] {
   const loads = s.loads;
@@ -31,7 +31,10 @@ function femNodes(s: FemStudy, asm: boolean, hasResult: boolean): Node[] {
     {
       section: "conditions", icon: "⤓", label: "Cargas e apoios", detail: `${loads.length} condição(ões)`,
       state: structural && !supports && s.analysis !== "modal" ? "warn" : loads.length ? "ok" : "todo",
-      children: loads.map((l) => ({ label: LOAD_SHORT[l.kind], detail: "faces" in l ? `${loadFaces(s, l).length} face(s)` : "", color: CONDITION_COLORS[l.kind] })),
+      children: loads.map((l) => {
+        const edges = loadEdges(l).length;
+        return { label: LOAD_SHORT[l.kind], detail: edges ? `${edges} aresta(s)` : "faces" in l ? `${loadFaces(s, l).length} face(s)` : "", color: CONDITION_COLORS[l.kind], edges: edges > 0 };
+      }),
     },
     ...(asm ? [{ section: "contact" as const, icon: "⧉", label: "Contacto", detail: ({ bonded: "colado", friction: `atrito μ = ${s.contact?.mu ?? 0.3}`, none: "sem ligação" } as Record<string, string>)[s.contact?.mode ?? "bonded"], state: "ok" as const }] : []),
     { section: "mesh", icon: "▦", label: "Malha", detail: `${m.element === "hex" ? "hexaedros" : "tetraedros"} ${m.order === 2 ? "quadráticos" : "lineares"} · ${m.size} mm${seeds ? ` · ${seeds} seed(s)` : ""}`, state: "ok" },
@@ -107,7 +110,7 @@ export function SimBrowser() {
                       {n.state === "warn" && <span class="st" title="Falta informação">!</span>}
                     </button>
                     {n.children?.length ? (
-                      <ul class="sim-leaves">{n.children.map((c, k) => <li key={k} title="Duplo clique: escolher as faces desta condição" onClick={() => store.set({ simSection: n.section })} onDblClick={() => store.set({ simSection: n.section, pickTarget: n.section === "conditions" ? { field: `load${k}`, accept: ["face"] } : null })}><span>{c.color !== undefined && <i class="sw" style={{ background: `#${c.color.toString(16).padStart(6, "0")}` }} />}{c.label}</span><span class="dt">{c.detail}</span></li>)}</ul>
+                      <ul class="sim-leaves">{n.children.map((c, k) => <li key={k} title={`Duplo clique: escolher as ${c.edges ? "arestas" : "faces"} desta condição`} onClick={() => store.set({ simSection: n.section })} onDblClick={() => store.set({ simSection: n.section, pickTarget: n.section === "conditions" ? (c.edges ? { field: `loadEdge${k}`, accept: ["edge"] } : { field: `load${k}`, accept: ["face"] }) : null })}><span>{c.color !== undefined && <i class="sw" style={{ background: `#${c.color.toString(16).padStart(6, "0")}` }} />}{c.label}</span><span class="dt">{c.detail}</span></li>)}</ul>
                     ) : null}
                   </li>
                 ))}

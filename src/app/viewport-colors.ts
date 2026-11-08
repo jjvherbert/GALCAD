@@ -24,6 +24,7 @@ export interface ColorState {
   hoverKey: string;
   featureHighlight: string | null;
   previewFeature: string | null;
+  /** Faces (nome) e arestas (`edge:nome`) com condições → cor da condição. */
   conditionFaces: Map<string, number> | null;
   analysis: Analysis | null;
   flash: Flash;
@@ -88,7 +89,7 @@ export function recolor(s: ColorState, data: DOMStringMap) {
     const cl = cont?.get(e.name);
     const base = cl !== undefined ? CONTINUITY_COLORS[cl]
       : d === undefined ? (e.curve ? s.theme.curve : s.theme.edge) : d <= 0.5 ? 0x16a34a : d <= 10 ? 0xf59e0b : 0x6b7280;
-    c.set(s.selected.has(k) ? s.theme.sel : k === hoverKey ? s.theme.hover : base);
+    c.set(s.selected.has(k) ? s.theme.sel : k === hoverKey ? s.theme.hover : s.conditionFaces?.get(k) ?? base);
     for (let v = e.start; v < e.start + e.count; v++) ecol.setXYZ(v, c.r, c.g, c.b);
   });
   ecol.needsUpdate = true;

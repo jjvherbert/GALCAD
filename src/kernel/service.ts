@@ -27,9 +27,9 @@ import { meshBody, type MeshData } from "./mesh.ts";
 import { Arena, T, bbox, explore, makeCompound, oc, setArena, volume } from "./occ.ts";
 
 
-export { sceneOf };
 import { to3MF, toGLB, toOBJ } from "../io/mesh-export.ts";
 import { hashText, sceneOf, surfaceArea } from "./service-scene.ts";
+export { sceneOf };
 import { step242 as buildStep242 } from "./service-step.ts";
 import { interference as detectInterference } from "./service-interference.ts";
 

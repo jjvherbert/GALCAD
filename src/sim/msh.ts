@@ -1,6 +1,6 @@
 // Leitor de malhas Gmsh MSH 4.1 (ASCII): nós, elementos por tipo e grupos físicos por nome.
 // Puro (sem OCC): é usado na aplicação e no agente local (cad-runner).
-import { SOLIDS, isFaceType, isSolidType } from "./elements.ts";
+import { SOLIDS, isFaceType, isLineType, isSolidType } from "./elements.ts";
 
 export interface MshElementBlock {
   dim: number;
@@ -119,6 +119,9 @@ export function solidBlocks(m: Msh, bodies?: { group: string }[]): MshElementBlo
 
 /** Blocos de faces de fronteira (triângulos e quadriláteros) de um grupo físico. */
 export const faceBlocks = (m: Msh, name: string): MshElementBlock[] => physicalBlocks(m, name).filter((b) => isFaceType(b.type));
+
+/** Blocos de linhas (line2/line3) de um grupo físico de arestas. */
+export const edgeBlocks = (m: Msh, name: string): MshElementBlock[] => physicalBlocks(m, name).filter((b) => isLineType(b.type));
 
 /** Elementos (nós pela ordem Gmsh) de uma lista de blocos, com o tipo de cada um. */
 export function* elementsOf(blocks: MshElementBlock[]): Generator<{ type: number; nodes: number[] }> {

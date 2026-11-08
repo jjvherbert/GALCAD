@@ -136,6 +136,10 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
         <div class={`kw-item ${st.simFocus?.index === i ? "focus" : ""}`} key={`${i}:${st.simFocus?.index === i ? st.simFocus.n : 0}`} ref={(el) => { if (el && st.simFocus?.index === i) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }}>
           <div class="row"><b>{LOAD_LABELS[l.kind]}</b><button class="icon" aria-label={`Retirar condição ${i + 1}`} onClick={() => up({ loads: s.loads.filter((_, k) => k !== i) })}>✕</button></div>
           {"faces" in l && <RefList field={`load${i}`} label="Faces" accept={["face"]} refs={l.faces} onChange={(faces) => setLoad(i, { ...l, faces } as FemLoad)} />}
+          {(l.kind === "fixed" || l.kind === "displacement" || l.kind === "force") && <>
+            <RefList field={`loadEdge${i}`} label="Arestas" accept={["edge"]} refs={l.edges ?? []} onChange={(edges) => setLoad(i, { ...l, edges: edges.length ? edges : undefined })} />
+            {(l.edges?.length ?? 0) > 0 && <p class="field-hint">{l.faces.length || l.sets?.length ? "Escolha faces ou arestas, não as duas: retire as faces (ou as arestas) desta condição." : l.kind === "force" ? "Força total repartida pelo comprimento das arestas (CalculiX e code_aster)." : "Apoio nas linhas da malha das arestas (CalculiX e code_aster): concentra tensões junto à aresta."}</p>}
+          </>}
           {"faces" in l && (s.sets?.length ?? 0) > 0 && (
             <div class="set-chips" aria-label="Conjuntos desta condição">
               {s.sets!.map((g) => {

@@ -1,5 +1,5 @@
 // Estudos: caso FEM de uma montagem (um volume por corpo e contacto colado ou com atrito).
-import { type FemStudy } from "../doc/study.ts";
+import { type FemStudy, loadEdges } from "../doc/study.ts";
 import { type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
 import { T, type TopoDS_Shape, bbox, explore, faceProps, makeCompound, normalOnFace, oc, v3 } from "./occ.ts";
@@ -51,6 +51,7 @@ type Vec3D = [number, number, number];
 export function assemblyStudyCase(bodies: AsmBody[], s: FemStudy, scope: Ctx["scope"], title: string): SimFiles {
   const report: StepReport = { warnings: [] };
   if (!bodies.length) throw new Error("A montagem não tem corpos sólidos para o estudo");
+  if (s.loads.some((l) => loadEdges(l).length)) throw new Error("Montagem: condições em arestas não suportadas — escolha faces");
   const faces: CaseFace[] = [];
   const offset: number[] = [];
   for (const bd of bodies) {

@@ -16,7 +16,7 @@ import { studyCase } from "../src/kernel/sim.ts";
 import { namedEdges } from "../src/kernel/naming.ts";
 import type { FemCase } from "../src/sim/case.ts";
 import { elementsOf, parseMsh, solidBlocks } from "../src/sim/msh.ts";
-import { faceIntegrals } from "../src/sim/elements.ts";
+import { faceIntegrals, lineIntegrals } from "../src/sim/elements.ts";
 import { isMonotonic } from "../src/sim/convergence.ts";
 import { previewMesh, runCase, tools } from "../tools/cad-runner.ts";
 
@@ -74,6 +74,18 @@ test("integrais das faces: cargas nodais consistentes do quad8 e do trapézio", 
   // trapézio bilinear: ∫Nᵢ dA exato = (2/3, 2/3, 7/12, 7/12)
   const t = faceIntegrals(3, [[0, 0, 0], [3, 0, 0], [2, 1, 0], [0, 1, 0]]);
   [2 / 3, 2 / 3, 7 / 12, 7 / 12].forEach((x, i) => near(t.nodal[i], x, 1e-9));
+});
+
+test("integrais das linhas: cargas nodais consistentes do seg2 e do seg3", () => {
+  const s2 = lineIntegrals(1, [[0, 0, 0], [3, 4, 0]]);
+  near(s2.length, 5, 1e-12);
+  s2.nodal.forEach((x) => near(x, 2.5, 1e-12));
+  // seg3 reto (nós de canto e depois o do meio): ∫Nᵢ ds = L/6, L/6, 2L/3
+  const s3 = lineIntegrals(8, [[0, 0, 0], [0, 0, 6], [0, 0, 3]]);
+  near(s3.length, 6, 1e-12);
+  [1, 1, 4].forEach((x, i) => near(s3.nodal[i], x, 1e-9));
+  near(s3.nodal.reduce((a, b) => a + b, 0), s3.length, 1e-12);
+  assert.throws(() => lineIntegrals(26, [[0, 0, 0], [1, 0, 0]]), /sem funções de forma/);
 });
 
 test("plano da malha: classes de arestas opostas, seeds e distribuição", async () => {

@@ -1,10 +1,11 @@
 // Estudos: caso FEM de uma peça (apoios, cargas, malha e hipóteses).
-import { type FemStudy, loadFaces, plasticCurveErrors } from "../doc/study.ts";
+import { type FemStudy, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
 import { type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges } from "./context.ts";
 import { meshPlan } from "./meshplan.ts";
 import { bbox, explore } from "./occ.ts";
+import { edgeProps } from "./occ-props.ts";
 import { type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, loadGroup } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, tagsOf, n3 } from "./sim-common.ts";
 
@@ -39,12 +40,18 @@ const HEX_NAME = (order: 1 | 2, integ: FemStudy["mesh"]["integration"]) => order
 
 export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], tags: (refs: TopoRef[], what: string) => number[], box: { min: V3; max: V3 }, report: StepReport, geo: MeshGeo): FemCase {
   const groups: Record<string, number[]> = {};
+  const edgeGroups: Record<string, number[]> = {}, edgeLength: Record<string, number> = {};
   const loads: FemCaseLoad[] = [];
   s.loads.forEach((l, i) => {
     if (l.kind === "gravity") { loads.push({ kind: "gravity", g: n3(l.g, sc, "Gravidade") }); return; }
     if (l.kind === "pointForce") { loads.push({ kind: "pointForce", point: n3(l.point, sc, `Condição ${i + 1}: ponto`), f: n3(l.f, sc, `Condição ${i + 1}: força`) }); return; }
     const g = loadGroup(i, l.kind);
-    groups[g] = tags(loadFaces(s, l), `Condição ${i + 1}`);
+    const edges = loadEdges(l);
+    if (edges.length) {
+      if (loadFaces(s, l).length) throw new Error(`Condição ${i + 1}: escolha faces ou arestas, não ambas`);
+      edgeGroups[g] = geo.edgeTags(edges, `Condição ${i + 1}`);
+      edgeLength[g] = edgeGroups[g].reduce((a, t) => a + edgeProps(geo.edges[t - 1]).length, 0);
+    } else groups[g] = tags(loadFaces(s, l), `Condição ${i + 1}`);
     if (l.kind === "symmetry") {
       // simetria: o deslocamento normal ao plano é nulo (faces planas alinhadas com um eixo); desliza no plano
       const byAxis: number[][] = [[], [], []];
@@ -136,7 +143,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && `plasticidade de von Mises com encruamento isotrópico ${curve?.length ? "multilinear" : "bilinear"}`].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
     format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, dynamic, probes: probes.length ? probes : undefined,
-    material: s.material, groups, faces, loads, bbox: box,
+    material: s.material, groups, ...(Object.keys(edgeGroups).length ? { edgeGroups, edgeLength } : {}), faces, loads, bbox: box,
     mesh: {
       size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local,
       ...(element === "hex" ? { element, integration: s.mesh.integration ?? (s.mesh.order === 2 ? "reduced" : "incompatible") } : {}),
@@ -147,6 +154,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
+      ...(Object.keys(edgeGroups).length ? ["Condições em arestas: força distribuída uniformemente pelo comprimento, apoio nos nós da aresta; a tensão junto à aresta é singular (depende da malha) — ler os resultados a uma distância de alguns elementos"] : []),
       ...(s.loads.some((l) => l.kind === "symmetry") ? ["Simetria: modelo parcial — geometria, apoios e cargas têm de ser simétricos em relação ao plano; as cargas são as da parte modelada (metade da total) e os resultados só valem nessa parte"] : []),
       "Apoio à decisão de engenharia: não é certificação nem decisão de uma autoridade ou de um organismo notificado",
     ],

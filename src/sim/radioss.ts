@@ -28,6 +28,7 @@ const ids = (list: number[]) => { const out: string[] = []; for (let k = 0; k < 
 export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
   if (c.analysis !== "dynamic" || c.dynamic?.scheme !== "explicit") throw new Error("OpenRadioss: só dinâmica explícita (escolha «Dinâmica transitória» e «Explícita»)");
   if ((c.ties ?? []).length) throw new Error("OpenRadioss: montagens com contacto ainda não estão neste adaptador (use uma peça)");
+  if (Object.keys(c.edgeGroups ?? {}).length) throw new Error("OpenRadioss: condições em arestas ainda não estão neste adaptador (escolha faces)");
   const warnings: string[] = [];
   const D = c.dynamic;
   const name = "galcad";

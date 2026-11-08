@@ -146,3 +146,33 @@ test("code_aster: tabelas IMPR_TABLE → resultado com deslocamentos, von Mises 
   const f = asterResult({ ...base, analysis: "modal" }, parseMsh(MSH), { u: u.replace(/ 1 1\.0 /g, " 1 0.0 "), freq: " NUME_ORDRE FREQ\n 1 123.4\n 2 456.7\n" }, [1, 2, 3, 4]);
   assert.deepEqual(f.frequencies, [123.4, 456.7]);
 });
+
+// o mesmo tetraedro com uma curva (aresta N1–N2, SEG2) no grupo L3_EDGE
+const MSH_EDGE = MSH
+  .replace('$PhysicalNames\n3\n', '$PhysicalNames\n4\n1 4 "L3_EDGE"\n')
+  .replace("$Entities\n0 0 2 1\n", "$Entities\n0 1 2 1\n7 0 0 0 1 0 0 1 4 0\n")
+  .replace("$Elements\n3 3 1 4\n", "$Elements\n4 4 1 4\n1 7 1 1\n4 1 2\n");
+
+test("code_aster: condições numa aresta → GROUP_NO, FORCE_NODALE consistente e DDL_IMPO", () => {
+  const m = parseMsh(MSH_EDGE);
+  const c: FemCase = { ...base, edgeGroups: { L3_EDGE: [7] }, edgeLength: { L3_EDGE: 1 }, loads: [{ kind: "fixed", group: "L1_FIXED" }, { kind: "force", group: "L3_EDGE", f: [0, 0, -10] }] };
+  const { mail, edgeNodes, warnings } = asterMesh(c, m);
+  assert.deepEqual(warnings, []);
+  assert.match(mail, /GROUP_NO\nL3_EDGE\nN1 N2\nFINSF/);
+  assert.match(mail, /GROUP_NO\nE1_1\nN1\nFINSF/);
+  assert.match(mail, /GROUP_NO\nE1_2\nN2\nFINSF/);
+  // SEG2: metade da força em cada nó; as frações somam 1
+  assert.deepEqual(edgeNodes.L3_EDGE.map((x) => x.w), [0.5, 0.5]);
+  const comm = asterCase(c, m).files["job.comm"];
+  assert.match(comm, /FORCE_NODALE=\(_F\(GROUP_NO='E1_1', FX=0\., FY=0\., FZ=-5\.\), _F\(GROUP_NO='E1_2', FX=0\., FY=0\., FZ=-5\.\),\)/);
+  assert.ok(!/[^\x00-\x7f]/.test(comm));
+  // apoio na aresta: graus impostos no grupo de nós
+  const fx = asterCase({ ...c, loads: [{ kind: "fixed", group: "L3_EDGE" }, { kind: "force", group: "L2_FORCE", f: [0, 0, -10] }] }, m);
+  assert.match(fx.files["job.comm"], /_F\(GROUP_NO='L3_EDGE', DX=0\., DY=0\., DZ=0\.\)/);
+  assert.ok(!/FORCE_NODALE/.test(fx.files["job.comm"]));
+  // grupo sem linhas na malha: aviso e a força não é aplicada
+  const none = asterCase({ ...c, edgeGroups: { L4_NONE: [99] }, loads: [{ kind: "fixed", group: "L1_FIXED" }, { kind: "force", group: "L4_NONE", f: [0, 0, -10] }] }, m);
+  assert.ok(none.warnings.includes("O grupo L4_NONE não tem linhas na malha"), none.warnings.join("; "));
+  assert.ok(none.warnings.includes("Força no grupo L4_NONE sem comprimento"), none.warnings.join("; "));
+  assert.ok(!/FORCE_NODALE/.test(none.files["job.comm"]));
+});

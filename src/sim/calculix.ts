@@ -4,8 +4,8 @@
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
 import type { FemCase } from "./case.ts";
-import { type Msh, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
-import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey } from "./elements.ts";
+import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
+import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
 
 /**
@@ -31,6 +31,8 @@ export interface Deck {
   elements: number;
   /** Área de cada grupo de faces (mm²) medida na malha (para conferir com o CAD). */
   groupArea: Record<string, number>;
+  /** Comprimento de cada grupo de arestas (mm) medido na malha. */
+  groupLength: Record<string, number>;
   /**
    * Cargas aplicadas diretamente nos graus de liberdade restringidos (N), com a carga total: o RF do
    * CalculiX é a força interna, e a reação verdadeira é RF − esta parcela (f_int = f_ext + R).
@@ -80,6 +82,15 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     if (!tris[name].length) warnings.push(`O grupo ${name} não tem faces na malha`);
     if (tris[name].some((t) => !t.face)) warnings.push(`Grupo ${name}: faces sem face de elemento correspondente`);
   }
+  // linhas (line2/line3) dos grupos de arestas, com as integrais para as forças consistentes
+  const lines: Record<string, { n: number[]; length: number; nodal: number[] }[]> = {};
+  const groupLength: Record<string, number> = {};
+  for (const name of Object.keys(c.edgeGroups ?? {})) {
+    lines[name] = [...elementsOf(edgeBlocks(m, name))].map(({ type, nodes }) => ({ n: nodes, ...lineIntegrals(type, nodes.map((t) => m.nodes.get(t)!)) }));
+    groupLength[name] = lines[name].reduce((s, l) => s + l.length, 0);
+    if (!lines[name].length) warnings.push(`O grupo ${name} não tem linhas na malha`);
+    if (lines[name].some((l) => l.n.some((x) => !used.has(x)))) warnings.push(`Grupo ${name}: nós das arestas fora dos elementos de volume`);
+  }
 
   const L: string[] = [];
   L.push("*HEADING", `${c.title} — gerado pelo CAD protótipo`);
@@ -93,7 +104,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     // o CalculiX aceita até 16 entradas por linha: o C3D20 continua na linha seguinte
     L.push(e.n.length > 15 ? `${i + 1}, ${e.n.slice(0, 15).join(", ")},\n${e.n.slice(15).join(", ")}` : `${i + 1}, ${e.n.join(", ")}`);
   });
-  for (const [name, list] of Object.entries(tris)) {
+  for (const [name, list] of Object.entries<{ n: number[] }[]>({ ...tris, ...lines })) {
     const ns = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b);
     L.push(`*NSET, NSET=N_${name}`);
     for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
@@ -182,9 +193,11 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       case "force": {
         // tração uniforme t = F/A → forças nodais consistentes ∫Nᵢ t dA (tri3: A/3 por canto; tri6:
         // A/3 por nó intermédio; quad8: −A/12 nos cantos e A/3 nos intermédios)
-        const A = groupArea[ld.group];
-        if (!(A > 0)) { warnings.push(`Força no grupo ${ld.group} sem área`); break; }
-        for (const t of tris[ld.group]) t.n.forEach((n, i) => {
+        // em arestas: carga por unidade de comprimento F/L (line2: L/2 por nó; line3: L/6 nas pontas e 2L/3 no meio)
+        const edge = !!lines[ld.group];
+        const A = edge ? groupLength[ld.group] : groupArea[ld.group];
+        if (!(A > 0)) { warnings.push(`Força no grupo ${ld.group} sem ${edge ? "comprimento" : "área"}`); break; }
+        for (const t of edge ? lines[ld.group] : tris[ld.group]) t.n.forEach((n, i) => {
           if (t.nodal[i] === 0) return;
           const acc = cload.get(n) ?? [0, 0, 0];
           for (let k = 0; k < 3; k++) acc[k] += (ld.f[k] * t.nodal[i]) / A;
@@ -213,7 +226,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   }
   // parcela das cargas que cai nos nós dos apoios (CLOAD e pressão consistente; a gravidade nesses
   // nós, uma fração mínima da massa, não entra)
-  const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => tris[n.slice(2)]?.flatMap((t) => t.n) ?? [])));
+  const dofNodes = dofSets.map((sets) => new Set(sets.flatMap((n) => (tris[n.slice(2)] ?? lines[n.slice(2)])?.flatMap((t) => t.n) ?? [])));
   const supportLoad: [number, number, number] = [0, 0, 0];
   for (const [n, f] of cload) for (let k = 0; k < 3; k++) if (dofNodes[k].has(n)) supportLoad[k] += f[k];
   for (const ld of c.loads) {
@@ -279,7 +292,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   }
   L.push("*END STEP");
   if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
-  return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, supportLoad, warnings, dynamic: dyn };
+  return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, groupLength, supportLoad, warnings, dynamic: dyn };
 }
 
 // Resultados: em calculix-result.ts
