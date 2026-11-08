@@ -1,5 +1,5 @@
 // Resultados do CalculiX: leitura do `.frd` e do `.dat` e montagem do resultado para o visualizador.
-import { type FemCase, amplitudeAt } from "./case.ts";
+import { type FemCase, amplitudeAt, csysAxes, csysToLocal } from "./case.ts";
 import { type Msh, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, faceKey, outwardTriangles } from "./elements.ts";
 import type { Metric } from "./convergence.ts";
@@ -49,10 +49,11 @@ export function parseFrd(text: string): { nodes: Map<number, [number, number, nu
  * Valores próprios do `.dat`: frequências (Hz) ou fatores de encurvadura; reações totais de cada
  * conjunto no último tempo e, nas análises incrementais, a soma das reações em cada tempo.
  */
-export function parseDat(text: string): { frequencies: number[]; buckling: number[]; reactions: [number, number, number][]; reactionHistory: { time: number; f: [number, number, number] }[]; setTotals?: Record<string, [number, number, number]> } {
+export function parseDat(text: string): { frequencies: number[]; buckling: number[]; reactions: [number, number, number][]; reactionHistory: { time: number; f: [number, number, number] }[]; setTotals?: Record<string, [number, number, number]>; nodeForces?: Record<string, Map<number, [number, number, number]>> } {
   const lines = text.split(/\r?\n/);
   const frequencies: number[] = [], buckling: number[] = [];
   const sets = new Map<string, Map<number, [number, number, number]>>();
+  const nodeForces: Record<string, { time: number; f: Map<number, [number, number, number]> }> = {};
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (/E I G E N V A L U E\s+O U T P U T/.test(l)) {
@@ -67,6 +68,17 @@ export function parseDat(text: string): { frequencies: number[]; buckling: numbe
         if (v.length === 2 && Number.isInteger(v[0]) && Number.isFinite(v[1])) buckling.push(v[1]);
         else if (buckling.length && lines[j].trim() === "") break;
       }
+    } else if (/^\s*forces \(fx,fy,fz\) for set/.test(l)) {
+      // forças nó a nó (último tempo)
+      const m = /for set (\S+) and time\s+(\S+)/.exec(l);
+      if (!m) continue;
+      const set = m[1].toUpperCase(), t = Number(m[2]), nf = new Map<number, [number, number, number]>();
+      for (let j = i + 1; j < lines.length; j++) {
+        const v = lines[j].trim().split(/\s+/).map(Number);
+        if (v.length === 4 && Number.isInteger(v[0]) && v.every(Number.isFinite)) nf.set(v[0], [v[1], v[2], v[3]]);
+        else if (nf.size || (lines[j].trim() !== "" && j > i + 2)) break;
+      }
+      if (!(nodeForces[set]?.time > t)) nodeForces[set] = { time: t, f: nf };
     } else if (/total force/.test(l)) {
       const v = lines[i + 2]?.trim().split(/\s+/).map(Number);
       if (!v || v.length < 3 || !v.every(Number.isFinite)) continue;
@@ -87,7 +99,7 @@ export function parseDat(text: string): { frequencies: number[]; buckling: numbe
   });
   const setTotals: Record<string, [number, number, number]> = {};
   for (const [name, st] of sets) { const last = [...st.keys()].sort((a, b) => a - b).at(-1); if (last !== undefined) setTotals[name] = st.get(last)!; }
-  return { frequencies, buckling, reactions: reactionHistory.length ? [reactionHistory.at(-1)!.f] : [], reactionHistory, setTotals };
+  return { frequencies, buckling, reactions: reactionHistory.length ? [reactionHistory.at(-1)!.f] : [], reactionHistory, setTotals, nodeForces: Object.fromEntries(Object.entries(nodeForces).map(([k, v]) => [k, v.f])) };
 }
 
 export interface FemResult {
@@ -344,12 +356,24 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
   const groupReactions: NonNullable<FemResult["groupReactions"]> = [];
   for (const ld of c.loads) {
     if (ld.kind !== "fixed" && ld.kind !== "displacement") continue;
-    const v = d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+    // num referencial local, a reação soma-se nó a nó em componentes locais
+    const cs = ld.kind === "displacement" ? ld.csys : undefined, loc = !!cs;
+    let v = cs ? undefined : d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+    const nf = cs && d.nodeForces?.[`N_${ld.group}`.toUpperCase()];
+    if (cs && nf?.size) {
+      v = [0, 0, 0];
+      for (const [n, fg] of nf) {
+        const ax = csysAxes(cs, m.nodes.get(n) ?? [0, 0, 0]), fl = ax ? csysToLocal(ax, fg) : fg;
+        for (let k = 0; k < 3; k++) v[k] += fl[k];
+      }
+    }
     if (!v) continue;
     const f = [0, 1, 2].map((k) => (ld.kind === "fixed" || ld.u[k] !== null ? v[k] : null));
     groupReactions.push({ group: ld.group, f });
-    f.forEach((x, k) => { if (x !== null) metrics.push({ key: `R_${ld.group}_${"xyz"[k]}`, label: `Reação ${ld.group} ${"XYZ"[k]}`, unit: "N", value: x }); });
+    f.forEach((x, k) => { if (x !== null) metrics.push({ key: `R_${ld.group}_${"xyz"[k]}`, label: `Reação ${ld.group} ${"XYZ"[k]}${loc ? " (local)" : ""}`, unit: "N", value: x }); });
+    if (loc) summary.push([`Reação ${ld.group} local (N)`, f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
   }
-  if (groupReactions.length > 1) for (const g of groupReactions) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
+  const isLocal = (g: string) => c.loads.some((l) => l.kind === "displacement" && l.group === g && !!l.csys);
+  if (groupReactions.length > 1) for (const g of groupReactions) if (!isLocal(g.group)) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => (x === null ? "—" : x.toFixed(2))).join(" · ")]);
   return { analysis: c.analysis, positions, triangles, fields, displacements, frequencies: d.frequencies, buckling: d.buckling, reactions: d.reactions, groupReactions, summary, metrics, history, timeHistory, hypotheses: c.hypotheses };
 }

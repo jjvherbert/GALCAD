@@ -4,6 +4,68 @@ import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+// src/sim/case.ts
+const sub$2 = (p, q) => [
+	p[0] - q[0],
+	p[1] - q[1],
+	p[2] - q[2]
+];
+const cross$2 = (p, q) => [
+	p[1] * q[2] - p[2] * q[1],
+	p[2] * q[0] - p[0] * q[2],
+	p[0] * q[1] - p[1] * q[0]
+];
+const dot$1 = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+const unit = (p) => {
+	const n = Math.hypot(...p);
+	return n > 1e-12 ? [
+		p[0] / n,
+		p[1] / n,
+		p[2] / n
+	] : null;
+};
+/**
+* Eixos locais (ex, ey, ez em coordenadas globais) de um referencial no ponto `p` (mm): retangular
+* (iguais em todo o lado) ou cilíndrico (radial, tangencial, axial de a para b). Erro se o
+* referencial for degenerado; no cilíndrico, null para um ponto sobre o eixo.
+*/
+function csysAxes(c, p = [
+	0,
+	0,
+	0
+]) {
+	if (c.type === "rect") {
+		const ex = unit(c.a), ez = unit(cross$2(c.a, c.b));
+		if (!ex || !ez) throw new Error("Referencial local: os pontos a e b têm de definir um plano (não nulos nem alinhados com a origem)");
+		return [
+			ex,
+			cross$2(ez, ex),
+			ez
+		];
+	}
+	const ez = unit(sub$2(c.b, c.a));
+	if (!ez) throw new Error("Referencial local cilíndrico: os pontos a e b do eixo têm de ser diferentes");
+	const d = sub$2(p, c.a), along = dot$1(d, ez);
+	const er = unit([
+		d[0] - along * ez[0],
+		d[1] - along * ez[1],
+		d[2] - along * ez[2]
+	]);
+	return er ? [
+		er,
+		cross$2(ez, er),
+		ez
+	] : null;
+}
+const csysToLocal = (ax, v) => ax.map((e) => dot$1(e, v));
+/** Fator da amplitude no instante t (interpolação linear; constante fora da tabela). Sem dinâmica: 1. */
+function amplitudeAt(c, t) {
+	const a = c.dynamic?.amplitude;
+	if (!a?.length) return 1;
+	if (t <= a[0][0]) return a[0][1];
+	for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + (a[i][1] - a[i - 1][1]) * (t - a[i - 1][0]) / (a[i][0] - a[i - 1][0] || 1);
+	return a[a.length - 1][1];
+}
 // src/sim/elements.ts
 const id = (n) => Array.from({ length: n }, (_, i) => i);
 const HEX20_CCX = [
@@ -1116,15 +1178,6 @@ function stableIncrement(m, materials) {
 	}
 	return best;
 }
-// src/sim/case.ts
-/** Fator da amplitude no instante t (interpolação linear; constante fora da tabela). Sem dinâmica: 1. */
-function amplitudeAt(c, t) {
-	const a = c.dynamic?.amplitude;
-	if (!a?.length) return 1;
-	if (t <= a[0][0]) return a[0][1];
-	for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + (a[i][1] - a[i - 1][1]) * (t - a[i - 1][0]) / (a[i][0] - a[i - 1][0] || 1);
-	return a[a.length - 1][1];
-}
 // src/sim/calculix-result.ts
 /** Lê um `.frd` ASCII: coordenadas dos nós e blocos de resultados nodais. */
 function parseFrd(text) {
@@ -1179,6 +1232,7 @@ function parseDat(text) {
 	const lines = text.split(/\r?\n/);
 	const frequencies = [], buckling = [];
 	const sets = /* @__PURE__ */ new Map();
+	const nodeForces = {};
 	for (let i = 0; i < lines.length; i++) {
 		const l = lines[i];
 		if (/E I G E N V A L U E\s+O U T P U T/.test(l)) for (let j = i + 1; j < lines.length; j++) {
@@ -1191,7 +1245,24 @@ function parseDat(text) {
 			if (v.length === 2 && Number.isInteger(v[0]) && Number.isFinite(v[1])) buckling.push(v[1]);
 			else if (buckling.length && lines[j].trim() === "") break;
 		}
-		else if (/total force/.test(l)) {
+		else if (/^\s*forces \(fx,fy,fz\) for set/.test(l)) {
+			const m = /for set (\S+) and time\s+(\S+)/.exec(l);
+			if (!m) continue;
+			const set = m[1].toUpperCase(), t = Number(m[2]), nf = /* @__PURE__ */ new Map();
+			for (let j = i + 1; j < lines.length; j++) {
+				const v = lines[j].trim().split(/\s+/).map(Number);
+				if (v.length === 4 && Number.isInteger(v[0]) && v.every(Number.isFinite)) nf.set(v[0], [
+					v[1],
+					v[2],
+					v[3]
+				]);
+				else if (nf.size || lines[j].trim() !== "" && j > i + 2) break;
+			}
+			if (!(nodeForces[set]?.time > t)) nodeForces[set] = {
+				time: t,
+				f: nf
+			};
+		} else if (/total force/.test(l)) {
 			const v = lines[i + 2]?.trim().split(/\s+/).map(Number);
 			if (!v || v.length < 3 || !v.every(Number.isFinite)) continue;
 			const m = /for set (\S+) and time\s+(\S+)/.exec(l);
@@ -1238,7 +1309,8 @@ function parseDat(text) {
 		buckling,
 		reactions: reactionHistory.length ? [reactionHistory.at(-1).f] : [],
 		reactionHistory,
-		setTotals
+		setTotals,
+		nodeForces: Object.fromEntries(Object.entries(nodeForces).map(([k, v]) => [k, v.f]))
 	};
 }
 /**
@@ -1648,7 +1720,24 @@ function femResultFrom(c, m, blocks, d) {
 	const groupReactions = [];
 	for (const ld of c.loads) {
 		if (ld.kind !== "fixed" && ld.kind !== "displacement") continue;
-		const v = d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+		const cs = ld.kind === "displacement" ? ld.csys : void 0, loc = !!cs;
+		let v = cs ? void 0 : d.setTotals?.[`N_${ld.group}`.toUpperCase()];
+		const nf = cs && d.nodeForces?.[`N_${ld.group}`.toUpperCase()];
+		if (cs && nf?.size) {
+			v = [
+				0,
+				0,
+				0
+			];
+			for (const [n, fg] of nf) {
+				const ax = csysAxes(cs, m.nodes.get(n) ?? [
+					0,
+					0,
+					0
+				]), fl = ax ? csysToLocal(ax, fg) : fg;
+				for (let k = 0; k < 3; k++) v[k] += fl[k];
+			}
+		}
 		if (!v) continue;
 		const f = [
 			0,
@@ -1662,13 +1751,17 @@ function femResultFrom(c, m, blocks, d) {
 		f.forEach((x, k) => {
 			if (x !== null) metrics.push({
 				key: `R_${ld.group}_${"xyz"[k]}`,
-				label: `Reação ${ld.group} ${"XYZ"[k]}`,
+				label: `Reação ${ld.group} ${"XYZ"[k]}${loc ? " (local)" : ""}`,
 				unit: "N",
 				value: x
 			});
 		});
+		if (loc) summary.push([`Reação ${ld.group} local (N)`, f.map((x) => x === null ? "—" : x.toFixed(2)).join(" · ")]);
 	}
-	if (groupReactions.length > 1) for (const g of groupReactions) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => x === null ? "—" : x.toFixed(2)).join(" · ")]);
+	const isLocal = (g) => c.loads.some((l) => l.kind === "displacement" && l.group === g && !!l.csys);
+	if (groupReactions.length > 1) {
+		for (const g of groupReactions) if (!isLocal(g.group)) summary.push([`Reação ${g.group} (N)`, g.f.map((x) => x === null ? "—" : x.toFixed(2)).join(" · ")]);
+	}
 	return {
 		analysis: c.analysis,
 		positions,
@@ -1781,19 +1874,39 @@ function calculixDeck(c, m) {
 		if (i === 0 || elems[i - 1].type !== e.type) L.push(`*ELEMENT, TYPE=${e.type}, ELSET=EALL`);
 		L.push(e.n.length > 15 ? `${i + 1}, ${e.n.slice(0, 15).join(", ")},\n${e.n.slice(15).join(", ")}` : `${i + 1}, ${e.n.join(", ")}`);
 	});
+	const nodesOf = {};
 	for (const [name, list] of Object.entries({
 		...tris,
 		...lines
 	})) {
-		const ns = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b);
+		const ns = nodesOf[name] = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b);
 		L.push(`*NSET, NSET=N_${name}`);
 		for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
+	}
+	const nodeCs = /* @__PURE__ */ new Map();
+	if (!thermal) for (const ld of c.loads) {
+		if (ld.kind !== "displacement" && ld.kind !== "spring" || !ld.csys) continue;
+		const cs = ld.csys;
+		csysAxes(cs, cs.type === "cyl" ? cs.b : void 0);
+		let onAxis = 0;
+		for (const n of nodesOf[ld.group] ?? []) {
+			const prev = nodeCs.get(n);
+			if (prev && JSON.stringify(prev) !== JSON.stringify(cs)) throw new Error(`Referencial local de ${ld.group}: há nós com outro referencial local (um nó só pode ter um)`);
+			nodeCs.set(n, cs);
+			if (!csysAxes(cs, m.nodes.get(n))) onAxis++;
+		}
+		if (onAxis) warnings.push(`Referencial cilíndrico de ${ld.group}: ${onAxis} nó(s) sobre o eixo, sem direção radial definida`);
+		L.push(`*TRANSFORM, NSET=N_${ld.group}, TYPE=${cs.type === "cyl" ? "C" : "R"}`, [...cs.a, ...cs.b].map(fmt).join(", "));
+	}
+	for (const ld of c.loads) {
+		if (ld.kind !== "fixed" && ld.kind !== "displacement" && ld.kind !== "spring" || "csys" in ld && ld.csys || !nodeCs.size) continue;
+		if ((nodesOf[ld.group] ?? []).some((n) => nodeCs.has(n)) && ld.kind !== "fixed") warnings.push(`${ld.group}: partilha nós com um grupo em referencial local — nesses nós as direções são as locais`);
 	}
 	const dofSets = [
 		0,
 		1,
 		2
-	].map((k) => c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" && ld.u[k] !== null ? [`N_${ld.group}`] : []));
+	].map((k) => c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" && !ld.csys && ld.u[k] !== null ? [`N_${ld.group}`] : []));
 	if (!thermal) dofSets.forEach((sets, k) => {
 		if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`));
 	});
@@ -2072,9 +2185,12 @@ function calculixDeck(c, m) {
 	}
 	if (cload.size) {
 		loads.push("*CLOAD");
-		for (const [n, f] of cload) f.forEach((x, k) => {
-			if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`);
-		});
+		for (const [n, fg] of cload) {
+			const cs = nodeCs.get(n), ax = cs && csysAxes(cs, m.nodes.get(n));
+			(ax ? csysToLocal(ax, fg) : fg).forEach((x, k) => {
+				if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`);
+			});
+		}
 	}
 	if (moments.length) loads.push("*CLOAD", ...moments);
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;
@@ -2114,21 +2230,22 @@ function calculixDeck(c, m) {
 	if (bcs.length) L.push("*BOUNDARY", ...bcs);
 	if (bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...bcsAmp);
 	if (c.analysis !== "modal") L.push(...loads);
+	const glob = nodeCs.size ? ", GLOBAL=YES" : "";
 	if (thermal) L.push("*NODE FILE", "NT");
 	else if (dyn) {
 		const f = `, FREQUENCY=${dyn.frequency}`;
 		L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
 		dofSets.forEach((sets, k) => {
-			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}`, "RF");
+			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF");
 		});
 	} else {
 		L.push("*NODE FILE", "U");
 		if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
 		if (c.analysis === "static") dofSets.forEach((sets, k) => {
-			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF");
+			if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF");
 		});
 		if (c.analysis === "static") {
-			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
+			for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, ${ld.kind === "displacement" && ld.csys ? "GLOBAL=YES" : `TOTALS=ONLY${glob}`}`, "RF");
 		}
 	}
 	L.push("*END STEP");
@@ -2909,6 +3026,7 @@ function radiossDeck(c, m) {
 	for (const ld of c.loads) {
 		if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "coupling") throw new Error("OpenRadioss: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
+		if (ld.kind === "displacement" && ld.csys) throw new Error("OpenRadioss: os deslocamentos em referencial local ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "mass") throw new Error("OpenRadioss: as massas pontuais ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
 		if (ld.kind === "fixed" || ld.kind === "displacement") {
@@ -3365,6 +3483,7 @@ function asterCase(c, m) {
 	if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
 	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
 	if (c.loads.some((l) => l.kind === "coupling")) throw new Error("code_aster: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
+	if (c.loads.some((l) => (l.kind === "displacement" || l.kind === "spring") && l.csys)) throw new Error("code_aster: os referenciais locais (deslocamentos e molas) ainda não estão neste adaptador (use o CalculiX)");
 	const { mail, nodeOrder, areas, edgeNodes, springs, masses, warnings } = asterMesh(c, m);
 	const mat = c.material;
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;

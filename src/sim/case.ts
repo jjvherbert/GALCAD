@@ -8,9 +8,13 @@ export type V3 = [number, number, number];
 /** Face do corpo: tag (índice 1… pela ordem do OpenCASCADE, igual ao do Gmsh), centroide e área (mm, mm²). */
 export interface CaseFace { tag: number; name: string; center: V3; area: number; /** Normal exterior (faces planas). */ normal?: V3 }
 
+/** Referencial local (CalculiX `*TRANSFORM`): retangular (a = ponto no eixo X, b = ponto no plano XY) ou cilíndrico (a, b = pontos do eixo). */
+export type CaseCsys = { type: "rect" | "cyl"; a: V3; b: V3 };
+
 export type FemCaseLoad =
   | { kind: "fixed"; group: string }
-  | { kind: "displacement"; group: string; u: (number | null)[] }
+  /** Deslocamento imposto; com `csys`, componentes no referencial local. */
+  | { kind: "displacement"; group: string; u: (number | null)[]; csys?: CaseCsys }
   | { kind: "force"; group: string; f: V3 }
   | { kind: "pointForce"; point: V3; f: V3 }
   | { kind: "pressure"; group: string; p: number }
@@ -18,8 +22,8 @@ export type FemCaseLoad =
   | { kind: "temperature"; group: string; t: number }
   | { kind: "convection"; group: string; h: number; tInf: number }
   | { kind: "heatFlux"; group: string; q: number }
-  /** Mola à terra: rigidez total (N/mm) por direção global, repartida pelos nós do grupo como uma força distribuída. */
-  | { kind: "spring"; group: string; k: V3 }
+  /** Mola à terra: rigidez total (N/mm) por direção (global, ou local com `csys`), repartida pelos nós do grupo como uma força distribuída. */
+  | { kind: "spring"; group: string; k: V3; csys?: CaseCsys }
   /** Massa acrescentada (t) repartida pelos nós do grupo como uma força distribuída (entra na inércia e no peso). */
   | { kind: "mass"; group: string; m: number }
   /** Acoplamento rígido (RBE2) ou distribuído (RBE3) do grupo a um ponto de referência, com força (N) e momento (N·mm) nesse ponto. */
@@ -127,6 +131,36 @@ export interface CfdCase {
 }
 
 export type SimCase = FemCase | CfdCase;
+
+const sub = (p: V3, q: V3): V3 => [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+const cross = (p: V3, q: V3): V3 => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+const dot = (p: V3, q: V3) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+const unit = (p: V3): V3 | null => {
+  const n = Math.hypot(...p);
+  return n > 1e-12 ? [p[0] / n, p[1] / n, p[2] / n] : null;
+};
+
+/**
+ * Eixos locais (ex, ey, ez em coordenadas globais) de um referencial no ponto `p` (mm): retangular
+ * (iguais em todo o lado) ou cilíndrico (radial, tangencial, axial de a para b). Erro se o
+ * referencial for degenerado; no cilíndrico, null para um ponto sobre o eixo.
+ */
+export function csysAxes(c: CaseCsys, p: V3 = [0, 0, 0]): [V3, V3, V3] | null {
+  if (c.type === "rect") {
+    const ex = unit(c.a), ez = unit(cross(c.a, c.b));
+    if (!ex || !ez) throw new Error("Referencial local: os pontos a e b têm de definir um plano (não nulos nem alinhados com a origem)");
+    return [ex, cross(ez, ex), ez];
+  }
+  const ez = unit(sub(c.b, c.a));
+  if (!ez) throw new Error("Referencial local cilíndrico: os pontos a e b do eixo têm de ser diferentes");
+  const d = sub(p, c.a), along = dot(d, ez);
+  const er = unit([d[0] - along * ez[0], d[1] - along * ez[1], d[2] - along * ez[2]]);
+  return er ? [er, cross(ez, er), ez] : null;
+}
+
+/** Componentes globais de um vetor dado no referencial local retangular (e inverso com `toLocal`). */
+export const csysToGlobal = (ax: [V3, V3, V3], v: V3): V3 => [0, 1, 2].map((i) => ax[0][i] * v[0] + ax[1][i] * v[1] + ax[2][i] * v[2]) as V3;
+export const csysToLocal = (ax: [V3, V3, V3], v: V3): V3 => ax.map((e) => dot(e, v)) as V3;
 
 /** Grupos físicos gerados para cada carga (`L1_FIXED`, …) e os do refinamento local (`R1`, …). */
 export const loadGroup = (i: number, kind: string) => `L${i + 1}_${kind.toUpperCase()}`;

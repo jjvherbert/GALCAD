@@ -3,7 +3,7 @@
 //
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
-import type { FemCase, FemCaseLoad, V3 } from "./case.ts";
+import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, csysAxes, csysToLocal } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
@@ -120,14 +120,37 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     // o CalculiX aceita até 16 entradas por linha: o C3D20 continua na linha seguinte
     L.push(e.n.length > 15 ? `${i + 1}, ${e.n.slice(0, 15).join(", ")},\n${e.n.slice(15).join(", ")}` : `${i + 1}, ${e.n.join(", ")}`);
   });
+  const nodesOf: Record<string, number[]> = {};
   for (const [name, list] of Object.entries<{ n: number[] }[]>({ ...tris, ...lines })) {
-    const ns = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b);
+    const ns = (nodesOf[name] = [...new Set(list.flatMap((t) => t.n))].sort((a, b) => a - b));
     L.push(`*NSET, NSET=N_${name}`);
     for (let k = 0; k < ns.length; k += 12) L.push(ns.slice(k, k + 12).join(", ") + ",");
   }
+  // referenciais locais (*TRANSFORM): nos nós transformados, os graus do *BOUNDARY, do *CLOAD e das
+  // molas são locais; um nó só pode ter um referencial
+  const nodeCs = new Map<number, CaseCsys>();
+  if (!thermal) for (const ld of c.loads) {
+    if ((ld.kind !== "displacement" && ld.kind !== "spring") || !ld.csys) continue;
+    const cs = ld.csys;
+    csysAxes(cs, cs.type === "cyl" ? cs.b : undefined);
+    let onAxis = 0;
+    for (const n of nodesOf[ld.group] ?? []) {
+      const prev = nodeCs.get(n);
+      if (prev && JSON.stringify(prev) !== JSON.stringify(cs)) throw new Error(`Referencial local de ${ld.group}: há nós com outro referencial local (um nó só pode ter um)`);
+      nodeCs.set(n, cs);
+      if (!csysAxes(cs, m.nodes.get(n)!)) onAxis++;
+    }
+    if (onAxis) warnings.push(`Referencial cilíndrico de ${ld.group}: ${onAxis} nó(s) sobre o eixo, sem direção radial definida`);
+    L.push(`*TRANSFORM, NSET=N_${ld.group}, TYPE=${cs.type === "cyl" ? "C" : "R"}`, [...cs.a, ...cs.b].map(fmt).join(", "));
+  }
+  for (const ld of c.loads) {
+    if ((ld.kind !== "fixed" && ld.kind !== "displacement" && ld.kind !== "spring") || ("csys" in ld && ld.csys) || !nodeCs.size) continue;
+    if ((nodesOf[ld.group] ?? []).some((n) => nodeCs.has(n)) && ld.kind !== "fixed") warnings.push(`${ld.group}: partilha nós com um grupo em referencial local — nesses nós as direções são as locais`);
+  }
   // reações: um conjunto por grau de liberdade com os apoios que o restringem (nos graus livres o RF
-  // de um nó é a carga aplicada nele, que não é reação)
-  const dofSets = [0, 1, 2].map((k) => c.loads.flatMap((ld) => (ld.kind === "fixed" || (ld.kind === "displacement" && ld.u[k] !== null) ? [`N_${ld.group}`] : [])));
+  // de um nó é a carga aplicada nele, que não é reação); os deslocamentos em referencial local ficam
+  // de fora (os graus deles não são os globais) e a reação deles sai por apoio, em componentes locais
+  const dofSets = [0, 1, 2].map((k) => c.loads.flatMap((ld) => (ld.kind === "fixed" || (ld.kind === "displacement" && !ld.csys && ld.u[k] !== null) ? [`N_${ld.group}`] : [])));
   if (!thermal) dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NSET, NSET=N_R${"XYZ"[k]}`, ...sets.map((x) => `${x},`)); });
   const material = (name: string, mat: FemCase["material"]) => {
     L.push(`*MATERIAL, NAME=${name}`, `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
@@ -341,7 +364,12 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   }
   if (cload.size) {
     loads.push("*CLOAD");
-    for (const [n, f] of cload) f.forEach((x, k) => { if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`); });
+    for (const [n, fg] of cload) {
+      // num nó transformado, as componentes do CLOAD são as locais
+      const cs = nodeCs.get(n), ax = cs && csysAxes(cs, m.nodes.get(n)!);
+      const f = ax ? csysToLocal(ax, fg) : fg;
+      f.forEach((x, k) => { if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`); });
+    }
   }
   if (moments.length) loads.push("*CLOAD", ...moments);
 
@@ -373,19 +401,23 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   if (bcs.length) L.push("*BOUNDARY", ...bcs);
   if (bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...bcsAmp);
   if (c.analysis !== "modal") L.push(...loads);
+  // com referenciais locais, os totais das reações pedem-se em componentes globais
+  const glob = nodeCs.size ? ", GLOBAL=YES" : "";
   if (thermal) L.push("*NODE FILE", "NT");
   else if (dyn) {
     // instantes guardados (o CalculiX usa a mesma frequência em todos os ficheiros)
     const f = `, FREQUENCY=${dyn.frequency}`;
     L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
-    dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}`, "RF"); });
+    dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF"); });
   } else {
     L.push("*NODE FILE", "U");
     if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
     // reações nos apoios (verificação do equilíbrio)
-    if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY`, "RF"); });
+    if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF"); });
     // reações por apoio (ex.: força de atrito transmitida a uma face com deslocamento imposto)
-    if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, TOTALS=ONLY`, "RF");
+    // (num referencial local pede-se nó a nó, em componentes globais: o CalculiX soma os totais sempre
+    // em componentes globais, e num cilíndrico a soma das componentes locais depende do nó)
+    if (c.analysis === "static") for (const ld of c.loads) if (ld.kind === "fixed" || ld.kind === "displacement") L.push(`*NODE PRINT, NSET=N_${ld.group}, ${ld.kind === "displacement" && ld.csys ? "GLOBAL=YES" : `TOTALS=ONLY${glob}`}`, "RF");
   }
   L.push("*END STEP");
   if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "spring")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
