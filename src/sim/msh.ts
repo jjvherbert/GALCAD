@@ -117,6 +117,14 @@ export function solidBlocks(m: Msh, bodies?: { group: string }[]): MshElementBlo
   return all;
 }
 
+/** Casca: blocos 2D do grupo SHELL (só triângulos, tri3/tri6 → S3/S6, sem misturar ordens). */
+export function shellBlocks(m: Msh): MshElementBlock[] {
+  const all = physicalBlocks(m, "SHELL").filter((b) => b.dim === 2);
+  if (all.some((b) => b.type !== 2 && b.type !== 9)) throw new Error("A malha de casca tem quadriláteros: só são suportados triângulos (S3/S6)");
+  if (new Set(all.map((b) => b.type)).size > 1) throw new Error("A malha de casca mistura elementos lineares e quadráticos");
+  return all;
+}
+
 /** Blocos de faces de fronteira (triângulos e quadriláteros) de um grupo físico. */
 export const faceBlocks = (m: Msh, name: string): MshElementBlock[] => physicalBlocks(m, name).filter((b) => isFaceType(b.type));
 

@@ -744,6 +744,13 @@ function solidBlocks(m, bodies) {
 	if (new Set(all.map((b) => SOLIDS[b.type].order)).size > 1) throw new Error("A malha mistura elementos lineares e quadráticos");
 	return all;
 }
+/** Casca: blocos 2D do grupo SHELL (só triângulos, tri3/tri6 → S3/S6, sem misturar ordens). */
+function shellBlocks(m) {
+	const all = physicalBlocks(m, "SHELL").filter((b) => b.dim === 2);
+	if (all.some((b) => b.type !== 2 && b.type !== 9)) throw new Error("A malha de casca tem quadriláteros: só são suportados triângulos (S3/S6)");
+	if (new Set(all.map((b) => b.type)).size > 1) throw new Error("A malha de casca mistura elementos lineares e quadráticos");
+	return all;
+}
 /** Blocos de faces de fronteira (triângulos e quadriláteros) de um grupo físico. */
 const faceBlocks = (m, name) => physicalBlocks(m, name).filter((b) => isFaceType(b.type));
 /** Blocos de linhas (line2/line3) de um grupo físico de arestas. */
@@ -1047,8 +1054,42 @@ const LABELS = {
 		"tet"
 	]
 };
-/** Qualidade de toda a malha de volume do caso (grupos SOLID ou B1, B2, …). */
-function meshQuality(m, bodies) {
+/**
+* Medidas de um triângulo de casca pelos cantos (sem sinal: a casca não tem lado de dentro): jacobiano
+* escalado = menor seno dos cantos / sen 60° (1 no equilátero), razão de aspeto = maior aresta / menor
+* altura · √3/2 (1 no equilátero), ângulos e área.
+*/
+function triangleQuality(P) {
+	const a2 = len(cross(sub(P[1], P[0]), sub(P[2], P[0])));
+	const L = [
+		len(sub(P[1], P[0])),
+		len(sub(P[2], P[1])),
+		len(sub(P[0], P[2]))
+	];
+	const sines = [
+		a2 / (L[0] * L[2] || 1),
+		a2 / (L[0] * L[1] || 1),
+		a2 / (L[1] * L[2] || 1)
+	];
+	const ang = [
+		0,
+		1,
+		2
+	].map((i) => angle(sub(P[(i + 1) % 3], P[i]), sub(P[(i + 2) % 3], P[i])));
+	const hmin = a2 / Math.max(...L);
+	return {
+		sj: Math.min(...sines) / (Math.sqrt(3) / 2),
+		ar: hmin > 0 ? Math.max(...L) / hmin * (Math.sqrt(3) / 2) : 1e6,
+		minAngle: Math.min(...ang),
+		maxAngle: Math.max(...ang),
+		area: a2 / 2
+	};
+}
+/**
+* Qualidade de toda a malha do caso: volume (grupos SOLID ou B1, B2, …) ou, com `shell`, os triângulos
+* do grupo SHELL (limites dos tetraedros nos ângulos; `volume` passa a ser a área, mm²).
+*/
+function meshQuality(m, bodies, shell = false) {
 	const types = {};
 	const vals = {
 		sj: [],
@@ -1062,7 +1103,34 @@ function meshQuality(m, bodies) {
 	const info = [];
 	const used = /* @__PURE__ */ new Set();
 	let volume = 0;
-	for (const e of elementsOf(solidBlocks(m, bodies))) {
+	if (shell) for (const e of elementsOf(shellBlocks(m))) {
+		const key = e.type === 9 ? "tri6" : "tri3";
+		types[key] = (types[key] ?? 0) + 1;
+		e.nodes.forEach((n) => used.add(n));
+		const P = e.nodes.slice(0, 3).map((n) => m.nodes.get(n));
+		const q = triangleQuality(P);
+		volume += q.area;
+		for (const k of [
+			"sj",
+			"ar",
+			"minAngle",
+			"maxAngle"
+		]) vals[k].push({
+			v: q[k],
+			kind: "tet"
+		});
+		perElement.push(q.sj);
+		info.push({
+			sj: q.sj,
+			ar: q.ar,
+			center: [
+				0,
+				1,
+				2
+			].map((k) => P.reduce((s, p) => s + p[k], 0) / 3)
+		});
+	}
+	else for (const e of elementsOf(solidBlocks(m, bodies))) {
 		const st = SOLIDS[e.type];
 		types[`${st.kind}${st.nodes}`] = (types[`${st.kind}${st.nodes}`] ?? 0) + 1;
 		e.nodes.forEach((n) => used.add(n));
@@ -1320,7 +1388,8 @@ function parseDat(text) {
 * elemento, em triângulos com a normal para fora; `index` dá a posição de cada nó em `positions`.
 * `edges`: arestas das faces exteriores (pares de índices), sem as diagonais dos quadriláteros.
 */
-function exteriorSurface(m, bodies) {
+function exteriorSurface(m, bodies, shell = false) {
+	if (shell) return shellSurface(m);
 	const count = /* @__PURE__ */ new Map();
 	let el = 0;
 	for (const e of elementsOf(solidBlocks(m, bodies))) {
@@ -1371,6 +1440,154 @@ function exteriorSurface(m, bodies) {
 		faces
 	};
 }
+/**
+* Superfície da malha de casca: os próprios triângulos (o tri6 em 4 sub-triângulos pelos nós
+* intermédios, para a cor seguir os valores nodais); arestas só pelos cantos.
+*/
+function shellSurface(m) {
+	const index = /* @__PURE__ */ new Map();
+	const positions = [], triangles = [], edges = [];
+	const faces = [];
+	const seen = /* @__PURE__ */ new Set();
+	const id = (t) => {
+		if (!index.has(t)) {
+			index.set(t, index.size);
+			positions.push(...m.nodes.get(t));
+		}
+		return index.get(t);
+	};
+	let el = 0;
+	for (const e of elementsOf(shellBlocks(m))) {
+		const n = e.nodes, corners = n.slice(0, 3);
+		faces.push({
+			corners,
+			element: el++
+		});
+		const tris = n.length === 6 ? [
+			[
+				n[0],
+				n[3],
+				n[5]
+			],
+			[
+				n[3],
+				n[1],
+				n[4]
+			],
+			[
+				n[5],
+				n[4],
+				n[2]
+			],
+			[
+				n[3],
+				n[4],
+				n[5]
+			]
+		] : [corners];
+		for (const tri of tris) for (const t of tri) triangles.push(id(t));
+		corners.forEach((a, i) => {
+			const b = corners[(i + 1) % 3], key = a < b ? `${a},${b}` : `${b},${a}`;
+			if (!seen.has(key)) {
+				seen.add(key);
+				edges.push(id(a), id(b));
+			}
+		});
+	}
+	return {
+		positions,
+		triangles,
+		index,
+		edges,
+		faces
+	};
+}
+/**
+* Casca: o CalculiX expande cada S3/S6 num sólido de 3 camadas de nós (base, meio, topo) e o `.frd` só
+* tem os nós expandidos (numeração nova). Volta aos nós da malha pelas coordenadas: o nó do meio está na
+* posição original; a base e o topo são os nós expandidos à volta dele, simétricos em relação ao meio.
+* Deslocamentos e outros vetores: o do meio. Tensores (6 componentes): o da face (base ou topo) com
+* maior von Mises, onde a flexão é máxima.
+*/
+function shellFrdBlocks(m, frd) {
+	const used = /* @__PURE__ */ new Set();
+	for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
+	const pts = [...frd.nodes.values()];
+	if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
+	const lo = [
+		0,
+		1,
+		2
+	].map((k) => Math.min(...pts.map((p) => p[k]))), hi = [
+		0,
+		1,
+		2
+	].map((k) => Math.max(...pts.map((p) => p[k])));
+	const diag = Math.hypot(...hi.map((x, k) => x - lo[k])) || 1;
+	const h = .001 * diag, tol = 1e-4 * diag;
+	const cell = (p) => p.map((x) => Math.floor(x / h));
+	const grid = /* @__PURE__ */ new Map();
+	for (const [id, p] of frd.nodes) {
+		const k = cell(p).join(",");
+		const g = grid.get(k);
+		if (g) g.push(id);
+		else grid.set(k, [id]);
+	}
+	const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+	const nearest = (p) => {
+		const [i, j, k] = cell(p);
+		let best = -1, bd = tol;
+		for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++) for (const id of grid.get(`${i + a},${j + b},${k + c}`) ?? []) {
+			const d = dist(p, frd.nodes.get(id));
+			if (d <= bd) {
+				bd = d;
+				best = id;
+			}
+		}
+		return best;
+	};
+	const map = /* @__PURE__ */ new Map();
+	for (const t of used) {
+		const p = m.nodes.get(t), mid = nearest(p);
+		if (mid < 0) throw new Error(`Resultado de casca: o nó ${t} da malha não aparece no .frd`);
+		let faces = [];
+		const near = [
+			-3,
+			-2,
+			-1,
+			1,
+			2,
+			3
+		].map((o) => mid + o).filter((id) => {
+			const q = frd.nodes.get(id);
+			return q && dist(q, p) >= tol;
+		});
+		for (let a = 0; a < near.length && !faces.length; a++) for (let b = a + 1; b < near.length; b++) {
+			const pa = frd.nodes.get(near[a]), pb = frd.nodes.get(near[b]);
+			if (dist(pa.map((x, k) => (x + pb[k]) / 2), p) < tol) {
+				faces = [near[a], near[b]];
+				break;
+			}
+		}
+		map.set(t, {
+			mid,
+			faces
+		});
+	}
+	const vm = (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
+	return frd.blocks.map((b) => {
+		const data = /* @__PURE__ */ new Map();
+		for (const [t, { mid, faces }] of map) {
+			const fv = faces.map((f) => b.data.get(f)).filter((v) => !!v);
+			const v = b.components.length >= 6 && fv.length ? fv.reduce((x, y) => vm(y) > vm(x) ? y : x) : b.data.get(mid) ?? (fv.length ? fv[0].map((_, k) => fv.reduce((s, y) => s + y[k], 0) / fv.length) : void 0);
+			if (v) data.set(t, v);
+		}
+		return {
+			...b,
+			data
+		};
+	});
+}
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
 function femResult(c, m, frd, dat, supportLoad = [
 	0,
@@ -1386,7 +1603,8 @@ function femResult(c, m, frd, dat, supportLoad = [
 	};
 	for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
 	if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1).f];
-	return femResultFrom(c, m, parseFrd(frd).blocks, d);
+	const parsed = parseFrd(frd);
+	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed) : parsed.blocks, d);
 }
 /**
 * Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
@@ -1394,7 +1612,7 @@ function femResult(c, m, frd, dat, supportLoad = [
 */
 function femResultFrom(c, m, blocks, d) {
 	const r = { blocks };
-	const { positions, triangles, index } = exteriorSurface(m, c.bodies);
+	const { positions, triangles, index } = exteriorSurface(m, c.bodies, !!c.shell);
 	const order = [...index.keys()];
 	const field = (b, f) => order.map((t) => {
 		const v = b?.data.get(t);
@@ -1410,7 +1628,11 @@ function femResultFrom(c, m, blocks, d) {
 	const max = (a) => a.reduce((x, y) => Math.max(x, y), 0);
 	const vmOf = (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
 	const stressSummary = (sb, label, withSafety) => {
-		const per = (c.bodies?.length ? c.bodies.map((b) => ({
+		const per = (c.shell ? [{
+			name: "",
+			material: c.material,
+			blocks: shellBlocks(m)
+		}] : c.bodies?.length ? c.bodies.map((b) => ({
 			name: b.name,
 			material: b.material,
 			blocks: solidBlocks(m, [b])
@@ -1852,10 +2074,57 @@ function calculixDeck(c, m) {
 	const warnings = [];
 	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
 	const thermal = c.analysis === "thermal";
-	if (!solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
+	if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
+	if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
 	const elems = [];
 	const bodyRange = [];
-	for (const g of groupsOfBodies) {
+	if (c.shell) {
+		const blocks = shellBlocks(m);
+		if (!blocks.length) throw new Error("A malha não tem elementos de casca (grupo SHELL)");
+		for (const b of blocks) {
+			const fn = c.faces[b.entity - 1]?.normal;
+			for (const e of elementsOf([b])) {
+				const [a, p, q] = e.nodes.slice(0, 3).map((t) => m.nodes.get(t));
+				const u = [
+					p[0] - a[0],
+					p[1] - a[1],
+					p[2] - a[2]
+				], v = [
+					q[0] - a[0],
+					q[1] - a[1],
+					q[2] - a[2]
+				];
+				const nz = fn ? fn[0] * (u[1] * v[2] - u[2] * v[1]) + fn[1] * (u[2] * v[0] - u[0] * v[2]) + fn[2] * (u[0] * v[1] - u[1] * v[0]) : 1;
+				const order = e.type === 9 ? nz < 0 ? [
+					0,
+					2,
+					1,
+					5,
+					4,
+					3
+				] : [
+					0,
+					1,
+					2,
+					3,
+					4,
+					5
+				] : nz < 0 ? [
+					0,
+					2,
+					1
+				] : [
+					0,
+					1,
+					2
+				];
+				elems.push({
+					type: e.type === 9 ? "S6" : "S3",
+					n: order.map((i) => e.nodes[i])
+				});
+			}
+		}
+	} else for (const g of groupsOfBodies) {
 		const first = elems.length + 1;
 		for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
 			const st = SOLIDS[e.type];
@@ -1869,7 +2138,7 @@ function calculixDeck(c, m) {
 		bodyRange.push([first, elems.length]);
 	}
 	const faceOf = /* @__PURE__ */ new Map();
-	elems.forEach((e, i) => e.st.faces.forEach((f, j) => faceOf.set(faceKey(f.map((q) => e.n[q])), [i + 1, j + 1])));
+	elems.forEach((e, i) => e.st ? e.st.faces.forEach((f, j) => faceOf.set(faceKey(f.map((q) => e.n[q])), [i + 1, j + 1])) : faceOf.set(faceKey(e.n.slice(0, 3)), [i + 1, 0]));
 	const used = /* @__PURE__ */ new Set();
 	for (const e of elems) for (const n of e.n) used.add(n);
 	const bfaces = (name) => [...elementsOf(faceBlocks(m, name))].map(({ type, nodes }) => {
@@ -1971,7 +2240,10 @@ function calculixDeck(c, m) {
 		material(`MAT_${b.group}`, b.material);
 		L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
 	});
-	else {
+	else if (c.shell) {
+		material("MAT", c.material);
+		L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
+	} else {
 		material("MAT", c.material);
 		L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
 	}
@@ -2083,7 +2355,7 @@ function calculixDeck(c, m) {
 			if (k !== void 0 && !activeIn(ld, k)) continue;
 			switch (ld.kind) {
 				case "fixed":
-					bcs.push(`N_${ld.group}, 1, 3`);
+					bcs.push(`N_${ld.group}, 1, ${c.shell ? 6 : 3}`);
 					break;
 				case "displacement":
 					ld.u.forEach((u, k) => {
@@ -2139,7 +2411,7 @@ function calculixDeck(c, m) {
 				}
 				case "pressure":
 					loads.push("*DLOAD");
-					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
+					for (const t of tris[ld.group]) if (t.face) loads.push(c.shell ? `${t.face[0]}, P, ${fmt(-ld.p)}` : `${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
 					break;
 				case "gravity": {
 					const g = Math.hypot(...ld.g);
@@ -2201,13 +2473,6 @@ function calculixDeck(c, m) {
 			for (const t of tris[ld.group]) {
 				if (!t.face) continue;
 				const el = elems[t.face[0] - 1];
-				const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x));
-				const ce = [
-					0,
-					1,
-					2
-				].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
-				const A = m.nodes.get(t.n[0]);
 				const nv = t.vec.reduce((s, v) => [
 					s[0] + v[0],
 					s[1] + v[1],
@@ -2217,7 +2482,29 @@ function calculixDeck(c, m) {
 					0,
 					0
 				]);
-				const sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
+				let sgn;
+				if (!el.st) {
+					const [a, p, q] = el.n.slice(0, 3).map((x) => m.nodes.get(x));
+					const u = [
+						p[0] - a[0],
+						p[1] - a[1],
+						p[2] - a[2]
+					], v = [
+						q[0] - a[0],
+						q[1] - a[1],
+						q[2] - a[2]
+					];
+					sgn = Math.sign(nv[0] * (u[1] * v[2] - u[2] * v[1]) + nv[1] * (u[2] * v[0] - u[0] * v[2]) + nv[2] * (u[0] * v[1] - u[1] * v[0])) || 1;
+				} else {
+					const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x));
+					const ce = [
+						0,
+						1,
+						2
+					].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
+					const A = m.nodes.get(t.n[0]);
+					sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
+				}
 				t.n.forEach((nd, i) => {
 					for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += -ld.p * sgn * t.vec[i][k];
 				});
@@ -2325,13 +2612,15 @@ function calculixDeck(c, m) {
 }
 // src/sim/meshview.ts
 function meshPreview(c, m) {
-	const quality = meshQuality(m, c.bodies);
+	const shell = !!c.shell;
+	const quality = meshQuality(m, c.bodies, shell);
 	const ar = [];
-	for (const e of elementsOf(solidBlocks(m, c.bodies))) {
+	if (shell) for (const e of elementsOf(shellBlocks(m))) ar.push(triangleQuality(e.nodes.slice(0, 3).map((n) => m.nodes.get(n))).ar);
+	else for (const e of elementsOf(solidBlocks(m, c.bodies))) {
 		const st = SOLIDS[e.type];
 		ar.push(elementQuality(st.kind, e.nodes.slice(0, st.corners).map((n) => m.nodes.get(n))).ar);
 	}
-	const ext = exteriorSurface(m, c.bodies);
+	const ext = exteriorSurface(m, c.bodies, shell);
 	const positions = [], triangles = [], edges = [], sj = [], aspect = [];
 	for (const f of ext.faces) {
 		const base = positions.length / 3;
@@ -2341,7 +2630,8 @@ function meshPreview(c, m) {
 			aspect.push(ar[f.element]);
 		}
 		const k = f.corners.length;
-		if (k === 3) triangles.push(base, base + 2, base + 1);
+		if (shell) triangles.push(base, base + 1, base + 2);
+		else if (k === 3) triangles.push(base, base + 2, base + 1);
 		else triangles.push(base, base + 3, base + 2, base, base + 2, base + 1);
 		for (let i = 0; i < k; i++) edges.push(base + i, base + (i + 1) % k);
 	}
@@ -2367,9 +2657,11 @@ function meshPreview(c, m) {
 		hex8: "hexaedros de 8 nós",
 		hex20: "hexaedros de 20 nós",
 		tet4: "tetraedros de 4 nós",
-		tet10: "tetraedros de 10 nós"
+		tet10: "tetraedros de 10 nós",
+		tri3: "triângulos de 3 nós",
+		tri6: "triângulos de 6 nós"
 	}[k] ?? k}`).join(" + ");
-	const summary = [["Malha", `${quality.nodes} nós · ${types}`], ["Volume da malha", `${quality.volume.toPrecision(6)} mm³`]];
+	const summary = [["Malha", `${quality.nodes} nós · ${types}`], shell ? ["Área da malha", `${quality.volume.toPrecision(6)} mm² · espessura ${c.shell.thickness} mm`] : ["Volume da malha", `${quality.volume.toPrecision(6)} mm³`]];
 	const flagged = quality.metrics.reduce((s, q) => s + q.fail.reduce((a, b) => a + b, 0), 0);
 	summary.push(["Verificação", quality.ok ? flagged ? `${flagged} assinalamento(s) — ver a qualidade` : "todos os elementos dentro dos limites" : "elementos inválidos (jacobiano ≤ 0)"]);
 	return {
@@ -2944,12 +3236,13 @@ function femGeo(c, o = {}) {
 	const hex = c.mesh.element === "hex";
 	const out = [
 		`// Gerado pelo CAD protótipo — ${c.title}`,
-		`// Unidades: mm. Elementos ${hex ? c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados" : "tetraédricos"} de ordem ${c.mesh.order}.`,
+		`// Unidades: mm. Elementos ${c.shell ? `de casca (triângulos, espessura ${c.shell.thickness} mm)` : hex ? c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados" : "tetraédricos"} de ordem ${c.mesh.order}.`,
 		`SetFactory("OpenCASCADE");`,
 		...o.heal ? healLines : [],
 		`Merge "model.brep";`
 	];
-	if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
+	if (c.shell) out.push(`Physical Surface("SHELL") = Surface{:};`);
+	else if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
 	else out.push(`Physical Volume("SOLID") = Volume{:};`);
 	for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
 	for (const [name, tags] of Object.entries(c.edgeGroups ?? {})) out.push(`Physical Curve("${name}") = ${list(tags)};`);
@@ -3904,7 +4197,7 @@ async function gmshMesh(c, dir, log, o) {
 	const nt = String(Math.max(1, cpus().length));
 	const args = (n) => o.kind === "fem" ? [
 		"mesh.geo",
-		"-3",
+		c.shell ? "-2" : "-3",
 		"-o",
 		"mesh.msh",
 		"-nt",
@@ -3930,7 +4223,11 @@ async function gmshMesh(c, dir, log, o) {
 		}
 		return read();
 	}
-	const attempts = [
+	const shell = o.kind === "fem" && !!c.shell;
+	const attempts = shell ? [{ algorithm3D: 1 }, {
+		algorithm3D: 1,
+		optimizeHO: false
+	}] : [
 		{ algorithm3D: 1 },
 		{ algorithm3D: 10 },
 		{
@@ -3951,7 +4248,7 @@ async function gmshMesh(c, dir, log, o) {
 			break;
 		}
 		write(g);
-		log(`Malha: tentativa ${k + 1}/${attempts.length} — ${ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
+		log(`Malha: tentativa ${k + 1}/${attempts.length} — ${shell ? "malha de superfície" : ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
 		try {
 			await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, void 0, { timeoutSec });
 			const msh = read();
@@ -3962,7 +4259,7 @@ async function gmshMesh(c, dir, log, o) {
 					continue;
 				}
 			}
-			if (k > 0) log(`Malha: obtida na tentativa ${k + 1} (${ALGO_NAMES[g.algorithm3D ?? 1]}).`);
+			if (k > 0) log(`Malha: obtida na tentativa ${k + 1} (${shell ? "malha de superfície" : ALGO_NAMES[g.algorithm3D ?? 1]}).`);
 			return msh;
 		} catch (e) {
 			if (e instanceof CancelledError) throw e;
@@ -3981,7 +4278,7 @@ const logOf = (dir) => {
 	}
 };
 /** Descrição curta dos elementos da malha (resumo). */
-const meshKind = (c) => c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`;
+const meshKind = (c) => c.shell ? `cascas ${c.mesh.order === 2 ? "S6" : "S3"} (t = ${c.shell.thickness} mm)` : c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`;
 /** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
 async function runAster(c, dir, log, regenerate) {
 	const t = tools();
@@ -4111,6 +4408,7 @@ async function runRadioss(c, dir, log, regenerate) {
 	};
 }
 async function runFem(c, dir, log, regenerate) {
+	if (c.shell && c.solver !== "calculix") throw new Error("Cascas (S3/S6): só com o CalculiX nesta versão");
 	if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
 	if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
 	const t = tools();

@@ -1,6 +1,6 @@
 // Resultados do CalculiX: leitura do `.frd` e do `.dat` e montagem do resultado para o visualizador.
 import { type FemCase, amplitudeAt, csysAxes, csysToLocal } from "./case.ts";
-import { type Msh, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
+import { type Msh, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, faceKey, outwardTriangles } from "./elements.ts";
 import type { Metric } from "./convergence.ts";
 
@@ -133,7 +133,8 @@ export interface FemResult {
  * elemento, em triângulos com a normal para fora; `index` dá a posição de cada nó em `positions`.
  * `edges`: arestas das faces exteriores (pares de índices), sem as diagonais dos quadriláteros.
  */
-export function exteriorSurface(m: Msh, bodies?: { group: string }[]): { positions: number[]; triangles: number[]; index: Map<number, number>; edges: number[]; faces: { corners: number[]; element: number }[] } {
+export function exteriorSurface(m: Msh, bodies?: { group: string }[], shell = false): { positions: number[]; triangles: number[]; index: Map<number, number>; edges: number[]; faces: { corners: number[]; element: number }[] } {
+  if (shell) return shellSurface(m);
   const count = new Map<string, { n: number[]; k: number; element: number }>();
   let el = 0;
   for (const e of elementsOf(solidBlocks(m, bodies))) {
@@ -162,6 +163,82 @@ export function exteriorSurface(m: Msh, bodies?: { group: string }[]): { positio
   return { positions, triangles, index, edges, faces };
 }
 
+/**
+ * Superfície da malha de casca: os próprios triângulos (o tri6 em 4 sub-triângulos pelos nós
+ * intermédios, para a cor seguir os valores nodais); arestas só pelos cantos.
+ */
+function shellSurface(m: Msh): ReturnType<typeof exteriorSurface> {
+  const index = new Map<number, number>();
+  const positions: number[] = [], triangles: number[] = [], edges: number[] = [];
+  const faces: { corners: number[]; element: number }[] = [];
+  const seen = new Set<string>();
+  const id = (t: number) => { if (!index.has(t)) { index.set(t, index.size); positions.push(...m.nodes.get(t)!); } return index.get(t)!; };
+  let el = 0;
+  for (const e of elementsOf(shellBlocks(m))) {
+    const n = e.nodes, corners = n.slice(0, 3);
+    faces.push({ corners, element: el++ });
+    const tris = n.length === 6 ? [[n[0], n[3], n[5]], [n[3], n[1], n[4]], [n[5], n[4], n[2]], [n[3], n[4], n[5]]] : [corners];
+    for (const tri of tris) for (const t of tri) triangles.push(id(t));
+    corners.forEach((a, i) => {
+      const b = corners[(i + 1) % 3], key = a < b ? `${a},${b}` : `${b},${a}`;
+      if (!seen.has(key)) { seen.add(key); edges.push(id(a), id(b)); }
+    });
+  }
+  return { positions, triangles, index, edges, faces };
+}
+
+/**
+ * Casca: o CalculiX expande cada S3/S6 num sólido de 3 camadas de nós (base, meio, topo) e o `.frd` só
+ * tem os nós expandidos (numeração nova). Volta aos nós da malha pelas coordenadas: o nó do meio está na
+ * posição original; a base e o topo são os nós expandidos à volta dele, simétricos em relação ao meio.
+ * Deslocamentos e outros vetores: o do meio. Tensores (6 componentes): o da face (base ou topo) com
+ * maior von Mises, onde a flexão é máxima.
+ */
+export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number, number]>; blocks: FrdBlock[] }): FrdBlock[] {
+  const used = new Set<number>();
+  for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
+  const pts = [...frd.nodes.values()];
+  if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
+  const lo = [0, 1, 2].map((k) => Math.min(...pts.map((p) => p[k]))), hi = [0, 1, 2].map((k) => Math.max(...pts.map((p) => p[k])));
+  const diag = Math.hypot(...hi.map((x, k) => x - lo[k])) || 1;
+  // grelha para a procura do vizinho mais próximo (o .frd tem ~6 algarismos significativos)
+  const h = 1e-3 * diag, tol = 1e-4 * diag;
+  const cell = (p: number[]) => p.map((x) => Math.floor(x / h));
+  const grid = new Map<string, number[]>();
+  for (const [id, p] of frd.nodes) { const k = cell(p).join(","); const g = grid.get(k); if (g) g.push(id); else grid.set(k, [id]); }
+  const dist = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const nearest = (p: number[]) => {
+    const [i, j, k] = cell(p);
+    let best = -1, bd = tol;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (let c = -1; c <= 1; c++)
+      for (const id of grid.get(`${i + a},${j + b},${k + c}`) ?? []) { const d = dist(p, frd.nodes.get(id)!); if (d <= bd) { bd = d; best = id; } }
+    return best;
+  };
+  const map = new Map<number, { mid: number; faces: number[] }>();
+  for (const t of used) {
+    const p = m.nodes.get(t)!, mid = nearest(p);
+    if (mid < 0) throw new Error(`Resultado de casca: o nó ${t} da malha não aparece no .frd`);
+    // base e topo: nós próximos na numeração, fora do meio e com o meio no ponto médio
+    let faces: number[] = [];
+    const near = [-3, -2, -1, 1, 2, 3].map((o) => mid + o).filter((id) => { const q = frd.nodes.get(id); return q && dist(q, p) >= tol; });
+    for (let a = 0; a < near.length && !faces.length; a++) for (let b = a + 1; b < near.length; b++) {
+      const pa = frd.nodes.get(near[a])!, pb = frd.nodes.get(near[b])!;
+      if (dist(pa.map((x, k) => (x + pb[k]) / 2), p) < tol) { faces = [near[a], near[b]]; break; }
+    }
+    map.set(t, { mid, faces });
+  }
+  const vm = (v: number[]) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
+  return frd.blocks.map((b) => {
+    const data = new Map<number, number[]>();
+    for (const [t, { mid, faces }] of map) {
+      const fv = faces.map((f) => b.data.get(f)).filter((v): v is number[] => !!v);
+      const v = b.components.length >= 6 && fv.length ? fv.reduce((x, y) => (vm(y) > vm(x) ? y : x)) : b.data.get(mid) ?? (fv.length ? fv[0].map((_, k) => fv.reduce((s, y) => s + y[k], 0) / fv.length) : undefined);
+      if (v) data.set(t, v);
+    }
+    return { ...b, data };
+  });
+}
+
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
 export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportLoad: [number, number, number] = [0, 0, 0], stepSupport?: [number, number, number][]): FemResult {
   const d = parseDat(dat);
@@ -175,7 +252,8 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportL
   };
   for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
   if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1)!.f];
-  return femResultFrom(c, m, parseFrd(frd).blocks, d);
+  const parsed = parseFrd(frd);
+  return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed) : parsed.blocks, d);
 }
 
 /**
@@ -185,7 +263,7 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportL
 export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnType<typeof parseDat>): FemResult {
   const r = { blocks };
   // superfície exterior: faces dos elementos (cantos) usadas uma só vez, em triângulos com a normal para fora
-  const { positions, triangles, index } = exteriorSurface(m, c.bodies);
+  const { positions, triangles, index } = exteriorSurface(m, c.bodies, !!c.shell);
   const order = [...index.keys()];
   const field = (b: FrdBlock | undefined, f: (v: number[]) => number) => order.map((t) => { const v = b?.data.get(t); return v ? f(v) : 0; });
   const fields: FemResult["fields"] = [];
@@ -202,7 +280,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
   // tensão de von Mises máxima e fator de segurança à cedência, por corpo com o material de cada corpo e
   // sobre todos os nós do corpo (não só os da superfície: o máximo pode ser interior, como no contacto)
   const stressSummary = (sb: FrdBlock[], label: string, withSafety: boolean) => {
-    const parts = c.bodies?.length ? c.bodies.map((b) => ({ name: b.name, material: b.material, blocks: solidBlocks(m, [b]) })) : [{ name: "", material: c.material, blocks: solidBlocks(m) }];
+    const parts = c.shell ? [{ name: "", material: c.material, blocks: shellBlocks(m) }] : c.bodies?.length ? c.bodies.map((b) => ({ name: b.name, material: b.material, blocks: solidBlocks(m, [b]) })) : [{ name: "", material: c.material, blocks: solidBlocks(m) }];
     const per = parts.map((p) => {
       const nodes = new Set<number>();
       for (const e of elementsOf(p.blocks)) for (const n of e.nodes) nodes.add(n);

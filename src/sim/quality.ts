@@ -2,7 +2,7 @@
 // Quality" do Femap): jacobiano escalado, razão de aspeto, ângulos das faces, empeno das faces
 // quadriláteras e fator de forma dos tetraedros, com estatísticas, histogramas, elementos fora dos
 // limites e os piores elementos. Puro: corre no agente e na aplicação. Usa só os nós de canto.
-import { type Msh, elementsOf, solidBlocks } from "./msh.ts";
+import { type Msh, elementsOf, shellBlocks, solidBlocks } from "./msh.ts";
 import { SOLIDS } from "./elements.ts";
 
 type P3 = [number, number, number];
@@ -45,7 +45,7 @@ export interface QualityMetric {
 export interface MeshQuality {
   elements: number;
   nodes: number;
-  /** Elementos por tipo ("hex8", "hex20", "tet4", "tet10"). */
+  /** Elementos por tipo ("hex8", "hex20", "tet4", "tet10"; casca "tri3", "tri6"). */
   types: Record<string, number>;
   /** Volume da malha (cantos; mm³). */
   volume: number;
@@ -122,15 +122,43 @@ const LABELS: Record<QualityMetric["key"], [string, string, QualityMetric["appli
   shape: ["Fator de forma (tetraedros)", "", "tet"],
 };
 
-/** Qualidade de toda a malha de volume do caso (grupos SOLID ou B1, B2, …). */
-export function meshQuality(m: Msh, bodies?: { group: string }[]): MeshQuality {
+/**
+ * Medidas de um triângulo de casca pelos cantos (sem sinal: a casca não tem lado de dentro): jacobiano
+ * escalado = menor seno dos cantos / sen 60° (1 no equilátero), razão de aspeto = maior aresta / menor
+ * altura · √3/2 (1 no equilátero), ângulos e área.
+ */
+export function triangleQuality(P: P3[]): { sj: number; ar: number; minAngle: number; maxAngle: number; area: number } {
+  const a2 = len(cross(sub(P[1], P[0]), sub(P[2], P[0])));
+  const L = [len(sub(P[1], P[0])), len(sub(P[2], P[1])), len(sub(P[0], P[2]))];
+  const sines = [a2 / (L[0] * L[2] || 1), a2 / (L[0] * L[1] || 1), a2 / (L[1] * L[2] || 1)];
+  const ang = [0, 1, 2].map((i) => angle(sub(P[(i + 1) % 3], P[i]), sub(P[(i + 2) % 3], P[i])));
+  const hmin = a2 / Math.max(...L);
+  return { sj: Math.min(...sines) / (Math.sqrt(3) / 2), ar: hmin > 0 ? (Math.max(...L) / hmin) * (Math.sqrt(3) / 2) : 1e6, minAngle: Math.min(...ang), maxAngle: Math.max(...ang), area: a2 / 2 };
+}
+
+/**
+ * Qualidade de toda a malha do caso: volume (grupos SOLID ou B1, B2, …) ou, com `shell`, os triângulos
+ * do grupo SHELL (limites dos tetraedros nos ângulos; `volume` passa a ser a área, mm²).
+ */
+export function meshQuality(m: Msh, bodies?: { group: string }[], shell = false): MeshQuality {
   const types: Record<string, number> = {};
   const vals: Record<QualityMetric["key"], { v: number; kind: "hex" | "tet" }[]> = { sj: [], ar: [], minAngle: [], maxAngle: [], warp: [], shape: [] };
   const perElement: number[] = [];
   const info: { sj: number; ar: number; center: P3 }[] = [];
   const used = new Set<number>();
   let volume = 0;
-  for (const e of elementsOf(solidBlocks(m, bodies))) {
+  if (shell) for (const e of elementsOf(shellBlocks(m))) {
+    const key = e.type === 9 ? "tri6" : "tri3";
+    types[key] = (types[key] ?? 0) + 1;
+    e.nodes.forEach((n) => used.add(n));
+    const P = e.nodes.slice(0, 3).map((n) => m.nodes.get(n)!) as P3[];
+    const q = triangleQuality(P);
+    volume += q.area;
+    for (const k of ["sj", "ar", "minAngle", "maxAngle"] as const) vals[k].push({ v: q[k], kind: "tet" });
+    perElement.push(q.sj);
+    info.push({ sj: q.sj, ar: q.ar, center: [0, 1, 2].map((k) => P.reduce((s, p) => s + p[k], 0) / 3) as P3 });
+  }
+  else for (const e of elementsOf(solidBlocks(m, bodies))) {
     const st = SOLIDS[e.type];
     types[`${st.kind}${st.nodes}`] = (types[`${st.kind}${st.nodes}`] ?? 0) + 1;
     e.nodes.forEach((n) => used.add(n));
