@@ -4,7 +4,7 @@
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
 import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, csysAxes, csysToLocal } from "./case.ts";
-import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
+import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
 
@@ -67,12 +67,27 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];
   const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
   const thermal = c.analysis === "thermal";
-  if (!solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
+  if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
+  if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
   // elementos de volume (numeração sequencial, corpo a corpo; nós pela ordem do CalculiX) e mapa
-  // face (cantos) → (elemento, n.º da face)
-  const elems: { type: string; st: SolidType; n: number[] }[] = [];
+  // face (cantos) → (elemento, n.º da face); casca: S3/S6 (st indefinido)
+  const elems: { type: string; st?: SolidType; n: number[] }[] = [];
   const bodyRange: [number, number][] = [];
-  for (const g of groupsOfBodies) {
+  if (c.shell) {
+    const blocks = shellBlocks(m);
+    if (!blocks.length) throw new Error("A malha não tem elementos de casca (grupo SHELL)");
+    for (const b of blocks) {
+      // normal do elemento alinhada com a normal da face (nas faces planas): a pressão fica com o sinal certo
+      const fn = c.faces[b.entity - 1]?.normal;
+      for (const e of elementsOf([b])) {
+        const [a, p, q] = e.nodes.slice(0, 3).map((t) => m.nodes.get(t)!);
+        const u = [p[0] - a[0], p[1] - a[1], p[2] - a[2]], v = [q[0] - a[0], q[1] - a[1], q[2] - a[2]];
+        const nz = fn ? fn[0] * (u[1] * v[2] - u[2] * v[1]) + fn[1] * (u[2] * v[0] - u[0] * v[2]) + fn[2] * (u[0] * v[1] - u[1] * v[0]) : 1;
+        const order = e.type === 9 ? (nz < 0 ? [0, 2, 1, 5, 4, 3] : [0, 1, 2, 3, 4, 5]) : nz < 0 ? [0, 2, 1] : [0, 1, 2];
+        elems.push({ type: e.type === 9 ? "S6" : "S3", n: order.map((i) => e.nodes[i]) });
+      }
+    }
+  } else for (const g of groupsOfBodies) {
     const first = elems.length + 1;
     for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
       const st = SOLIDS[e.type];
@@ -82,7 +97,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     bodyRange.push([first, elems.length]);
   }
   const faceOf = new Map<string, [number, number]>();
-  elems.forEach((e, i) => e.st.faces.forEach((f, j) => faceOf.set(faceKey(f.map((q) => e.n[q])), [i + 1, j + 1])));
+  elems.forEach((e, i) => (e.st ? e.st.faces.forEach((f, j) => faceOf.set(faceKey(f.map((q) => e.n[q])), [i + 1, j + 1])) : faceOf.set(faceKey(e.n.slice(0, 3)), [i + 1, 0])));
   const used = new Set<number>();
   for (const e of elems) for (const n of e.n) used.add(n);
 
@@ -184,6 +199,9 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       material(`MAT_${b.group}`, b.material);
       L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
     });
+  } else if (c.shell) {
+    material("MAT", c.material);
+    L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
   } else {
     material("MAT", c.material);
     L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
@@ -278,7 +296,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     for (const ld of c.loads) {
       if (k !== undefined && !activeIn(ld, k)) continue;
       switch (ld.kind) {
-        case "fixed": bcs.push(`N_${ld.group}, 1, 3`); break;
+        case "fixed": bcs.push(`N_${ld.group}, 1, ${c.shell ? 6 : 3}`); break;
         // na dinâmica, os deslocamentos impostos não nulos seguem a amplitude
         case "displacement": ld.u.forEach((u, k) => { if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`); }); break;
         case "temperature": bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`); break;
@@ -310,7 +328,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         }
         case "pressure":
           loads.push("*DLOAD");
-          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
+          for (const t of tris[ld.group]) if (t.face) loads.push(c.shell ? `${t.face[0]}, P, ${fmt(-ld.p)}` : `${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
           break;
         case "gravity": {
           const g = Math.hypot(...ld.g);
@@ -361,11 +379,19 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         if (!t.face) continue;
         // normal para fora do elemento (afastada do centro dos cantos)
         const el = elems[t.face[0] - 1];
-        const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x)!);
-        const ce = [0, 1, 2].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
-        const A = m.nodes.get(t.n[0])!;
         const nv = t.vec.reduce((s, v) => [s[0] + v[0], s[1] + v[1], s[2] + v[2]], [0, 0, 0]);
-        const sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
+        let sgn: number;
+        if (!el.st) {
+          // casca: P = −p no deck empurra contra a normal do elemento (a «exterior» desta conta)
+          const [a, p, q] = el.n.slice(0, 3).map((x) => m.nodes.get(x)!);
+          const u = [p[0] - a[0], p[1] - a[1], p[2] - a[2]], v = [q[0] - a[0], q[1] - a[1], q[2] - a[2]];
+          sgn = Math.sign(nv[0] * (u[1] * v[2] - u[2] * v[1]) + nv[1] * (u[2] * v[0] - u[0] * v[2]) + nv[2] * (u[0] * v[1] - u[1] * v[0])) || 1;
+        } else {
+          const e = el.n.slice(0, el.st.corners).map((x) => m.nodes.get(x)!);
+          const ce = [0, 1, 2].map((q) => e.reduce((s, p) => s + p[q], 0) / e.length);
+          const A = m.nodes.get(t.n[0])!;
+          sgn = Math.sign(nv[0] * (A[0] - ce[0]) + nv[1] * (A[1] - ce[1]) + nv[2] * (A[2] - ce[2])) || 1;
+        }
         t.n.forEach((nd, i) => { for (let k = 0; k < 3; k++) if (dofNodes[k].has(nd)) supportLoad[k] += -ld.p * sgn * t.vec[i][k]; });
       }
     }

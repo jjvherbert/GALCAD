@@ -96,7 +96,7 @@ export async function gmshMesh(c: SimCase, dir: string, log: Log, o: { kind: "fe
   if (!t.gmsh) throw new Error("Gmsh não encontrado (instale o Gmsh ou defina CAD_GMSH)");
   const geo = join(dir, "mesh.geo");
   const nt = String(Math.max(1, cpus().length));
-  const args = (n: string) => o.kind === "fem" ? ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", n] : ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", n];
+  const args = (n: string) => o.kind === "fem" ? ["mesh.geo", (c as FemCase).shell ? "-2" : "-3", "-o", "mesh.msh", "-nt", n] : ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", n];
   const write = (g: GeoOpts) => writeFileSync(geo, o.kind === "fem" ? femGeo(c as FemCase, g) : su2Geo(c as CfdCase, g));
   const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : undefined;
   const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
@@ -106,14 +106,16 @@ export async function gmshMesh(c: SimCase, dir: string, log: Log, o: { kind: "fe
     catch (e) { throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? (e as Error).message); }
     return read();
   }
-  const attempts: GeoOpts[] = [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
+  // casca (malha 2D): o algoritmo 3D não conta, só se tenta sem otimização de ordem 2 e com reparação
+  const shell = o.kind === "fem" && !!(c as FemCase).shell;
+  const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
   if (o.kind === "fem") attempts.push({ algorithm3D: 4, optimizeHO: false, heal: true });
   const start = Date.now();
   let last: Error | undefined, diag: string | null = null;
   for (const [k, g] of attempts.entries()) {
     if (k > 0 && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
     write(g);
-    log(`Malha: tentativa ${k + 1}/${attempts.length} — ${ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
+    log(`Malha: tentativa ${k + 1}/${attempts.length} — ${shell ? "malha de superfície" : ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
     try {
       // só o HXT é paralelo; os outros com -nt 1 (resultado reprodutível)
       await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec });
@@ -122,7 +124,7 @@ export async function gmshMesh(c: SimCase, dir: string, log: Log, o: { kind: "fe
         const w = checkGroups(c as FemCase, msh);
         if (w.length) { last = new Error(`A reparação da geometria alterou as faces das condições:\n${w.join("\n")}`); continue; }
       }
-      if (k > 0) log(`Malha: obtida na tentativa ${k + 1} (${ALGO_NAMES[g.algorithm3D ?? 1]}).`);
+      if (k > 0) log(`Malha: obtida na tentativa ${k + 1} (${shell ? "malha de superfície" : ALGO_NAMES[g.algorithm3D ?? 1]}).`);
       return msh;
     } catch (e) {
       if (e instanceof CancelledError) throw e;
@@ -137,7 +139,7 @@ export async function gmshMesh(c: SimCase, dir: string, log: Log, o: { kind: "fe
 const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh"), "utf8"); } catch { return ""; } };
 
 /** Descrição curta dos elementos da malha (resumo). */
-const meshKind = (c: FemCase) => (c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`);
+const meshKind = (c: FemCase) => (c.shell ? `cascas ${c.mesh.order === 2 ? "S6" : "S3"} (t = ${c.shell.thickness} mm)` : c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`);
 
 /** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
 async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
@@ -206,6 +208,7 @@ async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean
 }
 
 export async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
+  if (c.shell && c.solver !== "calculix") throw new Error("Cascas (S3/S6): só com o CalculiX nesta versão");
   if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
   if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
   const t = tools();

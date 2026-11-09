@@ -7,7 +7,7 @@ import { type PlanInput, meshPlan } from "./meshplan.ts";
 import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
 import { edgeProps } from "./occ-props.ts";
 import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup } from "../sim/case.ts";
-import { type MeshGeo, bodyOf, caseFaces, tagsOf, n3 } from "./sim-common.ts";
+import { type MeshGeo, bodyOf, caseFaces, shellOf, tagsOf, n3 } from "./sim-common.ts";
 
 const FEM_HYP: Record<FemStudy["analysis"], string> = {
   static: "Estática linear: pequenos deslocamentos e deformações, material elástico linear isotrópico, sem contacto",
@@ -18,22 +18,38 @@ const FEM_HYP: Record<FemStudy["analysis"], string> = {
 };
 
 export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
-  const solid = bodyOf(ctx);
-  const faces = caseFaces(ctx, solid);
+  const sh = s.shell ? shellOf(ctx) : undefined;
+  const solid = sh ? sh.shape : bodyOf(ctx);
+  const faces = sh ? caseFaces(ctx, solid, sh.faces) : caseFaces(ctx, solid);
   const b = bbox(solid);
   const allEdges = explore(solid, "edge");
   const edgeTags = (refs: TopoRef[], what: string) => {
     if (!refs.length) throw new Error(`${what}: escolha as arestas`);
     return resolveEdges(ctx, refs, report).map((ne) => {
       const i = allEdges.findIndex((e) => e.IsSame(ne.edge));
-      if (i < 0) throw new Error(`${what}: a aresta "${ne.name}" não pertence ao corpo`);
+      if (i < 0) throw new Error(`${what}: a aresta "${ne.name}" não pertence ao ${sh ? "modelo" : "corpo"}`);
       return i + 1;
     });
   };
-  const geo: MeshGeo = { solids: [solid], faces: explore(solid, "face"), edges: allEdges, edgeTags };
+  const geo: MeshGeo = { solids: sh ? [] : [solid], faces: explore(solid, "face"), edges: allEdges, edgeTags };
   return buildFemCase(s, ctx.scope, faces, (refs, what) => tagsOf(ctx, faces, solid, refs, what, report), { min: b.min as V3, max: b.max as V3 }, report, geo);
 }
 
+
+/** Casca: espessura avaliada e as opções que o modelo de casca ainda não suporta recusadas. */
+const SHELL_LOADS = new Set(["fixed", "displacement", "force", "pressure", "gravity"]);
+function shellCheck(s: FemStudy, sc: Ctx["scope"]): { thickness: number } {
+  const thickness = evalParam(s.shell!.thickness, sc, "Espessura da casca");
+  if (!(thickness > 0)) throw new Error("Espessura da casca: tem de ser positiva");
+  const no = (what: string) => { throw new Error(`Casca: ${what} ainda não é suportado`); };
+  if ((s.solver ?? "calculix") !== "calculix") no(`o solver ${s.solver}`);
+  if (s.analysis !== "static" && s.analysis !== "modal" && s.analysis !== "buckling") no(`a análise ${s.analysis}`);
+  if (s.nonlinear?.geometry || s.nonlinear?.plasticity) no("a análise não linear");
+  if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length) no("a malha manual (hexaedros, seeds ou faces mapeadas)");
+  if (s.contact && s.contact.mode !== "none") no("o contacto");
+  for (const l of s.loads) if (!SHELL_LOADS.has(l.kind)) no(`a condição «${l.kind}»`);
+  return { thickness };
+}
 
 /** Referencial local de uma condição: avaliado e conferido (erro se degenerado). */
 function loadCsys(c: LoadCsys | undefined, sc: Ctx["scope"], i: number): CaseCsys | undefined {
@@ -145,6 +161,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   if (size <= 0) throw new Error("Tamanho da malha: tem de ser positivo");
   // malha manual: seeds, faces mapeadas e hexaedros
   const element = s.mesh.element ?? "tet";
+  const shell = s.shell ? shellCheck(s, sc) : undefined;
   const localSize = new Map<number, number>();
   for (const l of local) for (const t of groups[l.group]) localSize.set(t, Math.min(l.size, localSize.get(t) ?? Infinity));
   const plan = element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length ? meshPlan({
@@ -153,7 +170,9 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     mapped: s.mesh.mapped?.length ? tags(s.mesh.mapped, "Faces mapeadas") : [],
   }) : undefined;
   report.warnings.push(...(plan?.warnings ?? []));
-  const meshHyp = element === "hex"
+  const meshHyp = shell
+    ? `Malha: cascas triangulares de ordem ${s.mesh.order} (${s.mesh.order === 2 ? "S6" : "S3"}, Gmsh), tamanho máx. ${size} mm — confirmar a convergência refinando`
+    : element === "hex"
     ? `Malha: ${plan!.notes.join("; ")}, elementos ${HEX_NAME(s.mesh.order, s.mesh.integration)} (Gmsh), tamanho ${size} mm — confirmar a convergência refinando e a qualidade (pré-visualização da malha)`
     : `Malha: tetraedros de ordem ${s.mesh.order} (Gmsh), tamanho máx. ${size} mm${plan?.notes.length ? `; ${plan.notes.join("; ")}` : ""} — confirmar a convergência refinando`;
   const thermal = s.analysis === "thermal";
@@ -191,16 +210,17 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && `plasticidade de von Mises com encruamento isotrópico ${curve?.length ? "multilinear" : "bilinear"}`].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
     format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, dynamic, ...(stepIdx.size ? { steps: s.steps!.map((st, k) => st.name || `Passo ${k + 1}`) } : {}), probes: probes.length ? probes : undefined,
-    material: s.material, groups, ...(Object.keys(edgeGroups).length ? { edgeGroups, edgeLength } : {}), faces, loads, bbox: box,
+    ...(shell ? { shell } : {}), material: s.material, groups, ...(Object.keys(edgeGroups).length ? { edgeGroups, edgeLength } : {}), faces, loads, bbox: box,
     mesh: {
       size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local,
       ...(element === "hex" ? { element, integration: s.mesh.integration ?? (s.mesh.order === 2 ? "reduced" : "incompatible") } : {}),
-      ...(plan ? { hexMethod: plan.hexMethod, volumes: plan.volumes, surfaces: plan.surfaces, curves: plan.curves } : {}),
+      ...(plan && !shell ? { hexMethod: plan.hexMethod, volumes: plan.volumes, surfaces: plan.surfaces, curves: plan.curves } : {}),
     },
     hypotheses: [
       analysisHyp,
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
+      ...(shell ? [`Casca de Mindlin (corte transversal incluído) na superfície média da chapa, espessura uniforme ${shell.thickness} mm; tensões no topo e na base (±t/2) da casca; a pressão atua segundo a normal da superfície`] : []),
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
       ...(stepIdx.size ? [`${stepIdx.size} passos de carga sequenciais: cada passo parte do estado final do anterior (deslocamentos e, com plasticidade, deformações permanentes); molas e massas ativas em todos`] : []),
       ...(Object.keys(edgeGroups).length ? ["Condições em arestas: força distribuída uniformemente pelo comprimento, apoio nos nós da aresta; a tensão junto à aresta é singular (depende da malha) — ler os resultados a uma distância de alguns elementos"] : []),
@@ -264,8 +284,9 @@ function pointsAlong(edge: TopoDS_Shape, fr: number[]): number[] {
 export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
   const report: StepReport = { warnings: [] };
   const warnings: string[] = [];
-  const solid = bodyOf(ctx);
-  const faces = caseFaces(ctx, solid);
+  const sh = s.shell ? shellOf(ctx) : undefined;
+  const solid = sh ? sh.shape : bodyOf(ctx);
+  const faces = sh ? caseFaces(ctx, solid, sh.faces) : caseFaces(ctx, solid);
   const allFaces = explore(solid, "face"), allEdges = explore(solid, "edge");
   const sc = ctx.scope;
   const tryDo = <T,>(f: () => T, fallback: T): T => { try { return f(); } catch (e) { warnings.push((e as Error).message); return fallback; } };

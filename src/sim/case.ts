@@ -107,6 +107,11 @@ export interface FemCase {
    * com atrito de Coulomb μ e separação (`contact`, penalidade face a face).
    */
   ties?: { name: string; slave: string; master: string; tolerance: number; slaveBody?: string; masterBody?: string; kind?: "tie" | "contact"; mu?: number }[];
+  /**
+   * Casca: o modelo é uma superfície (superfície média) malhada a 2D, com elementos S3/S6 de espessura
+   * uniforme (mm); os grupos de faces são regiões da casca e os de arestas são bordos.
+   */
+  shell?: { thickness: number };
   hypotheses: string[];
 }
 

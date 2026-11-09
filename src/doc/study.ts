@@ -263,6 +263,11 @@ export interface FemStudy {
    * separação (penalidade face a face, CalculiX), ou nenhum.
    */
   contact?: { mode: "bonded" | "friction" | "none"; tolerance?: number; mu?: number };
+  /**
+   * Casca: o estudo usa a última chapa (superfície) do documento em vez do sólido, com elementos de
+   * casca S3/S6 (Mindlin) de espessura uniforme (mm), na superfície média. Só CalculiX.
+   */
+  shell?: { thickness: Expr };
 }
 
 export interface CfdMesh {

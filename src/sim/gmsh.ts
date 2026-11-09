@@ -31,14 +31,16 @@ export function femGeo(c: FemCase, o: GeoOpts = {}): string {
   const hex = c.mesh.element === "hex";
   const out = [
     `// Gerado pelo CAD protótipo — ${c.title}`,
-    `// Unidades: mm. Elementos ${hex ? (c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados") : "tetraédricos"} de ordem ${c.mesh.order}.`,
+    `// Unidades: mm. Elementos ${c.shell ? `de casca (triângulos, espessura ${c.shell.thickness} mm)` : hex ? (c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados") : "tetraédricos"} de ordem ${c.mesh.order}.`,
     `SetFactory("OpenCASCADE");`,
     // a reparação OCC tem de estar ligada antes de importar o BREP
     ...(o.heal ? healLines : []),
     `Merge "model.brep";`,
   ];
   // um corpo: grupo SOLID; montagem: um grupo por volume (B1, B2, … pela ordem do composto)
-  if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
+  // casca: grupo SHELL com todas as superfícies (malha 2D, `gmsh -2`)
+  if (c.shell) out.push(`Physical Surface("SHELL") = Surface{:};`);
+  else if (c.bodies?.length) c.bodies.forEach((b, k) => out.push(`Physical Volume("${b.group}") = {${k + 1}};`));
   else out.push(`Physical Volume("SOLID") = Volume{:};`);
   for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
   // condições em arestas: com SaveAll = 0 só saem as linhas das curvas num grupo físico
