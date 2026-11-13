@@ -21,7 +21,7 @@ import { BomPanel } from "./BomPanel.tsx";
 import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { SimPanel } from "./SimPanel.tsx";
 import { conditionAtFace, conditionFaceColors } from "./sim-actions.ts";
-import { activeSeedIndex, handleSeedKey, scheduleSeedPreview, stepSeed } from "./seed-actions.ts";
+import { activeSeedIndex, handleSeedKey, scheduleLiveMesh, scheduleSeedPreview, stepSeed } from "./seed-actions.ts";
 import { SeedHud } from "./SeedHud.tsx";
 import { SimBrowser } from "./SimBrowser.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
@@ -66,7 +66,7 @@ function App() {
     "edit", "sketch", "choosingPlane", "confirmed", "pickTarget", "selection", "selectedFeature", "hoverFeature",
     "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy",
     "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
-    "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden",
+    "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden", "liveMesh", "agent",
   );
   const host = useRef<HTMLDivElement>(null);
   const vp = useRef<Viewport | null>(null);
@@ -140,6 +140,8 @@ function App() {
   useEffect(() => { vp.current?.setConditionFaces(conditionFaceColors()); }, [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result, st.asmResult]);
   // espaço FEM: nós das seeds da malha (meshPlan no worker, sem Gmsh), atualizados ao vivo
   useEffect(() => scheduleSeedPreview((p) => vp.current?.setSeedMarks(p)), [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result]);
+  // malha ao vivo (opção no painel da seed): volta a gerar a malha completa após uma pausa nas alterações
+  useEffect(scheduleLiveMesh, [st.workspace, st.simStudy, st.doc, st.project, st.pickTarget, st.liveMesh, st.agent]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
   // resultados de simulação (FEM) no 3D
   useEffect(() => {
