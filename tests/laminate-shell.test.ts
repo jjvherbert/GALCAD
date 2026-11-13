@@ -38,7 +38,7 @@ const ply = (theta: number, t = 0.5): OrthoPly => ({ e1: 40000, e2: 10000, g12: 
 function lamCase(plies: OrthoPly[] = [ply(0), ply(90)]): FemCase {
   return {
     format: "cadp-sim-case", version: 1, physics: "fem", solver: "calculix", title: "Placa laminada", analysis: "static", modes: 4,
-    material: { ...steel, density: 1600 }, groups: { P: [1] }, edgeGroups: { FIX: [1] },
+    material: { ...steel, density: 1.6 }, groups: { P: [1] }, edgeGroups: { FIX: [1] },
     faces: [{ tag: 1, name: "F1", center: [5, 5, 0], area: 100, normal: [0, 0, 1] }],
     loads: [{ kind: "fixed", group: "FIX" }, { kind: "pressure", group: "P", p: 0.01 }],
     mesh: { size: 5, minSize: 0.1, curvature: 0, order: 2, local: [] },
@@ -115,8 +115,20 @@ test("laminado: erros com malha linear e análise não estática", () => {
   c.mesh.order = 1;
   assert.throws(() => calculixDeck(c, parseMsh(plateMsh(1))), /requer malha de ordem 2/);
   const f = lamCase();
-  f.analysis = "modal";
-  assert.throws(() => calculixDeck(f, parseMsh(plateMsh())), /só análise estática/);
+  f.analysis = "dynamic";
+  assert.throws(() => calculixDeck(f, parseMsh(plateMsh())), /só estática, modal ou encurvadura/);
+});
+
+test("laminado: modal e encurvadura — secção composta, densidade por camada, só deslocamentos", () => {
+  for (const [analysis, step] of [["modal", "*FREQUENCY"], ["buckling", "*BUCKLE"]] as const) {
+    const c = lamCase();
+    c.analysis = analysis;
+    const d = calculixDeck(c, parseMsh(plateMsh())).inp;
+    assert.ok(d.includes(step), analysis);
+    assert.match(d, /\*SHELL SECTION[^\n]*COMPOSITE/);
+    assert.match(d, /\*DENSITY/);
+    assert.ok(!d.includes("*EL FILE"), analysis);
+  }
 });
 
 test("laminado: .frd com OUTPUT=2D — deslocamentos nos nós da malha, tensões no nível com maior von Mises", () => {
@@ -247,5 +259,5 @@ test("laminado por regiões no estudo: faces resolvidas, camadas e faces repetid
   assert.throws(run((s) => s.shell!.regions!.push({ faces: [{ face: 1 } as unknown as TopoRef], plies: [ply(0)] })), /região 2: a face 2 já está na região 1/);
   assert.throws(run((s) => { s.shell!.regions![0].plies[1].e1 = -1; }), /região 1, camada 2/);
   assert.throws(run((s) => { s.shell!.regions![0].plies = []; }), /região 1: sem camadas/);
-  assert.throws(run((s) => { s.analysis = "modal"; }), /só análise estática/);
+  assert.throws(run((s) => { s.analysis = "dynamic"; }), /só estática, modal ou encurvadura/);
 });

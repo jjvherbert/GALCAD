@@ -109,7 +109,7 @@ export function ShellEditor({ s, up }: { s: FemStudy; up: (p: Partial<FemStudy>)
       {sh && <>
         {!sh.plies?.length && <ExprInput label="Espessura" value={sh.thickness} onChange={(thickness) => up({ shell: { ...sh, thickness: thickness ?? "" } })} />}
         <LaminateEditor s={s} sh={sh} up={up} />
-        {laminate && s.analysis !== "static" && <p class="field-hint warn">O laminado só corre em análise estática nesta versão.</p>}
+        {laminate && s.analysis !== "static" && s.analysis !== "modal" && s.analysis !== "buckling" && <p class="field-hint warn">O laminado só corre em análise estática, modal ou de encurvadura nesta versão.</p>}
         <p class="field-hint">Só CalculiX. Laminado: camadas do anexo C da ISO 12215-5 (CLT), malha de ordem 2 (S6), índice de rotura por camada (extensão máxima, C.6) nos resultados.</p>
       </>}
     </fieldset>
