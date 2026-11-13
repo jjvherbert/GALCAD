@@ -4,6 +4,7 @@ import { type Annotation, type DrawingDoc, type DrawingView, type GdtChar, type 
 import { primToSvg } from "../drawing/svg.ts";
 import { GDT_LABELS, gdtSymbol } from "../drawing/prims.ts";
 import { addView, autoBalloons, deleteView, importModelDims, importPmi } from "../drawing/edit.ts";
+import { ISO_SCALES, autoLayout } from "../drawing/auto-layout.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { Check, Field, Select } from "./forms.tsx";
 
@@ -17,7 +18,7 @@ export function rootAsmOf(d: DrawingDoc, v: DrawingView, depth = 0): string | nu
 // Painel lateral
 // ---------------------------------------------------------------------------
 
-const SCALES: [string, string][] = [["5:1", "5:1"], ["2:1", "2:1"], ["1:1", "1:1"], ["1:2", "1:2"], ["1:5", "1:5"], ["1:10", "1:10"], ["1:20", "1:20"], ["1:50", "1:50"]];
+const SCALES: [string, string][] = ISO_SCALES.map(([n, m]) => [`${n}:${m}`, `${n}:${m}`]);
 const ORIENT: [StdView, string][] = [["front", "Frente"], ["back", "Trás"], ["top", "Cima"], ["bottom", "Baixo"], ["left", "Esquerda"], ["right", "Direita"], ["iso", "Isométrica"]];
 
 export function DrawingPanel({ d }: { d: DrawingDoc }) {
@@ -43,16 +44,20 @@ export function DrawingPanel({ d }: { d: DrawingDoc }) {
           {ORIENT.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
         <button class={`small ${tool?.kind === "modelView" ? "on" : ""}`} onClick={() => { const [kind, id] = src.split(":"); store.set({ drawingTool: { kind: "modelView", source: { kind: kind as "part" | "assembly", id }, orientation: orient } }); }}>Colocar vista</button>
-        <button class="small" title="Frente, cima e lateral no método de projeção da folha" onClick={() => {
+        <button class="small" title="Frente, cima, lateral e isométrica no método de projeção da folha, com escala automática" onClick={() => {
           const [kind, id] = src.split(":");
+          const source = { kind: kind as "part" | "assembly", id };
+          // com a caixa da última reconstrução: escala normalizada e vistas centradas; sem ela, posições fixas
+          const box = store.modelBoxes.get(id);
+          if (box) { store.commitDrawing(autoLayout(d, source, box), "Três vistas"); return; }
           const [w, h] = d.sheet.orientation === "landscape" ? [420, 297] : [297, 420];
           const k = d.sheet.size === "A4" ? 0.7 : 1;
           let doc = d;
-          const r1 = addView(doc, { kind: "model", source: { kind: kind as "part" | "assembly", id }, orientation: "front", at: [w * 0.3 * k, h * 0.62 * k] }); doc = r1.doc;
+          const r1 = addView(doc, { kind: "model", source, orientation: "front", at: [w * 0.3 * k, h * 0.62 * k] }); doc = r1.doc;
           const first = d.sheet.projection === "first";
           doc = addView(doc, { kind: "projected", parent: r1.id, side: first ? "below" : "above", at: [w * 0.3 * k, h * (first ? 0.3 : 0.85) * k] }).doc;
           doc = addView(doc, { kind: "projected", parent: r1.id, side: "right", at: [w * 0.62 * k, h * 0.62 * k] }).doc;
-          doc = addView(doc, { kind: "model", source: { kind: kind as "part" | "assembly", id }, orientation: "iso", at: [w * 0.75 * k, h * 0.82 * k] }).doc;
+          doc = addView(doc, { kind: "model", source, orientation: "iso", at: [w * 0.75 * k, h * 0.82 * k] }).doc;
           store.commitDrawing(doc, "Três vistas");
         }}>3 vistas + iso</button>
       </fieldset>

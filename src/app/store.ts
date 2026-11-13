@@ -9,7 +9,7 @@ import {
 } from "../doc/project.ts";
 import { FEATURE_LABELS } from "../doc/features.ts";
 
-import type { DrawingResponse, ExportFormat, RebuildResponse } from "../kernel/protocol.ts";
+import type { DrawingResponse, ExportFormat, MassProps, RebuildResponse } from "../kernel/protocol.ts";
 import {
   type Analysis, type AnySubStore, type DocKey, type Pick, type SessionKey, type State, type StateGroup, type StateSlice, type UiKey,
   DOC_KEYS, GROUP_OF, SESSION_KEYS, SubStore, UI_KEYS, pickState,
@@ -60,6 +60,8 @@ export class Store {
   /** Último resultado de simulação/desenho de cada documento: trocar de documento não os perde (A3). */
   simResults = new Map<string, NonNullable<State["simResult"]>>();
   drawingResults = new Map<string, DrawingResponse>();
+  /** Caixa envolvente da última reconstrução de cada peça/montagem (layout automático dos desenhos, F5). */
+  modelBoxes = new Map<string, MassProps["bbox"]>();
   /** Última peça/montagem ativa: ao sair do Desenho volta-se a ela, não à primeira peça. */
   lastModelDoc: DocRef | null = null;
   readonly docStore: SubStore<DocKey>;
@@ -184,10 +186,12 @@ export class Store {
           const doc = this.displayDoc();
           const r = await this.kernel.rebuild(doc, force, externalParts(this.state.project, doc));
           if (r) this.kernelStale = false;
+          if (r?.mass) this.modelBoxes.set(active.id, r.mass.bbox);
           if (r && this.state.active === active) { this.set({ result: r, error: null }); void this.refreshAnalysis(); }
         } else if (active.kind === "assembly") {
           const r = await this.kernel.assembly(this.displayProject(), active.id, force);
           if (r) this.kernelStale = false;
+          if (r?.mass) this.modelBoxes.set(active.id, r.mass.bbox);
           if (r && this.state.active === active) this.set({ asmResult: r, error: null });
         } else {
           const r = await this.kernel.drawing(this.state.project, active.id, force);
@@ -251,6 +255,7 @@ export class Store {
   commitDrawing(d: DrawingDoc, label: string, merge = false) { this.commitDoc("drawing", d, label, merge); }
   setActive(ref: DocRef) { docOps.setActive(this, ref); }
   addDocument(kind: DocKind) { docOps.addDocument(this, kind); }
+  createDrawing2D() { docOps.createDrawing2D(this); }
   deleteDocument(ref: DocRef) { docOps.deleteDocument(this, ref); }
   renameDocument(ref: DocRef, name: string) { docOps.renameDocument(this, ref, name); }
   setPartProperties(props: PartProperties) { docOps.setPartProperties(this, props); }
