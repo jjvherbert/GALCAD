@@ -81,7 +81,7 @@ async function main() {
 
     // 2. esboço: retângulo com canto na origem, cotas W e H
     await p.click("button.cmd:has-text('Esboço')");
-    await p.click("button:has-text('Começar')");
+    await p.click("button:has-text('Começar')"); await sketchReady();
     const box = await p.locator(".sk-canvas").boundingBox();
     const o = await p.$eval(".sk-canvas circle.origin", (e) => [Number(e.getAttribute("cx")), Number(e.getAttribute("cy"))]);
     await p.keyboard.press("r");
@@ -237,7 +237,7 @@ async function main() {
     await p.click(".modal button:has-text('Aplicar')");
     await settle();
     await p.click("button.cmd:has-text('Esboço')");
-    await p.click("button:has-text('Começar')");
+    await p.click("button:has-text('Começar')"); await sketchReady();
     const b3 = await p.locator(".sk-canvas").boundingBox();
     const o3 = await p.$eval(".sk-canvas circle.origin", (e) => [Number(e.getAttribute("cx")), Number(e.getAttribute("cy"))]);
     await p.keyboard.press("r");
