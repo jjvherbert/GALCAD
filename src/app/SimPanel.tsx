@@ -139,6 +139,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
                 <>
                   <Select label="Deformada" value={String(v.disp)} options={view.modes.map((d, k) => [String(k), d])} onChange={(x) => store.set({ simView: { ...v, disp: Number(x) } })} />
                   <Field label="Ampliação da deformada (0 = automática)"><input type="number" min="0" value={v.scale} onChange={(e) => store.set({ simView: { ...v, scale: Number((e.target as HTMLInputElement).value) || 0 } })} /></Field>
+                  <Check label="Animar a deformada" value={!!v.anim} onChange={(on) => store.set({ simView: { ...v, anim: on } })} />
                 </>
               )}
               {view.layers.length > 1 && (

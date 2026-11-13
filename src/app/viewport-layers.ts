@@ -33,6 +33,7 @@ export function drawPoles(v: Viewport, preview?: { k: number; p: THREE.Vector3 }
 
 export function setSimResult(v: Viewport, r: ResultView | null, view: SimView) {
   v.disposeGroup(v.simGroup);
+  v.simGroup.userData.anim = undefined;
   if (!v.simGroup.parent) v.scene.add(v.simGroup);
   const fem = !!r?.modes.length || r?.layers.some((l) => l.displacements) === true;
   if (v.faceMesh) v.faceMesh.visible = !r;

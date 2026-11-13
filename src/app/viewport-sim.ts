@@ -3,7 +3,33 @@ import * as THREE from "three";
 import { type ResultView, fieldRange, layerShown } from "../sim/result.ts";
 import { sequentialColor } from "./viewport-style.ts";
 
-export interface SimView { field: number; disp: number; scale: number; hidden: string[] }
+export interface SimView { field: number; disp: number; scale: number; hidden: string[]; anim?: boolean }
+
+/** Período da deformada animada (ms). */
+export const SIM_ANIM_PERIOD = 1600;
+
+/** Fator da deformada animada no instante `t` (ms): oscila entre −1 e 1, como um modo de vibração. */
+export function simAnimPhase(t: number, period = SIM_ANIM_PERIOD): number {
+  return Math.sin((2 * Math.PI * t) / period);
+}
+
+/** Posições animadas: `pos = base + s·dk` (a deformada ampliada `dk` já vem multiplicada pela ampliação). */
+export function applySimPhase(pos: Float32Array, base: ArrayLike<number>, dk: Float32Array, s: number): void {
+  for (let i = 0; i < pos.length; i++) pos[i] = base[i] + s * dk[i];
+}
+
+interface SimAnimLayer { pos: Float32Array; base: ArrayLike<number>; dk: Float32Array; attrs: THREE.BufferAttribute[] }
+
+/** Avança a deformada animada dos resultados em `group` (nada faz se a animação não estiver ligada). */
+export function stepSimAnim(group: THREE.Group, t: number): void {
+  const anim = group.userData.anim as SimAnimLayer[] | undefined;
+  if (!anim?.length) return;
+  const s = simAnimPhase(t);
+  for (const a of anim) {
+    applySimPhase(a.pos, a.base, a.dk, s);
+    for (const at of a.attrs) at.needsUpdate = true;
+  }
+}
 
 /**
  * Junta a `group` as camadas visíveis de `r`: cores do campo escolhido na paleta sequencial, com a
@@ -20,6 +46,7 @@ export function buildSimLayers(group: THREE.Group, r: ResultView, view: SimView,
   }
   const k = view.scale > 0 ? view.scale : dmax > 0 ? (0.08 * size) / dmax : 0;
   const c = new THREE.Color();
+  const anim: SimAnimLayer[] = [];
   for (const l of r.layers) {
     if (!layerShown(l, view.hidden)) continue;
     const pos = new Float32Array(l.positions);
@@ -37,12 +64,15 @@ export function buildSimLayers(group: THREE.Group, r: ResultView, view: SimView,
     g.setAttribute("color", new THREE.BufferAttribute(col, 3));
     g.setIndex(l.triangles);
     g.computeVertexNormals();
+    // deformada animada: guarda a posição de base e a deformada ampliada para o ciclo do visualizador
+    const ai = view.anim && d && k > 0 ? anim.push({ pos, base: l.positions, dk: Float32Array.from(d, (x) => x * k), attrs: [g.getAttribute("position") as THREE.BufferAttribute] }) - 1 : -1;
     group.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0, roughness: 0.7, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 })));
     // arestas dos elementos (pré-visualização da malha)
     if (l.edges?.length) {
       const eg = new THREE.BufferGeometry();
       eg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
       eg.setIndex(l.edges);
+      if (ai >= 0) anim[ai].attrs.push(eg.getAttribute("position") as THREE.BufferAttribute);
       group.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x1f2937, transparent: true, opacity: 0.55 })));
     }
   }
@@ -52,5 +82,6 @@ export function buildSimLayers(group: THREE.Group, r: ResultView, view: SimView,
     ref.userData.shared = true;
     group.add(ref);
   }
+  group.userData.anim = anim;
   return { dmax, k };
 }

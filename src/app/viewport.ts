@@ -15,7 +15,7 @@ import type { GestureDir, Settings } from "./settings.ts";
 import { onThemeChange, resolvedTheme } from "./theme.ts";
 import type { ViewName } from "./viewport-views.ts";
 import { type Theme, themes } from "./viewport-style.ts";
-import type { SimView } from "./viewport-sim.ts";
+import { type SimView, stepSimAnim } from "./viewport-sim.ts";
 import type { PlaneMesh } from "./viewport-scene.ts";
 import type { PoleNet } from "./viewport-poles.ts";
 import type { PmiItem, PmiLabel } from "./viewport-pmi.ts";
@@ -133,7 +133,7 @@ export class Viewport {
     this.seedEl = Object.assign(document.createElement("div"), { className: "pmi-layer seed-layer" });
     el.append(this.pmiSvg, this.pmiEl, this.seedEl);
     this.renderer.setAnimationLoop(() => {
-      this.stepAnim(); this.stepFlash(); this.renderer.render(this.scene, this.camera); this.placePmi();
+      this.stepAnim(); this.stepFlash(); if (this.animate) stepSimAnim(this.simGroup, performance.now()); this.renderer.render(this.scene, this.camera); this.placePmi();
       placeSeedLabels(this.seedLabels, this.camera, this.renderer.domElement);
     });
   }
