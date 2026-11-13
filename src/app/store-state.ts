@@ -115,7 +115,7 @@ export interface State {
   /** Simulação: último resultado do agente local, vista (campo, deformada, ampliação) e ligação ao agente. */
   /** `doc`: id da peça ou montagem do estudo. */
   simResult: { doc: string; studyId: string; result: import("./sim-client.ts").RunResult } | null;
-  simView: { field: number; disp: number; scale: number; hidden: string[] };
+  simView: { field: number; disp: number; scale: number; hidden: string[]; anim?: boolean };
   simHidden: boolean;
   /** Malha ao vivo: com as seeds em edição, volta a gerar a malha (elementos) a cada alteração. */
   liveMesh: boolean;
