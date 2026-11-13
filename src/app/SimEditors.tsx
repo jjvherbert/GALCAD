@@ -6,6 +6,7 @@ import { allMaterials } from "./material-library.ts";
 import { type SimSection, store, useStoreKeys } from "./store.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, newLoad } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
+import { ShellEditor } from "./ShellEditor.tsx";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria (plano)", pointForce: "Força pontual", force: "Força total", pressure: "Pressão", gravity: "Gravidade", spring: "Mola à terra", mass: "Massa pontual", coupling: "Acoplamento (RBE2/RBE3)",
@@ -117,6 +118,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
       {s.analysis === "static" && <StepsEditor s={s} up={up} />}
       {s.analysis === "dynamic" && <DynamicEditor d={s.dynamic ?? { scheme: "implicit", duration: 0.01, load: "step" }} onChange={(dynamic) => up({ dynamic })} />}
       {(s.analysis === "modal" || s.analysis === "buckling") && <Field label="N.º de modos"><input type="number" min="1" max="50" value={s.modes ?? 6} onChange={(e) => up({ modes: Number((e.target as HTMLInputElement).value) || 6 })} /></Field>}
+      {(s.shell || ((s.solver ?? "calculix") === "calculix" && s.analysis !== "thermal")) && <ShellEditor s={s} up={up} />}
       </>}
       {section === "material" && <fieldset class="checklist">
         <legend class="field-label">Material</legend>
