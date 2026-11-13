@@ -8,6 +8,7 @@ import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
 import { edgeProps } from "./occ-props.ts";
 import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, shellOf, tagsOf, n3 } from "./sim-common.ts";
+import { orthoPlyError } from "../sim/laminate.ts";
 
 const FEM_HYP: Record<FemStudy["analysis"], string> = {
   static: "Estática linear: pequenos deslocamentos e deformações, material elástico linear isotrópico, sem contacto",
@@ -38,8 +39,14 @@ export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
 
 /** Casca: espessura avaliada e as opções que o modelo de casca ainda não suporta recusadas. */
 const SHELL_LOADS = new Set(["fixed", "displacement", "force", "pressure", "gravity"]);
-function shellCheck(s: FemStudy, sc: Ctx["scope"]): { thickness: number } {
-  const thickness = evalParam(s.shell!.thickness, sc, "Espessura da casca");
+function shellCheck(s: FemStudy, sc: Ctx["scope"]): FemCase["shell"] & {} {
+  const plies = s.shell!.plies?.length ? s.shell!.plies : undefined;
+  if (plies) {
+    plies.forEach((p, k) => { const e = orthoPlyError(p); if (e) throw new Error(`Laminado, camada ${k + 1}: ${e}`); });
+    if (s.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
+    if (s.mesh.order !== 2) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
+  }
+  const thickness = plies ? plies.reduce((a, p) => a + p.t, 0) : evalParam(s.shell!.thickness, sc, "Espessura da casca");
   if (!(thickness > 0)) throw new Error("Espessura da casca: tem de ser positiva");
   const no = (what: string) => { throw new Error(`Casca: ${what} ainda não é suportado`); };
   if ((s.solver ?? "calculix") !== "calculix") no(`o solver ${s.solver}`);
@@ -48,7 +55,7 @@ function shellCheck(s: FemStudy, sc: Ctx["scope"]): { thickness: number } {
   if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length) no("a malha manual (hexaedros, seeds ou faces mapeadas)");
   if (s.contact && s.contact.mode !== "none") no("o contacto");
   for (const l of s.loads) if (!SHELL_LOADS.has(l.kind)) no(`a condição «${l.kind}»`);
-  return { thickness };
+  return plies ? { thickness, plies } : { thickness };
 }
 
 /** Referencial local de uma condição: avaliado e conferido (erro se degenerado). */
@@ -220,7 +227,9 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       analysisHyp,
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
-      ...(shell ? [`Casca de Mindlin (corte transversal incluído) na superfície média da chapa, espessura uniforme ${shell.thickness} mm; tensões no topo e na base (±t/2) da casca; a pressão atua segundo a normal da superfície`] : []),
+      ...(shell ? [shell.plies
+        ? `Casca laminada (Mindlin, S6, *SHELL SECTION COMPOSITE) na superfície média da chapa: ${shell.plies.length} camadas [${shell.plies.map((p) => `${p.theta}°`).join("/")}] da base para o topo, espessura total ${shell.thickness} mm; ângulos medidos a partir do eixo x projetado na superfície; camadas ortotrópicas (E3 = E2, G13 = G12); tensões da camada e da altura com maior von Mises; a pressão atua segundo a normal da superfície`
+        : `Casca de Mindlin (corte transversal incluído) na superfície média da chapa, espessura uniforme ${shell.thickness} mm; tensões no topo e na base (±t/2) da casca; a pressão atua segundo a normal da superfície`] : []),
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
       ...(stepIdx.size ? [`${stepIdx.size} passos de carga sequenciais: cada passo parte do estado final do anterior (deslocamentos e, com plasticidade, deformações permanentes); molas e massas ativas em todos`] : []),
       ...(Object.keys(edgeGroups).length ? ["Condições em arestas: força distribuída uniformemente pelo comprimento, apoio nos nós da aresta; a tensão junto à aresta é singular (depende da malha) — ler os resultados a uma distância de alguns elementos"] : []),

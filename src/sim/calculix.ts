@@ -68,6 +68,9 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
   const thermal = c.analysis === "thermal";
   if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
+  const plies = c.shell?.plies?.length ? c.shell.plies : undefined;
+  if (plies && c.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
+  if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
   if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
   // elementos de volume (numeração sequencial, corpo a corpo; nós pela ordem do CalculiX) e mapa
   // face (cantos) → (elemento, n.º da face); casca: S3/S6 (st indefinido)
@@ -200,8 +203,22 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
     });
   } else if (c.shell) {
-    material("MAT", c.material);
-    L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
+    if (plies) {
+      // laminado: um material ortotrópico (transversalmente isotrópico, E3 = E2) e uma orientação por
+      // camada; o ângulo θ roda a direção 1 em torno da normal (eixo 3 local), a partir do eixo de referência
+      const a = c.shell.axis ?? [1, 0, 0];
+      const b: V3 = Math.abs(a[2]) < 0.9 ? [-a[1], a[0], 0] : [0, -a[2], a[1]];
+      plies.forEach((p, k) => {
+        L.push(`*MATERIAL, NAME=MAT_P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
+        L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [p.e1, p.e2, p.e2, p.nu12, p.nu12, p.nu12, p.g12, p.g12].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+        L.push("*DENSITY", fmt(c.material.density * 1e-9));
+        L.push(`*ORIENTATION, NAME=OR_P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
+      });
+      L.push("*SHELL SECTION, ELSET=EALL, COMPOSITE", ...plies.map((p, k) => `${fmt(p.t)}, , MAT_P${k + 1}, OR_P${k + 1}`));
+    } else {
+      material("MAT", c.material);
+      L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
+    }
   } else {
     material("MAT", c.material);
     L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
@@ -460,8 +477,10 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
       dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF"); });
     } else {
-      L.push("*NODE FILE", "U");
-      if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
+      // laminado: OUTPUT=2D — deslocamentos nos nós da malha, tensões nos nós expandidos (3 níveis por camada); com uma só camada o OUTPUT=2D deixa as tensões vazias, por isso fica a saída expandida de casca (lida em shellFrdBlocks)
+      const o2 = plies && plies.length > 1 ? ", OUTPUT=2D" : "";
+      L.push(`*NODE FILE${o2}`, "U");
+      if (c.analysis === "static") L.push(`*EL FILE${o2}`, nl?.plasticity ? "S, PEEQ" : "S");
       // reações nos apoios (verificação do equilíbrio)
       if (c.analysis === "static") dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF"); });
       // reações por apoio (ex.: força de atrito transmitida a uma face com deslocamento imposto)

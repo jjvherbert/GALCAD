@@ -5,6 +5,7 @@
 // usa este sistema coerente); propriedades térmicas e de fluidos em SI, convertidas na exportação.
 import type { Expr, TopoRef, Vec3 } from "./types.ts";
 import type { ConvergenceReport } from "../sim/convergence.ts";
+import type { OrthoPly } from "../sim/laminate.ts";
 
 /** Material isotrópico linear (com a origem dos valores). */
 export interface SimMaterial {
@@ -265,9 +266,11 @@ export interface FemStudy {
   contact?: { mode: "bonded" | "friction" | "none"; tolerance?: number; mu?: number };
   /**
    * Casca: o estudo usa a última chapa (superfície) do documento em vez do sólido, com elementos de
-   * casca S3/S6 (Mindlin) de espessura uniforme (mm), na superfície média. Só CalculiX.
+   * casca S3/S6 (Mindlin) de espessura uniforme (mm), na superfície média. Só CalculiX. Com `plies`,
+   * laminado (camadas da base para o topo, ângulo a partir de x): a espessura passa a ser a soma das
+   * camadas; exige malha de ordem 2 (S6) e análise estática.
    */
-  shell?: { thickness: Expr };
+  shell?: { thickness: Expr; plies?: OrthoPly[] };
 }
 
 export interface CfdMesh {

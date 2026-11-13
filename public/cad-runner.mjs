@@ -1509,9 +1509,11 @@ function shellSurface(m) {
 * Deslocamentos e outros vetores: o do meio. Tensores (6 componentes): o da face (base ou topo) com
 * maior von Mises, onde a flexão é máxima.
 */
-function shellFrdBlocks(m, frd) {
+function shellFrdBlocks(m, frd, plies = 0) {
 	const used = /* @__PURE__ */ new Set();
 	for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
+	if (plies > 1) return compositeFrdBlocks(m, frd, used, plies);
+	const nk = Math.max(...m.nodes.keys());
 	const pts = [...frd.nodes.values()];
 	if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
 	const lo = [
@@ -1549,7 +1551,15 @@ function shellFrdBlocks(m, frd) {
 	const map = /* @__PURE__ */ new Map();
 	for (const t of used) {
 		const p = m.nodes.get(t), mid = nearest(p);
-		if (mid < 0) throw new Error(`Resultado de casca: o nó ${t} da malha não aparece no .frd`);
+		if (mid < 0) {
+			const id0 = nk + 3 * (t - 1), pa = frd.nodes.get(id0 + 1), pb = frd.nodes.get(id0 + 3);
+			if (!pa || !pb || dist(pa.map((x, k) => (x + pb[k]) / 2), p) >= tol) throw new Error(`Resultado de casca: o nó ${t} da malha não aparece no .frd`);
+			map.set(t, {
+				mid,
+				faces: [id0 + 1, id0 + 3]
+			});
+			continue;
+		}
 		let faces = [];
 		const near = [
 			-3,
@@ -1588,6 +1598,38 @@ function shellFrdBlocks(m, frd) {
 		};
 	});
 }
+const vonMises = (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
+/**
+* Laminado (`*SHELL SECTION, COMPOSITE` com `OUTPUT=2D`): os vetores vêm nos nós da malha; os tensores
+* nos nós expandidos, numerados a seguir ao maior nó da malha (nk) em blocos de 3 + 3n por nó (n camadas):
+* o nó t ocupa nk + B(t − 1) + 1 … nk + Bt, com 3 níveis por camada (base, meio, topo). Os nós de canto
+* escrevem os últimos 3n do bloco; os intermédios só a base e o topo de cada camada. Fica o nível com
+* maior von Mises (os critérios por camada vêm numa fatia seguinte).
+*/
+function compositeFrdBlocks(m, frd, used, plies) {
+	const nk = Math.max(...m.nodes.keys()), B = 3 + 3 * plies;
+	return frd.blocks.map((b) => {
+		const data = /* @__PURE__ */ new Map();
+		for (const t of used) {
+			if (b.components.length < 6) {
+				const v = b.data.get(t);
+				if (!v) throw new Error(`Resultado de laminado: o nó ${t} da malha não aparece no .frd`);
+				data.set(t, v);
+				continue;
+			}
+			let best;
+			for (let id = nk + B * (t - 1) + 1; id <= nk + B * t; id++) {
+				const v = b.data.get(id);
+				if (v && (!best || vonMises(v) > vonMises(best))) best = v;
+			}
+			if (best) data.set(t, best);
+		}
+		return {
+			...b,
+			data
+		};
+	});
+}
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
 function femResult(c, m, frd, dat, supportLoad = [
 	0,
@@ -1604,7 +1646,7 @@ function femResult(c, m, frd, dat, supportLoad = [
 	for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
 	if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1).f];
 	const parsed = parseFrd(frd);
-	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed) : parsed.blocks, d);
+	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, c.shell.plies?.length ?? 0) : parsed.blocks, d);
 }
 /**
 * Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
@@ -2075,6 +2117,9 @@ function calculixDeck(c, m) {
 	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
 	const thermal = c.analysis === "thermal";
 	if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
+	const plies = c.shell?.plies?.length ? c.shell.plies : void 0;
+	if (plies && c.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
+	if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
 	if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
 	const elems = [];
 	const bodyRange = [];
@@ -2241,8 +2286,41 @@ function calculixDeck(c, m) {
 		L.push(`*SOLID SECTION, ELSET=${b.group}, MATERIAL=MAT_${b.group}`);
 	});
 	else if (c.shell) {
-		material("MAT", c.material);
-		L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
+		if (plies) {
+			const a = c.shell.axis ?? [
+				1,
+				0,
+				0
+			];
+			const b = Math.abs(a[2]) < .9 ? [
+				-a[1],
+				a[0],
+				0
+			] : [
+				0,
+				-a[2],
+				a[1]
+			];
+			plies.forEach((p, k) => {
+				L.push(`*MATERIAL, NAME=MAT_P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
+				L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [
+					p.e1,
+					p.e2,
+					p.e2,
+					p.nu12,
+					p.nu12,
+					p.nu12,
+					p.g12,
+					p.g12
+				].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+				L.push("*DENSITY", fmt(c.material.density * 1e-9));
+				L.push(`*ORIENTATION, NAME=OR_P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
+			});
+			L.push("*SHELL SECTION, ELSET=EALL, COMPOSITE", ...plies.map((p, k) => `${fmt(p.t)}, , MAT_P${k + 1}, OR_P${k + 1}`));
+		} else {
+			material("MAT", c.material);
+			L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
+		}
 	} else {
 		material("MAT", c.material);
 		L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
@@ -2586,8 +2664,9 @@ function calculixDeck(c, m) {
 				if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF");
 			});
 		} else {
-			L.push("*NODE FILE", "U");
-			if (c.analysis === "static") L.push("*EL FILE", nl?.plasticity ? "S, PEEQ" : "S");
+			const o2 = plies && plies.length > 1 ? ", OUTPUT=2D" : "";
+			L.push(`*NODE FILE${o2}`, "U");
+			if (c.analysis === "static") L.push(`*EL FILE${o2}`, nl?.plasticity ? "S, PEEQ" : "S");
 			if (c.analysis === "static") dofSets.forEach((sets, k) => {
 				if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${glob}`, "RF");
 			});
