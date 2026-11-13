@@ -133,13 +133,14 @@ if (!setupMode) app.whenReady().then(async () => {
   let agent = null;
   try { agent = await startAgent(); } catch (e) { dialog.showErrorBox("GALCAD", `O agente de simulação não arrancou: ${e.message}\nA modelação funciona; as simulações não.`); }
   const site = await serveStatic();
+  const webPreferences = {
+    preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true,
+    additionalArguments: [`--cad-agent=${agent ? `${agent.url}|${agent.token}` : ""}`, `--cad-version=${app.getVersion()}`],
+  };
   const win = new BrowserWindow({
     width: 1440, height: 900, title: "GALCAD", backgroundColor: "#ffffff", show: false,
     icon: path.join(__dirname, "build", "icon.png"),
-    webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true,
-      additionalArguments: [`--cad-agent=${agent ? `${agent.url}|${agent.token}` : ""}`, `--cad-version=${app.getVersion()}`],
-    },
+    webPreferences,
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: "GALCAD", submenu: [
@@ -152,8 +153,17 @@ if (!setupMode) app.whenReady().then(async () => {
   ]));
   // ligações externas no browser do sistema; a janela só navega na própria aplicação
   const own = `http://127.0.0.1:${site.port}`;
-  win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: "deny" }; });
-  win.webContents.on("will-navigate", (e, url) => { if (!url.startsWith(own)) { e.preventDefault(); shell.openExternal(url); } });
+  // um desenho em janela própria (`?drawing=<id>`) abre como outra janela da aplicação, com as mesmas regras
+  const guard = (contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith(`${own}/`)) return { action: "allow", overrideBrowserWindowOptions: { width: 1280, height: 860, title: "GALCAD — Desenho", backgroundColor: "#ffffff", icon: path.join(__dirname, "build", "icon.png"), autoHideMenuBar: true, webPreferences } };
+      if (/^https?:/.test(url)) shell.openExternal(url);
+      return { action: "deny" };
+    });
+    contents.on("will-navigate", (e, url) => { if (!url.startsWith(own)) { e.preventDefault(); shell.openExternal(url); } });
+    contents.on("did-create-window", (child) => guard(child.webContents));
+  };
+  guard(win.webContents);
   // a janela principal aparece já desenhada (sem ecrã branco) e o splash fecha
   win.once("ready-to-show", async () => {
     // o ecrã de arranque mostra-se sempre primeiro e fica pelo menos meio segundo (a marca à vista)

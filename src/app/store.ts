@@ -22,6 +22,7 @@ import * as docOps from "./store-docs.ts";
 import * as featOps from "./store-features.ts";
 import * as treeOps from "./store-tree.ts";
 import { externalParts } from "./store-features.ts";
+import { drawingFromUrl } from "./doc-window.ts";
 export { externalParts } from "./store-features.ts";
 import { defaultFeature } from "./defaults.ts";
 import { type Settings, loadSettings, saveSettings } from "./settings.ts";
@@ -79,21 +80,45 @@ export class Store {
     } catch { /* sem armazenamento local ou autosave inválido */ }
     if (!project.parts.length) project = { ...project, parts: [newPart(project)] };
     const doc = project.parts[0];
+    // janela própria de um desenho (F5): `?drawing=<id>` abre já nesse desenho, no Desenho
+    const drawingId = typeof location !== "undefined" ? drawingFromUrl(project, location.search) : null;
     const settings = loadSettings();
     applyTheme(settings.theme);
     this.state = {
-      project, active: { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
+      project, active: drawingId ? { kind: "drawing", id: drawingId } : { kind: "part", id: doc.id }, doc, asmResult: null, drawingResult: null,
       edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, kernelBusy: false, rebuildPending: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, showSettings: false, showMaterials: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings, userMaterials: loadMaterials(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
-      workspace: "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
+      workspace: drawingId ? "drawing" : "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: settings.agentUrl, token: "" },
     };
     this.docStore = new SubStore(DOC_KEYS, this.state);
     this.sessionStore = new SubStore(SESSION_KEYS, this.state);
     this.uiStore = new SubStore(UI_KEYS, this.state);
     this.stores = { doc: this.docStore, session: this.sessionStore, ui: this.uiStore };
+    if (drawingId) this.lastModelDoc = { kind: "part", id: doc.id };
+    // outra janela da aplicação gravou o projeto: esta passa a mostrar a mesma versão
+    if (typeof window !== "undefined") window.addEventListener("storage", (e) => { if (e.key === docOps.AUTOSAVE && e.newValue) this.syncProject(e.newValue); });
+    this.rebuild(0);
+  }
+
+  /** Aplica o projeto gravado por outra janela (desenho em janela própria); não interrompe uma edição em curso. */
+  syncProject(text: string) {
+    if (this.state.edit || this.state.sketch || text === serializeProject(this.state.project)) return;
+    let project: CadProject;
+    try { project = parseProject(text); } catch { return; }
+    if (!project.parts.length) return;
+    const { active } = this.state;
+    const list: { id: string }[] = active.kind === "part" ? project.parts : active.kind === "assembly" ? project.assemblies : project.drawings;
+    const ref: DocRef = list.some((d) => d.id === active.id) ? active : { kind: "part", id: project.parts[0].id };
+    const doc = (ref.kind === "part" && project.parts.find((p) => p.id === ref.id)) || project.parts.find((p) => p.id === this.state.doc.id) || project.parts[0];
+    // o histórico de desfazer referia-se à versão anterior dos documentos
+    this.histories.clear();
+    this.set({
+      project, doc, active: ref, selection: [], selectedFeature: null, drawingSel: null,
+      ...(ref !== active ? { workspace: "design" as const, drawingResult: null } : {}),
+    });
     this.rebuild(0);
   }
 

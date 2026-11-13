@@ -3,6 +3,7 @@ export const DRAWING_TABS: { id: "drawing" | "annotate"; label: string; groups: 
   { id: "drawing", label: "Esquema de vistas", groups: [
     { title: "Vistas", ids: ["dr.view.projected", "dr.view.section", "dr.view.detail", "dr.view.aux"] },
     { title: "Exportar", ids: ["dr.export.pdf", "dr.export.dxf", "dr.export.svg"] },
+    { title: "Janela", ids: ["dr.window"] },
   ] },
   { id: "annotate", label: "Anotação", groups: [
     { title: "Cotas", ids: ["dr.dim", "dr.modelDims", "dr.pmi"] },
