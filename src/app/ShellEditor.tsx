@@ -11,7 +11,7 @@ const FIBRES: [FibreKind, string][] = [["glass", "Vidro E"], ["carbon", "Carbono
 const total = (plies: OrthoPly[]) => +plies.reduce((a, p) => a + p.t, 0).toFixed(3);
 const num = (e: Event) => Number((e.target as HTMLInputElement).value);
 
-/** Acrescentar uma camada do anexo C: fibra, tipo, gramagem e teor em fibra (por defeito o da Tabela C.2). */
+/** Acrescentar uma camada do anexo C: fibra, tipo, gramagem e teor em fibra (por defeito o da Tabela C.7). */
 function PlyAdder({ id, onAdd }: { id: string; onAdd: (p: OrthoPly[]) => void }) {
   const [fibre, setFibre] = useState<FibreKind>("glass");
   const [ply, setPly] = useState<PlyType>("csm");
@@ -31,13 +31,13 @@ function PlyAdder({ id, onAdd }: { id: string; onAdd: (p: OrthoPly[]) => void })
       <Select label="Processo (teor em fibra de referência)" value={process} options={Object.entries(PROCESS_LABELS) as [LaminationProcess, string][]} onChange={(p) => { setProcess(p); setPhi(null); }} />
       <div class="row3">
         <Field label="w (kg/m²)"><input type="number" min="0.05" step="0.05" value={w} onChange={(e) => setW(num(e))} /></Field>
-        <Field label="φ (fibra, massa)"><input type="number" min="0.1" max="0.8" step="0.01" value={+usedPhi.toFixed(3)} onChange={(e) => setPhi(num(e))} /></Field>
+        <Field label="φ (volume)"><input type="number" min="0.1" max="0.8" step="0.01" value={+usedPhi.toFixed(3)} onChange={(e) => setPhi(num(e))} /></Field>
         <Field label="θ (°)"><input type="number" step="15" value={theta} onChange={(e) => setTheta(num(e))} /></Field>
       </div>
       {plies
         ? <button class="small" onClick={() => onAdd(plies)}>+ camada ({+plies.reduce((a, p) => a + p.t, 0).toFixed(2)} mm)</button>
         : <p class="field-hint">Combinação sem dados no anexo C (verifique w e φ).</p>}
-      {phi !== null && guide !== null && phi !== guide && <p class="field-hint">φ de referência (Tabela C.2): {guide}.</p>}
+      {phi !== null && guide !== null && phi !== guide && <p class="field-hint">φ de referência (Tabela C.7): {guide}.</p>}
     </div>
   );
 }
