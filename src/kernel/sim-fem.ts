@@ -56,7 +56,7 @@ function shellCheck(s: FemStudy, sc: Ctx["scope"], tags: (refs: TopoRef[], what:
   });
   if (plies || regions.length) {
     plies?.forEach((p, k) => { const e = orthoPlyError(p); if (e) throw new Error(`Laminado, camada ${k + 1}: ${e}`); });
-    if (s.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
+    if (s.analysis !== "static" && s.analysis !== "modal" && s.analysis !== "buckling") throw new Error("Laminado em casca: só estática, modal ou encurvadura nesta versão");
     if (s.mesh.order !== 2) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
   }
   const thickness = plies ? plies.reduce((a, p) => a + p.t, 0) : evalParam(s.shell!.thickness, sc, "Espessura da casca");

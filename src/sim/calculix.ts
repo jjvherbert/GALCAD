@@ -63,6 +63,8 @@ export function springWeights(items: { n: number[]; nodal: number[] }[]): Map<nu
 // tira os zeros finais só da mantissa (num regex sobre o número inteiro, «2.5e-20» virava «2.5e-2»)
 export const trimNum = (s: string) => { const [mt, ex] = s.split("e"); return (mt.includes(".") ? mt.replace(/\.?0+$/, "") : mt) + (ex ? `e${ex}` : ""); };
 const fmt = (x: number) => (Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10)));
+/** Análises que correm com laminado em casca (com densidade por camada, a modal e a encurvadura também funcionam). */
+const LAMINATE_ANALYSES: readonly string[] = ["static", "modal", "buckling"];
 
 export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];
@@ -71,7 +73,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
   const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
   const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : undefined;
-  if (plies && c.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
+  if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal ou encurvadura nesta versão");
   if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
   if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
   // elementos de volume (numeração sequencial, corpo a corpo; nós pela ordem do CalculiX) e mapa
