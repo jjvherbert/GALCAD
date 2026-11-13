@@ -117,6 +117,8 @@ export interface State {
   simResult: { doc: string; studyId: string; result: import("./sim-client.ts").RunResult } | null;
   simView: { field: number; disp: number; scale: number; hidden: string[] };
   simHidden: boolean;
+  /** Malha ao vivo: com as seeds em edição, volta a gerar a malha (elementos) a cada alteração. */
+  liveMesh: boolean;
   agent: { url: string; token: string };
   /** Forma livre em edição: polo selecionado e restrição do arrasto. */
   poleSel: [number, number] | null;
@@ -165,7 +167,7 @@ export const SESSION_KEYS = [
 ] as const satisfies readonly (keyof State)[];
 export const UI_KEYS = [
   "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
-  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "userMaterials", "pmiView", "simView", "simHidden",
+  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "userMaterials", "pmiView", "simView", "simHidden", "liveMesh",
   "agent", "simBusy", "simProgress",
 ] as const satisfies readonly (keyof State)[];
 export type DocKey = (typeof DOC_KEYS)[number];

@@ -5,7 +5,8 @@ import type { MeshSeed } from "../doc/study.ts";
 import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { externalParts } from "./store-features.ts";
 import { store } from "./store.ts";
-import { activeStudy, patchMesh } from "./sim-actions.ts";
+import { activeStudy, cancelActiveStudy, patchMesh, runActiveStudy } from "./sim-actions.ts";
+import { liveMeshKey, liveMeshScheduler } from "./live-mesh.ts";
 
 /** Índice da seed cuja lista de arestas está em seleção no 3D (pickTarget `seed<i>`). */
 export function activeSeedIndex(): number | null {
@@ -83,4 +84,24 @@ export function scheduleSeedPreview(show: (p: SeedPreview | null) => void, delay
       .then((p) => { if (id === seq) show(p); })
       .catch(() => { if (id === seq) show(null); });
   }, delay);
+}
+
+let meshRun: Promise<void> | null = null;
+/** Malha ao vivo: pára a malha anterior ainda em curso (nunca um cálculo) e gera a nova. */
+async function rerunLiveMesh() {
+  if (store.state.simBusy === "run") return;
+  if (store.state.simBusy === "mesh") { await cancelActiveStudy(); await meshRun; }
+  if (store.state.simBusy) return;
+  const p = runActiveStudy(true);
+  meshRun = p;
+  await p;
+  if (meshRun === p) meshRun = null;
+}
+const liveMesh = liveMeshScheduler(() => void rerunLiveMesh());
+
+/** Chamado a cada alteração do estado: agenda a malha ao vivo se as definições da malha mudaram. */
+export function scheduleLiveMesh() {
+  const st = store.state, study = activeStudy("fem");
+  const fem = st.workspace === "fem" && study?.physics === "fem" ? study : undefined;
+  liveMesh(liveMeshKey(st.liveMesh, st.agent.token, activeSeedIndex() != null, fem?.id, fem?.mesh));
 }

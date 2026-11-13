@@ -91,7 +91,7 @@ export class Store {
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
       settings, userMaterials: loadMaterials(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
       workspace: drawingId ? "drawing" : "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
-      simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, agent: desktopAgent() ?? { url: settings.agentUrl, token: "" },
+      simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, liveMesh: false, agent: desktopAgent() ?? { url: settings.agentUrl, token: "" },
     };
     this.docStore = new SubStore(DOC_KEYS, this.state);
     this.sessionStore = new SubStore(SESSION_KEYS, this.state);
