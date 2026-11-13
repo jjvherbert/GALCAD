@@ -139,6 +139,14 @@ table.vars th { text-align: left; font-weight: 500; color: var(--muted); font-si
 table.vars td { padding: 2px; }
 table.vars input { width: 100%; }
 table.vars tr.invalid input { border-color: var(--bad); }
+.shell-editor { max-height: none; overflow: visible; display: grid; gap: 6px; }
+table.plies td.ply-label { font-size: 12px; line-height: 1.2; }
+table.plies td:nth-child(3) { width: 76px; }
+table.plies td:nth-child(4) { width: 60px; }
+table.plies input { padding-left: 4px; padding-right: 2px; }
+.shell-editor > button { justify-self: start; }
+table.plies td.ply-actions { white-space: nowrap; }
+table.plies tr.invalid td.ply-label { color: var(--bad); }
 
 /* editor de esboço */
 .sketch-editor { position: absolute; inset: 0; display: flex; flex-direction: column; background: transparent; }
