@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { calculixDeck, splitPlies } from "../src/sim/calculix.ts";
-import { shellFrdBlocks, type FrdBlock } from "../src/sim/calculix-result.ts";
+import { femResultFrom, shellFrdBlocks, type FrdBlock } from "../src/sim/calculix-result.ts";
 import { parseMsh } from "../src/sim/msh.ts";
 import { type FemCase, type V3, shellLayerCount } from "../src/sim/case.ts";
 import { type OrthoPly } from "../src/sim/laminate.ts";
@@ -139,6 +139,39 @@ test("laminado: .frd com OUTPUT=2D — deslocamentos nos nós da malha, tensões
   for (let t = 1; t <= 9; t++) assert.equal(s.data.get(t)![0], 100 * t);
   disp.delete(4);
   assert.throws(() => shellFrdBlocks(m, { nodes: new Map(), blocks }, 2), /o nó 4 da malha não aparece/);
+});
+
+test("laminado: índice de rotura por camada (extensão máx.) a partir das tensões globais do .frd", () => {
+  const m = parseMsh(plateMsh());
+  const strains = { ut: 2, uc: 1, uf: 2, gamma: 2 };
+  const c = lamCase([{ ...ply(0), strains }, { ...ply(90), strains }]);
+  const nk = 9, B = 3 + 3 * 2;
+  const disp = new Map<number, number[]>(), stress = new Map<number, number[]>();
+  for (let t = 1; t <= 9; t++) {
+    disp.set(t, [0, 0, 0]);
+    for (const k of t <= 4 ? [4, 5, 6, 7, 8, 9] : [4, 6, 7, 9]) stress.set(nk + B * (t - 1) + k, [100, 0, 0, 0, 0, 0]);
+  }
+  const blocks: FrdBlock[] = [
+    { name: "DISP", value: 1, components: ["D1", "D2", "D3"], data: disp },
+    { name: "STRESS", value: 1, components: ["SXX", "SYY", "SZZ", "SXY", "SYZ", "SZX"], data: stress },
+  ];
+  const out = shellFrdBlocks(m, { nodes: new Map(), blocks }, 2, c);
+  const fi = out.find((b) => b.name === "FI")!;
+  assert.deepEqual(fi.components, ["FI", "REG", "PLY", "MODE"]);
+  assert.equal(fi.data.size, 9);
+  // camada 0°: ε1 = 100/40000 → 0,125 de 2 %; camada 90°: ε2 = 100/10000 = 1 % → 0,5 em tração 2
+  for (let t = 1; t <= 9; t++) {
+    const [v, reg, pl, mode] = fi.data.get(t)!;
+    assert.ok(Math.abs(v - 0.5) < 1e-9);
+    assert.deepEqual([reg, pl, mode], [-1, 2, 2]);
+  }
+  // sem extensões de rotura não há bloco FI
+  assert.ok(!shellFrdBlocks(m, { nodes: new Map(), blocks }, 2, lamCase()).some((b) => b.name === "FI"));
+  const dat = { frequencies: [], buckling: [], reactions: [], reactionHistory: [] } as unknown as Parameters<typeof femResultFrom>[3];
+  const r = femResultFrom(c, m, out, dat);
+  assert.ok(r.fields.some((f) => /Índice de rotura/.test(f.name)));
+  assert.equal(r.metrics?.find((x) => x.key === "fimax")?.value, 0.5);
+  assert.match(r.summary.find(([k]) => /Índice de rotura máx/.test(k))![1], /0\.500 — camada 2, tração 2/);
 });
 
 // placa com duas superfícies (um tri6 em cada): regiões de laminado por face

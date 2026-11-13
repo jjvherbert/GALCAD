@@ -440,3 +440,94 @@ export function laminateResponse(plies: OrthoPly[], n: [number, number, number],
     plies: plies.map((p, k) => ({ ply: k, bottom: at(p, l.z[k]), top: at(p, l.z[k + 1]) })),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Critérios de rotura por camada — extensão máxima (ISO 12215-5, Tabela C.6)
+// ---------------------------------------------------------------------------
+
+export type FailureMode = "tração 1" | "compressão 1" | "tração 2" | "compressão 2" | "corte 12";
+
+export interface PlyFailure {
+  /** Índice de rotura (≥ 1 ⇒ rotura): maior razão extensão / extensão de rotura. */
+  index: number;
+  mode: FailureMode;
+}
+
+/**
+ * Critério de extensão máxima nos eixos do material, com as extensões de rotura da Tabela C.6.
+ * Hipótese: a direção 2 usa os mesmos limites da direção 1 — exato para camadas equilibradas
+ * (WR, CSM, biaxiais), otimista para a direção transversal de uma UD. `null` sem extensões de rotura.
+ */
+export function plyFailureIndex(p: OrthoPly, strain12: [number, number, number]): PlyFailure | null {
+  const s = p.strains;
+  if (!s) return null;
+  const [e1, e2, g] = strain12;
+  const cands: [number, FailureMode][] = [
+    e1 >= 0 ? [e1 / (s.ut / 100), "tração 1"] : [-e1 / (s.uc / 100), "compressão 1"],
+    e2 >= 0 ? [e2 / (s.ut / 100), "tração 2"] : [-e2 / (s.uc / 100), "compressão 2"],
+    [Math.abs(g) / (s.gamma / 100), "corte 12"],
+  ];
+  const [index, mode] = cands.reduce((a, b) => (b[0] > a[0] ? b : a));
+  return { index, mode };
+}
+
+export interface LaminateFailure {
+  /** Por camada: o pior entre a face inferior e a superior (`null` sem extensões de rotura). */
+  plies: (PlyFailure | null)[];
+  /** Camada crítica (índice em `plies`) e o seu índice de rotura; `null` se nenhuma camada tem limites. */
+  critical: { ply: number; index: number; mode: FailureMode } | null;
+}
+
+export function laminateFailure(plies: OrthoPly[], resp: LaminateResponse): LaminateFailure {
+  const per = resp.plies.map((r) => {
+    const a = plyFailureIndex(plies[r.ply], r.bottom.strain12), b = plyFailureIndex(plies[r.ply], r.top.strain12);
+    return a && b ? (b.index > a.index ? b : a) : a ?? b;
+  });
+  let critical: LaminateFailure["critical"] = null;
+  per.forEach((f, k) => {
+    if (f && (!critical || f.index > critical.index)) critical = { ply: k, index: f.index, mode: f.mode };
+  });
+  return { plies: per, critical };
+}
+
+export const FAILURE_MODES: FailureMode[] = ["tração 1", "compressão 1", "tração 2", "compressão 2", "corte 12"];
+
+/** Divide camadas em subcamadas até serem n (divide sempre a mais espessa); `of` é a camada de origem. */
+export function splitPlies(plies: OrthoPly[], n: number): { ply: OrthoPly; of: number }[] {
+  const c = plies.map(() => 1);
+  for (let k = plies.length; k < n; k++) {
+    let j = 0;
+    plies.forEach((p, i) => {
+      if (p.t / c[i] > plies[j].t / c[j]) j = i;
+    });
+    c[j]++;
+  }
+  return plies.flatMap((p, i) => Array.from({ length: c[i] }, () => ({ ply: { ...p, t: p.t / c[i] }, of: i })));
+}
+
+type V3 = [number, number, number];
+
+/**
+ * Direções 1 e 2 do material de uma camada em casca, como na `*ORIENTATION` do CalculiX: eixo de
+ * referência a, b ⟂ a, e θ em torno do eixo 3 local. Exato quando a normal da casca é a × b (placa plana
+ * alinhada); nas cascas curvas é uma aproximação.
+ */
+export function plyDirections(axis: V3, theta: number): [V3, V3] {
+  const unit = (v: V3): V3 => { const l = Math.hypot(...v) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const a = unit(axis), b = unit(Math.abs(a[2]) < 0.9 ? [-a[1], a[0], 0] : [0, -a[2], a[1]]);
+  const c = Math.cos((theta * Math.PI) / 180), s = Math.sin((theta * Math.PI) / 180);
+  return [[0, 1, 2].map((k) => c * a[k] + s * b[k]) as V3, [0, 1, 2].map((k) => -s * a[k] + c * b[k]) as V3];
+}
+
+/**
+ * Índice de rotura de uma camada a partir do tensor das tensões em eixos globais (SXX, SYY, SZZ, SXY,
+ * SYZ, SZX, em MPa): roda para os eixos do material e passa a extensões em tensão plana.
+ */
+export function plyStressFailure(p: OrthoPly, stress: number[], dirs: [V3, V3]): PlyFailure | null {
+  if (!p.strains) return null;
+  const [xx, yy, zz, xy, yz, zx] = stress;
+  const S = [[xx, xy, zx], [xy, yy, yz], [zx, yz, zz]];
+  const q = (u: V3, v: V3) => u.reduce((acc, ui, i) => acc + ui * v.reduce((t, vj, j) => t + S[i][j] * vj, 0), 0);
+  const [d1, d2] = dirs, s1 = q(d1, d1), s2 = q(d2, d2), t12 = q(d1, d2);
+  return plyFailureIndex(p, [s1 / p.e1 - (p.nu12 * s2) / p.e1, s2 / p.e2 - (p.nu12 * s1) / p.e1, t12 / p.g12]);
+}

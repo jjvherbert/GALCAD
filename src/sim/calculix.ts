@@ -7,7 +7,7 @@ import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, csysA
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
-import { type OrthoPly } from "./laminate.ts";
+import { type OrthoPly, splitPlies } from "./laminate.ts";
 
 /**
  * Elemento do CalculiX: tetraedros C3D4/C3D10; hexaedros lineares com modos incompatíveis (C3D8I,
@@ -536,18 +536,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, groupLength, supportLoad: cards[cards.length - 1].supportLoad, ...(nSteps > 1 ? { stepSupport: cards.map((x) => x.supportLoad) } : {}), warnings: [...new Set(warnings)], dynamic: dyn };
 }
 
-/** Divide camadas em subcamadas até serem n (divide sempre a mais espessa); `of` é a camada de origem. */
-export function splitPlies(plies: OrthoPly[], n: number): { ply: OrthoPly; of: number }[] {
-  const c = plies.map(() => 1);
-  for (let k = plies.length; k < n; k++) {
-    let j = 0;
-    plies.forEach((p, i) => {
-      if (p.t / c[i] > plies[j].t / c[j]) j = i;
-    });
-    c[j]++;
-  }
-  return plies.flatMap((p, i) => Array.from({ length: c[i] }, () => ({ ply: { ...p, t: p.t / c[i] }, of: i })));
-}
+export { splitPlies } from "./laminate.ts";
 
 // Resultados: em calculix-result.ts
 export { type FrdBlock, type FemResult, parseFrd, parseDat, exteriorSurface, femResult, femResultFrom } from "./calculix-result.ts";

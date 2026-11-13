@@ -2,6 +2,7 @@
 import { type FemCase, amplitudeAt, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
 import { type Msh, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, faceKey, outwardTriangles } from "./elements.ts";
+import { FAILURE_MODES, plyDirections, plyStressFailure, splitPlies } from "./laminate.ts";
 import type { Metric } from "./convergence.ts";
 
 export interface FrdBlock {
@@ -194,10 +195,10 @@ function shellSurface(m: Msh): ReturnType<typeof exteriorSurface> {
  * Deslocamentos e outros vetores: o do meio. Tensores (6 componentes): o da face (base ou topo) com
  * maior von Mises, onde a flexão é máxima.
  */
-export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number, number]>; blocks: FrdBlock[] }, plies = 0): FrdBlock[] {
+export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number, number]>; blocks: FrdBlock[] }, plies = 0, c?: FemCase): FrdBlock[] {
   const used = new Set<number>();
   for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
-  if (plies > 1) return compositeFrdBlocks(m, frd, used, plies);
+  if (plies > 1) return compositeFrdBlocks(m, frd, used, plies, c);
   const nk = Math.max(...m.nodes.keys());
   const pts = [...frd.nodes.values()];
   if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
@@ -255,11 +256,44 @@ const vonMises = (v: number[]) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - 
  * nos nós expandidos, numerados a seguir ao maior nó da malha (nk) em blocos de 3 + 3n por nó (n camadas):
  * o nó t ocupa nk + B(t − 1) + 1 … nk + Bt, com 3 níveis por camada (base, meio, topo). Os nós de canto
  * escrevem os últimos 3n do bloco; os intermédios só a base e o topo de cada camada. Fica o nível com
- * maior von Mises (os critérios por camada vêm numa fatia seguinte).
+ * maior von Mises; com o caso (`c`) e camadas com extensões de rotura, junta-se a cada bloco de tensões
+ * um bloco `FI` com o índice de rotura por camada (extensão máxima, ISO 12215-5 C.6) — o pior nível em
+ * todas as secções que tocam o nó, com a região (−1 = base), a camada (1…) e o modo.
  */
-function compositeFrdBlocks(m: Msh, frd: { blocks: FrdBlock[] }, used: Set<number>, plies: number): FrdBlock[] {
+function compositeFrdBlocks(m: Msh, frd: { blocks: FrdBlock[] }, used: Set<number>, plies: number, c?: FemCase): FrdBlock[] {
   const nk = Math.max(...m.nodes.keys()), B = 3 + 3 * plies;
-  return frd.blocks.map((b) => {
+  // secções (região ou base) que tocam cada nó, com as camadas já divididas como no .inp
+  const regions = c?.shell?.regions?.filter((r) => r.plies.length) ?? [], base = c?.shell?.plies ?? [];
+  const sections = [base, ...regions.map((r) => r.plies)].map((ps) => {
+    const split = ps.length ? splitPlies(ps, plies) : [];
+    return split.length === plies ? split.map((s) => ({ ...s, dirs: plyDirections(c!.shell!.axis ?? [1, 0, 0], s.ply.theta) })) : null;
+  });
+  const touch = new Map<number, Set<number>>();
+  if (c && sections.some((s) => s?.some((x) => x.ply.strains)))
+    for (const blk of shellBlocks(m)) {
+      const r = regions.findIndex((g) => g.faces.includes(blk.entity));
+      for (const e of elementsOf([blk])) for (const t of e.nodes) {
+        const set = touch.get(t) ?? new Set<number>();
+        set.add(r + 1);
+        touch.set(t, set);
+      }
+    }
+  const failure = (b: FrdBlock): FrdBlock | null => {
+    const data = new Map<number, number[]>();
+    for (const [t, secs] of touch)
+      for (const sec of secs) {
+        const split = sections[sec];
+        if (!split) continue;
+        for (let off = 4; off <= B; off++) {
+          const v = b.data.get(nk + B * (t - 1) + off), k = Math.floor((off - 4) / 3);
+          const f = v && plyStressFailure(split[k].ply, v, split[k].dirs);
+          if (f && f.index > (data.get(t)?.[0] ?? -1)) data.set(t, [f.index, sec - 1, split[k].of + 1, FAILURE_MODES.indexOf(f.mode)]);
+        }
+      }
+    return data.size ? { ...b, name: "FI", components: ["FI", "REG", "PLY", "MODE"], data } : null;
+  };
+  return frd.blocks.flatMap((b) => {
+    const fi = touch.size && b.components.length >= 6 ? failure(b) : null;
     const data = new Map<number, number[]>();
     for (const t of used) {
       if (b.components.length < 6) {
@@ -275,7 +309,7 @@ function compositeFrdBlocks(m: Msh, frd: { blocks: FrdBlock[] }, used: Set<numbe
       }
       if (best) data.set(t, best);
     }
-    return { ...b, data };
+    return fi ? [{ ...b, data }, fi] : [{ ...b, data }];
   });
 }
 
@@ -293,7 +327,7 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportL
   for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
   if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1)!.f];
   const parsed = parseFrd(frd);
-  return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, shellLayerCount(c)) : parsed.blocks, d);
+  return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, shellLayerCount(c), c) : parsed.blocks, d);
 }
 
 /**
@@ -394,6 +428,18 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
         const vm = sv ? field(sv, (v) => v[0]) : field(s, (v) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
         fields.push({ name: "Tensão de von Mises", unit: "MPa", values: vm });
         stressSummary([(sv ?? s)!], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
+      }
+      const fb = lastOf("FI");
+      if (fb) {
+        const fi = field(fb, (v) => v[0]);
+        fields.push({ name: "Índice de rotura (extensão máx., ISO 12215-5 C.6)", unit: "", values: fi });
+        let worst: number[] | undefined;
+        for (const v of fb.data.values()) if (!worst || v[0] > worst[0]) worst = v;
+        if (worst) {
+          const where = `camada ${worst[2]}${worst[1] >= 0 ? ` da região ${worst[1] + 1}` : ""}, ${FAILURE_MODES[worst[3]] ?? "?"}`;
+          summary.push(["Índice de rotura máx. (extensão máx.)", `${worst[0].toFixed(3)} — ${where}${worst[0] >= 1 ? " — ROTURA" : ""}`]);
+          metrics.push({ key: "fimax", label: "Índice de rotura máx.", unit: "", value: worst[0] });
+        }
       }
       const pe = lastOf("PE");
       if (pe) {
