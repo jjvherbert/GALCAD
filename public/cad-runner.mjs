@@ -1254,6 +1254,117 @@ function stableIncrement(m, materials) {
 	}
 	return best;
 }
+// src/sim/laminate.ts
+/**
+* Critério de extensão máxima nos eixos do material, com as extensões de rotura da Tabela C.6.
+* Hipótese: a direção 2 usa os mesmos limites da direção 1 — exato para camadas equilibradas
+* (WR, CSM, biaxiais), otimista para a direção transversal de uma UD. `null` sem extensões de rotura.
+*/
+function plyFailureIndex(p, strain12) {
+	const s = p.strains;
+	if (!s) return null;
+	const [e1, e2, g] = strain12;
+	const [index, mode] = [
+		e1 >= 0 ? [e1 / (s.ut / 100), "tração 1"] : [-e1 / (s.uc / 100), "compressão 1"],
+		e2 >= 0 ? [e2 / (s.ut / 100), "tração 2"] : [-e2 / (s.uc / 100), "compressão 2"],
+		[Math.abs(g) / (s.gamma / 100), "corte 12"]
+	].reduce((a, b) => b[0] > a[0] ? b : a);
+	return {
+		index,
+		mode
+	};
+}
+const FAILURE_MODES = [
+	"tração 1",
+	"compressão 1",
+	"tração 2",
+	"compressão 2",
+	"corte 12"
+];
+/** Divide camadas em subcamadas até serem n (divide sempre a mais espessa); `of` é a camada de origem. */
+function splitPlies(plies, n) {
+	const c = plies.map(() => 1);
+	for (let k = plies.length; k < n; k++) {
+		let j = 0;
+		plies.forEach((p, i) => {
+			if (p.t / c[i] > plies[j].t / c[j]) j = i;
+		});
+		c[j]++;
+	}
+	return plies.flatMap((p, i) => Array.from({ length: c[i] }, () => ({
+		ply: {
+			...p,
+			t: p.t / c[i]
+		},
+		of: i
+	})));
+}
+/**
+* Direções 1 e 2 do material de uma camada em casca, como na `*ORIENTATION` do CalculiX: eixo de
+* referência a, b ⟂ a, e θ em torno do eixo 3 local. Exato quando a normal da casca é a × b (placa plana
+* alinhada); nas cascas curvas é uma aproximação.
+*/
+function plyDirections(axis, theta) {
+	const unit = (v) => {
+		const l = Math.hypot(...v) || 1;
+		return [
+			v[0] / l,
+			v[1] / l,
+			v[2] / l
+		];
+	};
+	const a = unit(axis), b = unit(Math.abs(a[2]) < .9 ? [
+		-a[1],
+		a[0],
+		0
+	] : [
+		0,
+		-a[2],
+		a[1]
+	]);
+	const c = Math.cos(theta * Math.PI / 180), s = Math.sin(theta * Math.PI / 180);
+	return [[
+		0,
+		1,
+		2
+	].map((k) => c * a[k] + s * b[k]), [
+		0,
+		1,
+		2
+	].map((k) => -s * a[k] + c * b[k])];
+}
+/**
+* Índice de rotura de uma camada a partir do tensor das tensões em eixos globais (SXX, SYY, SZZ, SXY,
+* SYZ, SZX, em MPa): roda para os eixos do material e passa a extensões em tensão plana.
+*/
+function plyStressFailure(p, stress, dirs) {
+	if (!p.strains) return null;
+	const [xx, yy, zz, xy, yz, zx] = stress;
+	const S = [
+		[
+			xx,
+			xy,
+			zx
+		],
+		[
+			xy,
+			yy,
+			yz
+		],
+		[
+			zx,
+			yz,
+			zz
+		]
+	];
+	const q = (u, v) => u.reduce((acc, ui, i) => acc + ui * v.reduce((t, vj, j) => t + S[i][j] * vj, 0), 0);
+	const [d1, d2] = dirs, s1 = q(d1, d1), s2 = q(d2, d2), t12 = q(d1, d2);
+	return plyFailureIndex(p, [
+		s1 / p.e1 - p.nu12 * s2 / p.e1,
+		s2 / p.e2 - p.nu12 * s1 / p.e1,
+		t12 / p.g12
+	]);
+}
 // src/sim/calculix-result.ts
 /** Lê um `.frd` ASCII: coordenadas dos nós e blocos de resultados nodais. */
 function parseFrd(text) {
@@ -1515,10 +1626,10 @@ function shellSurface(m) {
 * Deslocamentos e outros vetores: o do meio. Tensores (6 componentes): o da face (base ou topo) com
 * maior von Mises, onde a flexão é máxima.
 */
-function shellFrdBlocks(m, frd, plies = 0) {
+function shellFrdBlocks(m, frd, plies = 0, c) {
 	const used = /* @__PURE__ */ new Set();
 	for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
-	if (plies > 1) return compositeFrdBlocks(m, frd, used, plies);
+	if (plies > 1) return compositeFrdBlocks(m, frd, used, plies, c);
 	const nk = Math.max(...m.nodes.keys());
 	const pts = [...frd.nodes.values()];
 	if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
@@ -1610,11 +1721,63 @@ const vonMises = (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 
 * nos nós expandidos, numerados a seguir ao maior nó da malha (nk) em blocos de 3 + 3n por nó (n camadas):
 * o nó t ocupa nk + B(t − 1) + 1 … nk + Bt, com 3 níveis por camada (base, meio, topo). Os nós de canto
 * escrevem os últimos 3n do bloco; os intermédios só a base e o topo de cada camada. Fica o nível com
-* maior von Mises (os critérios por camada vêm numa fatia seguinte).
+* maior von Mises; com o caso (`c`) e camadas com extensões de rotura, junta-se a cada bloco de tensões
+* um bloco `FI` com o índice de rotura por camada (extensão máxima, ISO 12215-5 C.6) — o pior nível em
+* todas as secções que tocam o nó, com a região (−1 = base), a camada (1…) e o modo.
 */
-function compositeFrdBlocks(m, frd, used, plies) {
+function compositeFrdBlocks(m, frd, used, plies, c) {
 	const nk = Math.max(...m.nodes.keys()), B = 3 + 3 * plies;
-	return frd.blocks.map((b) => {
+	const regions = c?.shell?.regions?.filter((r) => r.plies.length) ?? [];
+	const sections = [c?.shell?.plies ?? [], ...regions.map((r) => r.plies)].map((ps) => {
+		const split = ps.length ? splitPlies(ps, plies) : [];
+		return split.length === plies ? split.map((s) => ({
+			...s,
+			dirs: plyDirections(c.shell.axis ?? [
+				1,
+				0,
+				0
+			], s.ply.theta)
+		})) : null;
+	});
+	const touch = /* @__PURE__ */ new Map();
+	if (c && sections.some((s) => s?.some((x) => x.ply.strains))) for (const blk of shellBlocks(m)) {
+		const r = regions.findIndex((g) => g.faces.includes(blk.entity));
+		for (const e of elementsOf([blk])) for (const t of e.nodes) {
+			const set = touch.get(t) ?? /* @__PURE__ */ new Set();
+			set.add(r + 1);
+			touch.set(t, set);
+		}
+	}
+	const failure = (b) => {
+		const data = /* @__PURE__ */ new Map();
+		for (const [t, secs] of touch) for (const sec of secs) {
+			const split = sections[sec];
+			if (!split) continue;
+			for (let off = 4; off <= B; off++) {
+				const v = b.data.get(nk + B * (t - 1) + off), k = Math.floor((off - 4) / 3);
+				const f = v && plyStressFailure(split[k].ply, v, split[k].dirs);
+				if (f && f.index > (data.get(t)?.[0] ?? -1)) data.set(t, [
+					f.index,
+					sec - 1,
+					split[k].of + 1,
+					FAILURE_MODES.indexOf(f.mode)
+				]);
+			}
+		}
+		return data.size ? {
+			...b,
+			name: "FI",
+			components: [
+				"FI",
+				"REG",
+				"PLY",
+				"MODE"
+			],
+			data
+		} : null;
+	};
+	return frd.blocks.flatMap((b) => {
+		const fi = touch.size && b.components.length >= 6 ? failure(b) : null;
 		const data = /* @__PURE__ */ new Map();
 		for (const t of used) {
 			if (b.components.length < 6) {
@@ -1630,10 +1793,13 @@ function compositeFrdBlocks(m, frd, used, plies) {
 			}
 			if (best) data.set(t, best);
 		}
-		return {
+		return fi ? [{
 			...b,
 			data
-		};
+		}, fi] : [{
+			...b,
+			data
+		}];
 	});
 }
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
@@ -1652,7 +1818,7 @@ function femResult(c, m, frd, dat, supportLoad = [
 	for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
 	if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1).f];
 	const parsed = parseFrd(frd);
-	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, shellLayerCount(c)) : parsed.blocks, d);
+	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, shellLayerCount(c), c) : parsed.blocks, d);
 }
 /**
 * Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
@@ -1843,6 +2009,27 @@ function femResultFrom(c, m, blocks, d) {
 					values: vm
 				});
 				stressSummary([sv ?? s], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
+			}
+			const fb = lastOf("FI");
+			if (fb) {
+				const fi = field(fb, (v) => v[0]);
+				fields.push({
+					name: "Índice de rotura (extensão máx., ISO 12215-5 C.6)",
+					unit: "",
+					values: fi
+				});
+				let worst;
+				for (const v of fb.data.values()) if (!worst || v[0] > worst[0]) worst = v;
+				if (worst) {
+					const where = `camada ${worst[2]}${worst[1] >= 0 ? ` da região ${worst[1] + 1}` : ""}, ${FAILURE_MODES[worst[3]] ?? "?"}`;
+					summary.push(["Índice de rotura máx. (extensão máx.)", `${worst[0].toFixed(3)} — ${where}${worst[0] >= 1 ? " — ROTURA" : ""}`]);
+					metrics.push({
+						key: "fimax",
+						label: "Índice de rotura máx.",
+						unit: "",
+						value: worst[0]
+					});
+				}
 			}
 			const pe = lastOf("PE");
 			if (pe) {
@@ -2730,24 +2917,6 @@ function calculixDeck(c, m) {
 		warnings: [...new Set(warnings)],
 		dynamic: dyn
 	};
-}
-/** Divide camadas em subcamadas até serem n (divide sempre a mais espessa); `of` é a camada de origem. */
-function splitPlies(plies, n) {
-	const c = plies.map(() => 1);
-	for (let k = plies.length; k < n; k++) {
-		let j = 0;
-		plies.forEach((p, i) => {
-			if (p.t / c[i] > plies[j].t / c[j]) j = i;
-		});
-		c[j]++;
-	}
-	return plies.flatMap((p, i) => Array.from({ length: c[i] }, () => ({
-		ply: {
-			...p,
-			t: p.t / c[i]
-		},
-		of: i
-	})));
 }
 // src/sim/meshview.ts
 function meshPreview(c, m) {

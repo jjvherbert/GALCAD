@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  abd, compositeDensity, elasticConstants, guidancePhi, invert, isoPlyToOrtho, laminateModuli,
-  laminateResponse, orthoPlyError, phiFromPsi, plyMassKgM2, plyResult, plyThicknessMm, psiFromPhi, qBar,
+  abd, compositeDensity, elasticConstants, guidancePhi, invert, isoPlyToOrtho, laminateFailure, laminateModuli,
+  laminateResponse, plyFailureIndex, orthoPlyError, phiFromPsi, plyMassKgM2, plyResult, plyThicknessMm, psiFromPhi, qBar,
   type OrthoPly,
 } from "../src/sim/laminate.ts";
 
@@ -181,4 +181,33 @@ test("validação de camadas ortotrópicas e inversa singular", () => {
   assert.equal(invert([[1, 2], [2, 4]]), null);
   const inv = invert([[4, 7], [2, 6]])!;
   close(inv[0][0], 0.6); close(inv[0][1], -0.7); close(inv[1][0], -0.2); close(inv[1][1], 0.4);
+});
+
+test("rotura por camada: extensão máxima com os limites da Tabela C.6", () => {
+  const strains = { ut: 1.5, uc: 1.2, uf: 2, gamma: 2 };
+  const p: OrthoPly = { ...iso(20000, 0.3, 1), strains };
+  assert.equal(plyFailureIndex(iso(20000, 0.3, 1), [0.01, 0, 0]), null);
+  assert.deepEqual(plyFailureIndex(p, [0.0075, 0, 0]), { index: 0.5, mode: "tração 1" });
+  assert.deepEqual(plyFailureIndex(p, [0, -0.012, 0]), { index: 1, mode: "compressão 2" });
+  const g = plyFailureIndex(p, [0.001, 0.001, -0.03])!;
+  assert.equal(g.mode, "corte 12");
+  close(g.index, 1.5);
+});
+
+test("rotura por camada: momento puro — camada crítica na face em compressão quando uc < ut", () => {
+  const strains = { ut: 1.5, uc: 1.0, uf: 2, gamma: 2 };
+  const plies: OrthoPly[] = [0, 1].map(() => ({ ...iso(20000, 0.3, 1), strains }));
+  const r = laminateResponse(plies, [0, 0, 0], [100, 0, 0])!;
+  const f = laminateFailure(plies, r);
+  // κx > 0: z < 0 em compressão (camada 0, face inferior).
+  assert.equal(f.critical!.ply, 0);
+  assert.equal(f.critical!.mode, "compressão 1");
+  close(f.critical!.index, -r.plies[0].bottom.strain12[0] / 0.01);
+  close(f.plies[1]!.index, r.plies[1].top.strain12[0] / 0.015);
+  assert.equal(laminateFailure([iso(20000, 0.3, 2)], laminateResponse([iso(20000, 0.3, 2)], [1, 0, 0])!).critical, null);
+});
+
+test("rotura por camada: camadas ISO trazem as extensões de rotura", () => {
+  const [p] = isoPlyToOrtho({ fibre: "glass", ply: "wr", w: 0.8, phi: 0.4 })!;
+  assert.deepEqual(p.strains, { ut: 1.55, uc: 1.4, uf: 1.84, gamma: 1.7 });
 });
