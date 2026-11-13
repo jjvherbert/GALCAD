@@ -3,10 +3,11 @@
 //
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
-import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, csysAxes, csysToLocal } from "./case.ts";
+import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
+import { type OrthoPly } from "./laminate.ts";
 
 /**
  * Elemento do CalculiX: tetraedros C3D4/C3D10; hexaedros lineares com modos incompatíveis (C3D8I,
@@ -68,13 +69,14 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
   const thermal = c.analysis === "thermal";
   if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
-  const plies = c.shell?.plies?.length ? c.shell.plies : undefined;
+  const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
+  const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : undefined;
   if (plies && c.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
   if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
   if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
   // elementos de volume (numeração sequencial, corpo a corpo; nós pela ordem do CalculiX) e mapa
   // face (cantos) → (elemento, n.º da face); casca: S3/S6 (st indefinido)
-  const elems: { type: string; st?: SolidType; n: number[] }[] = [];
+  const elems: { type: string; st?: SolidType; n: number[]; face?: number }[] = [];
   const bodyRange: [number, number][] = [];
   if (c.shell) {
     const blocks = shellBlocks(m);
@@ -87,7 +89,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         const u = [p[0] - a[0], p[1] - a[1], p[2] - a[2]], v = [q[0] - a[0], q[1] - a[1], q[2] - a[2]];
         const nz = fn ? fn[0] * (u[1] * v[2] - u[2] * v[1]) + fn[1] * (u[2] * v[0] - u[0] * v[2]) + fn[2] * (u[0] * v[1] - u[1] * v[0]) : 1;
         const order = e.type === 9 ? (nz < 0 ? [0, 2, 1, 5, 4, 3] : [0, 1, 2, 3, 4, 5]) : nz < 0 ? [0, 2, 1] : [0, 1, 2];
-        elems.push({ type: e.type === 9 ? "S6" : "S3", n: order.map((i) => e.nodes[i]) });
+        elems.push({ type: e.type === 9 ? "S6" : "S3", n: order.map((i) => e.nodes[i]), face: b.entity });
       }
     }
   } else for (const g of groupsOfBodies) {
@@ -208,13 +210,53 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       // camada; o ângulo θ roda a direção 1 em torno da normal (eixo 3 local), a partir do eixo de referência
       const a = c.shell.axis ?? [1, 0, 0];
       const b: V3 = Math.abs(a[2]) < 0.9 ? [-a[1], a[0], 0] : [0, -a[2], a[1]];
-      plies.forEach((p, k) => {
-        L.push(`*MATERIAL, NAME=MAT_P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
-        L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [p.e1, p.e2, p.e2, p.nu12, p.nu12, p.nu12, p.g12, p.g12].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
-        L.push("*DENSITY", fmt(c.material.density * 1e-9));
-        L.push(`*ORIENTATION, NAME=OR_P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
-      });
-      L.push("*SHELL SECTION, ELSET=EALL, COMPOSITE", ...plies.map((p, k) => `${fmt(p.t)}, , MAT_P${k + 1}, OR_P${k + 1}`));
+      // o ccx só dá tensões às secções com o número máximo de camadas: as que têm menos são divididas
+      // em subcamadas (mesmo material e orientação) até todas terem n
+      const n = shellLayerCount(c);
+      const ortho = (pre: string, ps: OrthoPly[]) =>
+        ps.forEach((p, k) => {
+          L.push(`*MATERIAL, NAME=MAT_${pre}P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
+          L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [p.e1, p.e2, p.e2, p.nu12, p.nu12, p.nu12, p.g12, p.g12].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+          L.push("*DENSITY", fmt(c.material.density * 1e-9));
+          L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
+        });
+      const composite = (set: string, pre: string, ps: OrthoPly[]) =>
+        L.push(`*SHELL SECTION, ELSET=${set}, COMPOSITE`, ...splitPlies(ps, n).map(({ ply, of }) => `${fmt(ply.t)}, , MAT_${pre}P${of + 1}, OR_${pre}P${of + 1}`));
+      if (!regions.length) {
+        ortho("", plies);
+        composite("EALL", "", plies);
+      } else {
+        // regiões por faces: cada elemento de casca vai para a primeira região que contém a sua face
+        const sets = regions.map(() => [] as number[]), base: number[] = [];
+        elems.forEach((e, i) => {
+          if (e.face === undefined) return;
+          const r = regions.findIndex((g) => g.faces.includes(e.face!));
+          (r < 0 ? base : sets[r]).push(i + 1);
+        });
+        const elset = (name: string, ids: number[]) => {
+          L.push(`*ELSET, ELSET=${name}`);
+          for (let i = 0; i < ids.length; i += 16) L.push(ids.slice(i, i + 16).join(", "));
+        };
+        sets.forEach((ids, r) => {
+          if (!ids.length) throw new Error(`Laminado em casca: a região ${r + 1} (faces ${regions[r].faces.join(", ")}) não tem elementos`);
+          elset(`E_R${r + 1}`, ids);
+          ortho(`R${r + 1}_`, regions[r].plies);
+          composite(`E_R${r + 1}`, `R${r + 1}_`, regions[r].plies);
+        });
+        if (base.length) {
+          elset("E_BASE", base);
+          if (plies.length) {
+            ortho("", plies);
+            composite("E_BASE", "", plies);
+          } else {
+            // resto isotrópico: n camadas iguais do mesmo material, sem orientação
+            material("MAT", c.material);
+            const t = c.shell.thickness;
+            if (n > 1) L.push("*SHELL SECTION, ELSET=E_BASE, COMPOSITE", ...Array.from({ length: n }, () => `${fmt(t / n)}, , MAT`));
+            else L.push("*SHELL SECTION, ELSET=E_BASE, MATERIAL=MAT", fmt(t));
+          }
+        }
+      }
     } else {
       material("MAT", c.material);
       L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
@@ -478,7 +520,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF"); });
     } else {
       // laminado: OUTPUT=2D — deslocamentos nos nós da malha, tensões nos nós expandidos (3 níveis por camada); com uma só camada o OUTPUT=2D deixa as tensões vazias, por isso fica a saída expandida de casca (lida em shellFrdBlocks)
-      const o2 = plies && plies.length > 1 ? ", OUTPUT=2D" : "";
+      const o2 = plies && shellLayerCount(c) > 1 ? ", OUTPUT=2D" : "";
       L.push(`*NODE FILE${o2}`, "U");
       if (c.analysis === "static") L.push(`*EL FILE${o2}`, nl?.plasticity ? "S, PEEQ" : "S");
       // reações nos apoios (verificação do equilíbrio)
@@ -492,6 +534,19 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   });
   if (c.analysis === "static" && !c.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "spring")) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
   return { inp: L.join("\n") + "\n", nodes: used.size, elements: elems.length, groupArea, groupLength, supportLoad: cards[cards.length - 1].supportLoad, ...(nSteps > 1 ? { stepSupport: cards.map((x) => x.supportLoad) } : {}), warnings: [...new Set(warnings)], dynamic: dyn };
+}
+
+/** Divide camadas em subcamadas até serem n (divide sempre a mais espessa); `of` é a camada de origem. */
+export function splitPlies(plies: OrthoPly[], n: number): { ply: OrthoPly; of: number }[] {
+  const c = plies.map(() => 1);
+  for (let k = plies.length; k < n; k++) {
+    let j = 0;
+    plies.forEach((p, i) => {
+      if (p.t / c[i] > plies[j].t / c[j]) j = i;
+    });
+    c[j]++;
+  }
+  return plies.flatMap((p, i) => Array.from({ length: c[i] }, () => ({ ply: { ...p, t: p.t / c[i] }, of: i })));
 }
 
 // Resultados: em calculix-result.ts

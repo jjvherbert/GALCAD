@@ -268,9 +268,10 @@ export interface FemStudy {
    * Casca: o estudo usa a última chapa (superfície) do documento em vez do sólido, com elementos de
    * casca S3/S6 (Mindlin) de espessura uniforme (mm), na superfície média. Só CalculiX. Com `plies`,
    * laminado (camadas da base para o topo, ângulo a partir de x): a espessura passa a ser a soma das
-   * camadas; exige malha de ordem 2 (S6) e análise estática.
+   * camadas; exige malha de ordem 2 (S6) e análise estática. Com `regions`, faces com laminado próprio
+   * (o resto fica com `plies` ou isotrópico com `thickness`).
    */
-  shell?: { thickness: Expr; plies?: OrthoPly[] };
+  shell?: { thickness: Expr; plies?: OrthoPly[]; regions?: { faces: TopoRef[]; plies: OrthoPly[] }[] };
 }
 
 export interface CfdMesh {

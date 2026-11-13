@@ -2,12 +2,16 @@
 // leitura do .frd com OUTPUT=2D (nós expandidos por camada; com uma só camada, a leitura de casca).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { calculixDeck } from "../src/sim/calculix.ts";
+import { calculixDeck, splitPlies } from "../src/sim/calculix.ts";
 import { shellFrdBlocks, type FrdBlock } from "../src/sim/calculix-result.ts";
 import { parseMsh } from "../src/sim/msh.ts";
-import { type FemCase } from "../src/sim/case.ts";
+import { type FemCase, type V3, shellLayerCount } from "../src/sim/case.ts";
 import { type OrthoPly } from "../src/sim/laminate.ts";
-import { SIM_MATERIALS } from "../src/doc/study.ts";
+import { SIM_MATERIALS, type FemStudy } from "../src/doc/study.ts";
+import { type TopoRef } from "../src/doc/types.ts";
+import { buildFemCase } from "../src/kernel/sim-fem.ts";
+import { type StepReport } from "../src/kernel/context.ts";
+import { type MeshGeo } from "../src/kernel/sim-common.ts";
 
 const steel = SIM_MATERIALS.find((x) => /S235/.test(x.name))!;
 
@@ -135,4 +139,80 @@ test("laminado: .frd com OUTPUT=2D — deslocamentos nos nós da malha, tensões
   for (let t = 1; t <= 9; t++) assert.equal(s.data.get(t)![0], 100 * t);
   disp.delete(4);
   assert.throws(() => shellFrdBlocks(m, { nodes: new Map(), blocks }, 2), /o nó 4 da malha não aparece/);
+});
+
+// placa com duas superfícies (um tri6 em cada): regiões de laminado por face
+function twoFaceMsh(): string {
+  return plateMsh()
+    .replace("$Entities\n0 1 1 0", "$Entities\n0 1 2 0")
+    .replace("1 0 0 0 10 10 0 2 2 3 0\n", "1 0 0 0 10 10 0 2 2 3 0\n2 0 0 0 10 10 0 1 2 0\n")
+    .replace("$Elements\n2 4 1 4", "$Elements\n3 4 1 4")
+    .replace("2 1 9 2\n1 1 2 3 5 6 7\n2 1 3 4 7 8 9", "2 1 9 1\n1 1 2 3 5 6 7\n2 2 9 1\n2 1 3 4 7 8 9");
+}
+
+function regCase(base: OrthoPly[] | undefined, region: OrthoPly[]): FemCase {
+  const c = lamCase(base ?? [ply(0)]);
+  if (!base) { delete c.shell!.plies; c.shell!.thickness = 1; }
+  c.faces.push({ tag: 2, name: "F2", center: [3, 7, 0], area: 50, normal: [0, 0, 1] });
+  c.shell!.regions = [{ faces: [2], plies: region }];
+  return c;
+}
+
+test("laminado por regiões: ELSET por região e base, mesmo número de camadas em todas as secções", () => {
+  const m = parseMsh(twoFaceMsh());
+  assert.equal(m.blocks.filter((b) => b.dim === 2).length, 2);
+  const ls = calculixDeck(regCase([ply(0, 1)], [ply(0), ply(90), ply(0)]), m).inp.split("\n");
+  const r = ls.indexOf("*ELSET, ELSET=E_R1");
+  assert.equal(ls[r + 1].trim().replace(/,$/, ""), "2");
+  const b = ls.indexOf("*ELSET, ELSET=E_BASE");
+  assert.equal(ls[b + 1].trim().replace(/,$/, ""), "1");
+  assert.ok(ls.includes("*MATERIAL, NAME=MAT_R1_P3") && ls.includes("*ORIENTATION, NAME=OR_R1_P2, SYSTEM=RECTANGULAR"));
+  const sr = ls.indexOf("*SHELL SECTION, ELSET=E_R1, COMPOSITE");
+  assert.deepEqual(ls.slice(sr + 1, sr + 4), ["0.5, , MAT_R1_P1, OR_R1_P1", "0.5, , MAT_R1_P2, OR_R1_P2", "0.5, , MAT_R1_P3, OR_R1_P3"]);
+  const sb = ls.indexOf("*SHELL SECTION, ELSET=E_BASE, COMPOSITE");
+  assert.deepEqual(ls.slice(sb + 1, sb + 4), Array(3).fill("0.3333333333, , MAT_P1, OR_P1"));
+  assert.ok(ls.includes("*EL FILE, OUTPUT=2D"));
+});
+
+test("laminado por regiões: base isotrópica dividida em n camadas do mesmo material", () => {
+  const ls = calculixDeck(regCase(undefined, [ply(0), ply(90)]), parseMsh(twoFaceMsh())).inp.split("\n");
+  const sb = ls.indexOf("*SHELL SECTION, ELSET=E_BASE, COMPOSITE");
+  assert.deepEqual(ls.slice(sb + 1, sb + 3), ["0.5, , MAT", "0.5, , MAT"]);
+  assert.ok(ls.includes("*MATERIAL, NAME=MAT") && ls.includes("*NODE FILE, OUTPUT=2D"));
+});
+
+test("laminado por regiões: região sem elementos dá erro", () => {
+  const c = regCase([ply(0)], [ply(45)]);
+  c.shell!.regions![0].faces = [7];
+  assert.throws(() => calculixDeck(c, parseMsh(twoFaceMsh())), /região 1 .*não tem elementos/);
+});
+
+test("splitPlies e shellLayerCount", () => {
+  const s = splitPlies([ply(0, 2), ply(90, 0.5)], 4);
+  assert.deepEqual(s.map((x) => [x.of, x.ply.t]), [[0, 2 / 3], [0, 2 / 3], [0, 2 / 3], [1, 0.5]]);
+  assert.equal(splitPlies([ply(0)], 1).length, 1);
+  assert.equal(shellLayerCount(regCase(undefined, [ply(0), ply(90)])), 2);
+  assert.equal(shellLayerCount(lamCase([ply(0)])), 1);
+});
+
+test("laminado por regiões no estudo: faces resolvidas, camadas e faces repetidas validadas", () => {
+  const study = {
+    id: "s", name: "S", physics: "fem", solver: "calculix", analysis: "static", material: steel, loads: [],
+    mesh: { size: 5, order: 2 },
+    shell: { thickness: 2, regions: [{ faces: [{ face: 1 }], plies: [ply(0), ply(90)] }] },
+  } as unknown as FemStudy;
+  const tags = (refs: TopoRef[]) => refs.map((r) => (r as unknown as { face: number }).face + 1);
+  const report = { warnings: [] as string[] } as unknown as StepReport;
+  const geo = { edges: [], edgeTags: () => [] } as unknown as MeshGeo;
+  const box = { min: [0, 0, 0] as V3, max: [10, 10, 0] as V3 };
+  const c = buildFemCase(study, () => undefined, [], tags, box, report, geo);
+  assert.deepEqual(c.shell!.regions!.map((r) => r.faces), [[2]]);
+  assert.equal(c.shell!.thickness, 2);
+  assert.equal(c.shell!.plies, undefined);
+  assert.ok(c.hypotheses.some((h) => /Laminado por regiões: região 1 \(faces 2\): \[0°\/90°\], 1 mm; .*isotrópica de 2 mm/.test(h)));
+  const run = (f: (s: FemStudy) => void) => { const s2 = structuredClone(study); f(s2); return () => buildFemCase(s2, () => undefined, [], tags, box, report, geo); };
+  assert.throws(run((s) => s.shell!.regions!.push({ faces: [{ face: 1 } as unknown as TopoRef], plies: [ply(0)] })), /região 2: a face 2 já está na região 1/);
+  assert.throws(run((s) => { s.shell!.regions![0].plies[1].e1 = -1; }), /região 1, camada 2/);
+  assert.throws(run((s) => { s.shell!.regions![0].plies = []; }), /região 1: sem camadas/);
+  assert.throws(run((s) => { s.analysis = "modal"; }), /só análise estática/);
 });

@@ -1,5 +1,5 @@
 // Resultados do CalculiX: leitura do `.frd` e do `.dat` e montagem do resultado para o visualizador.
-import { type FemCase, amplitudeAt, csysAxes, csysToLocal } from "./case.ts";
+import { type FemCase, amplitudeAt, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
 import { type Msh, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, faceKey, outwardTriangles } from "./elements.ts";
 import type { Metric } from "./convergence.ts";
@@ -293,7 +293,7 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportL
   for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
   if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1)!.f];
   const parsed = parseFrd(frd);
-  return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, c.shell.plies?.length ?? 0) : parsed.blocks, d);
+  return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, shellLayerCount(c)) : parsed.blocks, d);
 }
 
 /**

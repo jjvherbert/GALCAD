@@ -39,10 +39,23 @@ export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
 
 /** Casca: espessura avaliada e as opções que o modelo de casca ainda não suporta recusadas. */
 const SHELL_LOADS = new Set(["fixed", "displacement", "force", "pressure", "gravity"]);
-function shellCheck(s: FemStudy, sc: Ctx["scope"]): FemCase["shell"] & {} {
+function shellCheck(s: FemStudy, sc: Ctx["scope"], tags: (refs: TopoRef[], what: string) => number[]): FemCase["shell"] & {} {
   const plies = s.shell!.plies?.length ? s.shell!.plies : undefined;
-  if (plies) {
-    plies.forEach((p, k) => { const e = orthoPlyError(p); if (e) throw new Error(`Laminado, camada ${k + 1}: ${e}`); });
+  // regiões: faces com laminado próprio; uma face só pode estar numa região
+  const seen = new Map<number, number>();
+  const regions = (s.shell!.regions ?? []).map((r, i) => {
+    if (!r.plies.length) throw new Error(`Laminado, região ${i + 1}: sem camadas`);
+    r.plies.forEach((p, k) => { const e = orthoPlyError(p); if (e) throw new Error(`Laminado, região ${i + 1}, camada ${k + 1}: ${e}`); });
+    const faces = tags(r.faces, `Laminado, região ${i + 1}`);
+    if (!faces.length) throw new Error(`Laminado, região ${i + 1}: escolha pelo menos uma face`);
+    for (const f of faces) {
+      if (seen.has(f)) throw new Error(`Laminado, região ${i + 1}: a face ${f} já está na região ${seen.get(f)! + 1}`);
+      seen.set(f, i);
+    }
+    return { faces, plies: r.plies };
+  });
+  if (plies || regions.length) {
+    plies?.forEach((p, k) => { const e = orthoPlyError(p); if (e) throw new Error(`Laminado, camada ${k + 1}: ${e}`); });
     if (s.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
     if (s.mesh.order !== 2) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
   }
@@ -55,7 +68,7 @@ function shellCheck(s: FemStudy, sc: Ctx["scope"]): FemCase["shell"] & {} {
   if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length) no("a malha manual (hexaedros, seeds ou faces mapeadas)");
   if (s.contact && s.contact.mode !== "none") no("o contacto");
   for (const l of s.loads) if (!SHELL_LOADS.has(l.kind)) no(`a condição «${l.kind}»`);
-  return plies ? { thickness, plies } : { thickness };
+  return { thickness, ...(plies ? { plies } : {}), ...(regions.length ? { regions } : {}) };
 }
 
 /** Referencial local de uma condição: avaliado e conferido (erro se degenerado). */
@@ -168,7 +181,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   if (size <= 0) throw new Error("Tamanho da malha: tem de ser positivo");
   // malha manual: seeds, faces mapeadas e hexaedros
   const element = s.mesh.element ?? "tet";
-  const shell = s.shell ? shellCheck(s, sc) : undefined;
+  const shell = s.shell ? shellCheck(s, sc, tags) : undefined;
   const localSize = new Map<number, number>();
   for (const l of local) for (const t of groups[l.group]) localSize.set(t, Math.min(l.size, localSize.get(t) ?? Infinity));
   const plan = element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length ? meshPlan({
@@ -230,6 +243,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       ...(shell ? [shell.plies
         ? `Casca laminada (Mindlin, S6, *SHELL SECTION COMPOSITE) na superfície média da chapa: ${shell.plies.length} camadas [${shell.plies.map((p) => `${p.theta}°`).join("/")}] da base para o topo, espessura total ${shell.thickness} mm; ângulos medidos a partir do eixo x projetado na superfície; camadas ortotrópicas (E3 = E2, G13 = G12); tensões da camada e da altura com maior von Mises; a pressão atua segundo a normal da superfície`
         : `Casca de Mindlin (corte transversal incluído) na superfície média da chapa, espessura uniforme ${shell.thickness} mm; tensões no topo e na base (±t/2) da casca; a pressão atua segundo a normal da superfície`] : []),
+      ...(shell?.regions?.length ? [`Laminado por regiões: ${shell.regions.map((r, i) => `região ${i + 1} (faces ${r.faces.join(", ")}): [${r.plies.map((p) => `${p.theta}°`).join("/")}], ${+r.plies.reduce((a, p) => a + p.t, 0).toFixed(6)} mm`).join("; ")}; o resto da chapa fica com ${shell.plies ? "o laminado base" : `a casca isotrópica de ${shell.thickness} mm`}. Todas as secções com o mesmo número de camadas (a mais espessa é dividida em partes iguais) para o ccx dar tensões em todas; a superfície média é a mesma em todas as regiões (sem desvio)`] : []),
       "Forças distribuídas uniformemente pela área das faces; apoios ideais (rígidos)",
       ...(stepIdx.size ? [`${stepIdx.size} passos de carga sequenciais: cada passo parte do estado final do anterior (deslocamentos e, com plasticidade, deformações permanentes); molas e massas ativas em todos`] : []),
       ...(Object.keys(edgeGroups).length ? ["Condições em arestas: força distribuída uniformemente pelo comprimento, apoio nos nós da aresta; a tensão junto à aresta é singular (depende da malha) — ler os resultados a uma distância de alguns elementos"] : []),
