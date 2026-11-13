@@ -35,6 +35,7 @@ const DESIGN_TABS: Tab[] = [
       { title: "Furos", ids: ["feature.hole"] },
       { title: "Acabamento", ids: ["feature.fillet", "feature.chamfer", "feature.shell", "feature.draft"] },
       { title: "Padrões", ids: ["feature.linearPattern", "feature.circularPattern", "feature.mirror"] },
+      { title: "Desenho", ids: ["dr.create2d"] },
     ],
   },
   {
@@ -65,6 +66,7 @@ const ASM_TABS: Tab[] = [
     { title: "Mates", ids: ["asm.mate.coincident", "asm.mate.concentric", "asm.mate.parallel", "asm.mate.perpendicular", "asm.mate.distance", "asm.mate.angle", "asm.mate.tangent", "asm.mate.lock"] },
     { title: "Avaliar", ids: ["asm.interference"] },
     { title: "BOM", ids: ["asm.bom"] },
+    { title: "Desenho", ids: ["dr.create2d"] },
   ] },
   { id: "evaluate", label: "Avaliar", groups: [{ title: "Avaliar", ids: ["edit.rebuild", "edit.forceRebuild", "asm.interference"] }] },
 ];

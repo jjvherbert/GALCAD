@@ -4,6 +4,7 @@ import {
   type AssemblyDoc, type CadProject, type DocKind, type DocRef, type DrawingDoc, type PartDoc, type PartProperties,
   newAssembly, newDrawing, newPart, newProject, parseProject, serializeProject, usages,
 } from "../doc/project.ts";
+import { autoLayout } from "../drawing/auto-layout.ts";
 import { KernelRestartError } from "./kernel-client.ts";
 import type { Analysis } from "./store-state.ts";
 import type { Store } from "./store.ts";
@@ -58,6 +59,24 @@ export function addDocument(s: Store, kind: DocKind) {
   setActive(s, { kind, id });
 }
 
+/**
+ * «Criar desenho 2D»: desenho novo da peça/montagem ativa (ou da última aberta) com frente, planta, lateral e
+ * isométrica, escala normalizada e a menor folha onde cabem. Precisa da caixa da última reconstrução.
+ */
+export function createDrawing2D(s: Store) {
+  const active = s.state.active;
+  const ref = active.kind !== "drawing" ? active : s.lastModelDoc;
+  const box = ref && s.modelBoxes.get(ref.id);
+  if (!ref || ref.kind === "drawing" || !box) { s.set({ message: "Abra e reconstrua uma peça ou montagem antes de criar o desenho 2D." }); return; }
+  const p = s.state.project;
+  const model = (ref.kind === "part" ? p.parts : p.assemblies).find((d) => d.id === ref.id);
+  if (!model) return;
+  const d = autoLayout(newDrawing(p, `Desenho de ${model.name}`), { kind: ref.kind, id: ref.id }, box, { fitSheet: true });
+  s.set({ project: { ...p, drawings: [...p.drawings, d] }, dirty: true });
+  autosave(s);
+  setActive(s, { kind: "drawing", id: d.id });
+}
+
 export function deleteDocument(s: Store, ref: DocRef) {
   const p = s.state.project;
   const used = usages(p, ref.id);
@@ -72,6 +91,7 @@ export function deleteDocument(s: Store, ref: DocRef) {
   s.histories.delete(ref.id);
   s.simResults.delete(ref.id);
   s.drawingResults.delete(ref.id);
+  s.modelBoxes.delete(ref.id);
   if (s.lastModelDoc?.id === ref.id) s.lastModelDoc = null;
   s.set({ project, dirty: true });
   autosave(s);
@@ -160,6 +180,7 @@ export function newDoc(s: Store) {
   s.histories.clear();
   s.simResults.clear();
   s.drawingResults.clear();
+  s.modelBoxes.clear();
   s.lastModelDoc = null;
   s.set({ project, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, simResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: project.name, dirty: false, pickTarget: null });
   autosave(s);
@@ -172,6 +193,7 @@ export function open(s: Store, text: string, fileName: string) {
   s.histories.clear();
   s.simResults.clear();
   s.drawingResults.clear();
+  s.modelBoxes.clear();
   s.lastModelDoc = null;
   const name = fileName.replace(/\.cadp\.json$|\.json$/i, "");
   s.set({ project: { ...project, name: project.name || name }, active: { kind: "part", id: project.parts[0].id }, doc: project.parts[0], result: null, asmResult: null, drawingResult: null, simResult: null, edit: null, sketch: null, selection: [], selectedFeature: null, fileName: name, dirty: false });

@@ -213,6 +213,7 @@ export const COMMANDS: Command[] = [
       store.set({ drawingTool: { kind, ...(parent ? { parent, points: [] } : {}) } as never });
     },
   })),
+  { id: "dr.create2d", label: "Criar desenho 2D (vistas e escala automáticas)", group: "Desenho", icon: "▤", run: () => store.createDrawing2D() },
   { id: "dr.modelDims", label: "Importar cotas do modelo", group: "Desenho", icon: "⇲", run: () => drawingAction("modelDims") },
   { id: "dr.pmi", label: "Importar PMI do modelo (cotas com tolerância, GD&T, referências, rugosidade, notas)", group: "Desenho", icon: "⌖", run: () => drawingAction("pmi") },
   { id: "dr.autoBalloon", label: "Balões automáticos", group: "Desenho", icon: "⑳", run: () => drawingAction("balloons") },
