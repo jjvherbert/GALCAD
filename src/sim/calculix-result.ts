@@ -194,9 +194,11 @@ function shellSurface(m: Msh): ReturnType<typeof exteriorSurface> {
  * Deslocamentos e outros vetores: o do meio. Tensores (6 componentes): o da face (base ou topo) com
  * maior von Mises, onde a flexão é máxima.
  */
-export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number, number]>; blocks: FrdBlock[] }): FrdBlock[] {
+export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number, number]>; blocks: FrdBlock[] }, plies = 0): FrdBlock[] {
   const used = new Set<number>();
   for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
+  if (plies > 1) return compositeFrdBlocks(m, frd, used, plies);
+  const nk = Math.max(...m.nodes.keys());
   const pts = [...frd.nodes.values()];
   if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
   const lo = [0, 1, 2].map((k) => Math.min(...pts.map((p) => p[k]))), hi = [0, 1, 2].map((k) => Math.max(...pts.map((p) => p[k])));
@@ -217,7 +219,14 @@ export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number
   const map = new Map<number, { mid: number; faces: number[] }>();
   for (const t of used) {
     const p = m.nodes.get(t)!, mid = nearest(p);
-    if (mid < 0) throw new Error(`Resultado de casca: o nó ${t} da malha não aparece no .frd`);
+    if (mid < 0) {
+      // laminado de uma camada: nós expandidos a seguir ao maior nó da malha e sem o do meio nos
+      // nós intermédios — base e topo pela numeração (nk + 3(t − 1) + 1 e + 3), vetores pela média
+      const id0 = nk + 3 * (t - 1), pa = frd.nodes.get(id0 + 1), pb = frd.nodes.get(id0 + 3);
+      if (!pa || !pb || dist(pa.map((x, k) => (x + pb[k]) / 2), p) >= tol) throw new Error(`Resultado de casca: o nó ${t} da malha não aparece no .frd`);
+      map.set(t, { mid, faces: [id0 + 1, id0 + 3] });
+      continue;
+    }
     // base e topo: nós próximos na numeração, fora do meio e com o meio no ponto médio
     let faces: number[] = [];
     const near = [-3, -2, -1, 1, 2, 3].map((o) => mid + o).filter((id) => { const q = frd.nodes.get(id); return q && dist(q, p) >= tol; });
@@ -239,6 +248,37 @@ export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number
   });
 }
 
+const vonMises = (v: number[]) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
+
+/**
+ * Laminado (`*SHELL SECTION, COMPOSITE` com `OUTPUT=2D`): os vetores vêm nos nós da malha; os tensores
+ * nos nós expandidos, numerados a seguir ao maior nó da malha (nk) em blocos de 3 + 3n por nó (n camadas):
+ * o nó t ocupa nk + B(t − 1) + 1 … nk + Bt, com 3 níveis por camada (base, meio, topo). Os nós de canto
+ * escrevem os últimos 3n do bloco; os intermédios só a base e o topo de cada camada. Fica o nível com
+ * maior von Mises (os critérios por camada vêm numa fatia seguinte).
+ */
+function compositeFrdBlocks(m: Msh, frd: { blocks: FrdBlock[] }, used: Set<number>, plies: number): FrdBlock[] {
+  const nk = Math.max(...m.nodes.keys()), B = 3 + 3 * plies;
+  return frd.blocks.map((b) => {
+    const data = new Map<number, number[]>();
+    for (const t of used) {
+      if (b.components.length < 6) {
+        const v = b.data.get(t);
+        if (!v) throw new Error(`Resultado de laminado: o nó ${t} da malha não aparece no .frd`);
+        data.set(t, v);
+        continue;
+      }
+      let best: number[] | undefined;
+      for (let id = nk + B * (t - 1) + 1; id <= nk + B * t; id++) {
+        const v = b.data.get(id);
+        if (v && (!best || vonMises(v) > vonMises(best))) best = v;
+      }
+      if (best) data.set(t, best);
+    }
+    return { ...b, data };
+  });
+}
+
 /** Junta a malha e os resultados num formato leve para o visualizador e para o relatório. */
 export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportLoad: [number, number, number] = [0, 0, 0], stepSupport?: [number, number, number][]): FemResult {
   const d = parseDat(dat);
@@ -253,7 +293,7 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportL
   for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
   if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1)!.f];
   const parsed = parseFrd(frd);
-  return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed) : parsed.blocks, d);
+  return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, c.shell.plies?.length ?? 0) : parsed.blocks, d);
 }
 
 /**

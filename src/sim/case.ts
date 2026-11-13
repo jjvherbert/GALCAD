@@ -2,6 +2,7 @@
 // os adaptadores (Gmsh, CalculiX, OpenFOAM, SU2) traduzem. Gerado pelo núcleo a partir do estudo;
 // viaja no ficheiro `case.json` do caso exportado e é lido pelo agente local.
 import type { SimMaterial } from "../doc/study.ts";
+import type { OrthoPly } from "./laminate.ts";
 
 export type V3 = [number, number, number];
 
@@ -109,9 +110,11 @@ export interface FemCase {
   ties?: { name: string; slave: string; master: string; tolerance: number; slaveBody?: string; masterBody?: string; kind?: "tie" | "contact"; mu?: number }[];
   /**
    * Casca: o modelo é uma superfície (superfície média) malhada a 2D, com elementos S3/S6 de espessura
-   * uniforme (mm); os grupos de faces são regiões da casca e os de arestas são bordos.
+   * uniforme (mm); os grupos de faces são regiões da casca e os de arestas são bordos. Com `plies`, a
+   * casca é um laminado (S6, `*SHELL SECTION, COMPOSITE`): camadas da base para o topo, ângulos a
+   * partir de `axis` (por defeito x) projetado na superfície; `thickness` é a soma das espessuras.
    */
-  shell?: { thickness: number };
+  shell?: { thickness: number; plies?: OrthoPly[]; axis?: V3 };
   hypotheses: string[];
 }
 
