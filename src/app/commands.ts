@@ -7,6 +7,7 @@ import { store } from "./store.ts";
 import type { Viewport } from "./viewport.ts";
 import { VIEWS, type ViewName } from "./viewport-views.ts";
 import { EXPORTS, exportAs, exportDrawing, importStep, openProject, saveProject } from "./fileio.ts";
+import { drawingWindowUrl } from "./doc-window.ts";
 import { autoBalloons, importModelDims, importPmi } from "../drawing/edit.ts";
 import { WORKSPACES, openSimSection, setWorkspace } from "./workspaces.ts";
 import { addCondition, addProbe, addStudy, patchMesh, runActiveStudy, runConvergence, setStudyMaterial } from "./sim-actions.ts";
@@ -214,6 +215,10 @@ export const COMMANDS: Command[] = [
     },
   })),
   { id: "dr.create2d", label: "Criar desenho 2D (vistas e escala automáticas)", group: "Desenho", icon: "▤", run: () => store.createDrawing2D() },
+  {
+    id: "dr.window", label: "Abrir o desenho numa janela própria (p. ex. noutro monitor)", short: "Nova janela", group: "Desenho", icon: "⧉",
+    run: () => { const a = store.state.active; if (a.kind === "drawing") window.open(drawingWindowUrl(location.pathname, a.id), "_blank"); },
+  },
   { id: "dr.modelDims", label: "Importar cotas do modelo", group: "Desenho", icon: "⇲", run: () => drawingAction("modelDims") },
   { id: "dr.pmi", label: "Importar PMI do modelo (cotas com tolerância, GD&T, referências, rugosidade, notas)", group: "Desenho", icon: "⌖", run: () => drawingAction("pmi") },
   { id: "dr.autoBalloon", label: "Balões automáticos", group: "Desenho", icon: "⑳", run: () => drawingAction("balloons") },
