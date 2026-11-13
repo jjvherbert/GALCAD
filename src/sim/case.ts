@@ -4,6 +4,9 @@
 import type { SimMaterial } from "../doc/study.ts";
 import type { OrthoPly } from "./laminate.ts";
 
+/** Região de uma casca laminada: faces (tags) com camadas próprias, da base para o topo. */
+export type ShellRegion = { faces: number[]; plies: OrthoPly[] };
+
 export type V3 = [number, number, number];
 
 /** Face do corpo: tag (índice 1… pela ordem do OpenCASCADE, igual ao do Gmsh), centroide e área (mm, mm²). */
@@ -111,10 +114,11 @@ export interface FemCase {
   /**
    * Casca: o modelo é uma superfície (superfície média) malhada a 2D, com elementos S3/S6 de espessura
    * uniforme (mm); os grupos de faces são regiões da casca e os de arestas são bordos. Com `plies`, a
-   * casca é um laminado (S6, `*SHELL SECTION, COMPOSITE`): camadas da base para o topo, ângulos a
+   * casca é um laminado (S6, `*SHELL SECTION, COMPOSITE`; com `regions`, laminados próprios em
+   * algumas faces e o resto com `plies` ou isotrópico): camadas da base para o topo, ângulos a
    * partir de `axis` (por defeito x) projetado na superfície; `thickness` é a soma das espessuras.
    */
-  shell?: { thickness: number; plies?: OrthoPly[]; axis?: V3 };
+  shell?: { thickness: number; plies?: OrthoPly[]; axis?: V3; regions?: ShellRegion[] };
   hypotheses: string[];
 }
 
@@ -207,4 +211,11 @@ export function amplitudeTable(load: "step" | "ramp" | "halfsine" | "sine", dura
   }
   if (load === "halfsine" && end < duration) pts.push([duration, 0]);
   return pts.map(([t, v]) => [t, Math.abs(v) < 1e-12 ? 0 : v]);
+}
+
+/** Número de camadas das secções de casca (o máximo da base e das regiões; isotrópico conta 1). */
+export function shellLayerCount(c: FemCase): number {
+  const s = c.shell;
+  if (!s) return 0;
+  return Math.max(s.plies?.length || 1, ...(s.regions ?? []).map((r) => r.plies.length));
 }

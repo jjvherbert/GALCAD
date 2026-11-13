@@ -68,6 +68,12 @@ function amplitudeAt(c, t) {
 	for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + (a[i][1] - a[i - 1][1]) * (t - a[i - 1][0]) / (a[i][0] - a[i - 1][0] || 1);
 	return a[a.length - 1][1];
 }
+/** Número de camadas das secções de casca (o máximo da base e das regiões; isotrópico conta 1). */
+function shellLayerCount(c) {
+	const s = c.shell;
+	if (!s) return 0;
+	return Math.max(s.plies?.length || 1, ...(s.regions ?? []).map((r) => r.plies.length));
+}
 // src/sim/elements.ts
 const id = (n) => Array.from({ length: n }, (_, i) => i);
 const HEX20_CCX = [
@@ -1646,7 +1652,7 @@ function femResult(c, m, frd, dat, supportLoad = [
 	for (const h of d.reactionHistory) for (let k = 0; k < 3; k++) h.f[k] -= applied(h.time, k);
 	if (d.reactionHistory.length) d.reactions = [d.reactionHistory.at(-1).f];
 	const parsed = parseFrd(frd);
-	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, c.shell.plies?.length ?? 0) : parsed.blocks, d);
+	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, shellLayerCount(c)) : parsed.blocks, d);
 }
 /**
 * Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
@@ -2117,7 +2123,8 @@ function calculixDeck(c, m) {
 	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
 	const thermal = c.analysis === "thermal";
 	if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
-	const plies = c.shell?.plies?.length ? c.shell.plies : void 0;
+	const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
+	const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : void 0;
 	if (plies && c.analysis !== "static") throw new Error("Laminado em casca: só análise estática nesta versão");
 	if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
 	if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
@@ -2165,7 +2172,8 @@ function calculixDeck(c, m) {
 				];
 				elems.push({
 					type: e.type === 9 ? "S6" : "S3",
-					n: order.map((i) => e.nodes[i])
+					n: order.map((i) => e.nodes[i]),
+					face: b.entity
 				});
 			}
 		}
@@ -2301,8 +2309,9 @@ function calculixDeck(c, m) {
 				-a[2],
 				a[1]
 			];
-			plies.forEach((p, k) => {
-				L.push(`*MATERIAL, NAME=MAT_P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
+			const n = shellLayerCount(c);
+			const ortho = (pre, ps) => ps.forEach((p, k) => {
+				L.push(`*MATERIAL, NAME=MAT_${pre}P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
 				L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [
 					p.e1,
 					p.e2,
@@ -2314,9 +2323,42 @@ function calculixDeck(c, m) {
 					p.g12
 				].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
 				L.push("*DENSITY", fmt(c.material.density * 1e-9));
-				L.push(`*ORIENTATION, NAME=OR_P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
+				L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
 			});
-			L.push("*SHELL SECTION, ELSET=EALL, COMPOSITE", ...plies.map((p, k) => `${fmt(p.t)}, , MAT_P${k + 1}, OR_P${k + 1}`));
+			const composite = (set, pre, ps) => L.push(`*SHELL SECTION, ELSET=${set}, COMPOSITE`, ...splitPlies(ps, n).map(({ ply, of }) => `${fmt(ply.t)}, , MAT_${pre}P${of + 1}, OR_${pre}P${of + 1}`));
+			if (!regions.length) {
+				ortho("", plies);
+				composite("EALL", "", plies);
+			} else {
+				const sets = regions.map(() => []), base = [];
+				elems.forEach((e, i) => {
+					if (e.face === void 0) return;
+					const r = regions.findIndex((g) => g.faces.includes(e.face));
+					(r < 0 ? base : sets[r]).push(i + 1);
+				});
+				const elset = (name, ids) => {
+					L.push(`*ELSET, ELSET=${name}`);
+					for (let i = 0; i < ids.length; i += 16) L.push(ids.slice(i, i + 16).join(", "));
+				};
+				sets.forEach((ids, r) => {
+					if (!ids.length) throw new Error(`Laminado em casca: a região ${r + 1} (faces ${regions[r].faces.join(", ")}) não tem elementos`);
+					elset(`E_R${r + 1}`, ids);
+					ortho(`R${r + 1}_`, regions[r].plies);
+					composite(`E_R${r + 1}`, `R${r + 1}_`, regions[r].plies);
+				});
+				if (base.length) {
+					elset("E_BASE", base);
+					if (plies.length) {
+						ortho("", plies);
+						composite("E_BASE", "", plies);
+					} else {
+						material("MAT", c.material);
+						const t = c.shell.thickness;
+						if (n > 1) L.push("*SHELL SECTION, ELSET=E_BASE, COMPOSITE", ...Array.from({ length: n }, () => `${fmt(t / n)}, , MAT`));
+						else L.push("*SHELL SECTION, ELSET=E_BASE, MATERIAL=MAT", fmt(t));
+					}
+				}
+			}
 		} else {
 			material("MAT", c.material);
 			L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
@@ -2664,7 +2706,7 @@ function calculixDeck(c, m) {
 				if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF");
 			});
 		} else {
-			const o2 = plies && plies.length > 1 ? ", OUTPUT=2D" : "";
+			const o2 = plies && shellLayerCount(c) > 1 ? ", OUTPUT=2D" : "";
 			L.push(`*NODE FILE${o2}`, "U");
 			if (c.analysis === "static") L.push(`*EL FILE${o2}`, nl?.plasticity ? "S, PEEQ" : "S");
 			if (c.analysis === "static") dofSets.forEach((sets, k) => {
@@ -2688,6 +2730,24 @@ function calculixDeck(c, m) {
 		warnings: [...new Set(warnings)],
 		dynamic: dyn
 	};
+}
+/** Divide camadas em subcamadas até serem n (divide sempre a mais espessa); `of` é a camada de origem. */
+function splitPlies(plies, n) {
+	const c = plies.map(() => 1);
+	for (let k = plies.length; k < n; k++) {
+		let j = 0;
+		plies.forEach((p, i) => {
+			if (p.t / c[i] > plies[j].t / c[j]) j = i;
+		});
+		c[j]++;
+	}
+	return plies.flatMap((p, i) => Array.from({ length: c[i] }, () => ({
+		ply: {
+			...p,
+			t: p.t / c[i]
+		},
+		of: i
+	})));
 }
 // src/sim/meshview.ts
 function meshPreview(c, m) {
