@@ -7,7 +7,7 @@ import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces
 import { partitionSolid } from "./partition.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
 import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
-import { edgeProps } from "./occ-props.ts";
+import { edgeProps, faceProps } from "./occ-props.ts";
 import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, shellOf, tagsOf, n3 } from "./sim-common.ts";
 import { orthoPlyError } from "../sim/laminate.ts";
@@ -47,10 +47,20 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       edgeIdx: (e) => { const i = allEdges.findIndex((x) => x.IsSame(e)); return i < 0 ? [] : [i + 1]; },
     };
   }
-  const p = partitionSolid(solid, cuts.map((c, i) => ({
-    axis: c.axis, at: evalParam(c.at, ctx.scope, `Partição ${i + 1}`),
-    normal: c.axis === "n" ? (c.normal ?? [0, 0, 1]).map((v, k) => evalParam(v, ctx.scope, `Partição ${i + 1} normal ${"xyz"[k]}`)) as [number, number, number] : undefined,
-  })));
+  const p = partitionSolid(solid, cuts.map((c, i) => {
+    if (c.axis === "f") {
+      // o plano da face prolongado para lá dos seus limites (Abaqus: Partition Cell > Extend Face)
+      if (!c.face) throw new Error(`Partição ${i + 1}: escolha a face plana cujo plano corta o sólido`);
+      const nf = resolveFaces(ctx, [c.face], report)[0];
+      const q = faceProps(nf.face);
+      if (!q.normal || !q.planeOrigin) throw new Error(`Partição ${i + 1}: a face "${nf.name}" não é plana`);
+      return { axis: "n" as const, normal: q.normal, at: q.normal.reduce((a, v, k) => a + v * q.planeOrigin![k], 0), label: `Partição pela face "${nf.name}"` };
+    }
+    return {
+      axis: c.axis, at: evalParam(c.at, ctx.scope, `Partição ${i + 1}`),
+      normal: c.axis === "n" ? (c.normal ?? [0, 0, 1]).map((v, k) => evalParam(v, ctx.scope, `Partição ${i + 1} normal ${"xyz"[k]}`)) as [number, number, number] : undefined,
+    };
+  }));
   // nomes: a face de origem (com ~k se foi dividida) ou «corte k» nas faces novas
   const base = p.faces.map((f) => { const o = p.origin(f); return o ? ctx.body!.faces.find((n) => n.face.IsSame(o))?.name ?? "?" : undefined; });
   const total = new Map<string, number>(), seen = new Map<string, number>();
