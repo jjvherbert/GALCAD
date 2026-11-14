@@ -115,6 +115,12 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
           {(s.nonlinear?.geometry || s.nonlinear?.plasticity) && <Field label="Incrementos de carga"><input type="number" min="1" max="200" value={s.nonlinear?.increments ?? 10} onChange={(e) => up({ nonlinear: { ...s.nonlinear, increments: Number((e.target as HTMLInputElement).value) || 10 } })} /></Field>}
         </fieldset>
       )}
+      {s.analysis === "dynamic" && (
+        <fieldset class="checklist">
+          <legend class="field-label">Não linear</legend>
+          <Check label="Plasticidade (von Mises)" value={!!s.nonlinear?.plasticity} onChange={(plasticity) => up({ nonlinear: { ...s.nonlinear, plasticity } })} />
+        </fieldset>
+      )}
       {s.analysis === "static" && <StepsEditor s={s} up={up} />}
       {s.analysis === "dynamic" && <DynamicEditor d={s.dynamic ?? { scheme: "implicit", duration: 0.01, load: "step" }} onChange={(dynamic) => up({ dynamic })} />}
       {(s.analysis === "modal" || s.analysis === "buckling") && <Field label="N.º de modos"><input type="number" min="1" max="50" value={s.modes ?? 6} onChange={(e) => up({ modes: Number((e.target as HTMLInputElement).value) || 6 })} /></Field>}

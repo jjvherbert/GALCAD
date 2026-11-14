@@ -208,7 +208,7 @@ export interface FemDynamic {
   v0?: [Expr, Expr, Expr];
 }
 
-/** Não linearidades da análise estática. */
+/** Não linearidades da análise estática (na dinâmica só a plasticidade). */
 export interface FemNonlinear {
   /** Grandes deslocamentos e rotações (NLGEOM / GROT_GDEP). */
   geometry?: boolean;

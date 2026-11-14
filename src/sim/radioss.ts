@@ -9,7 +9,9 @@
 // do hourglass, a formulação recomendada para flexão) e /TETRA4. Carga: forças nodais consistentes
 // (as das faces, como no CalculiX) por /CLOAD com a amplitude em /FUNCT; apoios por /BCS e deslocamentos
 // impostos não nulos por /IMPDISP (com a mesma amplitude);
-// gravidade por /GRAV; Rayleigh por /DAMP.
+// gravidade por /GRAV; Rayleigh por /DAMP. Plasticidade (encruamento isotrópico, von Mises):
+// bilinear por /MAT/PLAS_JOHNS (LAW2, σ = a + b·εp) e curva multilinear por /MAT/PLAS_TAB (LAW36)
+// com a curva σ(εp) em /FUNCT; a deformação plástica equivalente vem da animação EPSP.
 import { type FemCase } from "./case.ts";
 import { type Msh, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
 import { SOLIDS, faceIntegrals } from "./elements.ts";
@@ -40,9 +42,37 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
 
   // material (um por corpo) e propriedades por tipo de elemento
   const bodies = c.bodies?.length ? c.bodies.map((b) => ({ group: b.group, mat: b.material })) : [{ group: "SOLID", mat: c.material }];
+  const plastic = !!c.nonlinear?.plasticity;
+  const curves: string[] = [];
   bodies.forEach((b, k) => {
-    S.push(`/MAT/ELAST/${k + 1}`, title(b.mat.name), "#        Init. dens.          Ref. dens.", `${F(b.mat.density * 1e-6)}${F(0)}`, "#                  E                  nu", `${F(b.mat.E / 1000)}${F(b.mat.nu)}`);
+    const m = b.mat, rho = `${F(m.density * 1e-6)}${F(0)}`;
+    if (!plastic) {
+      S.push(`/MAT/ELAST/${k + 1}`, title(m.name), "#        Init. dens.          Ref. dens.", rho, "#                  E                  nu", `${F(m.E / 1000)}${F(m.nu)}`);
+      return;
+    }
+    if (!(m.yield! > 0)) throw new Error(`Plasticidade: o material ${m.name} não tem tensão de cedência`);
+    if (m.plasticCurve?.length) {
+      // LAW36: σ(εp) tabelada (GPa); depois do último ponto, plástico perfeito (como no CalculiX)
+      const fid = 100 + k, pts = m.plasticCurve.map(([sg, ep]) => [ep, sg / 1000]);
+      const last = pts.at(-1)!;
+      pts.push([Math.max(10, last[0] * 10 + 1), last[1]]);
+      S.push(`/MAT/PLAS_TAB/${k + 1}`, title(m.name), "#        Init. dens.          Ref. dens.", rho,
+        "#                  E                  Nu           Eps_p_max               Eps_t               Eps_m", `${F(m.E / 1000)}${F(m.nu)}${F(0)}${F(0)}${F(0)}`,
+        "#  N_funct  F_smooth              C_hard               F_cut               Eps_f        VP", `${I(1)}${I(0)}${F(0)}${F(0)}${F(0)}${I(0)}`,
+        "#  fct_IDp              Fscale   Fct_IDE                Einf                  CE", `${I(0)}${F(0)}${I(0)}${F(0)}${F(0)}`,
+        "#  fct_ID1", I(fid), "#            Fscale1", F(1), "#           EPS_dot1", F(0));
+      curves.push(`/FUNCT/${fid}`, `curva plastica ${title(m.name)}`.slice(0, 80), "#                  X                   Y", ...pts.map(([x, y]) => `${F(x)}${F(y)}`));
+      return;
+    }
+    // LAW2 (Johnson-Cook sem taxa nem temperatura): σ = a + b·εp^n com n = 1, b = Hp = E·Et/(E − Et)
+    const Et = m.tangent ?? 0, Hp = (m.E * Et) / (m.E - Et);
+    S.push(`/MAT/PLAS_JOHNS/${k + 1}`, title(m.name), "#        Init. dens.          Ref. dens.", rho,
+      "#                  E                  nu     Iflag", `${F(m.E / 1000)}${F(m.nu)}${I(0)}`,
+      "#                  a                   b                   n           EPS_p_max            SIG_max0", `${F(m.yield! / 1000)}${F(Hp / 1000)}${F(1)}${F(0)}${F(0)}`,
+      "#                  c           EPS_DOT_0       ICC   Fsmooth               F_cut               Chard", `${F(0)}${F(0)}${I(0)}${I(0)}${F(0)}${F(0)}`,
+      "#                  m              T_melt              rhoC_p                 T_r", `${F(0)}${F(0)}${F(0)}${F(0)}`);
   });
+  S.push(...curves);
   // /PROP/SOLID: 1 = hexaedros (Isolid 24), 2 = tetraedros (formulação por omissão)
   const prop = (id: number, label: string, isolid: number) => S.push(
     `/PROP/SOLID/${id}`, label,
@@ -182,7 +212,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
     // o Engine pára em T antes de escrever a animação de T: corre meio intervalo a mais para a incluir
     "#RADIOSS ENGINE", `/RUN/${name}/1`, F(T + T / D.frames / 2),
     "/ANIM/DT", `${F(0)}${F(T / D.frames)}`,
-    "/ANIM/VECT/DISP", "/ANIM/ELEM/VONM",
+    "/ANIM/VECT/DISP", "/ANIM/ELEM/VONM", ...(c.nonlinear?.plasticity ? ["/ANIM/ELEM/EPSP"] : []),
     "/PRINT/-1000",
   ];
   if (D.dt) warnings.push("OpenRadioss: o passo é o estável calculado pelo Engine (o passo indicado é ignorado)");
@@ -270,6 +300,16 @@ export function radiossBlocks(frames: VtkFrame[]): FrdBlock[] {
         for (const p of c) { const id = fr.nodeIds[p]; const a = sum.get(id) ?? [0, 0]; a[0] += s[e] * 1000; a[1]++; sum.set(id, a); }
       });
       out.push({ name: "VMIS", value: t, components: ["VM"], data: new Map([...sum].map(([id, [a, n]]) => [id, [a / n]])) });
+    }
+    // deformação plástica equivalente (adimensional), média nos nós dos sólidos
+    const pKey = Object.keys(fr.cellScalars).find((k) => /plastic|epsp/i.test(k));
+    if (pKey) {
+      const s = fr.cellScalars[pKey], sum = new Map<number, [number, number]>();
+      fr.cells.forEach((c, e) => {
+        if (fr.cellTypes[e] !== 10 && fr.cellTypes[e] !== 12) return;
+        for (const p of c) { const id = fr.nodeIds[p]; const a = sum.get(id) ?? [0, 0]; a[0] += s[e]; a[1]++; sum.set(id, a); }
+      });
+      out.push({ name: "PE", value: t, components: ["PE"], data: new Map([...sum].map(([id, [a, n]]) => [id, [a / n]])) });
     }
   }
   return out;

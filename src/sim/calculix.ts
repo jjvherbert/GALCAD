@@ -547,7 +547,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       // instantes guardados (o CalculiX usa a mesma frequência em todos os ficheiros)
       const f = `, FREQUENCY=${dyn.frequency}`;
       const o2 = plies && shellLayerCount(c) > 1 ? ", OUTPUT=2D" : "";
-      L.push(`*NODE FILE${f}${o2}`, "U", `*EL FILE${f}${o2}`, "S");
+      L.push(`*NODE FILE${f}${o2}`, "U", `*EL FILE${f}${o2}`, c.nonlinear?.plasticity ? "S, PEEQ" : "S");
       dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF"); });
     } else {
       // laminado: OUTPUT=2D — deslocamentos nos nós da malha, tensões nos nós expandidos (3 níveis por camada); com uma só camada o OUTPUT=2D deixa as tensões vazias, por isso fica a saída expandida de casca (lida em shellFrdBlocks)

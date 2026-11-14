@@ -177,3 +177,50 @@ test("OpenRadioss real: barra livre a v₀ = −1 m/s desce 1 mm em 1 ms (/INIVE
   // corpo livre sem forças: movimento de corpo rígido, uz(1 ms) = −1 m/s × 1 ms = −1 mm
   near(r.metrics.find((x) => x.key === "probe1")!.value, -1, 0.02);
 });
+
+test("OpenRadioss: plasticidade na dinâmica — LAW2 bilinear, LAW36 com curva, EPSP no Engine", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
+  const { doc, face } = await bar();
+  const { dir, c } = await solve(doc, study(face, { nonlinear: { plasticity: true } }));
+  spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: dir, shell: /\.(cmd|bat)$/i.test(T.gmsh!.path) });
+  const m = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const d = radiossDeck(c, m);
+  const S = d.starter.split("\n");
+  const j = S.indexOf("/MAT/PLAS_JOHNS/1");
+  assert.ok(j > 0 && !S.includes("/MAT/ELAST/1"));
+  // a = σy (GPa), b = Hp = E·Et/(E−Et) (GPa), n = 1
+  assert.equal(Number(S[j + 7].slice(0, 20)), 0.235);
+  near(Number(S[j + 7].slice(20, 40)), (210000 * 2100) / (210000 - 2100) / 1000, 1e-6);
+  assert.ok(d.engine.includes("/ANIM/ELEM/EPSP"));
+  const mat = { ...SIM_MATERIALS[0], tangent: undefined, plasticCurve: [[235, 0], [300, 0.05]] as [number, number][] };
+  const t = radiossDeck({ ...c, material: mat, bodies: c.bodies?.map((b) => ({ ...b, material: mat })) }, m).starter;
+  assert.match(t, /\/MAT\/PLAS_TAB\/1/);
+  assert.match(t, /\/FUNCT\/100\r?\n.*\r?\n.*\r?\n\s+0\s+0\.235\r?\n\s+0\.05\s+0\.3\r?\n\s+10\s+0\.3/);
+  assert.throws(() => radiossDeck({ ...c, material: { ...c.material, yield: undefined }, bodies: c.bodies?.map((b) => ({ ...b, material: { ...b.material, yield: undefined } })) }, m), /cedência/);
+});
+
+test("OpenRadioss: VTK com deformação plástica → bloco PE por nó", () => {
+  const vtk = [
+    "# vtk DataFile Version 3.0", "vtk output", "ASCII", "DATASET UNSTRUCTURED_GRID",
+    "FIELD FieldData 1", "TIME 1 1 double", "1", "POINTS 4 float", "0 0 0", "1 0 0", "0 1 0", "0 0 1", "",
+    "CELLS 1 5", "4 0 1 2 3", "", "CELL_TYPES 1", "10", "",
+    "POINT_DATA 4", "SCALARS NODE_ID int 1", "LOOKUP_TABLE default", "1", "2", "3", "4", "",
+    "VECTORS Displacement float", "0 0 0", "0 0 0", "0 0 0", "0 0 0", "",
+    "CELL_DATA 1", "SCALARS Plastic Strain float 1", "LOOKUP_TABLE default", "0.02", "",
+  ].join("\n");
+  const pe = radiossBlocks([parseVtk(vtk)]).find((x) => x.name === "PE")!;
+  assert.deepEqual(pe.data.get(3), [0.02]);
+});
+
+test("OpenRadioss real: barra puxada a 1 m/s durante 1 ms (ε ≈ 1 %) plastifica (LAW2)", { skip: !(T.gmsh && T.openradioss) && "OpenRadioss não instalado (CAD_RADIOSS_DIR)", timeout: 1800000 }, async () => {
+  const { doc, face } = await bar();
+  const r = await (await solve(doc, study(face, {
+    mesh: { size: 5, order: 1, curvature: 0, element: "hex", integration: "reduced" }, nonlinear: { plasticity: true },
+    dynamic: { scheme: "explicit", duration: 1e-3, load: "step", frames: 20 },
+    loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "displacement", faces: [face(0, 100)], ux: 1, velocity: true }],
+    probes: [{ name: "Ponta", quantity: "ux", at: { kind: "point", point: [100, 5, 5] } }],
+  }))).run();
+  assert.ok(r.ok, JSON.stringify(r.warnings));
+  near(r.metrics.find((x) => x.key === "probe1")!.value, 1, 0.02);
+  const peeq = r.metrics.find((x) => x.key === "peeq")!.value;
+  assert.ok(peeq > 0.004 && peeq < 0.05, `PEEQ ${peeq}`);
+});

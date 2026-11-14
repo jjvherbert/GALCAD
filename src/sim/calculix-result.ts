@@ -404,7 +404,18 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
   const atTime = (name: string, t: number) => r.blocks.find((b) => b.name === name && sameT(b.value, t));
   let timeHistory: FemResult["timeHistory"];
   let steps: FemResult["steps"];
+  // deformação plástica equivalente no último instante (não decresce, por isso é também a máxima no tempo)
+  const plasticOut = () => {
+    const pe = lastOf("PE");
+    if (!pe) return;
+    const peeq = field(pe, (v) => v[0]);
+    fields.push({ name: "Deformação plástica equivalente", unit: "—", values: peeq });
+    summary.push(["Deformação plástica equiv. máx.", `${(100 * max(peeq)).toFixed(3)} %`]);
+    metrics.push({ key: "peeq", label: "Deformação plástica equiv. máx.", unit: "", value: max(peeq) });
+    if (max(peeq) > 0) summary.push(["Zona plastificada", "sim — ver o campo da deformação plástica"]);
+  };
   if (c.analysis === "dynamic") {
+    const plastic = !!c.nonlinear?.plasticity;
     const frames = allDisp.filter((b) => b.data.size);
     const times = frames.map((b) => b.value);
     const umaxT = frames.map((b) => [...b.data.values()].reduce((mx, v) => Math.max(mx, Math.hypot(v[0], v[1], v[2])), 0));
@@ -418,14 +429,15 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       if (sB) { hasS = true; order.forEach((t, i) => { const v = sB.data.get(t); if (v) vmEnv[i] = Math.max(vmEnv[i], sB.name === "VMIS" ? v[0] : vmOf(v)); }); }
     }
     fields.push({ name: "Deslocamento máx. no tempo", unit: "mm", values: env });
-    if (hasS) { fields.push({ name: "Tensão de von Mises máx. no tempo", unit: "MPa", values: vmEnv }); safetyField(vmEnv); }
+    if (hasS) { fields.push({ name: "Tensão de von Mises máx. no tempo", unit: "MPa", values: vmEnv }); if (!plastic) safetyField(vmEnv); }
     // deformadas: até 24 instantes espaçados, mais o do pico
     const pick = [...new Set([...Array.from({ length: Math.min(24, frames.length) }, (_, i) => Math.round((i * (frames.length - 1)) / Math.max(1, Math.min(24, frames.length) - 1))), peak])].sort((a, b) => a - b);
     for (const i of pick) displacements.push({ label: `t = ${(times[i] * 1e3).toPrecision(4)} ms${i === peak ? " (pico)" : ""}`, values: order.flatMap((t) => frames[i].data.get(t)?.slice(0, 3) ?? [0, 0, 0]) });
     timeHistory = { times, series: [{ key: "umax", label: "Deslocamento máx.", unit: "mm", values: umaxT }] };
     summary.push(["Deslocamento máx. (pico)", `${umaxT[peak]?.toFixed(4) ?? "—"} mm em t = ${((times[peak] ?? 0) * 1e3).toPrecision(4)} ms`]);
     metrics.push({ key: "umax", label: "Deslocamento máx. (pico)", unit: "mm", value: umaxT[peak] ?? NaN }, { key: "tpeak", label: "Instante do pico", unit: "s", value: times[peak] ?? NaN });
-    if (hasS) stressSummary(frames.map((b) => atTime("STRESS", b.value) ?? atTime("VMIS", b.value)).filter((b) => !!b), "Tensão de von Mises máx. no tempo", true);
+    if (hasS) stressSummary(frames.map((b) => atTime("STRESS", b.value) ?? atTime("VMIS", b.value)).filter((b) => !!b), "Tensão de von Mises máx. no tempo", !plastic);
+    plasticOut();
     summary.push(["Instantes guardados", `${frames.length} (até ${((times.at(-1) ?? 0) * 1e3).toPrecision(4)} ms)`]);
   } else if (c.analysis === "thermal") {
     const t = r.blocks.find((b) => b.name === "NDTEMP");
@@ -463,14 +475,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
           metrics.push({ key: "fimax", label: "Índice de rotura máx.", unit: "", value: worst[0] });
         }
       }
-      const pe = lastOf("PE");
-      if (pe) {
-        const peeq = field(pe, (v) => v[0]);
-        fields.push({ name: "Deformação plástica equivalente", unit: "—", values: peeq });
-        summary.push(["Deformação plástica equiv. máx.", `${(100 * max(peeq)).toFixed(3)} %`]);
-        metrics.push({ key: "peeq", label: "Deformação plástica equiv. máx.", unit: "", value: max(peeq) });
-        if (max(peeq) > 0) summary.push(["Zona plastificada", "sim — ver o campo da deformação plástica"]);
-      }
+      plasticOut();
       summary.unshift(["Deslocamento máx.", `${max(U).toFixed(4)} mm`]);
       metrics.unshift({ key: "umax", label: "Deslocamento máx.", unit: "mm", value: max(U) });
     }
