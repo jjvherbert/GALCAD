@@ -1254,6 +1254,34 @@ function stableIncrement(m, materials) {
 	}
 	return best;
 }
+/**
+* Passo estável do explícito numa casca (S3/S6): 0,35·Lc/c com Lc a menor altura do triângulo
+* (metade nos quadráticos) e c = √(E/(ρ(1−ν²))) a velocidade das ondas de membrana em mm/s; num
+* laminado, E é o maior módulo das camadas (a direção mais rápida manda no passo).
+*/
+function stableIncrementShell(m, mat) {
+	let best = {
+		dt: Infinity,
+		element: 0,
+		lc: 0
+	};
+	let el = 0;
+	const c = Math.sqrt(mat.E / (mat.density * 1e-9 * (1 - mat.nu * mat.nu)));
+	for (const e of elementsOf(shellBlocks(m))) {
+		el++;
+		const P = e.nodes.slice(0, 3).map((n) => m.nodes.get(n));
+		const A = len(cross(sub(P[1], P[0]), sub(P[2], P[0]))) / 2;
+		const hmax = Math.max(len(sub(P[1], P[0])), len(sub(P[2], P[1])), len(sub(P[0], P[2])));
+		const lc = 2 * A / (hmax || 1e-300) * (e.type === 9 ? .5 : 1);
+		const dt = .35 * lc / c;
+		if (dt < best.dt) best = {
+			dt,
+			element: el,
+			lc
+		};
+	}
+	return best;
+}
 // src/sim/laminate.ts
 /**
 * Critério de extensão máxima nos eixos do material, com as extensões de rotura da Tabela C.6.
@@ -2328,7 +2356,8 @@ const fmt$1 = (x) => Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10)
 const LAMINATE_ANALYSES = [
 	"static",
 	"modal",
-	"buckling"
+	"buckling",
+	"dynamic"
 ];
 function calculixDeck(c, m) {
 	const warnings = [];
@@ -2337,7 +2366,7 @@ function calculixDeck(c, m) {
 	if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
 	const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
 	const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : void 0;
-	if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal ou encurvadura nesta versão");
+	if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal, encurvadura ou dinâmica nesta versão");
 	if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
 	if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
 	const elems = [];
@@ -2866,13 +2895,30 @@ function calculixDeck(c, m) {
 	let dyn;
 	if (c.dynamic) {
 		const D = c.dynamic;
-		const st = D.dt === void 0 ? stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({
+		const shellMat = () => {
+			const all = plies?.length ? plies : regions.flatMap((r) => r.plies);
+			const base = regions.length ? [{
+				E: c.material.E,
+				nu: c.material.nu
+			}] : [];
+			const mats = [...all.map((p) => ({
+				E: Math.max(p.e1, p.e2),
+				nu: p.nu12
+			})), ...base];
+			return mats.length ? {
+				E: Math.max(...mats.map((x) => x.E)),
+				nu: Math.max(...mats.map((x) => x.nu)),
+				density: c.material.density
+			} : c.material;
+		};
+		const st = D.dt !== void 0 ? void 0 : c.shell ? stableIncrementShell(m, shellMat()) : stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({
 			group: b.group,
 			...b.material
 		})) : [{
 			group: "SOLID",
 			...c.material
-		}]) : void 0;
+		}]);
+		if (st && !Number.isFinite(st.dt)) throw new Error("Dinâmica explícita: a malha não tem elementos para calcular o passo estável");
 		const dt = D.dt ?? st.dt;
 		const increments = Math.ceil(D.duration / dt - 1e-9);
 		if (increments > 2e6) throw new Error(`Dinâmica: ${increments} incrementos — reduza a duração ou aumente os elementos (o passo estável é ${dt.toExponential(2)} s)`);
@@ -2913,7 +2959,8 @@ function calculixDeck(c, m) {
 		if (thermal) L.push("*NODE FILE", "NT");
 		else if (dyn) {
 			const f = `, FREQUENCY=${dyn.frequency}`;
-			L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
+			const o2 = plies && shellLayerCount(c) > 1 ? ", OUTPUT=2D" : "";
+			L.push(`*NODE FILE${f}${o2}`, "U", `*EL FILE${f}${o2}`, "S");
 			dofSets.forEach((sets, k) => {
 				if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF");
 			});

@@ -6,7 +6,7 @@
 import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
-import { stableIncrement } from "./quality.ts";
+import { stableIncrement, stableIncrementShell } from "./quality.ts";
 import { type OrthoPly, splitPlies } from "./laminate.ts";
 
 /**
@@ -64,7 +64,7 @@ export function springWeights(items: { n: number[]; nodal: number[] }[]): Map<nu
 export const trimNum = (s: string) => { const [mt, ex] = s.split("e"); return (mt.includes(".") ? mt.replace(/\.?0+$/, "") : mt) + (ex ? `e${ex}` : ""); };
 const fmt = (x: number) => (Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10)));
 /** Análises que correm com laminado em casca (com densidade por camada, a modal e a encurvadura também funcionam). */
-const LAMINATE_ANALYSES: readonly string[] = ["static", "modal", "buckling"];
+const LAMINATE_ANALYSES: readonly string[] = ["static", "modal", "buckling", "dynamic"];
 
 export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];
@@ -73,7 +73,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
   const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
   const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : undefined;
-  if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal ou encurvadura nesta versão");
+  if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal, encurvadura ou dinâmica nesta versão");
   if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
   if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
   // elementos de volume (numeração sequencial, corpo a corpo; nós pela ordem do CalculiX) e mapa
@@ -477,7 +477,17 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   let dyn: Deck["dynamic"];
   if (c.dynamic) {
     const D = c.dynamic;
-    const st = D.dt === undefined ? stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({ group: b.group, ...b.material })) : [{ group: "SOLID", ...c.material }]) : undefined;
+    const shellMat = () => {
+      const all = plies?.length ? plies : regions.flatMap((r) => r.plies);
+      // por regiões, a base isotrópica também conta
+      const base = regions.length ? [{ E: c.material.E, nu: c.material.nu }] : [];
+      const mats = [...all.map((p) => ({ E: Math.max(p.e1, p.e2), nu: p.nu12 })), ...base];
+      return mats.length ? { E: Math.max(...mats.map((x) => x.E)), nu: Math.max(...mats.map((x) => x.nu)), density: c.material.density } : c.material;
+    };
+    const st = D.dt !== undefined ? undefined
+      : c.shell ? stableIncrementShell(m, shellMat())
+      : stableIncrement(m, c.bodies?.length ? c.bodies.map((b) => ({ group: b.group, ...b.material })) : [{ group: "SOLID", ...c.material }]);
+    if (st && !Number.isFinite(st.dt)) throw new Error("Dinâmica explícita: a malha não tem elementos para calcular o passo estável");
     const dt = D.dt ?? st!.dt;
     const increments = Math.ceil(D.duration / dt - 1e-9);
     if (increments > 2e6) throw new Error(`Dinâmica: ${increments} incrementos — reduza a duração ou aumente os elementos (o passo estável é ${dt.toExponential(2)} s)`);
@@ -518,7 +528,8 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     else if (dyn) {
       // instantes guardados (o CalculiX usa a mesma frequência em todos os ficheiros)
       const f = `, FREQUENCY=${dyn.frequency}`;
-      L.push(`*NODE FILE${f}`, "U", `*EL FILE${f}`, "S");
+      const o2 = plies && shellLayerCount(c) > 1 ? ", OUTPUT=2D" : "";
+      L.push(`*NODE FILE${f}${o2}`, "U", `*EL FILE${f}${o2}`, "S");
       dofSets.forEach((sets, k) => { if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF"); });
     } else {
       // laminado: OUTPUT=2D — deslocamentos nos nós da malha, tensões nos nós expandidos (3 níveis por camada); com uma só camada o OUTPUT=2D deixa as tensões vazias, por isso fica a saída expandida de casca (lida em shellFrdBlocks)

@@ -223,3 +223,24 @@ export function stableIncrement(m: Msh, materials: { group: string; E: number; n
   }
   return best;
 }
+
+/**
+ * Passo estável do explícito numa casca (S3/S6): 0,35·Lc/c com Lc a menor altura do triângulo
+ * (metade nos quadráticos) e c = √(E/(ρ(1−ν²))) a velocidade das ondas de membrana em mm/s; num
+ * laminado, E é o maior módulo das camadas (a direção mais rápida manda no passo).
+ */
+export function stableIncrementShell(m: Msh, mat: { E: number; nu: number; density: number }): { dt: number; element: number; lc: number } {
+  let best = { dt: Infinity, element: 0, lc: 0 };
+  let el = 0;
+  const c = Math.sqrt(mat.E / (mat.density * 1e-9 * (1 - mat.nu * mat.nu)));
+  for (const e of elementsOf(shellBlocks(m))) {
+    el++;
+    const P = e.nodes.slice(0, 3).map((n) => m.nodes.get(n)!) as P3[];
+    const A = len(cross(sub(P[1], P[0]), sub(P[2], P[0]))) / 2;
+    const hmax = Math.max(len(sub(P[1], P[0])), len(sub(P[2], P[1])), len(sub(P[0], P[2])));
+    const lc = ((2 * A) / (hmax || 1e-300)) * (e.type === 9 ? 0.5 : 1);
+    const dt = (0.35 * lc) / c;
+    if (dt < best.dt) best = { dt, element: el, lc };
+  }
+  return best;
+}
