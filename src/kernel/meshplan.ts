@@ -61,6 +61,17 @@ export function meshPlan(p: PlanInput): MeshPlan {
     }
     return pairs.length === 2 ? pairs : null;
   };
+  /**
+   * Arestas ligadas numa face mapeada: as opostas de uma face de 4 arestas, ou as 3 arestas de uma
+   * face triangular (todas com o mesmo n.º — o Gmsh degenera um dos cantos, qualquer que seja).
+   */
+  const linked = (ft: number): [number, number][] | null => {
+    const o = opposite(ft);
+    if (o) return o;
+    const es = faceEdges(ft);
+    if (es.length !== 3 || explore(p.faces[ft - 1], "wire").length !== 1 || es.some((e) => edgeInfo(e).verts.length !== 2)) return null;
+    return [[es[0], es[1]], [es[1], es[2]]];
+  };
   const solidFaces = p.solids.map((s) => explore(s, "face").map((f) => tagOf(p.faces, f)));
   const hexable = p.solids.map((s, k) => solidFaces[k].length === 6 && explore(s, "edge").length === 12 && solidFaces[k].every((f) => opposite(f)));
 
@@ -73,8 +84,10 @@ export function meshPlan(p: PlanInput): MeshPlan {
     if (p.hexMethod === "auto" && bad.length) warnings.push(`Hexaedros por subdivisão (qualidade inferior): ${bad.join(", ")} não é um bloco hexaédrico; divida-o em blocos para uma malha estruturada`);
     if (method === "structured") p.solids.forEach((_, k) => { volumes.push(k + 1); solidFaces[k].forEach((f) => surfaces.add(f)); });
   }
+  let tri = 0;
   for (const f of p.mapped) {
-    if (!opposite(f)) throw new Error(`Face mapeada ${f}: só faces com 4 arestas (um contorno) podem ser mapeadas`);
+    if (!linked(f)) throw new Error(`Face mapeada ${f}: só faces com 3 ou 4 arestas (um contorno) podem ser mapeadas`);
+    if (!opposite(f)) tri++;
     surfaces.add(f);
   }
 
@@ -82,7 +95,7 @@ export function meshPlan(p: PlanInput): MeshPlan {
   const parent = new Map<number, number>();
   const find = (a: number): number => { const q = parent.get(a) ?? a; if (q === a) return a; const r = find(q); parent.set(a, r); return r; };
   const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
-  for (const f of surfaces) for (const [a, b] of opposite(f)!) { parent.set(a, find(a)); parent.set(b, find(b)); union(a, b); }
+  for (const f of surfaces) for (const [a, b] of linked(f)!) { parent.set(a, find(a)); parent.set(b, find(b)); union(a, b); }
 
   // seeds do utilizador por aresta (a última seed numa aresta prevalece)
   const seedOf = new Map<number, { n: number; seed: PlanSeed }>();
@@ -142,6 +155,7 @@ export function meshPlan(p: PlanInput): MeshPlan {
   if (method === "structured") notes.push(`hexaedros estruturados (mapeados) em ${volumes.length} volume(s), ${surfaces.size} faces mapeadas`);
   if (method === "subdivision") notes.push("hexaedros por subdivisão de uma malha tetraédrica (cada tetraedro em 4 hexaedros)");
   if (p.element !== "hex" && surfaces.size) notes.push(`${surfaces.size} face(s) mapeada(s)`);
+  if (tri) notes.push(`${tri} face(s) mapeada(s) triangular(es): as 3 arestas com o mesmo n.º de elementos${p.element === "hex" ? ", triângulos no canto degenerado" : ""}`);
   const user = curves.filter((c) => c.user).length;
   if (user) notes.push(`${user} aresta(s) com seed`);
   return { hexMethod: method, volumes: volumes.length ? volumes : undefined, surfaces: surfaces.size ? [...surfaces].sort((a, b) => a - b) : undefined, curves: curves.length ? curves : undefined, warnings, notes };

@@ -137,7 +137,7 @@ export interface SimMesh {
   integration?: "incompatible" | "full" | "reduced";
   /** Seeds nas arestas (Femap: Mesh Size on Curves). */
   seeds?: MeshSeed[];
-  /** Faces mapeadas (malha estruturada na face; quadriláteros com hexaedros). */
+  /** Faces mapeadas, com 3 ou 4 arestas (malha estruturada na face; quadriláteros com hexaedros). */
   mapped?: TopoRef[];
 }
 
