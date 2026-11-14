@@ -422,6 +422,18 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
       <Field label="Camadas na espessura (mín.)"><input type="number" min="0" max="20" step="1" value={m.layers ?? 0} onChange={(e) => set({ layers: Math.max(0, Math.round(Number((e.target as HTMLInputElement).value) || 0)) || undefined })} /></Field>
       {(m.layers ?? 0) > 1 && <p class="field-hint">Arestas curtas (≤ 15 % da maior dimensão do volume) com pelo menos {m.layers} elementos — para chapas e paredes finas modeladas como sólido. Camadas completas em hexaedros; em tetraedros só nas arestas (use também tamanho ≤ espessura / camadas).</p>}
       <fieldset class="checklist">
+        <legend class="field-label">Partições em blocos</legend>
+        {(m.partitions ?? []).map((c, i) => (
+          <div class="row" key={i}>
+            <Select label="Plano" value={c.axis} options={[["x", "X = const."], ["y", "Y = const."], ["z", "Z = const."]]} onChange={(axis) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, axis } : x)) })} />
+            <ExprInput label={c.axis.toUpperCase()} unit="mm" value={c.at} onChange={(at) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, at: at ?? 0 } : x)) })} />
+            <button class="icon" aria-label={`Retirar partição ${i + 1}`} onClick={() => { const p = (m.partitions ?? []).filter((_, k) => k !== i); set({ partitions: p.length ? p : undefined }); }}>✕</button>
+          </div>
+        ))}
+        <button class="small" onClick={() => set({ partitions: [...(m.partitions ?? []), { axis: "x", at: 0 }] })}>+ partição</button>
+        {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Cargas, apoios, seeds e refinamentos passam às sub-faces. Só sólidos.</p>}
+      </fieldset>
+      <fieldset class="checklist">
         <legend class="field-label">Refinamento local</legend>
         {(m.local ?? []).map((l, i) => (
           <div class="kw-item" key={i}>

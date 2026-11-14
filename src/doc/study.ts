@@ -144,6 +144,12 @@ export interface SimMesh {
    * para peças finas modeladas como sólido (2–3 camadas evitam a rigidez excessiva de 1 tetraedro).
    */
   layers?: number;
+  /**
+   * Partições: planos perpendiculares a X, Y ou Z que cortam o sólido em blocos antes da malha
+   * (Abaqus: Partition Cell; Femap: Slice). As faces de corte são partilhadas (malha conforme) e
+   * cada bloco de 6 faces pode levar hexaedros estruturados; cargas, apoios e seeds passam às sub-faces/arestas.
+   */
+  partitions?: { axis: "x" | "y" | "z"; at: Expr }[];
 }
 
 /**

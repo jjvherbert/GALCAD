@@ -2,7 +2,8 @@
 import { type FemStudy, type LoadCsys, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
 import { type Expr, type TopoRef } from "../doc/types.ts";
-import { type Ctx, type StepReport, edges as resolveEdges } from "./context.ts";
+import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
+import { partitionSolid } from "./partition.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
 import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
 import { edgeProps } from "./occ-props.ts";
@@ -18,22 +19,76 @@ const FEM_HYP: Record<FemStudy["analysis"], string> = {
   dynamic: "Dinâmica transitória linear: pequenos deslocamentos, material elástico linear, cargas com amplitude no tempo, condições iniciais nulas",
 };
 
-export function femCase(ctx: Ctx, s: FemStudy, report: StepReport): FemCase {
+/** Topologia do estudo pela ordem do model.brep: o corpo (ou a chapa) e, com partições, os blocos. */
+export interface FemTopo {
+  shape: TopoDS_Shape;
+  solids: TopoDS_Shape[];
+  faces: CaseFace[];
+  allFaces: TopoDS_Shape[];
+  allEdges: TopoDS_Shape[];
+  /** Tags das faces (sub-faces nas partições) das referências. */
+  faceTags: (refs: TopoRef[], what: string) => number[];
+  /** Tags das arestas do modelo que vêm de uma aresta do corpo (as sub-arestas, se foi cortada). */
+  edgeIdx: (e: TopoDS_Shape) => number[];
+  note?: string;
+}
+
+export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
   const sh = s.shell ? shellOf(ctx) : undefined;
   const solid = sh ? sh.shape : bodyOf(ctx);
-  const faces = sh ? caseFaces(ctx, solid, sh.faces) : caseFaces(ctx, solid);
-  const b = bbox(solid);
-  const allEdges = explore(solid, "edge");
+  const cuts = s.mesh.partitions ?? [];
+  if (sh || !cuts.length) {
+    const faces = sh ? caseFaces(ctx, solid, sh.faces) : caseFaces(ctx, solid);
+    const allEdges = explore(solid, "edge");
+    return {
+      shape: solid, solids: sh ? [] : [solid], faces, allFaces: explore(solid, "face"), allEdges,
+      faceTags: (refs, what) => tagsOf(ctx, faces, solid, refs, what, report),
+      edgeIdx: (e) => { const i = allEdges.findIndex((x) => x.IsSame(e)); return i < 0 ? [] : [i + 1]; },
+    };
+  }
+  const p = partitionSolid(solid, cuts.map((c, i) => ({ axis: c.axis, at: evalParam(c.at, ctx.scope, `Partição ${i + 1}`) })));
+  // nomes: a face de origem (com ~k se foi dividida) ou «corte k» nas faces novas
+  const base = p.faces.map((f) => { const o = p.origin(f); return o ? ctx.body!.faces.find((n) => n.face.IsSame(o))?.name ?? "?" : undefined; });
+  const total = new Map<string, number>(), seen = new Map<string, number>();
+  for (const b of base) if (b) total.set(b, (total.get(b) ?? 0) + 1);
+  let cut = 0;
+  const named = p.faces.map((face, i) => {
+    const b = base[i];
+    if (!b) return { face, name: `corte ${++cut}` };
+    const k = (seen.get(b) ?? 0) + 1;
+    seen.set(b, k);
+    return { face, name: total.get(b)! > 1 ? `${b}~${k}` : b };
+  });
+  const faces = caseFaces(ctx, p.shape, named as never);
+  const index = (list: TopoDS_Shape[], x: TopoDS_Shape) => list.findIndex((y) => y.IsSame(x)) + 1;
+  return {
+    shape: p.shape, solids: p.solids, faces, allFaces: p.faces, allEdges: p.edges,
+    faceTags: (refs, what) => {
+      if (!refs.length) throw new Error(`${what}: escolha as faces`);
+      return resolveFaces(ctx, refs, report).flatMap((nf) => {
+        const sub = p.sub(nf.face);
+        if (!sub.length) throw new Error(`${what}: a face "${nf.name}" não pertence ao corpo do estudo`);
+        return sub.map((f) => index(p.faces, f));
+      });
+    },
+    edgeIdx: (e) => p.sub(e).map((x) => index(p.edges, x)).filter((t) => t > 0),
+    note: `Partições: ${cuts.length} plano(s) dividem o sólido em ${p.solids.length} blocos com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas`,
+  };
+}
+
+export function femCase(ctx: Ctx, s: FemStudy, report: StepReport, topo = femTopo(ctx, s, report)): FemCase {
+  const { faces, allEdges } = topo;
+  const b = bbox(topo.shape);
   const edgeTags = (refs: TopoRef[], what: string) => {
     if (!refs.length) throw new Error(`${what}: escolha as arestas`);
-    return resolveEdges(ctx, refs, report).map((ne) => {
-      const i = allEdges.findIndex((e) => e.IsSame(ne.edge));
-      if (i < 0) throw new Error(`${what}: a aresta "${ne.name}" não pertence ao ${sh ? "modelo" : "corpo"}`);
-      return i + 1;
+    return resolveEdges(ctx, refs, report).flatMap((ne) => {
+      const t = topo.edgeIdx(ne.edge);
+      if (!t.length) throw new Error(`${what}: a aresta "${ne.name}" não pertence ao ${s.shell ? "modelo" : "corpo"}`);
+      return t;
     });
   };
-  const geo: MeshGeo = { solids: sh ? [] : [solid], faces: explore(solid, "face"), edges: allEdges, edgeTags };
-  return buildFemCase(s, ctx.scope, faces, (refs, what) => tagsOf(ctx, faces, solid, refs, what, report), { min: b.min as V3, max: b.max as V3 }, report, geo);
+  const geo: MeshGeo = { solids: topo.solids, faces: topo.allFaces, edges: allEdges, edgeTags, ...(topo.note ? { note: topo.note } : {}) };
+  return buildFemCase(s, ctx.scope, faces, topo.faceTags, { min: b.min as V3, max: b.max as V3 }, report, geo);
 }
 
 
@@ -65,7 +120,7 @@ function shellCheck(s: FemStudy, sc: Ctx["scope"], tags: (refs: TopoRef[], what:
   if ((s.solver ?? "calculix") !== "calculix") no(`o solver ${s.solver}`);
   if (s.analysis !== "static" && s.analysis !== "modal" && s.analysis !== "buckling") no(`a análise ${s.analysis}`);
   if (s.nonlinear?.geometry || s.nonlinear?.plasticity) no("a análise não linear");
-  if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1) no("a malha manual (hexaedros, seeds ou faces mapeadas)");
+  if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1 || s.mesh.partitions?.length) no("a malha manual (hexaedros, seeds, faces mapeadas ou partições)");
   if (s.contact && s.contact.mode !== "none") no("o contacto");
   for (const l of s.loads) if (!SHELL_LOADS.has(l.kind)) no(`a condição «${l.kind}»`);
   return { thickness, ...(plies ? { plies } : {}), ...(regions.length ? { regions } : {}) };
@@ -240,6 +295,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       analysisHyp,
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
+      ...(geo.note ? [geo.note] : []),
       ...(shell ? [shell.plies
         ? `Casca laminada (Mindlin, S6, *SHELL SECTION COMPOSITE) na superfície média da chapa: ${shell.plies.length} camadas [${shell.plies.map((p) => `${p.theta}°`).join("/")}] da base para o topo, espessura total ${shell.thickness} mm; ângulos medidos a partir do eixo x projetado na superfície; camadas ortotrópicas (E3 = E2, G13 = G12); tensões da camada e da altura com maior von Mises; a pressão atua segundo a normal da superfície`
         : `Casca de Mindlin (corte transversal incluído) na superfície média da chapa, espessura uniforme ${shell.thickness} mm; tensões no topo e na base (±t/2) da casca; a pressão atua segundo a normal da superfície`] : []),
@@ -307,15 +363,13 @@ function pointsAlong(edge: TopoDS_Shape, fr: number[]): number[] {
 export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
   const report: StepReport = { warnings: [] };
   const warnings: string[] = [];
-  const sh = s.shell ? shellOf(ctx) : undefined;
-  const solid = sh ? sh.shape : bodyOf(ctx);
-  const faces = sh ? caseFaces(ctx, solid, sh.faces) : caseFaces(ctx, solid);
-  const allFaces = explore(solid, "face"), allEdges = explore(solid, "edge");
-  const sc = ctx.scope;
   const tryDo = <T,>(f: () => T, fallback: T): T => { try { return f(); } catch (e) { warnings.push((e as Error).message); return fallback; } };
+  const topo = tryDo(() => femTopo(ctx, s, report), null) ?? femTopo(ctx, { ...s, mesh: { ...s.mesh, partitions: [] } }, report);
+  const solid = topo.shape, allFaces = topo.allFaces, allEdges = topo.allEdges;
+  const sc = ctx.scope;
   const edgeTags = (refs: TopoRef[], what: string) => {
     if (!refs.length) throw new Error(`${what}: escolha as arestas`);
-    return resolveEdges(ctx, refs, report).map((ne) => allEdges.findIndex((e) => e.IsSame(ne.edge)) + 1).filter((t) => t > 0);
+    return resolveEdges(ctx, refs, report).flatMap((ne) => topo.edgeIdx(ne.edge));
   };
   let size = tryDo(() => evalParam(s.mesh.size, sc, "Tamanho da malha"), NaN);
   if (!(size > 0)) {
@@ -326,7 +380,7 @@ export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
   const localSize = new Map<number, number>();
   (s.mesh.local ?? []).forEach((l, i) => tryDo(() => {
     const v = evalParam(l.size, sc, "Tamanho local");
-    if (v > 0) for (const t of tagsOf(ctx, faces, solid, l.faces, `Refinamento ${i + 1}`, report)) localSize.set(t, Math.min(v, localSize.get(t) ?? Infinity));
+    if (v > 0) for (const t of topo.faceTags(l.faces, `Refinamento ${i + 1}`)) localSize.set(t, Math.min(v, localSize.get(t) ?? Infinity));
   }, undefined));
   const seeds = (s.mesh.seeds ?? []).flatMap((sd, i) => tryDo(() => {
     const value = evalParam(sd.value, sc, `Seed ${i + 1}`);
@@ -334,8 +388,8 @@ export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
     if (!(value > 0) || !(bias >= 1)) throw new Error(`Seed ${i + 1}: valor positivo e razão ≥ 1`);
     return [{ tags: edgeTags(sd.edges, `Seed ${i + 1}`), mode: sd.mode, value, bias, biasAt: sd.biasAt ?? "start" as const, biasPoint: sd.biasPoint }];
   }, []));
-  const mapped = s.mesh.mapped?.length ? tryDo(() => tagsOf(ctx, faces, solid, s.mesh.mapped!, "Faces mapeadas", report), []) : [];
-  const input: PlanInput = { solids: [solid], faces: allFaces, edges: allEdges, size, localSize, element: s.mesh.element ?? "tet", hexMethod: s.mesh.hexMethod ?? "auto", seeds, mapped, layers: s.mesh.layers };
+  const mapped = s.mesh.mapped?.length ? tryDo(() => topo.faceTags(s.mesh.mapped!, "Faces mapeadas"), []) : [];
+  const input: PlanInput = { solids: topo.solids.length ? topo.solids : [solid], faces: allFaces, edges: allEdges, size, localSize, element: s.mesh.element ?? "tet", hexMethod: s.mesh.hexMethod ?? "auto", seeds, mapped, layers: s.mesh.layers };
   let plan: ReturnType<typeof meshPlan> | null = null;
   try { plan = meshPlan(input); } catch (e) {
     warnings.push((e as Error).message);
