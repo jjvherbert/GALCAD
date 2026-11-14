@@ -389,6 +389,33 @@ test("partições: perfil em L dividido em 3 blocos dá hexaedros estruturados, 
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
 });
 
+test("partições: plano inclinado x + y = 50 corta o perfil em L em 3 blocos", async () => {
+  const s = new SketchBuilder();
+  const p = [[0, 0], [100, 0], [100, 20], [20, 20], [20, 60], [0, 60]].map(([x, y]) => s.point(x, y));
+  p.forEach((a, i) => s.line(a, p[(i + 1) % p.length]));
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const face = (axis: 0 | 1 | 2, v: number): TopoRef => {
+    const f = r.ctx.body!.faces.find((x) => { const q = faceProps(x.face); return q.normal && Math.abs(Math.abs(q.normal[axis]) - 1) < 1e-9 && Math.abs(q.center[axis] - v) < 1e-6; })!;
+    return { kind: "face", name: f.name };
+  };
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(1, 60)] }, { kind: "force", faces: [face(0, 100)], f: [0, -100, 0] }];
+  // n̂ = (1,1,0)/√2 e d = 50/√2: o plano x + y = 50 atravessa os dois braços do L (a normal não precisa de ser unitária)
+  const cut = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, partitions: [{ axis: "n", normal: [2, 2, 0], at: "50 / sqrt(2)" }] }, loads }));
+  // os blocos (pentágonos/trapézios extrudidos) não são hexaédricos: só a malha tetraédrica fica conforme
+  assert.equal(cut.c.faces.filter((f) => f.name.startsWith("corte ")).length, 2);
+  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
+  // as cargas continuam numa só face cada (o corte não lhes toca)
+  assert.equal(Object.values(cut.c.groups).filter((t) => t.length === 1).length, 2, JSON.stringify(cut.c.groups));
+  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [0, 0, 0], at: 1 }] }, loads })), /normal do plano não pode ser nula/);
+  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [1, 1, 0], at: 200 }] }, loads })), /não atravessa o sólido/);
+  if (!T.gmsh) return;
+  const h = await previewMesh(cut.dir);
+  near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
+});
+
 test("CalculiX: malha editada à mão — nó movido e elemento apagado chegam ao solver", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 600000 }, async () => {
   const { doc, face } = await bar();
   const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -F] }];

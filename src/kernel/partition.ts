@@ -1,5 +1,5 @@
 // Partições do sólido em blocos para a malha (como as "partitions" do Abaqus ou o Femap
-// "Geometry > Solid > Slice"): planos perpendiculares a X, Y ou Z cortam o sólido com o
+// "Geometry > Solid > Slice"): planos perpendiculares a X, Y ou Z, ou inclinados, cortam o sólido com o
 // BRepAlgoAPI_Splitter. As faces de corte ficam partilhadas pelos blocos vizinhos (malha conforme)
 // e cada bloco de 6 faces pode ser malhado com hexaedros estruturados. As faces e arestas do corpo
 // original passam para as sub-faces/sub-arestas pelo histórico do corte, para as cargas, apoios e
@@ -7,7 +7,8 @@
 import { type TopoDS_Shape, T, bbox, explore, gpPln, listToArray, makeList, oc } from "./occ.ts";
 import { ShapeIndex } from "./naming.ts";
 
-export interface CutPlane { axis: "x" | "y" | "z"; at: number }
+/** Plano de corte: perpendicular a X, Y ou Z em `at`, ou inclinado ("n"): n̂·x = at com n̂ = normal normalizada. */
+export interface CutPlane { axis: "x" | "y" | "z" | "n"; at: number; normal?: [number, number, number] }
 
 export interface Partitioned {
   /** Compound dos blocos (vai para o model.brep). */
@@ -32,13 +33,26 @@ export function partitionSolid(solid: TopoDS_Shape, planes: CutPlane[]): Partiti
   const mid = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
   const tools: TopoDS_Shape[] = [];
   for (const p of planes) {
-    const k = AX[p.axis];
     const eps = 1e-7 * far;
-    if (!(p.at > b.min[k] + eps && p.at < b.max[k] - eps)) throw new Error(`Partição ${p.axis.toUpperCase()} = ${p.at}: o plano não atravessa o sólido (${p.axis.toUpperCase()} de ${+b.min[k].toFixed(4)} a ${+b.max[k].toFixed(4)})`);
-    const org = mid.slice() as [number, number, number];
-    org[k] = p.at;
-    const n: [number, number, number] = [0, 0, 0];
-    n[k] = 1;
+    let n: [number, number, number];
+    if (p.axis === "n") {
+      const v = p.normal ?? [0, 0, 0], len = Math.hypot(...v);
+      if (!(len > 1e-12) || v.some((x) => !Number.isFinite(x))) throw new Error("Partição inclinada: a normal do plano não pode ser nula");
+      n = v.map((x) => x / len) as [number, number, number];
+    } else { n = [0, 0, 0]; n[AX[p.axis]] = 1; }
+    // alcance de n̂·x nos 8 cantos da caixa (exato para os planos X/Y/Z, conservador para os inclinados)
+    let lo = Infinity, hi = -Infinity;
+    for (let c = 0; c < 8; c++) {
+      const q = [0, 1, 2].map((k) => ((c >> k) & 1 ? b.max[k] : b.min[k]));
+      const d = q[0] * n[0] + q[1] * n[1] + q[2] * n[2];
+      lo = Math.min(lo, d); hi = Math.max(hi, d);
+    }
+    const label = p.axis === "n" ? `Partição n·x = ${p.at}` : `Partição ${p.axis.toUpperCase()} = ${p.at}`;
+    const what = p.axis === "n" ? "n·x" : p.axis.toUpperCase();
+    if (!(p.at > lo + eps && p.at < hi - eps)) throw new Error(`${label}: o plano não atravessa o sólido (${what} de ${+lo.toFixed(4)} a ${+hi.toFixed(4)})`);
+    // origem do plano: o centro da caixa projetado sobre ele (a face quadrada cobre o sólido todo)
+    const dm = mid[0] * n[0] + mid[1] * n[1] + mid[2] * n[2] - p.at;
+    const org = [0, 1, 2].map((k) => mid[k] - dm * n[k]) as [number, number, number];
     tools.push(T(T(new o.BRepBuilderAPI_MakeFace(gpPln(org, n), -far, far, -far, far)).Face()));
   }
   const sp = T(new o.BRepAlgoAPI_Splitter());

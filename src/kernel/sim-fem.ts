@@ -47,7 +47,10 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       edgeIdx: (e) => { const i = allEdges.findIndex((x) => x.IsSame(e)); return i < 0 ? [] : [i + 1]; },
     };
   }
-  const p = partitionSolid(solid, cuts.map((c, i) => ({ axis: c.axis, at: evalParam(c.at, ctx.scope, `Partição ${i + 1}`) })));
+  const p = partitionSolid(solid, cuts.map((c, i) => ({
+    axis: c.axis, at: evalParam(c.at, ctx.scope, `Partição ${i + 1}`),
+    normal: c.axis === "n" ? (c.normal ?? [0, 0, 1]).map((v, k) => evalParam(v, ctx.scope, `Partição ${i + 1} normal ${"xyz"[k]}`)) as [number, number, number] : undefined,
+  })));
   // nomes: a face de origem (com ~k se foi dividida) ou «corte k» nas faces novas
   const base = p.faces.map((f) => { const o = p.origin(f); return o ? ctx.body!.faces.find((n) => n.face.IsSame(o))?.name ?? "?" : undefined; });
   const total = new Map<string, number>(), seen = new Map<string, number>();

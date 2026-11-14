@@ -145,11 +145,12 @@ export interface SimMesh {
    */
   layers?: number;
   /**
-   * Partições: planos perpendiculares a X, Y ou Z que cortam o sólido em blocos antes da malha
+   * Partições: planos perpendiculares a X, Y ou Z, ou inclinados (axis "n": n̂·x = at, com a
+   * normal dada), que cortam o sólido em blocos antes da malha
    * (Abaqus: Partition Cell; Femap: Slice). As faces de corte são partilhadas (malha conforme) e
    * cada bloco de 6 faces pode levar hexaedros estruturados; cargas, apoios e seeds passam às sub-faces/arestas.
    */
-  partitions?: { axis: "x" | "y" | "z"; at: Expr }[];
+  partitions?: { axis: "x" | "y" | "z" | "n"; at: Expr; normal?: [Expr, Expr, Expr] }[];
   /**
    * Edição de nós e elementos individuais depois da malha (Abaqus: Edit Mesh; Femap: Modify):
    * mover o nó mais próximo de `at` para `to`, ou apagar o elemento em `at` (ou todos os que têm o
