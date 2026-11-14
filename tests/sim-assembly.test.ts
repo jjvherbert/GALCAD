@@ -216,7 +216,7 @@ test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito →
     assert.ok(S.includes(`/GRNOD/NODE/${grnd}`) && S[seg] === `/SURF/SEG/${surf}`);
     if (mode === "friction") {
       assert.equal(+S[k + 9].slice(20, 40), 0.3); // Fric
-      assert.equal(+S[k + 11].slice(20, 30), 6); // Inacti
+      assert.equal(+S[k + 11].slice(30, 40), 6); // Inacti
       assert.equal(S[k + 13].length, 60);
     }
     assert.deepEqual(S.filter((l) => l.length > 100), [], "linhas fora das colunas");

@@ -141,7 +141,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
         "#              Stfac                Fric              Gapmin              Tstart               Tstop",
         `${F(1)}${F(t.mu ?? 0)}${F(0)}${F(0)}${F(0)}`,
         "#      IBC                        Inacti               VIS_S               VIS_F              Bumult",
-        `${"000".padStart(10)}${"".padStart(10)}${I(6)}${F(0)}${F(0)}${F(0)}`,
+        `${"000".padStart(10)}${"".padStart(20)}${I(6)}${F(0)}${F(0)}${F(0)}`,
         "#    Ifric    Ifiltr               Xfreq     Iform   sens_ID",
         `${I(0)}${I(0)}${F(0)}${I(0)}${I(0)}`);
     } else {
