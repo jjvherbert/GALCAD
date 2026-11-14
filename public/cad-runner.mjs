@@ -2323,7 +2323,7 @@ const trimNum = (s) => {
 	const [mt, ex] = s.split("e");
 	return (mt.includes(".") ? mt.replace(/\.?0+$/, "") : mt) + (ex ? `e${ex}` : "");
 };
-const fmt = (x) => Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10));
+const fmt$1 = (x) => Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10));
 /** Análises que correm com laminado em casca (com densidade por camada, a modal e a encurvadura também funcionam). */
 const LAMINATE_ANALYSES = [
 	"static",
@@ -2439,7 +2439,7 @@ function calculixDeck(c, m) {
 	for (const h of c.hypotheses) L.push(`** ${h}`);
 	L.push("** Unidades: mm, N, MPa, t, s");
 	L.push("*NODE, NSET=NALL");
-	for (const [t, p] of [...m.nodes].sort((a, b) => a[0] - b[0])) if (used.has(t)) L.push(`${t}, ${fmt(p[0])}, ${fmt(p[1])}, ${fmt(p[2])}`);
+	for (const [t, p] of [...m.nodes].sort((a, b) => a[0] - b[0])) if (used.has(t)) L.push(`${t}, ${fmt$1(p[0])}, ${fmt$1(p[1])}, ${fmt$1(p[2])}`);
 	elems.forEach((e, i) => {
 		if (i === 0 || elems[i - 1].type !== e.type) L.push(`*ELEMENT, TYPE=${e.type}, ELSET=EALL`);
 		L.push(e.n.length > 15 ? `${i + 1}, ${e.n.slice(0, 15).join(", ")},\n${e.n.slice(15).join(", ")}` : `${i + 1}, ${e.n.join(", ")}`);
@@ -2466,7 +2466,7 @@ function calculixDeck(c, m) {
 			if (!csysAxes(cs, m.nodes.get(n))) onAxis++;
 		}
 		if (onAxis) warnings.push(`Referencial cilíndrico de ${ld.group}: ${onAxis} nó(s) sobre o eixo, sem direção radial definida`);
-		L.push(`*TRANSFORM, NSET=N_${ld.group}, TYPE=${cs.type === "cyl" ? "C" : "R"}`, [...cs.a, ...cs.b].map(fmt).join(", "));
+		L.push(`*TRANSFORM, NSET=N_${ld.group}, TYPE=${cs.type === "cyl" ? "C" : "R"}`, [...cs.a, ...cs.b].map(fmt$1).join(", "));
 	}
 	for (const ld of c.loads) {
 		if (ld.kind !== "fixed" && ld.kind !== "displacement" && ld.kind !== "spring" || "csys" in ld && ld.csys || !nodeCs.size) continue;
@@ -2484,20 +2484,20 @@ function calculixDeck(c, m) {
 		L.push(`*MATERIAL, NAME=${name}`, `** ${mat.name}${mat.source ? ` (${mat.source})` : ""}`);
 		if (thermal) {
 			if (!(mat.k > 0)) throw new Error(`Térmico: o material ${mat.name} não tem condutividade térmica k`);
-			L.push("*CONDUCTIVITY", fmt(mat.k));
+			L.push("*CONDUCTIVITY", fmt$1(mat.k));
 			return;
 		}
-		L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
-		if (c.dynamic && (c.dynamic.alpha || c.dynamic.beta)) L.push(`*DAMPING, ALPHA=${fmt(c.dynamic.alpha)}, BETA=${fmt(c.dynamic.beta)}`);
-		if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
+		L.push("*ELASTIC", `${fmt$1(mat.E)}, ${fmt$1(mat.nu)}`, "*DENSITY", fmt$1(mat.density * 1e-9));
+		if (c.dynamic && (c.dynamic.alpha || c.dynamic.beta)) L.push(`*DAMPING, ALPHA=${fmt$1(c.dynamic.alpha)}, BETA=${fmt$1(c.dynamic.beta)}`);
+		if (mat.alpha) L.push("*EXPANSION", fmt$1(mat.alpha));
 		if (c.nonlinear?.plasticity) {
 			if (!(mat.yield > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
 			if (mat.plasticCurve?.length) {
-				L.push("*PLASTIC", ...mat.plasticCurve.map(([s, ep]) => `${fmt(s)}, ${fmt(ep)}`));
+				L.push("*PLASTIC", ...mat.plasticCurve.map(([s, ep]) => `${fmt$1(s)}, ${fmt$1(ep)}`));
 				return;
 			}
 			const Et = mat.tangent ?? 0, Hp = mat.E * Et / (mat.E - Et);
-			L.push("*PLASTIC", `${fmt(mat.yield)}, 0.`, `${fmt(mat.yield + Hp)}, 1.`);
+			L.push("*PLASTIC", `${fmt$1(mat.yield)}, 0.`, `${fmt$1(mat.yield + Hp)}, 1.`);
 		}
 	};
 	if (c.bodies?.length) c.bodies.forEach((b, k) => {
@@ -2533,11 +2533,11 @@ function calculixDeck(c, m) {
 					p.nu12,
 					p.g12,
 					p.g12
-				].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
-				L.push("*DENSITY", fmt(c.material.density * 1e-9));
-				L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
+				].map(fmt$1).join(", "), `${fmt$1(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+				L.push("*DENSITY", fmt$1(c.material.density * 1e-9));
+				L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt$1).join(", "), `3, ${fmt$1(p.theta)}`);
 			});
-			const composite = (set, pre, ps) => L.push(`*SHELL SECTION, ELSET=${set}, COMPOSITE`, ...splitPlies(ps, n).map(({ ply, of }) => `${fmt(ply.t)}, , MAT_${pre}P${of + 1}, OR_${pre}P${of + 1}`));
+			const composite = (set, pre, ps) => L.push(`*SHELL SECTION, ELSET=${set}, COMPOSITE`, ...splitPlies(ps, n).map(({ ply, of }) => `${fmt$1(ply.t)}, , MAT_${pre}P${of + 1}, OR_${pre}P${of + 1}`));
 			if (!regions.length) {
 				ortho("", plies);
 				composite("EALL", "", plies);
@@ -2566,14 +2566,14 @@ function calculixDeck(c, m) {
 					} else {
 						material("MAT", c.material);
 						const t = c.shell.thickness;
-						if (n > 1) L.push("*SHELL SECTION, ELSET=E_BASE, COMPOSITE", ...Array.from({ length: n }, () => `${fmt(t / n)}, , MAT`));
-						else L.push("*SHELL SECTION, ELSET=E_BASE, MATERIAL=MAT", fmt(t));
+						if (n > 1) L.push("*SHELL SECTION, ELSET=E_BASE, COMPOSITE", ...Array.from({ length: n }, () => `${fmt$1(t / n)}, , MAT`));
+						else L.push("*SHELL SECTION, ELSET=E_BASE, MATERIAL=MAT", fmt$1(t));
 					}
 				}
 			}
 		} else {
 			material("MAT", c.material);
-			L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
+			L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt$1(c.shell.thickness));
 		}
 	} else {
 		material("MAT", c.material);
@@ -2591,14 +2591,14 @@ function calculixDeck(c, m) {
 			const K = 20 * Emax;
 			L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=ELEMENT`, ...slave.map((x) => `${x.face[0]}, S${x.face[1]}`));
 			L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
-			L.push(`*SURFACE INTERACTION, NAME=SI_${t.name}`, "*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=LINEAR", `${fmt(K)}`);
-			if ((t.mu ?? 0) > 0) L.push("*FRICTION", `${fmt(t.mu)}, ${fmt(K / 100)}`);
+			L.push(`*SURFACE INTERACTION, NAME=SI_${t.name}`, "*SURFACE BEHAVIOR, PRESSURE-OVERCLOSURE=LINEAR", `${fmt$1(K)}`);
+			if ((t.mu ?? 0) > 0) L.push("*FRICTION", `${fmt$1(t.mu)}, ${fmt$1(K / 100)}`);
 			L.push(`*CONTACT PAIR, INTERACTION=SI_${t.name}, TYPE=SURFACE TO SURFACE`, `S_${t.slave}, S_${t.master}`);
 			continue;
 		}
 		L.push(`*SURFACE, NAME=S_${t.slave}, TYPE=NODE`, `N_${t.slave}`);
 		L.push(`*SURFACE, NAME=S_${t.master}, TYPE=ELEMENT`, ...master.map((x) => `${x.face[0]}, S${x.face[1]}`));
-		L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
+		L.push(`*TIE, NAME=${t.name}, POSITION TOLERANCE=${fmt$1(t.tolerance)}`, `S_${t.slave}, S_${t.master}`);
 	}
 	let eid = elems.length;
 	c.loads.forEach((ld, j) => {
@@ -2616,7 +2616,7 @@ function calculixDeck(c, m) {
 			if (!(k > 0)) return;
 			const byK = /* @__PURE__ */ new Map();
 			for (const [n, wi] of w) {
-				const s = fmt(k * wi);
+				const s = fmt$1(k * wi);
 				byK.set(s, [...byK.get(s) ?? [], n]);
 			}
 			let q = 0;
@@ -2642,7 +2642,7 @@ function calculixDeck(c, m) {
 		massW.set(j, w);
 		const byM = /* @__PURE__ */ new Map();
 		for (const [n, wi] of w) {
-			const s = fmt(ld.m * wi);
+			const s = fmt$1(ld.m * wi);
 			byM.set(s, [...byM.get(s) ?? [], n]);
 		}
 		let q = 0;
@@ -2666,8 +2666,8 @@ function calculixDeck(c, m) {
 			return;
 		}
 		const r = ++nid, q = ld.mode === "rigid" ? ++nid : void 0;
-		L.push(`*NODE, NSET=NREF${j + 1}`, `${r}, ${ld.point.map(fmt).join(", ")}`);
-		if (q) L.push(`${q}, ${ld.point.map(fmt).join(", ")}`, `*RIGID BODY, NSET=N_${ld.group}, REF NODE=${r}, ROT NODE=${q}`);
+		L.push(`*NODE, NSET=NREF${j + 1}`, `${r}, ${ld.point.map(fmt$1).join(", ")}`);
+		if (q) L.push(`${q}, ${ld.point.map(fmt$1).join(", ")}`, `*RIGID BODY, NSET=N_${ld.group}, REF NODE=${r}, ROT NODE=${q}`);
 		else {
 			if (!faces.length) throw new Error(`Acoplamento distribuído ${ld.group}: precisa de faces da malha`);
 			L.push(`*SURFACE, NAME=SC${j + 1}, TYPE=ELEMENT`, ...faces.map((t) => `${t.face[0]}, S${t.face[1]}`));
@@ -2691,11 +2691,11 @@ function calculixDeck(c, m) {
 					break;
 				case "displacement":
 					ld.u.forEach((u, k) => {
-						if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`);
+						if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt$1(u)}`);
 					});
 					break;
 				case "temperature":
-					bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`);
+					bcs.push(`N_${ld.group}, 11, 11, ${fmt$1(ld.t)}`);
 					break;
 				case "pointForce": {
 					let best = -1, bd = Infinity;
@@ -2743,11 +2743,11 @@ function calculixDeck(c, m) {
 				}
 				case "pressure":
 					loads.push("*DLOAD");
-					for (const t of tris[ld.group]) if (t.face) loads.push(c.shell ? `${t.face[0]}, P, ${fmt(-ld.p)}` : `${t.face[0]}, P${t.face[1]}, ${fmt(ld.p)}`);
+					for (const t of tris[ld.group]) if (t.face) loads.push(c.shell ? `${t.face[0]}, P, ${fmt$1(-ld.p)}` : `${t.face[0]}, P${t.face[1]}, ${fmt$1(ld.p)}`);
 					break;
 				case "gravity": {
 					const g = Math.hypot(...ld.g);
-					if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt(g)}, ${ld.g.map((x) => fmt(x / g)).join(", ")}`);
+					if (g > 0) loads.push("*DLOAD", `EALL, GRAV, ${fmt$1(g)}, ${ld.g.map((x) => fmt$1(x / g)).join(", ")}`);
 					c.loads.forEach((mb, j) => {
 						if (mb.kind !== "mass") return;
 						for (const [n, wi] of massW.get(j) ?? []) {
@@ -2764,11 +2764,11 @@ function calculixDeck(c, m) {
 				}
 				case "convection":
 					loads.push("*FILM");
-					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt(ld.tInf)}, ${fmt(ld.h * .001)}`);
+					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt$1(ld.tInf)}, ${fmt$1(ld.h * .001)}`);
 					break;
 				case "heatFlux":
 					loads.push("*DFLUX");
-					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * .001)}`);
+					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt$1(ld.q * .001)}`);
 					break;
 				case "spring": break;
 				case "mass": break;
@@ -2787,7 +2787,7 @@ function calculixDeck(c, m) {
 					add(p.r, ld.f);
 					if (p.q) add(p.q, ld.mo);
 					else ld.mo.forEach((x, k) => {
-						if (Math.abs(x) > 0) moments.push(`${p.r}, ${k + 4}, ${fmt(x)}`);
+						if (Math.abs(x) > 0) moments.push(`${p.r}, ${k + 4}, ${fmt$1(x)}`);
 					});
 					break;
 				}
@@ -2847,7 +2847,7 @@ function calculixDeck(c, m) {
 			for (const [n, fg] of cload) {
 				const cs = nodeCs.get(n), ax = cs && csysAxes(cs, m.nodes.get(n));
 				(ax ? csysToLocal(ax, fg) : fg).forEach((x, k) => {
-					if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt(x)}`);
+					if (Math.abs(x) > 0) loads.push(`${n}, ${k + 1}, ${fmt$1(x)}`);
 				});
 			}
 		}
@@ -2883,7 +2883,7 @@ function calculixDeck(c, m) {
 			stable: !!st
 		};
 		L.push("*AMPLITUDE, NAME=A1");
-		for (let k = 0; k < D.amplitude.length; k += 4) L.push(D.amplitude.slice(k, k + 4).flatMap(([t, v]) => [fmt(t), fmt(v)]).join(", "));
+		for (let k = 0; k < D.amplitude.length; k += 4) L.push(D.amplitude.slice(k, k + 4).flatMap(([t, v]) => [fmt$1(t), fmt$1(v)]).join(", "));
 		const ld0 = cards[0].loads;
 		for (let i = 0; i < ld0.length; i++) if (/^\*(CLOAD|DLOAD|DFLUX|FILM)$/.test(ld0[i])) ld0[i] += ", AMPLITUDE=A1";
 	}
@@ -2901,10 +2901,10 @@ function calculixDeck(c, m) {
 	};
 	const glob = nodeCs.size ? ", GLOBAL=YES" : "";
 	cards.forEach((cd, k) => {
-		if (dyn) L.push(`*STEP, INC=${dyn.increments + 100}`, c.dynamic.scheme === "explicit" ? "*DYNAMIC, EXPLICIT, DIRECT" : "*DYNAMIC, DIRECT", `${fmt(dyn.dt)}, ${fmt(c.dynamic.duration)}`);
+		if (dyn) L.push(`*STEP, INC=${dyn.increments + 100}`, c.dynamic.scheme === "explicit" ? "*DYNAMIC, EXPLICIT, DIRECT" : "*DYNAMIC, DIRECT", `${fmt$1(dyn.dt)}, ${fmt$1(c.dynamic.duration)}`);
 		else if (nl || contact) {
 			const n = nl?.increments ?? 10, inc = 1 / n;
-			L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt(inc)}, 1., ${fmt(inc * 1e-4)}, ${fmt(inc)}`);
+			L.push(`*STEP${nl?.geometry ? ", NLGEOM" : ""}, INC=${Math.max(200, 20 * n)}`, "*STATIC", `${fmt$1(inc)}, 1., ${fmt$1(inc * 1e-4)}, ${fmt$1(inc)}`);
 		} else if (c.analysis === "static") L.push("*STEP", "*STATIC", ...nSteps > 1 ? ["1., 1., 1e-05, 1."] : []);
 		else if (c.analysis === "modal") L.push("*STEP", "*FREQUENCY", String(c.modes));
 		else if (c.analysis === "buckling") L.push("*STEP", "*BUCKLE", String(c.modes));
@@ -3628,6 +3628,171 @@ function su2Geo(c, o = {}) {
 	}
 	out.push(`Mesh.ScalingFactor = 0.001;`, `Mesh.MeshSizeMax = ${s};`, `Mesh.MeshSizeMin = ${s / 10};`, `Mesh.MeshSizeFromCurvature = 12;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.ElementOrder = 1;`, `Mesh.SaveAll = 0;`);
 	return out.join("\n") + "\n";
+}
+// src/sim/mshedit.ts
+/** Nós de canto por tipo Gmsh (os de meio de lado não contam para a ligação entre elementos). */
+const CORNERS = {
+	1: 2,
+	8: 2,
+	2: 3,
+	9: 3,
+	3: 4,
+	16: 4,
+	4: 4,
+	11: 4,
+	5: 8,
+	17: 8,
+	6: 6,
+	18: 6,
+	7: 5,
+	19: 5,
+	15: 1
+};
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+const fmt = (p) => `(${p.map((v) => +v.toFixed(4)).join(", ")})`;
+function elements(blocks) {
+	const out = [];
+	for (const b of blocks) {
+		const per = NODES_PER[b.type];
+		for (let k = 0; k < b.conn.length / per; k++) out.push({
+			block: b,
+			k,
+			nodes: b.conn.slice(k * per, (k + 1) * per)
+		});
+	}
+	return out;
+}
+/** Aplica as edições pela ordem dada; devolve uma malha nova (a original fica intacta) e notas. */
+function applyMeshEdits(m, edits) {
+	if (!edits.length) return {
+		msh: m,
+		notes: []
+	};
+	const nodes = new Map([...m.nodes].map(([t, p]) => [t, [
+		p[0],
+		p[1],
+		p[2]
+	]]));
+	const top = Math.max(...m.blocks.map((b) => b.dim));
+	if (!(top >= 2)) throw new Error("Edição da malha: a malha não tem elementos de volume nem de casca");
+	const lo = [
+		Infinity,
+		Infinity,
+		Infinity
+	], hi = [
+		-Infinity,
+		-Infinity,
+		-Infinity
+	];
+	for (const p of nodes.values()) for (let i = 0; i < 3; i++) {
+		lo[i] = Math.min(lo[i], p[i]);
+		hi[i] = Math.max(hi[i], p[i]);
+	}
+	const diag = Math.hypot(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) || 1;
+	const tol = .02 * diag;
+	const dead = /* @__PURE__ */ new Set();
+	const bi = new Map(m.blocks.map((b, i) => [b, i]));
+	const id = (e) => `${bi.get(e.block)}:${e.k}`;
+	const tops = elements(m.blocks.filter((b) => b.dim === top));
+	const centre = (e) => {
+		const c = e.nodes.slice(0, CORNERS[e.block.type]).map((n) => nodes.get(n));
+		return [
+			0,
+			1,
+			2
+		].map((i) => c.reduce((s, p) => s + p[i], 0) / c.length);
+	};
+	const notes = [];
+	edits.forEach((ed, i) => {
+		const name = `Edição ${i + 1}`;
+		if (ed.kind === "move") {
+			let best = -1, bd = Infinity;
+			for (const [t, p] of nodes) {
+				const d = dist(p, ed.at);
+				if (d < bd) {
+					bd = d;
+					best = t;
+				}
+			}
+			if (bd > tol) throw new Error(`${name}: não há nenhum nó perto de ${fmt(ed.at)} (o mais próximo está a ${+bd.toFixed(4)} mm)`);
+			const old = nodes.get(best);
+			nodes.set(best, [...ed.to]);
+			for (const e of tops) {
+				if (dead.has(id(e)) || !e.nodes.includes(best)) continue;
+				const P = e.nodes.slice(0, CORNERS[e.block.type]).map((n) => nodes.get(n));
+				const st = SOLIDS[e.block.type];
+				if (!(st ? elementQuality(st.kind, P).sj > 0 : triangleQuality(P.slice(0, 3)).area > 1e-12 * diag * diag)) {
+					nodes.set(best, old);
+					throw new Error(`${name}: mover o nó ${best} para ${fmt(ed.to)} inverte ou degenera um elemento`);
+				}
+			}
+			notes.push(`nó ${best} movido de ${fmt(old)} para ${fmt(ed.to)}`);
+		} else {
+			const live = tops.filter((e) => !dead.has(id(e)));
+			let hit;
+			if (ed.radius && ed.radius > 0) hit = live.filter((e) => dist(centre(e), ed.at) <= ed.radius);
+			else {
+				let best, bd = Infinity;
+				for (const e of live) {
+					const d = dist(centre(e), ed.at);
+					if (d < bd) {
+						bd = d;
+						best = e;
+					}
+				}
+				const reach = best ? Math.max(...best.nodes.slice(0, CORNERS[best.block.type]).map((n) => dist(nodes.get(n), centre(best)))) : 0;
+				hit = best && bd <= reach ? [best] : [];
+			}
+			if (!hit.length) throw new Error(`${name}: não há nenhum elemento em ${fmt(ed.at)}${ed.radius ? ` (raio ${ed.radius} mm)` : ""}`);
+			hit.forEach((e) => dead.add(id(e)));
+			notes.push(`${hit.length} elemento(s) apagado(s) em ${fmt(ed.at)}`);
+		}
+	});
+	if (dead.size === tops.length) throw new Error("Edição da malha: as edições apagam todos os elementos");
+	const owners = /* @__PURE__ */ new Map();
+	for (const e of tops) {
+		if (dead.has(id(e))) continue;
+		for (const n of e.nodes.slice(0, CORNERS[e.block.type])) {
+			let s = owners.get(n);
+			if (!s) owners.set(n, s = /* @__PURE__ */ new Set());
+			s.add(id(e));
+		}
+	}
+	const keep = (e) => {
+		if (e.block.dim === top) return !dead.has(id(e));
+		if (!dead.size) return true;
+		const sets = e.nodes.slice(0, CORNERS[e.block.type]).map((n) => owners.get(n));
+		if (sets.some((s) => !s)) return false;
+		const [first, ...rest] = sets;
+		for (const x of first) if (rest.every((s) => s.has(x))) return true;
+		return false;
+	};
+	let dropped = 0;
+	const blocks = [];
+	for (const b of m.blocks) {
+		const conn = [], tags = [];
+		for (const e of elements([b])) if (keep(e)) {
+			conn.push(...e.nodes);
+			tags.push(b.tags[e.k]);
+		} else if (b.dim < top) dropped++;
+		if (tags.length) blocks.push({
+			...b,
+			conn,
+			tags
+		});
+	}
+	if (dropped) notes.push(`${dropped} elemento(s) de fronteira retirado(s) dos grupos por deixarem de ser fronteira`);
+	const used = /* @__PURE__ */ new Set();
+	for (const b of blocks) b.conn.forEach((n) => used.add(n));
+	for (const t of [...nodes.keys()]) if (!used.has(t)) nodes.delete(t);
+	return {
+		msh: {
+			...m,
+			nodes,
+			blocks
+		},
+		notes
+	};
 }
 // src/sim/radioss.ts
 const I = (x) => String(Math.round(x)).padStart(10);
@@ -4524,7 +4689,16 @@ const ALGO_NAMES = {
 * otimização de ordem 2 → (FEM) com reparação OCC, cada tentativa com limite de tempo; a reparação só
 * é aceite se os grupos continuarem a bater certo. Devolve a malha lida (FEM) ou `undefined` (SU2).
 */
+/** Malha Gmsh com as edições de nós/elementos (FemMesh.edits) já aplicadas: pré-visualização, qualidade e solvers veem todos a malha editada. */
 async function gmshMesh(c, dir, log, o) {
+	const m = await gmshMeshRaw(c, dir, log, o);
+	const edits = o.kind === "fem" ? c.mesh.edits ?? [] : [];
+	if (!m || !edits.length) return m;
+	const r = applyMeshEdits(m, edits);
+	for (const n of r.notes) log(`Malha editada: ${n}`);
+	return r.msh;
+}
+async function gmshMeshRaw(c, dir, log, o) {
 	const t = tools();
 	if (!t.gmsh) throw new Error("Gmsh não encontrado (instale o Gmsh ou defina CAD_GMSH)");
 	const geo = join(dir, "mesh.geo");
