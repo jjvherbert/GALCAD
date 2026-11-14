@@ -297,7 +297,13 @@ function compositeFrdBlocks(m: Msh, frd: { blocks: FrdBlock[] }, used: Set<numbe
     const data = new Map<number, number[]>();
     for (const t of used) {
       if (b.components.length < 6) {
-        const v = b.data.get(t);
+        // escalares (NDTEMP) só nos nós expandidos de cada camada: média através da espessura
+        let v = b.data.get(t);
+        if (!v) {
+          const xs: number[][] = [];
+          for (let id = nk + B * (t - 1) + 1; id <= nk + B * t; id++) { const x = b.data.get(id); if (x) xs.push(x); }
+          if (xs.length) v = xs[0].map((_, k) => xs.reduce((s, x) => s + x[k], 0) / xs.length);
+        }
         if (!v) throw new Error(`Resultado de laminado: o nó ${t} da malha não aparece no .frd`);
         data.set(t, v);
         continue;

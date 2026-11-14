@@ -110,13 +110,31 @@ test("laminado: uma só camada — COMPOSITE sem OUTPUT=2D e leitura normal de c
   assert.equal(d.data.size, 9);
 });
 
-test("laminado: erros com malha linear e análise não estática", () => {
+test("laminado: erros com malha linear", () => {
   const c = lamCase();
   c.mesh.order = 1;
   assert.throws(() => calculixDeck(c, parseMsh(plateMsh(1))), /requer malha de ordem 2/);
-  const f = lamCase();
-  f.analysis = "thermal";
-  assert.throws(() => calculixDeck(f, parseMsh(plateMsh())));
+});
+
+const thermalLam = (plies: OrthoPly[]) => {
+  const c = lamCase(plies);
+  c.analysis = "thermal";
+  c.loads = [{ kind: "temperature", group: "FIX", t: 100 }, { kind: "convection", group: "P", h: 10, tInf: 20 }];
+  return c;
+};
+
+test("laminado: térmica — condutividade por camada (ORTHO com k/k2, isotrópica só com k, k do material sem nenhuma)", () => {
+  const { inp } = calculixDeck(thermalLam([{ ...ply(0), k: 5, k2: 0.5 }, { ...ply(90), k: 2 }, ply(45)]), parseMsh(plateMsh()));
+  assert.match(inp, /\*HEAT TRANSFER/);
+  assert.match(inp, /\*CONDUCTIVITY, TYPE=ORTHO\n5, 0\.5, 0\.5\n/);
+  assert.match(inp, /\*CONDUCTIVITY\n2\n/);
+  assert.match(inp, /\*CONDUCTIVITY\n50\n/);
+  assert.match(inp, /COMPOSITE/);
+  assert.doesNotMatch(inp, /\*ELASTIC/);
+  assert.match(inp, /\*FILM\n(\d+, F2, 20, 0\.01\n)+/);
+  const c = thermalLam([ply(0)]);
+  delete c.material.k;
+  assert.throws(() => calculixDeck(c, parseMsh(plateMsh())), /Camada 1: falta a condutividade/);
 });
 
 test("laminado: dinâmica implícita — *DYNAMIC, DIRECT e saída por camada (OUTPUT=2D)", () => {
@@ -175,6 +193,19 @@ test("laminado: .frd com OUTPUT=2D — deslocamentos nos nós da malha, tensões
   assert.equal(s.data.size, 9);
   for (let t = 1; t <= 9; t++) assert.equal(s.data.get(t)![0], 100 * t);
   disp.delete(4);
+  assert.throws(() => shellFrdBlocks(m, { nodes: new Map(), blocks }, 2), /o nó 4 da malha não aparece/);
+});
+
+test("laminado: temperatura (NDTEMP) só nos nós expandidos — média através da espessura em cada nó da malha", () => {
+  const m = parseMsh(plateMsh());
+  const nk = 9, B = 3 + 3 * 2;
+  const temp = new Map<number, number[]>();
+  for (let t = 1; t <= 9; t++) for (let k = 1; k <= B; k++) temp.set(nk + B * (t - 1) + k, [10 * t + k]);
+  const blocks: FrdBlock[] = [{ name: "NDTEMP", value: 1, components: ["T"], data: temp }];
+  const [T] = shellFrdBlocks(m, { nodes: new Map(), blocks }, 2);
+  assert.equal(T.data.size, 9);
+  for (let t = 1; t <= 9; t++) assert.equal(T.data.get(t)![0], 10 * t + (B + 1) / 2);
+  for (let k = 1; k <= B; k++) temp.delete(nk + B * 3 + k);
   assert.throws(() => shellFrdBlocks(m, { nodes: new Map(), blocks }, 2), /o nó 4 da malha não aparece/);
 });
 

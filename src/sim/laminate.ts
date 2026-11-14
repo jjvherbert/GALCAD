@@ -233,6 +233,8 @@ export interface OrthoPly {
   e1: number; e2: number; g12: number; nu12: number;
   t: number;
   theta: number;
+  /** Condutividade térmica ao longo das fibras e na transversal (mesmas unidades do k do material); sem elas fica o k do material do estudo. */
+  k?: number; k2?: number;
   /** Extensões de rotura (%) nos eixos do material, para os critérios por camada. */
   strains?: PlyStrains;
   /** Origem (rótulo para relatórios). */

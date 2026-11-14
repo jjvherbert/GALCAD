@@ -64,16 +64,16 @@ export function springWeights(items: { n: number[]; nodal: number[] }[]): Map<nu
 export const trimNum = (s: string) => { const [mt, ex] = s.split("e"); return (mt.includes(".") ? mt.replace(/\.?0+$/, "") : mt) + (ex ? `e${ex}` : ""); };
 const fmt = (x: number) => (Number.isInteger(x) ? String(x) : trimNum(x.toPrecision(10)));
 /** Análises que correm com laminado em casca (com densidade por camada, a modal e a encurvadura também funcionam). */
-const LAMINATE_ANALYSES: readonly string[] = ["static", "modal", "buckling", "dynamic"];
+const LAMINATE_ANALYSES: readonly string[] = ["static", "modal", "buckling", "dynamic", "thermal"];
 
 export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];
   const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
   const thermal = c.analysis === "thermal";
-  if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
+  if (c.shell && c.bodies?.length) throw new Error("Casca: só um corpo");
   const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
   const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : undefined;
-  if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal, encurvadura ou dinâmica nesta versão");
+  if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal, encurvadura, dinâmica ou térmica nesta versão");
   if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
   if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
   // elementos de volume (numeração sequencial, corpo a corpo; nós pela ordem do CalculiX) e mapa
@@ -218,8 +218,16 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       const ortho = (pre: string, ps: OrthoPly[]) =>
         ps.forEach((p, k) => {
           L.push(`*MATERIAL, NAME=MAT_${pre}P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
-          L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [p.e1, p.e2, p.e2, p.nu12, p.nu12, p.nu12, p.g12, p.g12].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
-          L.push("*DENSITY", fmt(c.material.density * 1e-9));
+          if (thermal) {
+            // condução: k da camada (ao longo das fibras; k2 na transversal) ou o do material do estudo
+            const k1 = p.k ?? c.material.k, k2 = p.k2 ?? k1;
+            if (!(k1! > 0) || !(k2! > 0)) throw new Error(`Camada ${k + 1}: falta a condutividade térmica (k) da camada ou do material`);
+            if (k2 === k1) L.push("*CONDUCTIVITY", fmt(k1!));
+            else L.push("*CONDUCTIVITY, TYPE=ORTHO", [k1!, k2!, k2!].map(fmt).join(", "));
+          } else {
+            L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [p.e1, p.e2, p.e2, p.nu12, p.nu12, p.nu12, p.g12, p.g12].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+            L.push("*DENSITY", fmt(c.material.density * 1e-9));
+          }
           L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
         });
       const composite = (set: string, pre: string, ps: OrthoPly[]) =>
@@ -407,11 +415,11 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
         }
         case "convection":
           loads.push("*FILM");
-          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt(ld.tInf)}, ${fmt(ld.h * 1e-3)}`);
+          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${c.shell ? 2 : t.face[1]}, ${fmt(ld.tInf)}, ${fmt(ld.h * 1e-3)}`);
           break;
         case "heatFlux":
           loads.push("*DFLUX");
-          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt(ld.q * 1e-3)}`);
+          for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${c.shell ? 2 : t.face[1]}, ${fmt(ld.q * 1e-3)}`);
           break;
         // molas: elementos SPRING1 nos dados do modelo (acima)
         case "spring": break;

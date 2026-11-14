@@ -1809,7 +1809,15 @@ function compositeFrdBlocks(m, frd, used, plies, c) {
 		const data = /* @__PURE__ */ new Map();
 		for (const t of used) {
 			if (b.components.length < 6) {
-				const v = b.data.get(t);
+				let v = b.data.get(t);
+				if (!v) {
+					const xs = [];
+					for (let id = nk + B * (t - 1) + 1; id <= nk + B * t; id++) {
+						const x = b.data.get(id);
+						if (x) xs.push(x);
+					}
+					if (xs.length) v = xs[0].map((_, k) => xs.reduce((s, x) => s + x[k], 0) / xs.length);
+				}
 				if (!v) throw new Error(`Resultado de laminado: o nó ${t} da malha não aparece no .frd`);
 				data.set(t, v);
 				continue;
@@ -2357,16 +2365,17 @@ const LAMINATE_ANALYSES = [
 	"static",
 	"modal",
 	"buckling",
-	"dynamic"
+	"dynamic",
+	"thermal"
 ];
 function calculixDeck(c, m) {
 	const warnings = [];
 	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
 	const thermal = c.analysis === "thermal";
-	if (c.shell && (c.bodies?.length || thermal)) throw new Error("Casca: só um corpo e análise mecânica");
+	if (c.shell && c.bodies?.length) throw new Error("Casca: só um corpo");
 	const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
 	const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : void 0;
-	if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal, encurvadura ou dinâmica nesta versão");
+	if (plies && !LAMINATE_ANALYSES.includes(c.analysis)) throw new Error("Laminado em casca: só estática, modal, encurvadura, dinâmica ou térmica nesta versão");
 	if (plies && shellBlocks(m).some((b) => b.type !== 9)) throw new Error("Laminado em casca: requer malha de ordem 2 (S6)");
 	if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error(`A malha não tem elementos de volume nos grupos ${groupsOfBodies.join(", ")}`);
 	const elems = [];
@@ -2553,17 +2562,28 @@ function calculixDeck(c, m) {
 			const n = shellLayerCount(c);
 			const ortho = (pre, ps) => ps.forEach((p, k) => {
 				L.push(`*MATERIAL, NAME=MAT_${pre}P${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
-				L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [
-					p.e1,
-					p.e2,
-					p.e2,
-					p.nu12,
-					p.nu12,
-					p.nu12,
-					p.g12,
-					p.g12
-				].map(fmt$1).join(", "), `${fmt$1(p.e2 / (2 * (1 + p.nu12)))}, 0`);
-				L.push("*DENSITY", fmt$1(c.material.density * 1e-9));
+				if (thermal) {
+					const k1 = p.k ?? c.material.k, k2 = p.k2 ?? k1;
+					if (!(k1 > 0) || !(k2 > 0)) throw new Error(`Camada ${k + 1}: falta a condutividade térmica (k) da camada ou do material`);
+					if (k2 === k1) L.push("*CONDUCTIVITY", fmt$1(k1));
+					else L.push("*CONDUCTIVITY, TYPE=ORTHO", [
+						k1,
+						k2,
+						k2
+					].map(fmt$1).join(", "));
+				} else {
+					L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [
+						p.e1,
+						p.e2,
+						p.e2,
+						p.nu12,
+						p.nu12,
+						p.nu12,
+						p.g12,
+						p.g12
+					].map(fmt$1).join(", "), `${fmt$1(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+					L.push("*DENSITY", fmt$1(c.material.density * 1e-9));
+				}
 				L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt$1).join(", "), `3, ${fmt$1(p.theta)}`);
 			});
 			const composite = (set, pre, ps) => L.push(`*SHELL SECTION, ELSET=${set}, COMPOSITE`, ...splitPlies(ps, n).map(({ ply, of }) => `${fmt$1(ply.t)}, , MAT_${pre}P${of + 1}, OR_${pre}P${of + 1}`));
@@ -2793,11 +2813,11 @@ function calculixDeck(c, m) {
 				}
 				case "convection":
 					loads.push("*FILM");
-					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${t.face[1]}, ${fmt$1(ld.tInf)}, ${fmt$1(ld.h * .001)}`);
+					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, F${c.shell ? 2 : t.face[1]}, ${fmt$1(ld.tInf)}, ${fmt$1(ld.h * .001)}`);
 					break;
 				case "heatFlux":
 					loads.push("*DFLUX");
-					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${t.face[1]}, ${fmt$1(ld.q * .001)}`);
+					for (const t of tris[ld.group]) if (t.face) loads.push(`${t.face[0]}, S${c.shell ? 2 : t.face[1]}, ${fmt$1(ld.q * .001)}`);
 					break;
 				case "spring": break;
 				case "mass": break;
