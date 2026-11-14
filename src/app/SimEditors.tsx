@@ -419,6 +419,8 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
         <p class="field-hint">Com a seleção de arestas ligada, clique nas arestas no 3D e ajuste ao vivo: +/− ou Shift+roda mudam o n.º (ou o tamanho), B muda a distribuição. Uma face escolhida conta como as suas arestas. Nas malhas mapeadas o n.º de elementos passa às arestas opostas; a distribuição também, no mesmo sentido. Confira o resultado na pré-visualização.</p>
       </fieldset>
       <RefList field="mesh.mapped" label="Faces mapeadas (3 ou 4 arestas)" accept={["face"]} refs={m.mapped ?? []} onChange={(mapped) => set({ mapped })} />
+      <Field label="Camadas na espessura (mín.)"><input type="number" min="0" max="20" step="1" value={m.layers ?? 0} onChange={(e) => set({ layers: Math.max(0, Math.round(Number((e.target as HTMLInputElement).value) || 0)) || undefined })} /></Field>
+      {(m.layers ?? 0) > 1 && <p class="field-hint">Arestas curtas (≤ 15 % da maior dimensão do volume) com pelo menos {m.layers} elementos — para chapas e paredes finas modeladas como sólido. Camadas completas em hexaedros; em tetraedros só nas arestas (use também tamanho ≤ espessura / camadas).</p>}
       <fieldset class="checklist">
         <legend class="field-label">Refinamento local</legend>
         {(m.local ?? []).map((l, i) => (

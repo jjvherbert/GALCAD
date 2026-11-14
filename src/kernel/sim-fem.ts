@@ -65,7 +65,7 @@ function shellCheck(s: FemStudy, sc: Ctx["scope"], tags: (refs: TopoRef[], what:
   if ((s.solver ?? "calculix") !== "calculix") no(`o solver ${s.solver}`);
   if (s.analysis !== "static" && s.analysis !== "modal" && s.analysis !== "buckling") no(`a análise ${s.analysis}`);
   if (s.nonlinear?.geometry || s.nonlinear?.plasticity) no("a análise não linear");
-  if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length) no("a malha manual (hexaedros, seeds ou faces mapeadas)");
+  if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1) no("a malha manual (hexaedros, seeds ou faces mapeadas)");
   if (s.contact && s.contact.mode !== "none") no("o contacto");
   for (const l of s.loads) if (!SHELL_LOADS.has(l.kind)) no(`a condição «${l.kind}»`);
   return { thickness, ...(plies ? { plies } : {}), ...(regions.length ? { regions } : {}) };
@@ -184,10 +184,10 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   const shell = s.shell ? shellCheck(s, sc, tags) : undefined;
   const localSize = new Map<number, number>();
   for (const l of local) for (const t of groups[l.group]) localSize.set(t, Math.min(l.size, localSize.get(t) ?? Infinity));
-  const plan = element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length ? meshPlan({
+  const plan = element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1 ? meshPlan({
     solids: geo.solids, faces: geo.faces, edges: geo.edges, size, localSize, element, hexMethod: s.mesh.hexMethod ?? "auto", names: geo.names,
     seeds: (s.mesh.seeds ?? []).map((sd, i) => ({ tags: geo.edgeTags(sd.edges, `Seed ${i + 1}`), mode: sd.mode, value: evalParam(sd.value, sc, `Seed ${i + 1}`), bias: sd.bias === undefined || sd.bias === "" ? 1 : evalParam(sd.bias, sc, `Seed ${i + 1}: razão`), biasAt: sd.biasAt ?? "start", biasPoint: sd.biasPoint })),
-    mapped: s.mesh.mapped?.length ? tags(s.mesh.mapped, "Faces mapeadas") : [],
+    mapped: s.mesh.mapped?.length ? tags(s.mesh.mapped, "Faces mapeadas") : [], layers: s.mesh.layers,
   }) : undefined;
   report.warnings.push(...(plan?.warnings ?? []));
   const meshHyp = shell
@@ -335,7 +335,7 @@ export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
     return [{ tags: edgeTags(sd.edges, `Seed ${i + 1}`), mode: sd.mode, value, bias, biasAt: sd.biasAt ?? "start" as const, biasPoint: sd.biasPoint }];
   }, []));
   const mapped = s.mesh.mapped?.length ? tryDo(() => tagsOf(ctx, faces, solid, s.mesh.mapped!, "Faces mapeadas", report), []) : [];
-  const input: PlanInput = { solids: [solid], faces: allFaces, edges: allEdges, size, localSize, element: s.mesh.element ?? "tet", hexMethod: s.mesh.hexMethod ?? "auto", seeds, mapped };
+  const input: PlanInput = { solids: [solid], faces: allFaces, edges: allEdges, size, localSize, element: s.mesh.element ?? "tet", hexMethod: s.mesh.hexMethod ?? "auto", seeds, mapped, layers: s.mesh.layers };
   let plan: ReturnType<typeof meshPlan> | null = null;
   try { plan = meshPlan(input); } catch (e) {
     warnings.push((e as Error).message);

@@ -139,6 +139,11 @@ export interface SimMesh {
   seeds?: MeshSeed[];
   /** Faces mapeadas, com 3 ou 4 arestas (malha estruturada na face; quadriláteros com hexaedros). */
   mapped?: TopoRef[];
+  /**
+   * Camadas na espessura: mínimo de elementos nas arestas curtas (≤ 15 % da maior dimensão do volume),
+   * para peças finas modeladas como sólido (2–3 camadas evitam a rigidez excessiva de 1 tetraedro).
+   */
+  layers?: number;
 }
 
 /**
