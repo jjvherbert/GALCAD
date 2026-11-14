@@ -31,8 +31,16 @@ export interface FemTopo {
   faceTags: (refs: TopoRef[], what: string) => number[];
   /** Tags das arestas do modelo que vêm de uma aresta do corpo (as sub-arestas, se foi cortada). */
   edgeIdx: (e: TopoDS_Shape) => number[];
+  /**
+   * Tags das arestas novas que as partições abrem numa face do corpo (referência `cut@<face>`): por
+   * exemplo a linha a meia espessura onde um plano corta a face exterior (NAFEMS LE10).
+   */
+  cutEdges: (face: TopoRef, what: string) => number[];
   note?: string;
 }
+
+/** Prefixo das referências a arestas de corte das partições: `cut@<nome da face>`. */
+export const CUT_EDGE = "cut@";
 
 export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
   const sh = s.shell ? shellOf(ctx) : undefined;
@@ -45,6 +53,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       shape: solid, solids: sh ? [] : [solid], faces, allFaces: explore(solid, "face"), allEdges,
       faceTags: (refs, what) => tagsOf(ctx, faces, solid, refs, what, report),
       edgeIdx: (e) => { const i = allEdges.findIndex((x) => x.IsSame(e)); return i < 0 ? [] : [i + 1]; },
+      cutEdges: (_f, what) => { throw new Error(`${what}: as arestas de corte só existem com partições da malha`); },
     };
   }
   const p = partitionSolid(solid, cuts.map((c, i) => {
@@ -86,6 +95,16 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       });
     },
     edgeIdx: (e) => p.sub(e).map((x) => index(p.edges, x)).filter((t) => t > 0),
+    cutEdges: (ref, what) => {
+      const [nf] = resolveFaces(ctx, [ref], report);
+      const own = new Set<number>();
+      for (const sf of p.sub(nf.face)) for (const e of explore(sf, "edge")) own.add(index(p.edges, e));
+      const out = new Set<number>();
+      for (const cf of p.faces.filter((f) => !p.origin(f))) for (const e of explore(cf, "edge")) { const k = index(p.edges, e); if (own.has(k)) out.add(k); }
+      out.delete(0);
+      if (!out.size) throw new Error(`${what}: nenhuma partição corta a face "${nf.name}"`);
+      return [...out].sort((a, b) => a - b);
+    },
     note: `Partições: ${cuts.length} plano(s) dividem o sólido em ${p.solids.length} blocos com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas`,
   };
 }
@@ -95,11 +114,15 @@ export function femCase(ctx: Ctx, s: FemStudy, report: StepReport, topo = femTop
   const b = bbox(topo.shape);
   const edgeTags = (refs: TopoRef[], what: string) => {
     if (!refs.length) throw new Error(`${what}: escolha as arestas`);
-    return resolveEdges(ctx, refs, report).flatMap((ne) => {
+    const cuts = refs.filter((r) => r.name.startsWith(CUT_EDGE));
+    const plain = refs.filter((r) => !r.name.startsWith(CUT_EDGE));
+    const fromCuts = cuts.flatMap((r) => topo.cutEdges({ kind: "face", name: r.name.slice(CUT_EDGE.length) }, what));
+    const fromPlain = (plain.length ? resolveEdges(ctx, plain, report) : []).flatMap((ne) => {
       const t = topo.edgeIdx(ne.edge);
       if (!t.length) throw new Error(`${what}: a aresta "${ne.name}" não pertence ao ${s.shell ? "modelo" : "corpo"}`);
       return t;
     });
+    return [...fromCuts, ...fromPlain];
   };
   const geo: MeshGeo = { solids: topo.solids, faces: topo.allFaces, edges: allEdges, edgeTags, ...(topo.note ? { note: topo.note } : {}) };
   return buildFemCase(s, ctx.scope, faces, topo.faceTags, { min: b.min as V3, max: b.max as V3 }, report, geo);
