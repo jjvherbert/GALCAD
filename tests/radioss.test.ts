@@ -88,7 +88,7 @@ test("OpenRadioss: Starter e Engine (unidades kg–mm–ms, colunas fixas, forç
   assert.deepEqual([S[fn + 3], S[fn + 4]].map((l) => [Number(l.slice(0, 20)), Number(l.slice(20, 40))]), [[0, 1], [1.2, 1]]);
   // Rayleigh: α em 1/ms
   assert.equal(Number(S[S.indexOf("/DAMP/1") + 3].slice(0, 20)), 0.5);
-  assert.match(d.engine, /\/RUN\/galcad\/1\n\s+1\.2\n\/ANIM\/DT\n\s+0\s+0\.025\n\/ANIM\/VECT\/DISP\n\/ANIM\/ELEM\/VONM/);
+  assert.match(d.engine, /\/RUN\/galcad\/1\n\s+1\.2125\n\/ANIM\/DT\n\s+0\s+0\.025\n\/ANIM\/VECT\/DISP\n\/ANIM\/ELEM\/VONM/);
   assert.ok(d.starter.trimEnd().endsWith("/END"));
   // molas à terra: ainda não neste adaptador
   assert.throws(() => radiossDeck({ ...c, loads: [...c.loads, { kind: "spring", group: "L1_FIXED", k: [10, 10, 10] }] }, m), /molas ainda não estão/);

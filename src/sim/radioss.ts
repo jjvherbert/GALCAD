@@ -178,7 +178,8 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
   // Engine: duração, animações (deslocamentos e von Mises) a D.frames instantes; passo estável do próprio Radioss
   const T = D.duration * 1000;
   const E = [
-    "#RADIOSS ENGINE", `/RUN/${name}/1`, F(T),
+    // o Engine pára em T antes de escrever a animação de T: corre meio intervalo a mais para a incluir
+    "#RADIOSS ENGINE", `/RUN/${name}/1`, F(T + T / D.frames / 2),
     "/ANIM/DT", `${F(0)}${F(T / D.frames)}`,
     "/ANIM/VECT/DISP", "/ANIM/ELEM/VONM",
     "/PRINT/-1000",

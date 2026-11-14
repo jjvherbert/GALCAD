@@ -4056,7 +4056,7 @@ function radiossDeck(c, m) {
 	const E = [
 		"#RADIOSS ENGINE",
 		`/RUN/${name}/1`,
-		F(T),
+		F(T + T / D.frames / 2),
 		"/ANIM/DT",
 		`${F(0)}${F(T / D.frames)}`,
 		"/ANIM/VECT/DISP",
