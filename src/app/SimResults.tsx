@@ -7,12 +7,14 @@ import { cancelActiveStudy } from "./sim-actions.ts";
 import { Select } from "./forms.tsx";
 import { type RunResult, resultView } from "./sim-client.ts";
 import { fieldRange } from "../sim/result.ts";
+import { toVtu } from "../sim/export-vtu.ts";
 
 /** Extrair os resultados do cálculo: resumo, histórias no tempo, métricas, qualidade da malha e JSON. */
 export function ResultExports({ r, name }: { r: RunResult; name: string }) {
   const base = name.replace(/[^\wÀ-ÿ-]+/g, "_").replace(/^_+|_+$/g, "") || "estudo";
   const csv = (file: string, t: Table) => download(`${base}-${file}.csv`, toCsvText(t), "text/csv;charset=utf-8");
   const th = r.fem?.timeHistory;
+  const view = resultView(r);
   return (
     <div class="conv-actions" role="group" aria-label="Extrair os resultados">
       <b>Extrair</b>
@@ -20,6 +22,7 @@ export function ResultExports({ r, name }: { r: RunResult; name: string }) {
       <button class="small" onClick={() => csv("metricas", { header: ["Chave", "Grandeza", "Unidade", "Valor"], rows: r.metrics.map((m) => [m.key, m.label, m.unit, fmt(m.value)]) })}>Métricas CSV</button>
       {th && <button class="small" onClick={() => csv("historias", { header: ["Tempo (s)", ...th.series.map((x) => `${x.label}${x.unit ? ` (${x.unit})` : ""}`)], rows: th.times.map((t, i) => [fmt(t, 8), ...th.series.map((x) => fmt(x.values[i]))]) })}>Histórias no tempo CSV</button>}
       {r.quality && <button class="small" onClick={() => csv("qualidade", { header: ["Métrica", "Unidade", "Mín.", "Média", "Máx.", "Elementos fora do limite"], rows: r.quality!.metrics.map((m) => [m.label, m.unit, fmt(m.min), fmt(m.mean), fmt(m.max), m.fail.join(" / ")]) })}>Qualidade CSV</button>}
+      {view && view.layers.length > 0 && <button class="small" title="Superfície com os campos e as deformadas (VTK XML), para o ParaView ou o Salome" onClick={() => download(`${base}-resultados.vtu`, toVtu(view, { all: true }), "application/xml")}>Campos VTU</button>}
       <button class="small" onClick={() => download(`${base}-resultados.json`, JSON.stringify({ solver: r.solver, segundos: r.seconds, resumo: r.summary, metricas: r.metrics, avisos: r.warnings, hipoteses: r.hypotheses, elementos: r.cells }, null, 2), "application/json")}>JSON</button>
     </div>
   );
