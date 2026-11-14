@@ -49,7 +49,7 @@ export function keyOf(h: Hit, mesh: MeshData | null, regionMeshes: RegionMesh[])
 /** Escolha (Pick) a enviar à app para o elemento atingido. */
 export function toPick(h: Hit, mesh: MeshData | null, regionMeshes: RegionMesh[]): Pick {
   if (h.kind === "face") { const f = mesh!.faces[h.index]; return { kind: "face", name: f.name, type: f.type, hint: { c: f.center, n: f.normal }, body: f.body, point: [h.point.x, h.point.y, h.point.z] }; }
-  if (h.kind === "edge") { const e = mesh!.edges[h.index]; return { kind: "edge", name: e.name, type: e.type, hint: { c: e.mid, n: e.dir } }; }
+  if (h.kind === "edge") { const e = mesh!.edges[h.index]; return { kind: "edge", name: e.name, type: e.type, hint: { c: e.mid, n: e.dir }, point: [h.point.x, h.point.y, h.point.z] }; }
   if (h.kind === "region") { const r = regionMeshes[h.index]; return { kind: "region", sketch: r.sketch, sig: r.sig, seed: r.seed }; }
   return { kind: "plane", ref: h.ref, label: h.label };
 }
