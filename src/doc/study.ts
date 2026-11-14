@@ -109,6 +109,11 @@ export type FemLoad = (
   | { kind: "convection"; faces: TopoRef[]; sets?: string[]; h: Expr; tInf: Expr }
   /** Fluxo de calor (W/m²) a entrar nas faces. */
   | { kind: "heatFlux"; faces: TopoRef[]; sets?: string[]; q: Expr }
+  /**
+   * Campo de temperatura T(x, y, z) em °C (x, y, z em mm, globais), em todo o corpo, para tensões
+   * térmicas na estática; tRef = temperatura sem tensões (omissa = 0 °C).
+   */
+  | { kind: "thermalField"; t: Expr; tRef?: Expr }
 ) & { steps?: string[] };
 
 /** Passo de carga da estática (as condições ativas mudam de passo para passo; o tempo acumula). */

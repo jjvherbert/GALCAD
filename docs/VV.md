@@ -16,7 +16,7 @@ CAD_GMSH=… CAD_CCX=… CAD_ASTER=… node --test tests/vv.test.ts
 |---|---|---|---|---|---|---|
 | **LE1**: membrana elíptica sob pressão (tensão plana, 3D com 100 mm de espessura, tetraedros de 2.ª ordem, h = 80 mm) | σyy no ponto D (2000, 0) | 92,7 MPa | 92,80 MPa | 92,80 MPa | 0,1 % | `tests/vv.test.ts` |
 | **LE10**: placa espessa sob pressão (anel elíptico com 600 mm de espessura, pressão de 1 MPa na face superior, tetraedros de 2.ª ordem, h = 100 mm) | σyy no ponto D (2000, 0, 300) | −5,38 MPa | −5,358 MPa | −5,358 MPa | 0,4 % | `tests/vv.test.ts` |
-| **LE11**: cilindro sólido com carga térmica | σzz no ponto A | −105 MPa | — | — | — | pendente |
+| **LE11**: cilindro/cone/esfera de parede espessa (revolução de 90°) sob campo de temperatura T = (r + z)/1000 °C, α = 2,3e-4, tetraedros de 2.ª ordem, h = 80 mm | σzz no ponto A (1000, 0, 0) | −105 MPa | −104,30 MPa | −104,34 MPa | 0,7 % | `tests/vv.test.ts` |
 | **R0031**: compósito laminado em tira | tensões interlaminares | (NAFEMS R0031) | — | — | — | pendente |
 
 Notas sobre o LE1:
@@ -31,8 +31,12 @@ Notas sobre o LE10:
 - Essa aresta é restringida em z com a referência **`cut@<face>`**: as arestas que as partições abrem numa face do corpo. Só funciona com partições e num corpo único (não em montagens).
 - A face exterior fica com ux = uy = 0, e as faces de simetria em x = 0 e y = 0.
 
+Notas sobre o LE11:
+- O perfil é desenhado no plano XZ e revolvido 90° em torno do eixo z; o corpo fica em z ≥ 0 (faces planas em z = 0 e z = 1797,1), com o ponto A no raio interior em z = 0.
+- Nova condição **campo de temperatura** (`thermalField`): T(x, y, z) em °C, avaliada em cada nó; no CalculiX vai em `*TEMPERATURE` com `*EXPANSION, ZERO`, no code_aster como variável de comando `TEMP` (`AFFE_VARC`). Só na estática; não existe no OpenRadioss.
+- Apoios: simetria em x = 0 e y = 0, uz = 0 nas duas faces planas.
+
 Pendentes:
-- **LE11** precisa de carga térmica com campo de temperatura linear em r e z.
 - **R0031** precisa da camada sólida laminada.
 
 ## Verificações analíticas já automáticas
@@ -56,6 +60,6 @@ Cada linha corresponde a um ou mais testes em `tests/`:
 
 ## O que falta para "uso profissional"
 
-- Os benchmarks LE11 e R0031 da tabela acima.
+- O benchmark R0031 da tabela acima.
 - Medir a taxa de sucesso do núcleo (OpenCASCADE WASM) num conjunto de peças reais.
 - Testar montagens grandes (modos leves).

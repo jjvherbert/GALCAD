@@ -10,7 +10,7 @@ import { ShellEditor } from "./ShellEditor.tsx";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria (plano)", pointForce: "Força pontual", force: "Força total", pressure: "Pressão", gravity: "Gravidade", spring: "Mola à terra", mass: "Massa pontual", coupling: "Acoplamento (RBE2/RBE3)",
-  temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
+  temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor", thermalField: "Campo de temperatura (tensões térmicas)",
 };
 const STRUCT = STRUCT_LOADS;
 /** Condições que aceitam arestas (apoios, força total e molas). */
@@ -210,6 +210,13 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
             </div>
           )}
           {l.kind === "pressure" && <ExprInput label="Pressão (MPa)" unit="MPa" value={l.p} onChange={(p) => setLoad(i, { ...l, p: p ?? 0 })} />}
+          {l.kind === "thermalField" && (
+            <>
+              <ExprInput label="T(x, y, z)" unit="°C" free={["x", "y", "z"]} value={l.t} onChange={(t) => setLoad(i, { ...l, t: t ?? "" })} />
+              <ExprInput label="Temperatura sem tensões" unit="°C" allowEmpty value={l.tRef} onChange={(tRef) => setLoad(i, { ...l, tRef })} />
+              <p class="hint">Em todo o corpo; x, y, z em mm (globais). Precisa do coeficiente de dilatação α do material. Só na estática.</p>
+            </>
+          )}
           {l.kind === "gravity" && <Vec3Input label="g" unit="mm/s²" value={l.g} onChange={(g) => setLoad(i, { ...l, g })} />}
           {l.kind === "temperature" && <ExprInput label="Temperatura" unit="°C" value={l.t} onChange={(t) => setLoad(i, { ...l, t: t ?? 0 })} />}
           {l.kind === "convection" && <div class="row"><ExprInput label="h" unit="W/(m²·K)" value={l.h} onChange={(h) => setLoad(i, { ...l, h: h ?? 0 })} /><ExprInput label="T fluido" unit="°C" value={l.tInf} onChange={(tInf) => setLoad(i, { ...l, tInf: tInf ?? 0 })} /></div>}

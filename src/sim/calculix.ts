@@ -3,7 +3,7 @@
 //
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
-import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, amplitudeIntegral, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
+import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, amplitudeIntegral, csysAxes, csysToLocal, shellLayerCount, thermalFieldAt } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement, stableIncrementShell } from "./quality.ts";
@@ -70,6 +70,8 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   const warnings: string[] = [];
   const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
   const thermal = c.analysis === "thermal";
+  // campo de temperatura (tensões térmicas): temperatura inicial = referência, a do passo em cada nó
+  const tField = c.loads.find((l) => l.kind === "thermalField");
   if (c.shell && c.bodies?.length) throw new Error("Casca: só um corpo");
   const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
   const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : undefined;
@@ -186,7 +188,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     L.push("*ELASTIC", `${fmt(mat.E)}, ${fmt(mat.nu)}`, "*DENSITY", fmt(mat.density * 1e-9));
     // amortecimento de Rayleigh C = α·M + β·K (integração direta)
     if (c.dynamic && (c.dynamic.alpha || c.dynamic.beta)) L.push(`*DAMPING, ALPHA=${fmt(c.dynamic.alpha)}, BETA=${fmt(c.dynamic.beta)}`);
-    if (mat.alpha) L.push("*EXPANSION", fmt(mat.alpha));
+    if (mat.alpha) L.push(tField ? `*EXPANSION, ZERO=${fmt(tField.tRef)}` : "*EXPANSION", fmt(mat.alpha));
     if (c.nonlinear?.plasticity) {
       if (!(mat.yield! > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
       // multilinear: os pontos (σ, εp) tal como estão; depois do último, plástico perfeito
@@ -355,6 +357,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     cpl.set(ld, { r, q });
   });
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
+  else if (tField) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", `NALL, ${fmt(tField.tRef)}`);
   // velocidade inicial de todos os nós (m/s → mm/s); os apoios anulam-na nas direções presas
   const v0 = c.dynamic?.v0;
   if (v0) L.push("*INITIAL CONDITIONS, TYPE=VELOCITY", ...v0.flatMap((v, k) => (v ? [`NALL, ${k + 1}, ${fmt(v * 1000)}`] : [])));
@@ -415,6 +418,13 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
               cload.set(n, acc);
             }
           });
+          break;
+        }
+        case "thermalField": {
+          // temperatura em cada nó; a deformação térmica é α·(T − ZERO) com ZERO = tRef no *EXPANSION
+          const T = thermalFieldAt(ld);
+          loads.push("*TEMPERATURE");
+          for (const [n, p] of [...m.nodes].sort((a, b) => a[0] - b[0])) if (used.has(n)) loads.push(`${n}, ${fmt(T(p))}`);
           break;
         }
         case "convection":

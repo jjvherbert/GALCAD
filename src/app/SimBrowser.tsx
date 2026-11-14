@@ -12,7 +12,7 @@ import { loadEdges, loadFaces } from "../doc/study.ts";
 
 const LOAD_SHORT: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento", symmetry: "Simetria", pointForce: "Força pontual", force: "Força", pressure: "Pressão", gravity: "Gravidade", spring: "Mola", mass: "Massa", coupling: "Acoplamento",
-  temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor",
+  temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor", thermalField: "Campo de temperatura",
 };
 const ANALYSIS: Record<FemStudy["analysis"], string> = { static: "Estática", modal: "Modal", buckling: "Encurvadura", dynamic: "Dinâmica", thermal: "Térmica" };
 const SOLVER: Record<string, string> = { calculix: "CalculiX", code_aster: "code_aster", openradioss: "OpenRadioss", openfoam: "OpenFOAM", su2: "SU2" };

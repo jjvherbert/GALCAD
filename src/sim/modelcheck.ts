@@ -17,7 +17,7 @@ export interface Capability { feature: string; group: string; calculix: Support;
 
 const LOAD_LABEL: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria", pointForce: "Força pontual", force: "Força", pressure: "Pressão", gravity: "Gravidade",
-  temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor", spring: "Mola à terra", mass: "Massa pontual", coupling: "Acoplamento (RBE)",
+  temperature: "Temperatura", convection: "Convecção", heatFlux: "Fluxo de calor", spring: "Mola à terra", mass: "Massa pontual", coupling: "Acoplamento (RBE)", thermalField: "Campo de temperatura",
 };
 
 /**
@@ -48,6 +48,7 @@ export const CAPABILITIES: Capability[] = [
   { group: "Condições", feature: "Gravidade", calculix: "sim", code_aster: "sim", openradioss: "sim" },
   { group: "Condições", feature: "Molas à terra", calculix: "sim", code_aster: "parcial", openradioss: "nao", note: "code_aster: só linear (estática, modal e dinâmica implícita)" },
   { group: "Condições", feature: "Massas pontuais", calculix: "sim", code_aster: "parcial", openradioss: "nao", note: "code_aster: só linear (estática, modal e dinâmica implícita); ignoradas na térmica" },
+  { group: "Condições", feature: "Campo de temperatura (tensões térmicas)", calculix: "sim", code_aster: "sim", openradioss: "nao", note: "só na estática; T(x, y, z) calculada em cada nó" },
   { group: "Condições", feature: "Temperatura, convecção, fluxo de calor", calculix: "sim", code_aster: "nao", openradioss: "nao" },
   { group: "Montagens", feature: "Contacto colado entre corpos", calculix: "sim", code_aster: "sim", openradioss: "nao" },
   { group: "Montagens", feature: "Contacto com atrito e separação", calculix: "sim", code_aster: "nao", openradioss: "nao" },
@@ -68,6 +69,7 @@ export function usedFeatures(s: FemStudy): string[] {
   used.push(hex ? (s.mesh.order === 1 ? "Hexaedros lineares (8 nós)" : "Hexaedros quadráticos (20 nós)") : (s.mesh.order === 1 ? "Tetraedros lineares (4 nós)" : "Tetraedros quadráticos (10 nós)"));
   if (s.shell) used.push("Cascas (placas finas)");
   for (const l of s.loads) {
+    if (l.kind === "thermalField") { used.push("Campo de temperatura (tensões térmicas)"); continue; }
     used.push(l.kind === "fixed" ? "Encastramento" : l.kind === "symmetry" ? "Simetria (plano)" : l.kind === "displacement" ? "Deslocamento imposto" : l.kind === "force" ? "Força nas faces" : l.kind === "pointForce" ? "Força pontual (nó mais próximo)" : l.kind === "pressure" ? "Pressão" : l.kind === "gravity" ? "Gravidade" : l.kind === "spring" ? "Molas à terra" : l.kind === "mass" ? "Massas pontuais" : l.kind === "coupling" ? "Acoplamentos rígidos/distribuídos (RBE2/RBE3)" : "Temperatura, convecção, fluxo de calor");
   }
   if (s.probes?.length) used.push("Sondas e histórias no tempo");
@@ -142,6 +144,11 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
     if (l.kind === "coupling" && [...(l.f ?? []), ...(l.mo ?? [])].every((x) => !num(x))) add("info", "conditions", `${name}: sem força nem momento no ponto (só liga as faces)`);
     if (l.kind === "pressure" && num(l.p) === 0) add("aviso", "conditions", `${name}: pressão nula`);
     if (l.kind === "gravity" && l.g.every((x) => num(x) === 0)) add("aviso", "conditions", `${name}: gravidade nula`);
+    if (l.kind === "thermalField") {
+      if (s.analysis !== "static") add("erro", "conditions", `${name}: só na análise estática`);
+      if (!String(l.t ?? "").trim()) add("erro", "conditions", `${name}: indique T(x, y, z)`);
+      if (!(num(m.alpha) && m.alpha! > 0)) add("erro", "material", `${name}: falta o coeficiente de dilatação α do material ${m.name}`);
+    }
     if (l.kind === "displacement" && l.velocity && s.analysis !== "dynamic") add("erro", "conditions", `${name}: a velocidade imposta só existe na análise dinâmica`);
     if (l.kind === "displacement" && l.velocity && l.csys) add("erro", "conditions", `${name}: a velocidade imposta só aceita o referencial global`);
     if (l.kind === "displacement" && [l.ux, l.uy, l.uz].every((x) => x === undefined || x === "")) add("aviso", "conditions", `${name}: nenhuma direção impedida nem imposta`);
@@ -156,7 +163,7 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
   if (steps.length > 1 && s.analysis === "static") {
     const ids = new Set(steps.map((x) => x.id));
     s.loads.forEach((l, i) => {
-      if (!l.steps || l.kind === "spring" || l.kind === "mass") return;
+      if (!l.steps || l.kind === "spring" || l.kind === "mass" || l.kind === "thermalField") return;
       const name = `Condição ${i + 1} (${LOAD_LABEL[l.kind]})`;
       if (!l.steps.some((id) => ids.has(id))) add("aviso", "conditions", `${name}: não está ativa em nenhum passo`);
     });
@@ -166,7 +173,7 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
     });
   }
   const supports = s.loads.filter((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "symmetry" || l.kind === "spring").length;
-  const loads = s.loads.filter((l) => l.kind === "force" || l.kind === "pointForce" || l.kind === "pressure" || l.kind === "gravity" || l.kind === "coupling").length;
+  const loads = s.loads.filter((l) => l.kind === "force" || l.kind === "pointForce" || l.kind === "pressure" || l.kind === "gravity" || l.kind === "coupling" || l.kind === "thermalField").length;
   if (!thermal && s.analysis !== "modal" && !supports && !assembly) add("aviso", "conditions", "Sem apoios: o modelo pode mover-se como corpo rígido (a matriz de rigidez fica singular)");
   if (!thermal && s.analysis === "modal" && !supports) add("info", "conditions", "Modal sem apoios: aparecem modos de corpo rígido com frequência ≈ 0 Hz");
   if (!thermal && s.analysis !== "modal" && !loads && s.analysis !== "buckling") add("aviso", "conditions", "Sem cargas: o resultado será nulo");

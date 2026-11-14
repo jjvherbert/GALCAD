@@ -2,6 +2,7 @@
 // os adaptadores (Gmsh, CalculiX, OpenFOAM, SU2) traduzem. Gerado pelo núcleo a partir do estudo;
 // viaja no ficheiro `case.json` do caso exportado e é lido pelo agente local.
 import type { SimMaterial } from "../doc/study.ts";
+import { evaluate, parse } from "../doc/expr.ts";
 import type { OrthoPly } from "./laminate.ts";
 import type { MeshEdit } from "./mshedit.ts";
 
@@ -26,6 +27,8 @@ export type FemCaseLoad = (
   | { kind: "pressure"; group: string; p: number }
   | { kind: "gravity"; g: V3 }
   | { kind: "temperature"; group: string; t: number }
+  /** Campo de temperatura em todos os nós: expressão em x, y, z (mm) e nas variáveis em `vars`. */
+  | { kind: "thermalField"; t: string; vars: Record<string, number>; tRef: number }
   | { kind: "convection"; group: string; h: number; tInf: number }
   | { kind: "heatFlux"; group: string; q: number }
   /** Mola à terra: rigidez total (N/mm) por direção (global, ou local com `csys`), repartida pelos nós do grupo como uma força distribuída. */
@@ -167,6 +170,16 @@ const unit = (p: V3): V3 | null => {
  * (iguais em todo o lado) ou cilíndrico (radial, tangencial, axial de a para b). Erro se o
  * referencial for degenerado; no cilíndrico, null para um ponto sobre o eixo.
  */
+/** Função T(p) (°C) de um campo de temperatura; erro se der um valor não finito. */
+export function thermalFieldAt(l: { t: string; vars: Record<string, number> }): (p: V3) => number {
+  const node = parse(l.t);
+  return (p) => {
+    const T = evaluate(node, (n) => (n === "x" ? p[0] : n === "y" ? p[1] : n === "z" ? p[2] : l.vars[n]));
+    if (!Number.isFinite(T)) throw new Error(`Campo de temperatura: valor não finito em (${p.join(", ")})`);
+    return T;
+  };
+}
+
 export function csysAxes(c: CaseCsys, p: V3 = [0, 0, 0]): [V3, V3, V3] | null {
   if (c.type === "rect") {
     const ex = unit(c.a), ez = unit(cross(c.a, c.b));

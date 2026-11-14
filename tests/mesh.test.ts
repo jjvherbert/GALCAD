@@ -417,6 +417,13 @@ test("partições: plano inclinado x + y = 50 corta o perfil em L em 3 blocos", 
   assert.doesNotThrow(() => studyCase(r.ctx, fem({ mesh: part, loads: onCut(face(1, 0)) })));
   assert.throws(() => studyCase(r.ctx, fem({ mesh: part, loads: onCut(face(0, 100)) })), /nenhuma partição corta a face/);
   assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1 }, loads: onCut(face(1, 0)) })), /só existem com partições da malha/);
+  // campo de temperatura: só na estática, expressão obrigatória e só com x, y, z e variáveis do modelo
+  const tf = (t: string): FemStudy["loads"] => [...loads, { kind: "thermalField", t }];
+  const steel = { ...SIM_MATERIALS[0], alpha: 1.2e-5 };
+  assert.doesNotThrow(() => studyCase(r.ctx, fem({ material: steel, loads: tf("20 + x/10") })));
+  assert.throws(() => studyCase(r.ctx, fem({ material: steel, analysis: "modal", loads: tf("20") })), /só na análise estática/);
+  assert.throws(() => studyCase(r.ctx, fem({ material: steel, loads: tf("  ") })), /indique T\(x, y, z\)/);
+  assert.throws(() => studyCase(r.ctx, fem({ material: steel, loads: tf("foo*x") })), /variável desconhecida "foo"/);
   if (!T.gmsh) return;
   const h = await previewMesh(cut.dir);
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
