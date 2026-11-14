@@ -425,13 +425,16 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
         <legend class="field-label">Partições em blocos</legend>
         {(m.partitions ?? []).map((c, i) => (
           <div class="row" key={i}>
-            <Select label="Plano" value={c.axis} options={[["x", "X = const."], ["y", "Y = const."], ["z", "Z = const."]]} onChange={(axis) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, axis } : x)) })} />
-            <ExprInput label={c.axis.toUpperCase()} unit="mm" value={c.at} onChange={(at) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, at: at ?? 0 } : x)) })} />
+            <Select label="Plano" value={c.axis} options={[["x", "X = const."], ["y", "Y = const."], ["z", "Z = const."], ["n", "Inclinado (n·x = d)"]]} onChange={(axis) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, axis, normal: axis === "n" ? x.normal ?? [1, 1, 0] : undefined } : x)) })} />
+            {c.axis === "n" && (["x", "y", "z"] as const).map((a, j) => (
+              <ExprInput key={a} label={`n${a}`} unit="" value={(c.normal ?? [1, 1, 0])[j]} onChange={(v) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, normal: (x.normal ?? [1, 1, 0]).map((w, q) => (q === j ? v ?? 0 : w)) as [Expr, Expr, Expr] } : x)) })} />
+            ))}
+            <ExprInput label={c.axis === "n" ? "d" : c.axis.toUpperCase()} unit="mm" value={c.at} onChange={(at) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, at: at ?? 0 } : x)) })} />
             <button class="icon" aria-label={`Retirar partição ${i + 1}`} onClick={() => { const p = (m.partitions ?? []).filter((_, k) => k !== i); set({ partitions: p.length ? p : undefined }); }}>✕</button>
           </div>
         ))}
         <button class="small" onClick={() => set({ partitions: [...(m.partitions ?? []), { axis: "x", at: 0 }] })}>+ partição</button>
-        {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Cargas, apoios, seeds e refinamentos passam às sub-faces. Só sólidos.</p>}
+        {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Num plano inclinado a normal não precisa de ser unitária e d é a distância à origem ao longo dela. Cargas, apoios, seeds e refinamentos passam às sub-faces. Só sólidos.</p>}
       </fieldset>
       <fieldset class="checklist">
         <legend class="field-label">Edição de nós/elementos</legend>
