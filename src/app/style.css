@@ -122,6 +122,8 @@ code { background: var(--panel2); padding: 0 4px; border-radius: 4px; }
 .reflist ul { list-style: none; margin: 4px 0 0; padding: 0; max-height: 160px; overflow: auto; }
 .reflist li { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; font-size: 12px; }
 .checklist { border: 1px solid var(--line); border-radius: 8px; padding: 6px; margin: 0; max-height: 200px; overflow: auto; }
+/* formulário agrupado (não uma lista): cresce com o conteúdo, sem scroll interno */
+.checklist.form { max-height: none; overflow: visible; }
 .status-block p { margin: 4px 0; }
 .info h3 { font-size: 13px; margin: 6px 0 4px; }
 .info table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }

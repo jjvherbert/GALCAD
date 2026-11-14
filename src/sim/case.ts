@@ -82,7 +82,7 @@ export interface FemCase {
    * estável da malha), amplitude das cargas (pares tempo–fator, interpolação linear), Rayleigh
    * C = α·M + β·K e n.º de instantes guardados.
    */
-  dynamic?: { scheme: "implicit" | "explicit"; duration: number; dt?: number; amplitude: [number, number][]; alpha: number; beta: number; frames: number };
+  dynamic?: { scheme: "implicit" | "explicit"; duration: number; dt?: number; amplitude: [number, number][]; alpha: number; beta: number; frames: number; /** Velocidade inicial de todos os nós (m/s, global); omisso = repouso. */ v0?: [number, number, number] };
   /** Estática não linear: geometria (grandes deslocamentos), plasticidade bilinear, incrementos. */
   nonlinear?: { geometry: boolean; plasticity: boolean; increments: number };
   /** Estática com vários passos de carga (nomes); omitido = um só passo. */

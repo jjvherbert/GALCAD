@@ -355,6 +355,9 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     cpl.set(ld, { r, q });
   });
   if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
+  // velocidade inicial de todos os nós (m/s → mm/s); os apoios anulam-na nas direções presas
+  const v0 = c.dynamic?.v0;
+  if (v0) L.push("*INITIAL CONDITIONS, TYPE=VELOCITY", ...v0.flatMap((v, k) => (v ? [`NALL, ${k + 1}, ${fmt(v * 1000)}`] : [])));
 
   // cartões de um passo de carga (k = índice em `c.steps`; undefined = um só passo, todas as cargas):
   // apoios, cargas e a parcela das cargas que cai nos nós dos apoios

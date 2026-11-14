@@ -328,13 +328,13 @@ function SetsBox({ s, up, assembly }: { s: FemStudy; up: (p: Partial<FemStudy>) 
   );
 }
 
-/** Dinâmica transitória: esquema, tempo, amplitude da carga e amortecimento de Rayleigh. */
+/** Dinâmica transitória: esquema, tempo, amplitude da carga, velocidade inicial e amortecimento de Rayleigh. */
 function DynamicEditor({ d, onChange }: { d: FemDynamic; onChange: (d: FemDynamic) => void }) {
   const set = (p: Partial<FemDynamic>) => onChange({ ...d, ...p });
   const [zeta, setZeta] = useState(2);
   const [freq, setFreq] = useState(100);
   return (
-    <fieldset class="checklist">
+    <fieldset class="checklist form">
       <legend class="field-label">Dinâmica</legend>
       <div class="row">
         <Select label="Integração" value={d.scheme} options={[["implicit", "Implícita (Newmark/HHT)"], ["explicit", "Explícita (diferenças centrais)"]]} onChange={(scheme) => set({ scheme })} />
@@ -355,6 +355,12 @@ function DynamicEditor({ d, onChange }: { d: FemDynamic; onChange: (d: FemDynami
         <Field label="no modo de (Hz)"><input type="number" min="0" value={freq} onChange={(e) => setFreq(Number((e.target as HTMLInputElement).value) || 0)} /></Field>
         <button class="small" title="α = 2ζω (amortecimento proporcional à massa, exato nessa frequência)" onClick={() => set({ alpha: Number((2 * (zeta / 100) * 2 * Math.PI * freq).toPrecision(4)), beta: undefined })}>α de ζ</button>
       </div>
+      <span class="field-label">Velocidade inicial (todo o corpo)</span>
+      <div class="row3">{(["vx", "vy", "vz"] as const).map((k, j) => <ExprInput key={k} label={k} unit="m/s" allowEmpty value={d.v0?.[j]} onChange={(x) => {
+        const v = [...(d.v0 ?? [0, 0, 0])] as NonNullable<FemDynamic["v0"]>;
+        v[j] = x ?? 0;
+        set({ v0: v.every((c) => c === 0 || c === "0") ? undefined : v });
+      }} />)}</div>
       <Field label="Instantes guardados"><input type="number" min="5" max="400" value={d.frames ?? 50} onChange={(e) => set({ frames: Number((e.target as HTMLInputElement).value) || 50 })} /></Field>
       <p class="field-hint">{d.scheme === "implicit"
         ? "Implícita: vibrações e choques lentos; passo por omissão duração/200 (≈ 20 passos por período do modo mais alto que interessa)."
