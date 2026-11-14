@@ -125,6 +125,8 @@ export interface FemCase {
    * partir de `axis` (por defeito x) projetado na superfície; `thickness` é a soma das espessuras.
    */
   shell?: { thickness: number; plies?: OrthoPly[]; axis?: V3; regions?: ShellRegion[] };
+  /** Laminado sólido: camadas planas em z a partir de z0 (elemento → camada pelo z do centroide). */
+  solidLaminate?: { plies: OrthoPly[]; z0: number };
   hypotheses: string[];
 }
 

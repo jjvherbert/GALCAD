@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SketchBuilder, initKernel } from "./helpers.ts";
 import { Engine } from "../src/kernel/rebuild.ts";
-import { faceProps } from "../src/kernel/occ.ts";
+import { edgeProps, faceProps } from "../src/kernel/occ.ts";
+import { namedEdges } from "../src/kernel/naming.ts";
 import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
 import { type FemStudy, SIM_MATERIALS, newFemStudy } from "../src/doc/study.ts";
@@ -148,3 +149,49 @@ for (const solver of ["calculix", "code_aster"] as const) {
     near(v, -105, 0.05);
   });
 }
+
+/** NAFEMS R0031(1): tira laminada [0/90/0/90/0/90/0] de 50 × 10 × 1 mm em flexão de três pontos (apoios em
+ *  linha em x = 10 e x = 40 na face inferior, 10 N/mm em x = 25 na superior). Quarto de modelo (simetria em
+ *  x = 25 e y = 5), laminado sólido com uma camada de elementos por lâmina. Alvos: σxx(E) = 684 MPa,
+ *  uz = −1,06 mm, σxz(D) = −4,1 MPa (a z = 0,1; ponto D a meio caminho entre apoio e carga). */
+test("NAFEMS R0031(1) (calculix): tira laminada em flexão de três pontos", { skip: !(T.gmsh && T.calculix) && "calculix não instalado", timeout: 900000 }, async () => {
+  const sk = new SketchBuilder();
+  sk.rect(25, 5, 25, 5, 25, 5);
+  let doc = newDocument();
+  doc = addFeature(doc, sk.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 1 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const face = (axis: 0 | 1 | 2, v: number): TopoRef => {
+    const f = r.ctx.body!.faces.find((x) => { const q = faceProps(x.face); return q.normal && Math.abs(Math.abs(q.normal[axis]) - 1) < 1e-9 && Math.abs(q.center[axis] - v) < 1e-6; });
+    assert.ok(f, `face ${"xyz"[axis]} = ${v}`);
+    return { kind: "face", name: f.name };
+  };
+  const load = namedEdges(r.ctx.body!).find((x) => { const q = edgeProps(x.edge); return Math.abs(q.mid[0] - 25) < 1e-6 && Math.abs(q.mid[2] - 1) < 1e-6; });
+  assert.ok(load, "aresta de carga");
+  const h = Number(process.env.R0031_H ?? 0.5);
+  const ply = (t: number, theta: number) => ({ t, theta, e1: 1e5, e2: 5e3, e3: 5e3, nu12: 0.4, nu13: 0.3, nu23: 0.3, g12: 3e3, g13: 2e3, g23: 2e3 });
+  const s: FemStudy = {
+    ...newFemStudy("s1", 1), solver: "calculix",
+    mesh: { size: h, order: 2, partitions: [0.1, 0.2, 0.3, 0.7, 0.8, 0.9].map((at) => ({ axis: "z" as "x" | "y" | "z", at })).concat([{ axis: "x", at: 40 }]) },
+    solidLaminate: { plies: [ply(0.1, 0), ply(0.1, 90), ply(0.1, 0), ply(0.4, 90), ply(0.1, 0), ply(0.1, 90), ply(0.1, 0)], z0: 0 },
+    loads: [
+      { kind: "symmetry", faces: [face(0, 25), face(1, 5)] },
+      { kind: "displacement", faces: [], edges: [{ kind: "edge", name: `cut@${face(2, 0).name}` }], uz: 0 },
+      // 10 N/mm × 5 mm (meia largura), metade para cada lado do plano de simetria x = 25
+      { kind: "force", faces: [], edges: [{ kind: "edge", name: load.name }], f: [0, 0, -25] },
+    ],
+    probes: [
+      { name: "σxx E", quantity: "sxx", at: { kind: "point", point: [25, 5, 0] } },
+      { name: "uz", quantity: "uz", at: { kind: "point", point: [25, 5, 1] } },
+      { name: "σxz D", quantity: "sxz", at: { kind: "point", point: [32.5, 5, 0.1] } },
+    ],
+  } as FemStudy;
+  const res = await run(doc, s);
+  assert.match(res.solver ?? "", /calculix/i);
+  const v = (k: number) => res.fem!.metrics.find((m) => m.key === `probe${k}`)!.value;
+  console.log(`R0031 calculix: σxx(E) = ${v(1)}, uz = ${v(2)}, σxz(D) = ${v(3)}`);
+  near(v(1), 684, 0.03);
+  near(v(2), -1.06, 0.02);
+  // o ponto D (a meio entre apoio e carga, z = 0,1) está na outra metade; no espelho (x = 32,5) σxz troca de sinal
+  near(v(3), 4.1, 0.05);
+});

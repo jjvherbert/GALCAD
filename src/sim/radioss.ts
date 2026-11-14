@@ -29,6 +29,7 @@ const title = (s: string) => s.replace(/[^\x20-\x7e]/g, "_").slice(0, 80);
 const ids = (list: number[]) => { const out: string[] = []; for (let k = 0; k < list.length; k += 10) out.push(list.slice(k, k + 10).map(I).join("")); return out; };
 
 export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
+  if (c.solidLaminate) throw new Error("OpenRadioss: o laminado sólido ainda não está neste adaptador (use o CalculiX)");
   if (c.analysis !== "dynamic" || c.dynamic?.scheme !== "explicit") throw new Error("OpenRadioss: só dinâmica explícita (escolha «Dinâmica transitória» e «Explícita»)");
   if (Object.keys(c.edgeGroups ?? {}).length) throw new Error("OpenRadioss: condições em arestas ainda não estão neste adaptador (escolha faces)");
   const warnings: string[] = [];

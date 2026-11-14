@@ -7,7 +7,7 @@ import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, ampli
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement, stableIncrementShell } from "./quality.ts";
-import { type OrthoPly, splitPlies } from "./laminate.ts";
+import { type OrthoPly, plyConstants3D, splitPlies } from "./laminate.ts";
 
 /**
  * Elemento do CalculiX: tetraedros C3D4/C3D10; hexaedros lineares com modos incompatíveis (C3D8I,
@@ -227,7 +227,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
             if (k2 === k1) L.push("*CONDUCTIVITY", fmt(k1!));
             else L.push("*CONDUCTIVITY, TYPE=ORTHO", [k1!, k2!, k2!].map(fmt).join(", "));
           } else {
-            L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [p.e1, p.e2, p.e2, p.nu12, p.nu12, p.nu12, p.g12, p.g12].map(fmt).join(", "), `${fmt(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+            { const q = plyConstants3D(p); L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", q.slice(0, 8).map(fmt).join(", "), `${fmt(q[8])}, 0`); }
             L.push("*DENSITY", fmt(c.material.density * 1e-9));
           }
           L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt).join(", "), `3, ${fmt(p.theta)}`);
@@ -273,6 +273,33 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       material("MAT", c.material);
       L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt(c.shell.thickness));
     }
+  } else if (c.solidLaminate) {
+    // laminado sólido: cada elemento na camada onde cai o z do seu centroide (nós de canto); um material
+    // ortotrópico e uma orientação (θ em torno de z, a partir de x) por camada
+    const { plies, z0 } = c.solidLaminate;
+    const tops: number[] = [];
+    plies.reduce((z, p) => (tops.push(z + p.t), z + p.t), z0);
+    const sets: number[][] = plies.map(() => []);
+    elems.forEach((e, i) => {
+      const nc = e.st?.corners ?? e.n.length;
+      let z = 0;
+      for (let j = 0; j < nc; j++) z += m.nodes.get(e.n[j])![2];
+      z /= nc;
+      if (z < z0 - 1e-9 || z > tops[tops.length - 1] + 1e-9) throw new Error(`Laminado sólido: há elementos fora das camadas (z = ${fmt(z)}, laminado de ${fmt(z0)} a ${fmt(tops[tops.length - 1])} mm)`);
+      sets[Math.max(0, tops.findIndex((t) => z <= t + 1e-9))].push(i + 1);
+    });
+    plies.forEach((p, k) => {
+      if (!sets[k].length) throw new Error(`Laminado sólido, camada ${k + 1}: sem elementos (refine a malha ou parta em z nas interfaces)`);
+      L.push(`*ELSET, ELSET=PLY_${k + 1}`);
+      for (let j = 0; j < sets[k].length; j += 16) L.push(sets[k].slice(j, j + 16).join(", "));
+      L.push(`*MATERIAL, NAME=MAT_SL${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
+      const q = plyConstants3D(p);
+      L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", q.slice(0, 8).map(fmt).join(", "), `${fmt(q[8])}, 0`);
+      L.push("*DENSITY", fmt(c.material.density * 1e-9));
+      if (c.material.alpha) L.push(tField ? `*EXPANSION, ZERO=${fmt(tField.tRef)}` : "*EXPANSION", fmt(c.material.alpha));
+      L.push(`*ORIENTATION, NAME=OR_SL${k + 1}, SYSTEM=RECTANGULAR`, "1., 0., 0., 0., 1., 0.", `3, ${fmt(p.theta)}`);
+      L.push(`*SOLID SECTION, ELSET=PLY_${k + 1}, MATERIAL=MAT_SL${k + 1}, ORIENTATION=OR_SL${k + 1}`);
+    });
   } else {
     material("MAT", c.material);
     L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");

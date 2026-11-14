@@ -1694,6 +1694,22 @@ function stableIncrementShell(m, mat) {
 	return best;
 }
 // src/sim/laminate.ts
+/** Erro de uma camada ortotrópica fisicamente impossível, ou `null` se é válida. */
+/** Constantes de engenharia 3D da camada, pela ordem do CalculiX: E1, E2, E3, ν12, ν13, ν23, G12, G13, G23. */
+function plyConstants3D(p) {
+	const e3 = p.e3 ?? p.e2, nu13 = p.nu13 ?? p.nu12, nu23 = p.nu23 ?? p.nu12;
+	return [
+		p.e1,
+		p.e2,
+		e3,
+		p.nu12,
+		nu13,
+		nu23,
+		p.g12,
+		p.g13 ?? p.g12,
+		p.g23 ?? p.e2 / (2 * (1 + p.nu12))
+	];
+}
 /**
 * Critério de extensão máxima nos eixos do material, com as extensões de rotura da Tabela C.6.
 * Hipótese: a direção 2 usa os mesmos limites da direção 1 — exato para camadas equilibradas
@@ -3015,16 +3031,10 @@ function calculixDeck(c, m) {
 						k2
 					].map(fmt$1).join(", "));
 				} else {
-					L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", [
-						p.e1,
-						p.e2,
-						p.e2,
-						p.nu12,
-						p.nu12,
-						p.nu12,
-						p.g12,
-						p.g12
-					].map(fmt$1).join(", "), `${fmt$1(p.e2 / (2 * (1 + p.nu12)))}, 0`);
+					{
+						const q = plyConstants3D(p);
+						L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", q.slice(0, 8).map(fmt$1).join(", "), `${fmt$1(q[8])}, 0`);
+					}
 					L.push("*DENSITY", fmt$1(c.material.density * 1e-9));
 				}
 				L.push(`*ORIENTATION, NAME=OR_${pre}P${k + 1}, SYSTEM=RECTANGULAR`, [...a, ...b].map(fmt$1).join(", "), `3, ${fmt$1(p.theta)}`);
@@ -3067,6 +3077,31 @@ function calculixDeck(c, m) {
 			material("MAT", c.material);
 			L.push("*SHELL SECTION, ELSET=EALL, MATERIAL=MAT", fmt$1(c.shell.thickness));
 		}
+	} else if (c.solidLaminate) {
+		const { plies, z0 } = c.solidLaminate;
+		const tops = [];
+		plies.reduce((z, p) => (tops.push(z + p.t), z + p.t), z0);
+		const sets = plies.map(() => []);
+		elems.forEach((e, i) => {
+			const nc = e.st?.corners ?? e.n.length;
+			let z = 0;
+			for (let j = 0; j < nc; j++) z += m.nodes.get(e.n[j])[2];
+			z /= nc;
+			if (z < z0 - 1e-9 || z > tops[tops.length - 1] + 1e-9) throw new Error(`Laminado sólido: há elementos fora das camadas (z = ${fmt$1(z)}, laminado de ${fmt$1(z0)} a ${fmt$1(tops[tops.length - 1])} mm)`);
+			sets[Math.max(0, tops.findIndex((t) => z <= t + 1e-9))].push(i + 1);
+		});
+		plies.forEach((p, k) => {
+			if (!sets[k].length) throw new Error(`Laminado sólido, camada ${k + 1}: sem elementos (refine a malha ou parta em z nas interfaces)`);
+			L.push(`*ELSET, ELSET=PLY_${k + 1}`);
+			for (let j = 0; j < sets[k].length; j += 16) L.push(sets[k].slice(j, j + 16).join(", "));
+			L.push(`*MATERIAL, NAME=MAT_SL${k + 1}`, `** camada ${k + 1}${p.label ? ` — ${p.label}` : ""}`);
+			const q = plyConstants3D(p);
+			L.push("*ELASTIC, TYPE=ENGINEERING CONSTANTS", q.slice(0, 8).map(fmt$1).join(", "), `${fmt$1(q[8])}, 0`);
+			L.push("*DENSITY", fmt$1(c.material.density * 1e-9));
+			if (c.material.alpha) L.push(tField ? `*EXPANSION, ZERO=${fmt$1(tField.tRef)}` : "*EXPANSION", fmt$1(c.material.alpha));
+			L.push(`*ORIENTATION, NAME=OR_SL${k + 1}, SYSTEM=RECTANGULAR`, "1., 0., 0., 0., 1., 0.", `3, ${fmt$1(p.theta)}`);
+			L.push(`*SOLID SECTION, ELSET=PLY_${k + 1}, MATERIAL=MAT_SL${k + 1}, ORIENTATION=OR_SL${k + 1}`);
+		});
 	} else {
 		material("MAT", c.material);
 		L.push("*SOLID SECTION, ELSET=EALL, MATERIAL=MAT");
@@ -4333,6 +4368,7 @@ const ids = (list) => {
 	return out;
 };
 function radiossDeck(c, m) {
+	if (c.solidLaminate) throw new Error("OpenRadioss: o laminado sólido ainda não está neste adaptador (use o CalculiX)");
 	if (c.analysis !== "dynamic" || c.dynamic?.scheme !== "explicit") throw new Error("OpenRadioss: só dinâmica explícita (escolha «Dinâmica transitória» e «Explícita»)");
 	if (Object.keys(c.edgeGroups ?? {}).length) throw new Error("OpenRadioss: condições em arestas ainda não estão neste adaptador (escolha faces)");
 	const warnings = [];
@@ -4990,6 +5026,7 @@ function asterMesh(c, m) {
 }
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 function asterCase(c, m) {
+	if (c.solidLaminate) throw new Error("code_aster: o laminado sólido ainda não está neste adaptador (use o CalculiX)");
 	if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
 	if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
 	if (c.loads.some((l) => l.kind === "coupling")) throw new Error("code_aster: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
