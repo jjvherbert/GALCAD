@@ -82,7 +82,7 @@ export type FemLoad = (
   /** Encastramento das faces ou, em alternativa, das arestas (`edges`). */
   | { kind: "fixed"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[] }
   /** Deslocamento imposto (mm) por direção, global ou no referencial local (`csys`). */
-  | { kind: "displacement"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; ux?: Expr; uy?: Expr; uz?: Expr; csys?: LoadCsys }
+  | { kind: "displacement"; faces: TopoRef[]; sets?: string[]; edges?: TopoRef[]; ux?: Expr; uy?: Expr; uz?: Expr; csys?: LoadCsys; /** dinâmica: ux/uy/uz são velocidades impostas (m/s) × amplitude; 0 continua a prender */ velocity?: boolean }
   /** Simetria: impede o deslocamento normal ao plano (faces planas alinhadas com X, Y ou Z); permite deslizar no plano. */
   | { kind: "symmetry"; faces: TopoRef[]; sets?: string[] }
   /** Força total (N) distribuída uniformemente pela área das faces ou pelo comprimento das arestas (`edges`). */

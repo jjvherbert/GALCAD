@@ -20,7 +20,7 @@ export type CaseCsys = { type: "rect" | "cyl"; a: V3; b: V3 };
 export type FemCaseLoad = (
   | { kind: "fixed"; group: string }
   /** Deslocamento imposto; com `csys`, componentes no referencial local. */
-  | { kind: "displacement"; group: string; u: (number | null)[]; csys?: CaseCsys }
+  | { kind: "displacement"; group: string; u: (number | null)[]; csys?: CaseCsys; /** dinâmica: u são velocidades (m/s) × amplitude */ velocity?: boolean }
   | { kind: "force"; group: string; f: V3 }
   | { kind: "pointForce"; point: V3; f: V3 }
   | { kind: "pressure"; group: string; p: number }
@@ -194,6 +194,33 @@ export function amplitudeAt(c: FemCase, t: number): number {
   if (t <= a[0][0]) return a[0][1];
   for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + ((a[i][1] - a[i - 1][1]) * (t - a[i - 1][0])) / (a[i][0] - a[i - 1][0] || 1);
   return a[a.length - 1][1];
+}
+
+/**
+ * Integral no tempo da amplitude (∫₀ᵗ a dτ, em s), em tabela: a velocidade imposta v·a(t) passa a
+ * deslocamento imposto v·∫a nos solvers que só impõem deslocamentos. Exato nos vértices; `sub` pontos
+ * por troço (o integral de um troço linear é uma parábola); prolongada até `until` e um pouco além.
+ */
+export function amplitudeIntegral(a: [number, number][], until: number, sub = 8): [number, number][] {
+  const pts: [number, number][] = a.length ? a.map(([t, v]) => [t, v]) : [[0, 1]];
+  if (pts[0][0] > 0) pts.unshift([0, pts[0][1]]);
+  const end = Math.max(until, pts[pts.length - 1][0]);
+  if (pts[pts.length - 1][0] < end) pts.push([end, pts[pts.length - 1][1]]);
+  const tail = pts[pts.length - 1][1];
+  pts.push([end * 1.5 || 1, tail]);
+  const out: [number, number][] = [[pts[0][0], 0]];
+  let acc = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const [t0, f0] = pts[i - 1], [t1, f1] = pts[i], h = t1 - t0;
+    if (!(h > 0)) continue;
+    const n = f0 === f1 ? 1 : sub;
+    for (let j = 1; j <= n; j++) {
+      const s = (h * j) / n;
+      out.push([t0 + s, acc + f0 * s + ((f1 - f0) * s * s) / (2 * h)]);
+    }
+    acc += (h * (f0 + f1)) / 2;
+  }
+  return out;
 }
 
 /** Tabela da amplitude (pares tempo–fator) de uma carga em degrau, rampa, meio seno ou seno. */

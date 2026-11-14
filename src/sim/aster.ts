@@ -9,7 +9,7 @@
 // Montagens: um GROUP_MA e um material por corpo; contacto colado por LIAISON_MAIL (nós da face
 // escrava presos ao volume do corpo mestre).
 // Unidades: mm, N, MPa, t, s (como no CalculiX).
-import type { FemCase } from "./case.ts";
+import { type FemCase, amplitudeIntegral } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
@@ -290,13 +290,21 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
   }
   // apoios (BC) e cargas (CH) em cargas separadas: nos não lineares só as cargas sobem em rampa
-  const ddl: string[] = [], ddlAmp: string[] = [], force: string[] = [], pres: string[] = [], nodal: string[] = [];
+  const ddl: string[] = [], ddlAmp: string[] = [], ddlVel: string[] = [], force: string[] = [], pres: string[] = [], nodal: string[] = [];
   let pf = 0;
   let grav = "";
   for (const ld of c.loads) {
     switch (ld.kind) {
       case "fixed": ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.${shell ? ", DRX=0., DRY=0., DRZ=0." : ""})`); break;
       case "displacement": {
+        if (c.dynamic && ld.velocity) {
+          // velocidade imposta (m/s → mm/s): deslocamento v·∫a(t) (F2); os zeros prendem
+          const zero = ld.u.map((u, k) => (u === 0 ? `D${"XYZ"[k]}=0.` : "")).filter(Boolean);
+          const vel = ld.u.map((u, k) => (u ? `D${"XYZ"[k]}=${num(u * 1000)}` : "")).filter(Boolean);
+          if (zero.length) ddl.push(`_F(GROUP_NO='${ld.group}', ${zero.join(", ")})`);
+          if (vel.length) ddlVel.push(`_F(GROUP_NO='${ld.group}', ${vel.join(", ")})`);
+          break;
+        }
         const comps = ld.u.map((u, k) => (u === null ? "" : `D${"XYZ"[k]}=${num(u)}`)).filter(Boolean);
         // na dinâmica, os deslocamentos impostos não nulos seguem a amplitude
         if (comps.length) (c.dynamic && ld.u.some((u) => u !== null && u !== 0) ? ddlAmp : ddl).push(`_F(GROUP_NO='${ld.group}', ${comps.join(", ")})`);
@@ -338,7 +346,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
   const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
   // em dinâmica a massa torna o sistema invertível: um corpo livre (ex.: só velocidade inicial) é válido
-  if (!bcParts.length && !springs.length && !ddlAmp.length && !c.dynamic) throw new Error("code_aster: o estudo não tem apoios nem ligações");
+  if (!bcParts.length && !springs.length && !ddlAmp.length && !ddlVel.length && !c.dynamic) throw new Error("code_aster: o estudo não tem apoios nem ligações");
   // só molas: sem carga de apoios (BC)
   const hasBc = bcParts.length > 0;
   if (hasBc) C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
@@ -346,6 +354,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   const hasCh = chParts.length > 0 && (c.analysis === "static" || c.analysis === "dynamic");
   if (hasCh) C.push(`CH = AFFE_CHAR_MECA(MODELE=MO, ${chParts.join(", ")})`);
   if (ddlAmp.length) C.push(`BCA = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddlAmp.join(", ")},))`);
+  if (ddlVel.length) C.push(`BCV = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddlVel.join(", ")},))`);
   const supports = c.loads.flatMap((ld) => (ld.kind === "fixed" || ld.kind === "displacement" ? [`'${ld.group}'`] : []));
 
   if (c.dynamic) {
@@ -356,8 +365,9 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     const n = Math.ceil(D.duration / dt - 1e-9), every = Math.max(1, Math.round(n / D.frames));
     const vale = D.amplitude.flatMap(([t, v]) => [num(t), num(v)]);
     C.push(`F1 = DEFI_FONCTION(NOM_PARA='INST', VALE=(${vale.join(", ")}), PROL_DROITE='CONSTANT', PROL_GAUCHE='CONSTANT')`);
+    if (ddlVel.length) C.push(`F2 = DEFI_FONCTION(NOM_PARA='INST', VALE=(${amplitudeIntegral(D.amplitude, D.duration).flatMap(([t, v]) => [num(t), num(v)]).join(", ")}), PROL_DROITE='LINEAIRE', PROL_GAUCHE='CONSTANT')`);
     C.push(`LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=${num(D.duration)}, NOMBRE=${n}))`);
-    const excit = [hasBc && "_F(CHARGE=BC)", hasCh && "_F(CHARGE=CH, FONC_MULT=F1)", ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)"].filter(Boolean).join(", ");
+    const excit = [hasBc && "_F(CHARGE=BC)", hasCh && "_F(CHARGE=CH, FONC_MULT=F1)", ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)", ddlVel.length && "_F(CHARGE=BCV, FONC_MULT=F2)"].filter(Boolean).join(", ");
     const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
     // velocidade inicial de todos os nós (m/s → mm/s) como estado inicial
     if (D.v0) C.push(`V0 = CREA_CHAMP(TYPE_CHAM='NOEU_DEPL_R', OPERATION='AFFE', MODELE=MO, AFFE=_F(TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), VALE=(${D.v0.map((v) => num(v * 1000)).join(", ")})))`);

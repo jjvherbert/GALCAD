@@ -92,7 +92,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
   // amplitude no tempo (ms) — função 1
   S.push("/FUNCT/1", "amplitude", "#                  X                   Y", ...D.amplitude.map(([t, v]) => `${F(t * 1000)}${F(v)}`));
 
-  let bcs = 0, loads = 0, imps = 0;
+  let bcs = 0, loads = 0, imps = 0, impv = 0;
   for (const ld of c.loads) {
     if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
     if (ld.kind === "coupling") throw new Error("OpenRadioss: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
@@ -106,7 +106,8 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
       if (fix.some(Boolean)) S.push(`/BCS/${++bcs}`, `apoio ${ld.group}`, "#  Tra rot   skew_ID  grnod_ID", `   ${fix.map((x) => (x ? "1" : "0")).join("")} 000${I(0)}${I(g)}`);
       if (ld.kind === "displacement") ld.u.forEach((u, k) => {
         if (u === null || u === 0) return;
-        S.push(`/IMPDISP/${++imps}`, `deslocamento ${"XYZ"[k]} ${ld.group}`,
+        // velocidade imposta: /IMPVEL (m/s = mm/ms, o valor passa igual); deslocamento: /IMPDISP (mm)
+        S.push(ld.velocity ? `/IMPVEL/${++impv}` : `/IMPDISP/${++imps}`, `${ld.velocity ? "velocidade" : "deslocamento"} ${"XYZ"[k]} ${ld.group}`,
           "#funct_IDT       Dir   skew_ID sensor_ID  grnod_ID  frame_ID     Icoor",
           `${I(1)}${"XYZ"[k].padStart(10)}${I(0)}${I(0)}${I(g)}${I(0)}${I(0)}`,
           "#           Ascale_x            Fscale_Y              Tstart               Tstop",

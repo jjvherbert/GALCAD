@@ -15,7 +15,7 @@ import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
 import { type FemStudy, SIM_MATERIALS, newFemStudy } from "../src/doc/study.ts";
 import { studyCase } from "../src/kernel/sim.ts";
-import { type FemCase, amplitudeAt, amplitudeTable } from "../src/sim/case.ts";
+import { type FemCase, amplitudeAt, amplitudeIntegral, amplitudeTable } from "../src/sim/case.ts";
 import { runCase, tools } from "../tools/cad-runner.ts";
 import { parseMsh } from "../src/sim/msh.ts";
 import { calculixDeck } from "../src/sim/calculix.ts";
@@ -71,6 +71,14 @@ test("amplitude: degrau, rampa, meio seno e seno", () => {
   near(amplitudeAt(c, 0.05), Math.SQRT1_2, 0.005);
   assert.equal(amplitudeAt(c, 0.5), 0);
   near(amplitudeAt({ dynamic: { amplitude: amplitudeTable("sine", 1, undefined, 0.4) } } as FemCase, 0.3), -1, 0.005);
+  // integral (deslocamento de uma velocidade imposta): degrau → reta; rampa → parábola; meio seno de duração T → 2T/π
+  assert.deepEqual(amplitudeIntegral([[0, 1], [1, 1]], 1), [[0, 0], [1, 1], [1.5, 1.5]]);
+  const ri = amplitudeIntegral([[0, 0], [1, 1]], 1);
+  near(ri.find(([t]) => t === 0.5)![1], 0.125, 1e-12);
+  near(ri.at(-1)![1], 1, 1e-12);
+  const hi = amplitudeIntegral(amplitudeTable("halfsine", 1, undefined, 0.2), 1);
+  near(hi.at(-1)![1], (2 * 0.2) / Math.PI, 0.01);
+  assert.deepEqual(amplitudeIntegral([[0.5, 2]], 1).slice(0, 2), [[0, 0], [0.5, 1]]);
 });
 
 test("caso dinâmico: amplitude, Rayleigh, hipóteses e deck do CalculiX", async () => {
@@ -161,6 +169,46 @@ test("velocidade inicial: caso e decks do CalculiX, code_aster e OpenRadioss", {
   assert.deepEqual([Number(row.slice(0, 20)), Number(row.slice(20, 40)), Number(row.slice(40, 60))], [0, 0, -1]);
   // sem v₀ não há /INIVEL
   assert.ok(!radiossDeck({ ...c, dynamic: { ...c.dynamic!, scheme: "explicit", v0: undefined } }, m).starter.includes("/INIVEL"));
+});
+
+/** Barra com a face x = 0 a −1 m/s em z (x e y presos): a face desce 1 mm em 1 ms. */
+const pushed = (face: (a: 0 | 1 | 2, v: number) => TopoRef, patch: Partial<FemStudy>, dyn: Partial<NonNullable<FemStudy["dynamic"]>> = {}) =>
+  fly(face, { loads: [{ kind: "displacement", faces: [face(0, 0)], ux: 0, uy: 0, uz: -1, velocity: true }], probes: [{ name: "Face", quantity: "uz", at: { kind: "point", point: [0, 5, 5] } }], ...patch }, { v0: undefined, ...dyn });
+
+test("velocidade imposta: validação e decks do CalculiX e code_aster", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
+  const { doc, face } = await bar();
+  const mesh: FemStudy["mesh"] = { size: 5, order: 1, curvature: 0, element: "hex", integration: "reduced" };
+  const { dir, c } = await solve(doc, pushed(face, { mesh }));
+  const ld = c.loads.find((l) => l.kind === "displacement")!;
+  assert.ok(ld.kind === "displacement" && ld.velocity && ld.u[2] === -1);
+  await assert.rejects(async () => solve(doc, { ...pushed(face, { mesh }), analysis: "static" }), /só existe na análise dinâmica/);
+  spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: dir, shell: /\.(cmd|bat)$/i.test(T.gmsh!.path) });
+  const m = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const inp = calculixDeck(c, m).inp;
+  assert.match(inp, /\*AMPLITUDE, NAME=A2\r?\n0\.?0*, 0\.?0*, /);
+  assert.match(inp, /\*BOUNDARY, AMPLITUDE=A2\r?\n\S+, 3, 3, -1000/);
+  const comm = asterCase(c, m).files["job.comm"];
+  assert.match(comm, /BCV = AFFE_CHAR_MECA\([\s\S]*DZ=-1000/);
+  assert.match(comm, /F2 = DEFI_FONCTION\(NOM_PARA='INST'/);
+  assert.match(comm, /_F\(CHARGE=BCV, FONC_MULT=F2\)/);
+});
+
+test("CalculiX real: face a −1 m/s imposta desce 1 mm em 1 ms (implícito e explícito)", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
+  const { doc, face } = await bar();
+  const r = await (await solve(doc, pushed(face, {}))).run();
+  assert.ok(r.ok, JSON.stringify(r.warnings));
+  near(probe(r), -1, 0.02);
+  const mesh: FemStudy["mesh"] = { size: 5, order: 1, curvature: 0, element: "hex", integration: "reduced" };
+  const re = await (await solve(doc, pushed(face, { mesh }, { scheme: "explicit" }))).run();
+  assert.ok(re.ok, JSON.stringify(re.warnings));
+  near(probe(re), -1, 0.02);
+});
+
+test("code_aster real: face a −1 m/s imposta desce 1 mm em 1 ms", { skip: !hasAster && "Gmsh/code_aster não instalados", timeout: 1800000 }, async () => {
+  const { doc, face } = await bar();
+  const r = await (await solve(doc, pushed(face, { solver: "code_aster", mesh: { size: 5, order: 1, curvature: 0, element: "hex", integration: "full" } }))).run();
+  assert.ok(r.ok, JSON.stringify(r.warnings));
+  near(probe(r), -1, 0.02);
 });
 
 test("CalculiX real: barra livre a v₀ = −1 m/s desce 1 mm em 1 ms (implícito e explícito)", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
