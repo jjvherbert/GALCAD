@@ -7,7 +7,8 @@
 // (mm, N, MPa, t, s): E/1000, ρ (g/cm³)·1e-6, F/1000, t·1000, g (mm/s²)·1e-6.
 // Elementos: /BRICK (hexaedro de 8 nós, Isolid = 24: integração reduzida com estabilização física
 // do hourglass, a formulação recomendada para flexão) e /TETRA4. Carga: forças nodais consistentes
-// (as das faces, como no CalculiX) por /CLOAD com a amplitude em /FUNCT; apoios por /BCS;
+// (as das faces, como no CalculiX) por /CLOAD com a amplitude em /FUNCT; apoios por /BCS e deslocamentos
+// impostos não nulos por /IMPDISP (com a mesma amplitude);
 // gravidade por /GRAV; Rayleigh por /DAMP.
 import { type FemCase } from "./case.ts";
 import { type Msh, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
@@ -91,7 +92,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
   // amplitude no tempo (ms) — função 1
   S.push("/FUNCT/1", "amplitude", "#                  X                   Y", ...D.amplitude.map(([t, v]) => `${F(t * 1000)}${F(v)}`));
 
-  let bcs = 0, loads = 0;
+  let bcs = 0, loads = 0, imps = 0;
   for (const ld of c.loads) {
     if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
     if (ld.kind === "coupling") throw new Error("OpenRadioss: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
@@ -99,10 +100,18 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
     if (ld.kind === "mass") throw new Error("OpenRadioss: as massas pontuais ainda não estão neste adaptador (use o CalculiX)");
     if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
     if (ld.kind === "fixed" || ld.kind === "displacement") {
-      const fix = ld.kind === "fixed" ? [true, true, true] : ld.u.map((u) => u !== null);
-      if (ld.kind === "displacement" && ld.u.some((u) => u !== null && u !== 0)) throw new Error("OpenRadioss: deslocamentos impostos não nulos ainda não estão neste adaptador (use forças)");
+      // direções presas (u = 0) por /BCS; deslocamentos não nulos por /IMPDISP com a amplitude
+      const fix = ld.kind === "fixed" ? [true, true, true] : ld.u.map((u) => u === 0);
       const g = group(`apoio ${ld.group}`, faceNodes(ld.group));
-      S.push(`/BCS/${++bcs}`, `apoio ${ld.group}`, "#  Tra rot   skew_ID  grnod_ID", `   ${fix.map((x) => (x ? "1" : "0")).join("")} 000${I(0)}${I(g)}`);
+      if (fix.some(Boolean)) S.push(`/BCS/${++bcs}`, `apoio ${ld.group}`, "#  Tra rot   skew_ID  grnod_ID", `   ${fix.map((x) => (x ? "1" : "0")).join("")} 000${I(0)}${I(g)}`);
+      if (ld.kind === "displacement") ld.u.forEach((u, k) => {
+        if (u === null || u === 0) return;
+        S.push(`/IMPDISP/${++imps}`, `deslocamento ${"XYZ"[k]} ${ld.group}`,
+          "#funct_IDT       Dir   skew_ID sensor_ID  grnod_ID  frame_ID     Icoor",
+          `${I(1)}${"XYZ"[k].padStart(10)}${I(0)}${I(0)}${I(g)}${I(0)}${I(0)}`,
+          "#           Ascale_x            Fscale_Y              Tstart               Tstop",
+          `${F(1)}${F(u)}${F(0)}${F(0)}`);
+      });
     }
   }
   // forças nodais consistentes das faces (força total uniforme e pressão), agrupadas por valor

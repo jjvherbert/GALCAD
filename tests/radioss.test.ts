@@ -93,6 +93,19 @@ test("OpenRadioss: Starter e Engine (unidades kg–mm–ms, colunas fixas, forç
   // molas à terra: ainda não neste adaptador
   assert.throws(() => radiossDeck({ ...c, loads: [...c.loads, { kind: "spring", group: "L1_FIXED", k: [10, 10, 10] }] }, m), /molas ainda não estão/);
   assert.throws(() => radiossDeck({ ...c, loads: [...c.loads, { kind: "mass", group: "L1_FIXED", m: 0.01 }] }, m), /massas pontuais ainda não estão/);
+  // deslocamento imposto: Z preso por /BCS (001), X = 0,5 mm por /IMPDISP com a amplitude, Y livre
+  const dd = radiossDeck({ ...c, loads: [{ kind: "displacement", group: "L1_FIXED", u: [0.5, null, 0] }] }, m);
+  const D2 = dd.starter.split("\n");
+  const b2 = D2[D2.indexOf("/BCS/1") + 3];
+  assert.equal(b2.slice(0, 10), "   001 000");
+  const imp = D2.indexOf("/IMPDISP/1");
+  assert.ok(imp > 0 && !D2.includes("/IMPDISP/2"));
+  const r1 = D2[imp + 3], r2 = D2[imp + 5];
+  assert.deepEqual([Number(r1.slice(0, 10)), r1.slice(10, 20).trim(), Number(r1.slice(40, 50))], [1, "X", Number(b2.slice(20, 30))]);
+  assert.deepEqual([Number(r2.slice(0, 20)), Number(r2.slice(20, 40))], [1, 0.5]);
+  // só deslocamentos não nulos: nenhum /BCS
+  const d3 = radiossDeck({ ...c, loads: [{ kind: "displacement", group: "L1_FIXED", u: [null, null, -1] }] }, m).starter;
+  assert.ok(!d3.includes("/BCS/") && d3.includes("/IMPDISP/1"));
   // quadráticos recusados (o explícito quer elementos lineares)
   const q = await solve(doc, study(face, { mesh: { size: 5, order: 2, curvature: 0, element: "hex" } }));
   spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: q.dir });
@@ -133,4 +146,16 @@ test("OpenRadioss real: consola sob degrau — pico ≈ 2× Timoshenko em T₁/2
   near(-peak / delta, 2, 0.1);
   near(r.metrics.find((x) => x.key === "tpeak")!.value, 1 / (2 * f1), 0.1);
   assert.ok(r.fem!.timeHistory!.times.length > 20);
+});
+
+test("OpenRadioss real: deslocamento imposto em rampa (/IMPDISP) — a ponta segue o valor imposto", { skip: !(T.gmsh && T.openradioss) && "OpenRadioss não instalado (CAD_RADIOSS_DIR)", timeout: 1800000 }, async () => {
+  const { doc, face } = await bar();
+  const r = await (await solve(doc, study(face, {
+    dynamic: { scheme: "explicit", duration: 1.2e-3, load: "ramp", rise: 6e-4, frames: 24 },
+    loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "displacement", faces: [face(0, 100)], uz: -0.1 }],
+  }))).run();
+  assert.ok(r.ok, JSON.stringify(r.warnings));
+  // a sonda está na face movida: o valor de maior módulo é o imposto, uz = −0,1 mm (e no fim também)
+  near(r.metrics.find((x) => x.key === "probe1")!.value, -0.1, 0.02);
+  near(r.fem!.timeHistory!.series.find((x) => x.key === "probe1")!.values.at(-1)!, -0.1, 0.02);
 });
