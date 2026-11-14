@@ -354,3 +354,37 @@ test("camadas na espessura: chapa fina com ≥ 3 elementos nas arestas de 2 mm (
   const h = await previewMesh(tet.dir);
   near(h.quality!.volume, 10000, 1e-6);
 });
+
+test("partições: perfil em L dividido em 3 blocos dá hexaedros estruturados, com cargas nas sub-faces", async () => {
+  const s = new SketchBuilder();
+  const p = [[0, 0], [100, 0], [100, 20], [20, 20], [20, 60], [0, 60]].map(([x, y]) => s.point(x, y));
+  p.forEach((a, i) => s.line(a, p[(i + 1) % p.length]));
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const face = (axis: 0 | 1 | 2, v: number): TopoRef => {
+    const f = r.ctx.body!.faces.find((x) => { const q = faceProps(x.face); return q.normal && Math.abs(Math.abs(q.normal[axis]) - 1) < 1e-9 && Math.abs(q.center[axis] - v) < 1e-6; })!;
+    return { kind: "face", name: f.name };
+  };
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(1, 60)] }, { kind: "force", faces: [face(0, 100)], f: [0, -100, 0] }];
+  // sem partições o L não é um bloco: subdivisão
+  const plain = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, element: "hex" }, loads }));
+  assert.equal(plain.c.mesh.hexMethod, "subdivision");
+  const cut = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, element: "hex", partitions: [{ axis: "x", at: 20 }, { axis: "y", at: 20 }], local: [{ faces: [face(2, 10)], size: 4 }] }, loads }));
+  const m = cut.c.mesh;
+  assert.equal(m.hexMethod, "structured");
+  assert.deepEqual(m.volumes, [1, 2, 3]);
+  assert.equal(cut.c.faces.filter((f) => f.name.startsWith("corte ")).length, 2);
+  // a face de topo (z = 10) foi dividida em 3 sub-faces; as das cargas ficam inteiras
+  const g = cut.c.groups;
+  const vals = Object.values(g);
+  assert.equal(g.R1.length, 3, JSON.stringify(g));
+  assert.equal(vals.filter((t) => t.length === 1).length, 2, JSON.stringify(g));
+  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")));
+  // plano fora do sólido
+  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "x", at: 200 }] }, loads })), /não atravessa o sólido/);
+  if (!T.gmsh) return;
+  const h = await previewMesh(cut.dir);
+  near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
+});

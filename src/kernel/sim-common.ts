@@ -43,7 +43,7 @@ export function tagsOf(ctx: Ctx, faces: CaseFace[], solid: TopoDS_Shape, refs: T
 export const n3 = (e: [unknown, unknown, unknown], scope: Ctx["scope"], label: string): V3 => e.map((x, k) => evalParam(x as never, scope, `${label} ${"XYZ"[k]}`)) as V3;
 
 /** Topologia do BREP exportado para o plano da malha: sólidos, faces e arestas pela ordem do Gmsh. */
-export interface MeshGeo { solids: TopoDS_Shape[]; faces: TopoDS_Shape[]; edges: TopoDS_Shape[]; edgeTags: (refs: TopoRef[], what: string) => number[]; names?: string[] }
+export interface MeshGeo { solids: TopoDS_Shape[]; faces: TopoDS_Shape[]; edges: TopoDS_Shape[]; edgeTags: (refs: TopoRef[], what: string) => number[]; names?: string[]; note?: string }
 
 export function readme(c: SimCase): string {
   const steps = c.physics === "fem"

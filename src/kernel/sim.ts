@@ -9,8 +9,8 @@ import { type SimCase } from "../sim/case.ts";
 import { femGeo, su2Geo } from "../sim/gmsh.ts";
 import { openfoamCase } from "../sim/openfoam.ts";
 import { su2Config } from "../sim/su2.ts";
-import { type SimFiles, bodyOf, readme, shellOf } from "./sim-common.ts";
-import { femCase } from "./sim-fem.ts";
+import { type SimFiles, bodyOf, readme } from "./sim-common.ts";
+import { femCase, femTopo } from "./sim-fem.ts";
 import { cfdCase, stlPatches } from "./sim-cfd.ts";
 
 export type { SimFiles } from "./sim-common.ts";
@@ -21,12 +21,13 @@ export { cfdCase } from "./sim-cfd.ts";
 
 export function studyCase(ctx: Ctx, s: Study): SimFiles {
   const report: StepReport = { warnings: [] };
-  const solid = s.physics === "fem" && s.shell ? shellOf(ctx).shape : bodyOf(ctx);
+  const topo = s.physics === "fem" ? femTopo(ctx, s, report) : undefined;
+  const solid = topo ? topo.shape : bodyOf(ctx);
   const brep = oc().BRepToolsWrapper.Write(solid) as string;
   const files: Record<string, string | Uint8Array> = { "model.brep": brep };
   let c: SimCase;
   if (s.physics === "fem") {
-    c = femCase(ctx, s, report);
+    c = femCase(ctx, s, report, topo);
     files["mesh.geo"] = femGeo(c);
   } else {
     c = cfdCase(ctx, s, report);
