@@ -195,7 +195,7 @@ const radStudy = (mode: "bonded" | "friction") => fem({
   probes: [{ name: "Meio do bloco", quantity: "uz", at: { kind: "point", point: [20, 20, 15] } }],
 });
 
-test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito → /INTER/TYPE7 (μ, Inacti = 6)", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
+test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito → /INTER/TYPE7 (μ, Inacti = 5)", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
   const pr = project([10, 10, 10], [[40, 40, 10], [20, 20, 10]]);
   for (const mode of ["bonded", "friction"] as const) {
     const { r, dir } = await solve(pr, radStudy(mode));
@@ -216,7 +216,7 @@ test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito →
     assert.ok(S.includes(`/GRNOD/NODE/${grnd}`) && S[seg] === `/SURF/SEG/${surf}`);
     if (mode === "friction") {
       assert.equal(+S[k + 9].slice(20, 40), 0.3); // Fric
-      assert.equal(+S[k + 11].slice(30, 40), 6); // Inacti
+      assert.equal(+S[k + 11].slice(30, 40), 5); // Inacti
       assert.equal(S[k + 13].length, 60);
     }
     assert.deepEqual(S.filter((l) => l.length > 100), [], "linhas fora das colunas");

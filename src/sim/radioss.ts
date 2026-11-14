@@ -120,7 +120,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
 
   // contacto entre corpos: superfície mestra por segmentos (triângulo: 4.º nó = 3.º), nós escravos por grupo.
   // Colado → /INTER/TYPE2 (nós escravos presos cinematicamente aos segmentos); com atrito → /INTER/TYPE7
-  // (penalidade nó-segmento, Coulomb μ, separa-se), Inacti = 6 porque as faces são coincidentes à partida.
+  // (penalidade nó-segmento, Coulomb μ, separa-se), Inacti = 5 (folga reduzida à distância inicial) porque as faces são coincidentes.
   let sid = 0, inter = 0;
   for (const t of c.ties ?? []) {
     const segs = [...elementsOf(faceBlocks(m, t.master))];
@@ -141,7 +141,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
         "#              Stfac                Fric              Gapmin              Tstart               Tstop",
         `${F(1)}${F(t.mu ?? 0)}${F(0)}${F(0)}${F(0)}`,
         "#      IBC                        Inacti               VIS_S               VIS_F              Bumult",
-        `${"000".padStart(10)}${"".padStart(20)}${I(6)}${F(0)}${F(0)}${F(0)}`,
+        `${"000".padStart(10)}${"".padStart(20)}${I(5)}${F(0)}${F(0)}${F(0)}`,
         "#    Ifric    Ifiltr               Xfreq     Iform   sens_ID",
         `${I(0)}${I(0)}${F(0)}${I(0)}${I(0)}`);
     } else {
