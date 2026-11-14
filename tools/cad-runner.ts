@@ -51,6 +51,8 @@ export interface RunResult {
   seconds: number;
   /** Pré-visualização da malha: relatório de qualidade. */
   quality?: MeshQuality;
+  /** Ficheiros de resultados nativos do solver (code_aster: MED; CalculiX: FRD), em base64, para o ParaView/Salome. */
+  files?: { name: string; mime: string; base64: string }[];
 }
 
 export interface RunOptions {

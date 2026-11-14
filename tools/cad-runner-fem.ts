@@ -1,6 +1,6 @@
 // Malha (Gmsh) e casos FEM (CalculiX, code_aster, Radioss) do agente local (movido de cad-runner.ts).
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { join } from "node:path";
 import type { CfdCase, FemCase, SimCase } from "../src/sim/case.ts";
@@ -154,6 +154,13 @@ const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh")
 /** Descrição curta dos elementos da malha (resumo). */
 const meshKind = (c: FemCase) => (c.shell ? `cascas ${c.mesh.order === 2 ? "S6" : "S3"} (t = ${c.shell.thickness} mm)` : c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`);
 
+/** Ficheiro de resultados nativo do solver (MED do code_aster, FRD do CalculiX) para descarregar, até 64 MB. */
+export function nativeFile(dir: string, file: string, name: string, mime: string): NonNullable<RunResult["files"]> {
+  const p = join(dir, file);
+  if (!existsSync(p) || statSync(p).size > 64e6) return [];
+  return [{ name, mime, base64: readFileSync(p).toString("base64") }];
+}
+
 /** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
 async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
   const t = tools();
@@ -172,7 +179,7 @@ async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean):
   const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab"), vm2: rd("vm2.tab") }, ac.nodeOrder);
   const elements = [...elementsOf(solidBlocks(msh, c.bodies))].length;
   const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} ${meshKind(c)}`], ...fem.summary];
-  return { ok: true, physics: "fem", solver: "code_aster", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
+  return { ok: true, physics: "fem", solver: "code_aster", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")), files: nativeFile(dir, "job.rmed", "resultados.med", "application/x-hdf5") };
 }
 
 /**
@@ -245,5 +252,5 @@ export async function runFem(c: FemCase, dir: string, log: Log, regenerate: bool
     const sc = /Scaling factor of time increment:\s*([\d.Ee+-]+)/.exec(lg);
     if (/Selective Mass Scaling is active/.test(lg) || (sc && Number(sc[1]) > 1.0001)) warnings.push(`O passo pedido passa o limite de estabilidade: o CalculiX escalou a massa (fator ${sc?.[1] ?? "?"} no passo) — os modos altos ficam alterados; deixe o passo em branco para usar o estável`);
   }
-  return { ok: true, physics: "fem", solver: `CalculiX ${t.calculix.version ?? ""}`.trim(), summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, "log.ccx")) };
+  return { ok: true, physics: "fem", solver: `CalculiX ${t.calculix.version ?? ""}`.trim(), summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, "log.ccx")), files: nativeFile(dir, "job.frd", "resultados.frd", "text/plain") };
 }

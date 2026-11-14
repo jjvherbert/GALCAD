@@ -23,6 +23,7 @@ export function ResultExports({ r, name }: { r: RunResult; name: string }) {
       {th && <button class="small" onClick={() => csv("historias", { header: ["Tempo (s)", ...th.series.map((x) => `${x.label}${x.unit ? ` (${x.unit})` : ""}`)], rows: th.times.map((t, i) => [fmt(t, 8), ...th.series.map((x) => fmt(x.values[i]))]) })}>Histórias no tempo CSV</button>}
       {r.quality && <button class="small" onClick={() => csv("qualidade", { header: ["Métrica", "Unidade", "Mín.", "Média", "Máx.", "Elementos fora do limite"], rows: r.quality!.metrics.map((m) => [m.label, m.unit, fmt(m.min), fmt(m.mean), fmt(m.max), m.fail.join(" / ")]) })}>Qualidade CSV</button>}
       {view && view.layers.length > 0 && <button class="small" title="Superfície com os campos e as deformadas (VTK XML), para o ParaView ou o Salome" onClick={() => download(`${base}-resultados.vtu`, toVtu(view, { all: true }), "application/xml")}>Campos VTU</button>}
+      {r.files?.map((f) => <button class="small" title="Resultados nativos do solver, para abrir no ParaView ou no Salome" onClick={() => download(`${base}-${f.name}`, Uint8Array.from(atob(f.base64), (ch) => ch.charCodeAt(0)), f.mime)}>{f.name.split(".").pop()!.toUpperCase()} nativo</button>)}
       <button class="small" onClick={() => download(`${base}-resultados.json`, JSON.stringify({ solver: r.solver, segundos: r.seconds, resumo: r.summary, metricas: r.metrics, avisos: r.warnings, hipoteses: r.hypotheses, elementos: r.cells }, null, 2), "application/json")}>JSON</button>
     </div>
   );
