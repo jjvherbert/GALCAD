@@ -1974,7 +1974,26 @@ function femResultFrom(c, m, blocks, d) {
 	const atTime = (name, t) => r.blocks.find((b) => b.name === name && sameT(b.value, t));
 	let timeHistory;
 	let steps;
+	const plasticOut = () => {
+		const pe = lastOf("PE");
+		if (!pe) return;
+		const peeq = field(pe, (v) => v[0]);
+		fields.push({
+			name: "Deformação plástica equivalente",
+			unit: "—",
+			values: peeq
+		});
+		summary.push(["Deformação plástica equiv. máx.", `${(100 * max(peeq)).toFixed(3)} %`]);
+		metrics.push({
+			key: "peeq",
+			label: "Deformação plástica equiv. máx.",
+			unit: "",
+			value: max(peeq)
+		});
+		if (max(peeq) > 0) summary.push(["Zona plastificada", "sim — ver o campo da deformação plástica"]);
+	};
 	if (c.analysis === "dynamic") {
+		const plastic = !!c.nonlinear?.plasticity;
 		const frames = allDisp.filter((b) => b.data.size);
 		const times = frames.map((b) => b.value);
 		const umaxT = frames.map((b) => [...b.data.values()].reduce((mx, v) => Math.max(mx, Math.hypot(v[0], v[1], v[2])), 0));
@@ -2006,7 +2025,7 @@ function femResultFrom(c, m, blocks, d) {
 				unit: "MPa",
 				values: vmEnv
 			});
-			safetyField(vmEnv);
+			if (!plastic) safetyField(vmEnv);
 		}
 		const pick = [.../* @__PURE__ */ new Set([...Array.from({ length: Math.min(24, frames.length) }, (_, i) => Math.round(i * (frames.length - 1) / Math.max(1, Math.min(24, frames.length) - 1))), peak])].sort((a, b) => a - b);
 		for (const i of pick) displacements.push({
@@ -2038,7 +2057,8 @@ function femResultFrom(c, m, blocks, d) {
 			unit: "s",
 			value: times[peak] ?? NaN
 		});
-		if (hasS) stressSummary(frames.map((b) => atTime("STRESS", b.value) ?? atTime("VMIS", b.value)).filter((b) => !!b), "Tensão de von Mises máx. no tempo", true);
+		if (hasS) stressSummary(frames.map((b) => atTime("STRESS", b.value) ?? atTime("VMIS", b.value)).filter((b) => !!b), "Tensão de von Mises máx. no tempo", !plastic);
+		plasticOut();
 		summary.push(["Instantes guardados", `${frames.length} (até ${((times.at(-1) ?? 0) * 1e3).toPrecision(4)} ms)`]);
 	} else if (c.analysis === "thermal") {
 		const T = field(r.blocks.find((b) => b.name === "NDTEMP"), (v) => v[0]);
@@ -2112,23 +2132,7 @@ function femResultFrom(c, m, blocks, d) {
 					});
 				}
 			}
-			const pe = lastOf("PE");
-			if (pe) {
-				const peeq = field(pe, (v) => v[0]);
-				fields.push({
-					name: "Deformação plástica equivalente",
-					unit: "—",
-					values: peeq
-				});
-				summary.push(["Deformação plástica equiv. máx.", `${(100 * max(peeq)).toFixed(3)} %`]);
-				metrics.push({
-					key: "peeq",
-					label: "Deformação plástica equiv. máx.",
-					unit: "",
-					value: max(peeq)
-				});
-				if (max(peeq) > 0) summary.push(["Zona plastificada", "sim — ver o campo da deformação plástica"]);
-			}
+			plasticOut();
 			summary.unshift(["Deslocamento máx.", `${max(U).toFixed(4)} mm`]);
 			metrics.unshift({
 				key: "umax",
@@ -3015,7 +3019,7 @@ function calculixDeck(c, m) {
 		else if (dyn) {
 			const f = `, FREQUENCY=${dyn.frequency}`;
 			const o2 = plies && shellLayerCount(c) > 1 ? ", OUTPUT=2D" : "";
-			L.push(`*NODE FILE${f}${o2}`, "U", `*EL FILE${f}${o2}`, "S");
+			L.push(`*NODE FILE${f}${o2}`, "U", `*EL FILE${f}${o2}`, c.nonlinear?.plasticity ? "S, PEEQ" : "S");
 			dofSets.forEach((sets, k) => {
 				if (sets.length) L.push(`*NODE PRINT, NSET=N_R${"XYZ"[k]}, TOTALS=ONLY${f}${glob}`, "RF");
 			});
@@ -3926,9 +3930,27 @@ function radiossDeck(c, m) {
 		group: "SOLID",
 		mat: c.material
 	}];
+	const plastic = !!c.nonlinear?.plasticity;
+	const curves = [];
 	bodies.forEach((b, k) => {
-		S.push(`/MAT/ELAST/${k + 1}`, title(b.mat.name), "#        Init. dens.          Ref. dens.", `${F(b.mat.density * 1e-6)}${F(0)}`, "#                  E                  nu", `${F(b.mat.E / 1e3)}${F(b.mat.nu)}`);
+		const m = b.mat, rho = `${F(m.density * 1e-6)}${F(0)}`;
+		if (!plastic) {
+			S.push(`/MAT/ELAST/${k + 1}`, title(m.name), "#        Init. dens.          Ref. dens.", rho, "#                  E                  nu", `${F(m.E / 1e3)}${F(m.nu)}`);
+			return;
+		}
+		if (!(m.yield > 0)) throw new Error(`Plasticidade: o material ${m.name} não tem tensão de cedência`);
+		if (m.plasticCurve?.length) {
+			const fid = 100 + k, pts = m.plasticCurve.map(([sg, ep]) => [ep, sg / 1e3]);
+			const last = pts.at(-1);
+			pts.push([Math.max(10, last[0] * 10 + 1), last[1]]);
+			S.push(`/MAT/PLAS_TAB/${k + 1}`, title(m.name), "#        Init. dens.          Ref. dens.", rho, "#                  E                  Nu           Eps_p_max               Eps_t               Eps_m", `${F(m.E / 1e3)}${F(m.nu)}${F(0)}${F(0)}${F(0)}`, "#  N_funct  F_smooth              C_hard               F_cut               Eps_f        VP", `${I(1)}${I(0)}${F(0)}${F(0)}${F(0)}${I(0)}`, "#  fct_IDp              Fscale   Fct_IDE                Einf                  CE", `${I(0)}${F(0)}${I(0)}${F(0)}${F(0)}`, "#  fct_ID1", I(fid), "#            Fscale1", F(1), "#           EPS_dot1", F(0));
+			curves.push(`/FUNCT/${fid}`, `curva plastica ${title(m.name)}`.slice(0, 80), "#                  X                   Y", ...pts.map(([x, y]) => `${F(x)}${F(y)}`));
+			return;
+		}
+		const Et = m.tangent ?? 0, Hp = m.E * Et / (m.E - Et);
+		S.push(`/MAT/PLAS_JOHNS/${k + 1}`, title(m.name), "#        Init. dens.          Ref. dens.", rho, "#                  E                  nu     Iflag", `${F(m.E / 1e3)}${F(m.nu)}${I(0)}`, "#                  a                   b                   n           EPS_p_max            SIG_max0", `${F(m.yield / 1e3)}${F(Hp / 1e3)}${F(1)}${F(0)}${F(0)}`, "#                  c           EPS_DOT_0       ICC   Fsmooth               F_cut               Chard", `${F(0)}${F(0)}${I(0)}${I(0)}${F(0)}${F(0)}`, "#                  m              T_melt              rhoC_p                 T_r", `${F(0)}${F(0)}${F(0)}${F(0)}`);
 	});
+	S.push(...curves);
 	const prop = (id, label, isolid) => S.push(`/PROP/SOLID/${id}`, label, "#   Isolid    Ismstr               Icpre               Inpts    Itetra    Iframe                  dn", `${I(isolid)}${I(0)}${" ".repeat(10)}${I(isolid === 24 ? 1 : 0)}${" ".repeat(10)}${I(0)}${I(0)}${I(0)}${F(0)}`, "#                q_a                 q_b                   h            LAMBDA_V                MU_V", `${F(0)}${F(0)}${F(0)}${F(0)}${F(0)}`, "#             dt_min   istrain      IHKT", `${F(0)}${I(0)}${I(0)}`);
 	prop(1, "hexaedros (Isolid 24)", 24);
 	prop(2, "tetraedros", 0);
@@ -4094,6 +4116,7 @@ function radiossDeck(c, m) {
 		`${F(0)}${F(T / D.frames)}`,
 		"/ANIM/VECT/DISP",
 		"/ANIM/ELEM/VONM",
+		...c.nonlinear?.plasticity ? ["/ANIM/ELEM/EPSP"] : [],
 		"/PRINT/-1000"
 	];
 	if (D.dt) warnings.push("OpenRadioss: o passo é o estável calculado pelo Engine (o passo indicado é ignorado)");
@@ -4214,6 +4237,26 @@ function radiossBlocks(frames) {
 				name: "VMIS",
 				value: t,
 				components: ["VM"],
+				data: new Map([...sum].map(([id, [a, n]]) => [id, [a / n]]))
+			});
+		}
+		const pKey = Object.keys(fr.cellScalars).find((k) => /plastic|epsp/i.test(k));
+		if (pKey) {
+			const s = fr.cellScalars[pKey], sum = /* @__PURE__ */ new Map();
+			fr.cells.forEach((c, e) => {
+				if (fr.cellTypes[e] !== 10 && fr.cellTypes[e] !== 12) return;
+				for (const p of c) {
+					const id = fr.nodeIds[p];
+					const a = sum.get(id) ?? [0, 0];
+					a[0] += s[e];
+					a[1]++;
+					sum.set(id, a);
+				}
+			});
+			out.push({
+				name: "PE",
+				value: t,
+				components: ["PE"],
 				data: new Map([...sum].map(([id, [a, n]]) => [id, [a / n]]))
 			});
 		}
@@ -4516,8 +4559,9 @@ function asterCase(c, m) {
 	const { mail, nodeOrder, areas, edgeNodes, springs, masses, warnings } = asterMesh(c, m);
 	const mat = c.material;
 	const nl = c.analysis === "static" ? c.nonlinear : void 0;
-	if (springs.length && (nl || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as molas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
-	if (masses.length && (nl || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as massas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
+	const plas = !!c.nonlinear?.plasticity && (c.analysis === "static" || c.analysis === "dynamic");
+	if (springs.length && (nl || plas || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as molas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
+	if (masses.length && (nl || plas || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as massas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
 	const discrete = [...springs.map((s) => s.group), ...masses.map((x) => x.group)];
 	const C = [];
 	C.push(`# ${c.title.replace(/[^\x20-\x7e]/g, "_")} -- gerado pelo CAD prototipo (unidades: mm, N, MPa, t, s)`);
@@ -4542,10 +4586,10 @@ function asterCase(c, m) {
 	const coque = shell ? `COQUE=_F(GROUP_MA='SOLID', EPAIS=${num(shell.thickness)}, VECTEUR=(1., 0., 0.))` : "";
 	if (dis.length || coque) C.push(`CARA = AFFE_CARA_ELEM(MODELE=MO, ${[dis.length && `DISCRET=(${dis.join(", ")})`, coque].filter(Boolean).join(", ")})`);
 	const cara = discrete.length || shell ? " CARA_ELEM=CARA," : "";
-	const trac = !!nl?.plasticity && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
+	const trac = plas && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
 	const material = (name, m2) => {
-		if (nl?.plasticity && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
-		let plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield)})` : "";
+		if (plas && !(m2.yield > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
+		let plast = plas ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield)})` : "";
 		if (trac) {
 			const Et = m2.tangent ?? 0, s2 = m2.yield + m2.E * Et / (m2.E - Et);
 			const pts = m2.plasticCurve?.length ? m2.plasticCurve : [[m2.yield, 0], [s2, 1]];
@@ -4663,7 +4707,7 @@ function asterCase(c, m) {
 		].filter(Boolean).join(", ");
 		const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
 		if (D.v0) C.push(`V0 = CREA_CHAMP(TYPE_CHAM='NOEU_DEPL_R', OPERATION='AFFE', MODELE=MO, AFFE=_F(TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), VALE=(${D.v0.map((v) => num(v * 1e3)).join(", ")})))`);
-		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""}${excit ? ` EXCIT=(${excit},),` : ""}${D.v0 ? " ETAT_INIT=_F(VITE=V0)," : ""} COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
+		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""}${excit ? ` EXCIT=(${excit},),` : ""}${D.v0 ? " ETAT_INIT=_F(VITE=V0)," : ""} COMPORTEMENT=_F(RELATION='${plas ? trac ? "VMIS_ISOT_TRAC" : "VMIS_ISOT_LINE" : "ELAS"}', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
 	} else if (c.analysis === "modal") C.push(`ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM,${cara}${hasBc ? " CHARGE=BC," : ""} NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))`, `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes + 3}), VERI_MODE=_F(STURM='NON'))`, `_FQ = sorted(RES.getAccessParameters()['FREQ'])[:${c.modes}]`, "_BAND = (max(0., _FQ[0] * 0.995), _FQ[-1] * 1.005)", "_NB = INFO_MODE(MATR_RIGI=K, MATR_MASS=M, TYPE_MODE='DYNAMIQUE', FREQ=_BAND)['NB_MODE', 1]", "_NC = len([f for f in RES.getAccessParameters()['FREQ'] if _BAND[0] <= f <= _BAND[1]])", "if _NB > _NC: raise ValueError('Sturm: ha %d modos entre %g e %g Hz e so foram calculados %d' % (_NB, _BAND[0], _BAND[1], _NC))", "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
 	else if (!nl) {
 		const excit = [hasBc && "_F(CHARGE=BC)", hasCh && "_F(CHARGE=CH)"].filter(Boolean).join(", ");
@@ -4677,15 +4721,15 @@ function asterCase(c, m) {
 	if (shell && c.analysis === "static") {
 		C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_ELNO',), FORCE=('REAC_NODA',))`);
 		for (const [r, niv] of [["RSUP", "SUP"], ["RINF", "INF"]]) C.push(`${r} = POST_CHAMP(RESULTAT=RES,${solidOnly} EXTR_COQUE=_F(NOM_CHAM=('SIGM_ELNO',), NUME_COUCHE=1, NIVE_COUCHE='${niv}'))`, `${r} = CALC_CHAMP(reuse=${r}, RESULTAT=${r}, CRITERES=('SIEQ_ELNO', 'SIEQ_NOEU',))`);
-	} else if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
-	else if (c.dynamic) C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',))`);
+	} else if (c.analysis === "static") C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${plas ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
+	else if (c.dynamic) C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',)${plas ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
 	const orders = c.analysis === "modal" ? `NUME_ORDRE=(${Array.from({ length: c.modes }, (_, i) => i + 1).join(", ")},)` : "TOUT_ORDRE='OUI'";
 	C.push(`TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), ${orders}))`, "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
 	if (c.analysis === "static" || c.dynamic) {
 		if (shell) for (const [r, u] of [["RSUP", 39], ["RINF", 43]]) C.push(`T${r} = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=${r}, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))`, `IMPR_TABLE(TABLE=T${r}, UNITE=${u}, FORMAT='TABLEAU')`);
 		else C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
 		if (supports.length && !c.dynamic) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
-		if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
+		if (plas) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
 	}
 	C.push(`IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES${shell ? ", NOM_CHAM='DEPL'" : ""}))`, "FIN()");
 	return {

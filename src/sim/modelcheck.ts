@@ -33,7 +33,7 @@ export const CAPABILITIES: Capability[] = [
   { group: "Análise", feature: "Dinâmica explícita", calculix: "sim", code_aster: "parcial", openradioss: "sim", note: "code_aster explícito é lento e só com integração completa; OpenRadioss é o indicado para impacto" },
   { group: "Não linear", feature: "Grandes deslocamentos", calculix: "sim", code_aster: "sim", openradioss: "nao" },
   { group: "Análise", feature: "Passos de carga múltiplos", calculix: "sim", code_aster: "nao", openradioss: "nao", note: "só na estática; code_aster ainda sem adaptador de passos" },
-  { group: "Não linear", feature: "Plasticidade (von Mises bilinear)", calculix: "sim", code_aster: "sim", openradioss: "nao" },
+  { group: "Não linear", feature: "Plasticidade (von Mises bilinear)", calculix: "sim", code_aster: "sim", openradioss: "sim", note: "também curva multilinear; na estática não linear e na dinâmica (OpenRadioss: LAW2/LAW36)" },
   { group: "Elementos", feature: "Tetraedros lineares (4 nós)", calculix: "sim", code_aster: "sim", openradioss: "sim" },
   { group: "Elementos", feature: "Tetraedros quadráticos (10 nós)", calculix: "sim", code_aster: "sim", openradioss: "nao", note: "o explícito do OpenRadioss usa elementos lineares" },
   { group: "Elementos", feature: "Hexaedros lineares (8 nós)", calculix: "sim", code_aster: "sim", openradioss: "sim", note: "CalculiX: C3D8I por omissão; code_aster: 3D_SI; OpenRadioss: Isolid 24" },
@@ -41,7 +41,7 @@ export const CAPABILITIES: Capability[] = [
   { group: "Elementos", feature: "Cascas (placas finas)", calculix: "sim", code_aster: "parcial", openradioss: "nao", note: "code_aster: um corpo, estática linear e modal, sem laminado" },
   { group: "Condições", feature: "Encastramento", calculix: "sim", code_aster: "sim", openradioss: "sim" },
   { group: "Condições", feature: "Simetria (plano)", calculix: "sim", code_aster: "sim", openradioss: "sim", note: "faces planas alinhadas com X, Y ou Z" },
-  { group: "Condições", feature: "Deslocamento imposto", calculix: "sim", code_aster: "sim", openradioss: "parcial", note: "OpenRadioss: só deslocamento nulo (use forças)" },
+  { group: "Condições", feature: "Deslocamento imposto", calculix: "sim", code_aster: "sim", openradioss: "sim", note: "OpenRadioss: /IMPDISP e velocidade imposta /IMPVEL" },
   { group: "Condições", feature: "Força nas faces", calculix: "sim", code_aster: "sim", openradioss: "sim" },
   { group: "Condições", feature: "Força pontual (nó mais próximo)", calculix: "sim", code_aster: "sim", openradioss: "nao" },
   { group: "Condições", feature: "Pressão", calculix: "sim", code_aster: "sim", openradioss: "sim" },
@@ -62,7 +62,7 @@ export function usedFeatures(s: FemStudy): string[] {
   const dyn = s.dynamic;
   used.push({ static: "Estática linear", modal: "Modal (frequências próprias)", buckling: "Encurvadura linear", thermal: "Térmica em regime permanente", dynamic: dyn?.scheme === "explicit" ? "Dinâmica explícita" : "Dinâmica implícita" }[s.analysis]);
   if (s.analysis === "static" && s.nonlinear?.geometry) used.push("Grandes deslocamentos");
-  if (s.analysis === "static" && s.nonlinear?.plasticity) used.push("Plasticidade (von Mises bilinear)");
+  if ((s.analysis === "static" || s.analysis === "dynamic") && s.nonlinear?.plasticity) used.push("Plasticidade (von Mises bilinear)");
   if (s.analysis === "static" && (s.steps?.length ?? 0) > 1) used.push("Passos de carga múltiplos");
   const hex = s.mesh.element === "hex";
   used.push(hex ? (s.mesh.order === 1 ? "Hexaedros lineares (8 nós)" : "Hexaedros quadráticos (20 nós)") : (s.mesh.order === 1 ? "Tetraedros lineares (4 nós)" : "Tetraedros quadráticos (10 nós)"));

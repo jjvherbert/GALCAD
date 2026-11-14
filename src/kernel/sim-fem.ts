@@ -277,8 +277,10 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   const thermal = s.analysis === "thermal";
   if (thermal && !s.loads.some((l) => l.kind === "temperature" || l.kind === "convection")) report.warnings.push("Térmica sem temperatura nem convecção imposta: o problema não tem solução única");
   if (!thermal && s.analysis !== "modal" && !s.loads.some((l) => l.kind === "fixed" || l.kind === "displacement" || l.kind === "symmetry" || l.kind === "spring")) report.warnings.push("Sem apoios: movimento de corpo rígido");
+  // na dinâmica só a plasticidade (a não linearidade geométrica fica para a estática)
   const nl = s.analysis === "static" && (s.nonlinear?.geometry || s.nonlinear?.plasticity)
-    ? { geometry: !!s.nonlinear.geometry, plasticity: !!s.nonlinear.plasticity, increments: Math.max(1, Math.round(s.nonlinear.increments ?? 10)) } : undefined;
+    ? { geometry: !!s.nonlinear.geometry, plasticity: !!s.nonlinear.plasticity, increments: Math.max(1, Math.round(s.nonlinear.increments ?? 10)) }
+    : s.analysis === "dynamic" && s.nonlinear?.plasticity ? { geometry: false, plasticity: true, increments: 1 } : undefined;
   const m = s.material;
   if (nl?.plasticity && !(m.yield! > 0)) throw new Error("Plasticidade: indique a tensão de cedência do material");
   const curve = nl?.plasticity ? m.plasticCurve : undefined;
@@ -303,11 +305,12 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     if (v0?.some((x) => !Number.isFinite(x))) throw new Error("Dinâmica: velocidade inicial inválida");
     if (v0?.some((x) => x !== 0)) dynamic.v0 = v0;
     if (s.solver === "openradioss" && d.scheme !== "explicit") throw new Error("OpenRadioss: só integração explícita");
+    if ((s.solver ?? "calculix") === "calculix" && d.scheme !== "explicit" && nl?.plasticity && s.mesh.order === 2) report.warnings.push("CalculiX: plasticidade na dinâmica implícita com elementos quadráticos tende a divergir — use ordem 1 (hexaedros com integração completa)");
     if (s.solver === "code_aster" && d.scheme === "explicit") report.warnings.push("code_aster explícito (DIFF_CENT): lento e só com integração completa — para impacto use o CalculiX (ou o OpenRadioss)");
   }
   const LOAD_NAME = { step: "degrau", ramp: "rampa", halfsine: "meio seno", sine: "seno" } as const;
   const analysisHyp = dynamic
-    ? `${FEM_HYP.dynamic}; ${dynamic.scheme === "implicit" ? "integração implícita (CalculiX: α-HHT, α = −0,05; code_aster: Newmark, aceleração média)" : "integração explícita (diferenças centrais, massa diagonal, passo abaixo do limite de estabilidade)"}; ${dynamic.duration} s${dynamic.dt ? `, passo ${dynamic.dt} s` : ", passo estável da malha"}; carga em ${LOAD_NAME[s.dynamic?.load ?? "step"]}; ${dynamic.alpha || dynamic.beta ? `amortecimento de Rayleigh α = ${dynamic.alpha} 1/s, β = ${dynamic.beta} s` : "sem amortecimento físico"}`
+    ? `${nl?.plasticity ? FEM_HYP.dynamic.replace("Dinâmica transitória linear", "Dinâmica transitória").replace("material elástico linear", `material elastoplástico (von Mises, encruamento isotrópico ${curve?.length ? "multilinear" : "bilinear"})`) : FEM_HYP.dynamic}; ${dynamic.scheme === "implicit" ? "integração implícita (CalculiX: α-HHT, α = −0,05; code_aster: Newmark, aceleração média)" : "integração explícita (diferenças centrais, massa diagonal, passo abaixo do limite de estabilidade)"}; ${dynamic.duration} s${dynamic.dt ? `, passo ${dynamic.dt} s` : ", passo estável da malha"}; carga em ${LOAD_NAME[s.dynamic?.load ?? "step"]}; ${dynamic.alpha || dynamic.beta ? `amortecimento de Rayleigh α = ${dynamic.alpha} 1/s, β = ${dynamic.beta} s` : "sem amortecimento físico"}`
     : !nl ? FEM_HYP[s.analysis]
     : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && `plasticidade de von Mises com encruamento isotrópico ${curve?.length ? "multilinear" : "bilinear"}`].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {

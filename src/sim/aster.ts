@@ -230,8 +230,10 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   const { mail, nodeOrder, areas, edgeNodes, springs, masses, warnings } = asterMesh(c, m);
   const mat = c.material;
   const nl = c.analysis === "static" ? c.nonlinear : undefined;
-  if (springs.length && (nl || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as molas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
-  if (masses.length && (nl || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as massas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
+  // plasticidade: na estática não linear e na dinâmica (DYNA_NON_LINE)
+  const plas = !!c.nonlinear?.plasticity && (c.analysis === "static" || c.analysis === "dynamic");
+  if (springs.length && (nl || plas || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as molas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
+  if (masses.length && (nl || plas || c.dynamic?.scheme === "explicit")) throw new Error("code_aster: as massas só estão na estática linear, modal e dinâmica implícita (use o CalculiX)");
   const discrete = [...springs.map((s) => s.group), ...masses.map((x) => x.group)];
   const C: string[] = [];
   C.push(`# ${c.title.replace(/[^\x20-\x7e]/g, "_")} -- gerado pelo CAD prototipo (unidades: mm, N, MPa, t, s)`);
@@ -265,10 +267,10 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   const cara = discrete.length || shell ? " CARA_ELEM=CARA," : "";
   // plasticidade: com alguma curva multilinear, todos os materiais passam à curva de tração
   // (VMIS_ISOT_TRAC, uma só relação para o modelo); senão, encruamento linear (VMIS_ISOT_LINE)
-  const trac = !!nl?.plasticity && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
+  const trac = plas && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
   const material = (name: string, m2: FemCase["material"]) => {
-    if (nl?.plasticity && !(m2.yield! > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
-    let plast = nl?.plasticity ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield!)})` : "";
+    if (plas && !(m2.yield! > 0)) throw new Error(`Plasticidade: o material ${m2.name} não tem tensão de cedência`);
+    let plast = plas ? `, ECRO_LINE=_F(D_SIGM_EPSI=${num(m2.tangent ?? 0)}, SY=${num(m2.yield!)})` : "";
     if (trac) {
       // curva σ–ε total (ε = σ/E + εp), o 1.º ponto no limite elástico; a bilinear vira 2 pontos
       // prolongados com a mesma inclinação Et, a multilinear fica constante depois do último
@@ -371,7 +373,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
     // velocidade inicial de todos os nós (m/s → mm/s) como estado inicial
     if (D.v0) C.push(`V0 = CREA_CHAMP(TYPE_CHAM='NOEU_DEPL_R', OPERATION='AFFE', MODELE=MO, AFFE=_F(TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), VALE=(${D.v0.map((v) => num(v * 1000)).join(", ")})))`);
-    C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""}${excit ? ` EXCIT=(${excit},),` : ""}${D.v0 ? " ETAT_INIT=_F(VITE=V0)," : ""} COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
+    C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""}${excit ? ` EXCIT=(${excit},),` : ""}${D.v0 ? " ETAT_INIT=_F(VITE=V0)," : ""} COMPORTEMENT=_F(RELATION='${plas ? (trac ? "VMIS_ISOT_TRAC" : "VMIS_ISOT_LINE") : "ELAS"}', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
   } else if (c.analysis === "modal") {
     // mais 3 modos do que os pedidos e a verificação de Sturm feita à parte só até ao último pedido:
     // a do CALC_MODES conta até ao último calculado e falha quando esse é metade de um par duplo
@@ -409,15 +411,15 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_ELNO',), FORCE=('REAC_NODA',))`);
     for (const [r, niv] of [["RSUP", "SUP"], ["RINF", "INF"]]) C.push(`${r} = POST_CHAMP(RESULTAT=RES,${solidOnly} EXTR_COQUE=_F(NOM_CHAM=('SIGM_ELNO',), NUME_COUCHE=1, NIVE_COUCHE='${niv}'))`, `${r} = CALC_CHAMP(reuse=${r}, RESULTAT=${r}, CRITERES=('SIEQ_ELNO', 'SIEQ_NOEU',))`);
   } else if (c.analysis === "static") {
-    C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
-  } else if (c.dynamic) C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',))`);
+    C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${plas ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
+  } else if (c.dynamic) C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',)${plas ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
   const orders = c.analysis === "modal" ? `NUME_ORDRE=(${Array.from({ length: c.modes }, (_, i) => i + 1).join(", ")},)` : "TOUT_ORDRE='OUI'";
   C.push(`TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), ${orders}))`, "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
   if (c.analysis === "static" || c.dynamic) {
     if (shell) for (const [r, u] of [["RSUP", 39], ["RINF", 43]]) C.push(`T${r} = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=${r}, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))`, `IMPR_TABLE(TABLE=T${r}, UNITE=${u}, FORMAT='TABLEAU')`);
     else C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
     if (supports.length && !c.dynamic) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
-    if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
+    if (plas) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
   }
   // casca: só os deslocamentos no .rmed (os campos com sub-pontos do TRIA7 não se exportam em MED)
   C.push(`IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES${shell ? ", NOM_CHAM='DEPL'" : ""}))`, "FIN()");

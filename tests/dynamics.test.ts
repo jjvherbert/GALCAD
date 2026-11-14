@@ -228,3 +228,40 @@ test("code_aster real: barra livre a v₀ = −1 m/s desce 1 mm em 1 ms (ETAT_IN
   assert.ok(r.ok, JSON.stringify(r.warnings));
   near(probe(r), -1, 0.02);
 });
+
+/** Barra presa em x = 0 e puxada em x = 100 a 1 m/s durante 1 ms: ε ≈ 1 % ≫ εy = 0,11 % (S235). */
+const pulled = (face: (a: 0 | 1 | 2, v: number) => TopoRef, patch: Partial<FemStudy>, dyn: Partial<NonNullable<FemStudy["dynamic"]>> = {}) =>
+  fly(face, {
+    nonlinear: { plasticity: true }, loads: [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "displacement", faces: [face(0, 100)], ux: 1, velocity: true }],
+    probes: [{ name: "Ponta", quantity: "ux", at: { kind: "point", point: [100, 5, 5] } }], ...patch,
+  }, { v0: undefined, ...dyn });
+const peeqOk = (r: Awaited<ReturnType<typeof runCase>>) => {
+  assert.ok(r.ok, JSON.stringify(r.warnings));
+  near(probe(r), 1, 0.02);
+  const pe = r.metrics.find((x) => x.key === "peeq")?.value ?? 0;
+  assert.ok(pe > 0.004 && pe < 0.05, `PEEQ ${pe}`);
+};
+
+test("plasticidade na dinâmica: decks do CalculiX (*PLASTIC, PEEQ) e code_aster (VMIS_ISOT_LINE, VARI_NOEU)", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
+  const { doc, face } = await bar();
+  const { dir, c } = await solve(doc, pulled(face, {}));
+  assert.ok(c.nonlinear?.plasticity && !c.nonlinear.geometry);
+  spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: dir, shell: /\.(cmd|bat)$/i.test(T.gmsh!.path) });
+  const m = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+  const inp = calculixDeck(c, m).inp;
+  assert.match(inp, /\*PLASTIC/);
+  assert.match(inp, /\*EL FILE[^\n]*\r?\nS, PEEQ/);
+  const comm = asterCase(c, m).files["job.comm"];
+  assert.match(comm, /DYNA_NON_LINE\([\s\S]*RELATION='VMIS_ISOT_LINE'/);
+  assert.match(comm, /VARI_INTERNE=\('VARI_NOEU',\)/);
+});
+
+test("CalculiX real: barra puxada a 1 m/s plastifica na dinâmica implícita", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 900000 }, async () => {
+  const { doc, face } = await bar();
+  peeqOk(await (await solve(doc, pulled(face, { mesh: { size: 5, order: 1, curvature: 0, element: "hex", integration: "full" } }))).run());
+});
+
+test("code_aster real: barra puxada a 1 m/s plastifica (DYNA_NON_LINE, VMIS_ISOT_LINE)", { skip: !hasAster && "Gmsh/code_aster não instalados", timeout: 1800000 }, async () => {
+  const { doc, face } = await bar();
+  peeqOk(await (await solve(doc, pulled(face, { solver: "code_aster", mesh: { size: 5, order: 1, curvature: 0, element: "hex", integration: "full" } }))).run());
+});
