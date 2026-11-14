@@ -114,7 +114,7 @@ export function SimLegend() {
   const fmt = (x: number) => (Math.abs(x) >= 1000 || (Math.abs(x) < 0.01 && x !== 0) ? x.toExponential(2) : x.toFixed(3));
   return (
     <>
-      <div class="legend sequential" />
+      <div class={f.reverse ? "legend sequential reverse" : "legend sequential"} />
       <div class="legend-labels"><span>{fmt(range[0])}</span><span>{f.unit}</span><span>{fmt(range[1])}</span></div>
     </>
   );

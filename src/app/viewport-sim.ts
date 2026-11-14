@@ -57,7 +57,8 @@ export function buildSimLayers(group: THREE.Group, r: ResultView, view: SimView,
     if (vals && range) {
       const [lo, hi] = range;
       // campo constante (ex.: malha toda perfeita): cor do meio da escala, para as arestas se verem
-      vals.forEach((x, i) => { sequentialColor(hi > lo ? (x - lo) / (hi - lo) : 0.5, c); col.set([c.r, c.g, c.b], i * 3); });
+      const rev = r.fields[view.field]?.reverse;
+      vals.forEach((x, i) => { const t = hi > lo ? (x - lo) / (hi - lo) : 0.5; sequentialColor(rev ? 1 - t : t, c); col.set([c.r, c.g, c.b], i * 3); });
     } else col.fill(0.75);
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));

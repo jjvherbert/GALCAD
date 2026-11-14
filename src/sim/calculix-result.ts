@@ -109,7 +109,7 @@ export interface FemResult {
   positions: number[];
   triangles: number[];
   /** Campos nodais na superfície. */
-  fields: { name: string; unit: string; values: number[] }[];
+  fields: { name: string; unit: string; values: number[]; reverse?: boolean }[];
   /** Deslocamento por nó da superfície (mm), por modo nos modais. */
   displacements: { label: string; values: number[] }[];
   frequencies: number[];
@@ -334,6 +334,9 @@ export function femResult(c: FemCase, m: Msh, frd: string, dat: string, supportL
  * Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
  * valores do solver (frequências, fatores, reações): comum ao CalculiX e ao code_aster.
  */
+/** Teto do campo do fator de segurança (acima disto a peça está folgada; sem teto, nós quase sem tensão esmagam a escala). */
+export const FS_FIELD_CAP = 10;
+
 export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnType<typeof parseDat>): FemResult {
   const r = { blocks };
   // superfície exterior: faces dos elementos (cantos) usadas uma só vez, em triângulos com a normal para fora
@@ -353,8 +356,20 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
   const vmOf = (v: number[]) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
   // tensão de von Mises máxima e fator de segurança à cedência, por corpo com o material de cada corpo e
   // sobre todos os nós do corpo (não só os da superfície: o máximo pode ser interior, como no contacto)
+  const parts = c.shell ? [{ name: "", material: c.material, blocks: shellBlocks(m) }] : c.bodies?.length ? c.bodies.map((b) => ({ name: b.name, material: b.material, blocks: solidBlocks(m, [b]) })) : [{ name: "", material: c.material, blocks: solidBlocks(m) }];
+  // campo do fator de segurança à cedência nos nós da superfície (cedência do corpo do nó / von Mises),
+  // limitado a FS_FIELD_CAP para a escala de cores mostrar as zonas críticas; sem cedência em nenhum corpo, não há campo
+  const safetyField = (vm: number[]) => {
+    const yieldAt = new Map<number, number>();
+    for (const p of parts) {
+      if (!p.material.yield) continue;
+      for (const e of elementsOf(p.blocks)) for (const n of e.nodes) yieldAt.set(n, Math.min(yieldAt.get(n) ?? Infinity, p.material.yield));
+    }
+    if (!yieldAt.size) return;
+    const values = order.map((t, i) => { const y = yieldAt.get(t); return y === undefined || vm[i] <= 0 ? FS_FIELD_CAP : Math.min(FS_FIELD_CAP, y / vm[i]); });
+    fields.push({ name: "Fator de segurança (cedência)", unit: "", values, reverse: true });
+  };
   const stressSummary = (sb: FrdBlock[], label: string, withSafety: boolean) => {
-    const parts = c.shell ? [{ name: "", material: c.material, blocks: shellBlocks(m) }] : c.bodies?.length ? c.bodies.map((b) => ({ name: b.name, material: b.material, blocks: solidBlocks(m, [b]) })) : [{ name: "", material: c.material, blocks: solidBlocks(m) }];
     const per = parts.map((p) => {
       const nodes = new Set<number>();
       for (const e of elementsOf(p.blocks)) for (const n of e.nodes) nodes.add(n);
@@ -397,7 +412,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       if (sB) { hasS = true; order.forEach((t, i) => { const v = sB.data.get(t); if (v) vmEnv[i] = Math.max(vmEnv[i], sB.name === "VMIS" ? v[0] : vmOf(v)); }); }
     }
     fields.push({ name: "Deslocamento máx. no tempo", unit: "mm", values: env });
-    if (hasS) fields.push({ name: "Tensão de von Mises máx. no tempo", unit: "MPa", values: vmEnv });
+    if (hasS) { fields.push({ name: "Tensão de von Mises máx. no tempo", unit: "MPa", values: vmEnv }); safetyField(vmEnv); }
     // deformadas: até 24 instantes espaçados, mais o do pico
     const pick = [...new Set([...Array.from({ length: Math.min(24, frames.length) }, (_, i) => Math.round((i * (frames.length - 1)) / Math.max(1, Math.min(24, frames.length) - 1))), peak])].sort((a, b) => a - b);
     for (const i of pick) displacements.push({ label: `t = ${(times[i] * 1e3).toPrecision(4)} ms${i === peak ? " (pico)" : ""}`, values: order.flatMap((t) => frames[i].data.get(t)?.slice(0, 3) ?? [0, 0, 0]) });
@@ -427,6 +442,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       if (s || sv) {
         const vm = sv ? field(sv, (v) => v[0]) : field(s, (v) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
         fields.push({ name: "Tensão de von Mises", unit: "MPa", values: vm });
+        if (!c.nonlinear?.plasticity) safetyField(vm);
         stressSummary([(sv ?? s)!], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
       }
       const fb = lastOf("FI");
