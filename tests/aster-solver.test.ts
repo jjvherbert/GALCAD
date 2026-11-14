@@ -173,3 +173,39 @@ test("code_aster: montagem — lâminas coladas (LIAISON_MAIL) e barras aço + a
   ] }));
   near(tipMean(se.fem!, 0), (10000 * 50) / (steel.E * A) + (10000 * 50) / (alu.E * A), 0.01);
 });
+
+// placa 100×20 (plano XZ, normal Y) em consola: aresta x = 0 encastrada, pressão na face
+async function plate(): Promise<{ doc: CadDocument; face: TopoRef; edge: TopoRef }> {
+  const s = new SketchBuilder();
+  const a = s.point(0, 0, { fixed: true }), b = s.point(100, 0, { fixed: true });
+  s.line(a, b);
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "surfaceExtrude", sketch: "f1", end: { type: "blind", depth: 20 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const sh = r.ctx.sheets.get("f2")!;
+  const e = namedEdges(sh).find((x) => { const p = edgeProps(x.edge); return Math.abs(p.mid[0]) < 1e-6 && Math.abs(p.end[2] - p.start[2]) > 1; })!;
+  return { doc, face: { kind: "face", name: sh.faces[0].name }, edge: { kind: "edge", name: e.name } };
+}
+
+for (const order of [1, 2] as const) {
+  test(`code_aster: casca ${order === 1 ? "DKT" : "COQUE_3D"} — placa em consola igual ao CalculiX`, { skip: !(has && T.calculix) && "code_aster/CalculiX não instalados", timeout: 600000 }, async () => {
+    const { doc, face, edge } = await plate();
+    const p = 0.001, t = 2, E = 210000, w = p * 20, I = (20 * t ** 3) / 12;
+    const delta = (w * 100 ** 4) / (8 * E * I);
+    // referência: o CalculiX de 2.ª ordem (o S3 de 1.ª ordem do CalculiX é rígido demais em flexão)
+    const st = (solver: "code_aster" | "calculix", analysis: "static" | "modal") => fem({
+      solver, analysis, modes: 3, shell: { thickness: t }, mesh: { size: 5, order: solver === "calculix" ? 2 : order, curvature: 0 },
+      loads: [{ kind: "fixed", faces: [], edges: [edge] }, { kind: "pressure", faces: [face], p }],
+    });
+    const ra = await run(doc, st("code_aster", "static")), rc = await run(doc, st("calculix", "static"));
+    assert.equal(ra.solver, "code_aster");
+    const umax = (r: typeof ra) => Math.max(...r.fem!.displacements[0].values.filter((_, i) => i % 3 === 1).map(Math.abs));
+    const vm = (r: typeof ra) => Math.max(...r.fem!.fields.find((f) => /Mises/.test(f.name))!.values);
+    near(umax(ra), umax(rc), 0.05);
+    near(umax(ra), delta, 0.1);
+    near(vm(ra), vm(rc), 0.15);
+    const ma = await run(doc, st("code_aster", "modal")), mc = await run(doc, st("calculix", "modal"));
+    near(ma.fem!.frequencies[0], mc.fem!.frequencies[0], 0.05);
+  });
+}

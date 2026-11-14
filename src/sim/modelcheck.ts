@@ -38,6 +38,7 @@ export const CAPABILITIES: Capability[] = [
   { group: "Elementos", feature: "Tetraedros quadráticos (10 nós)", calculix: "sim", code_aster: "sim", openradioss: "nao", note: "o explícito do OpenRadioss usa elementos lineares" },
   { group: "Elementos", feature: "Hexaedros lineares (8 nós)", calculix: "sim", code_aster: "sim", openradioss: "sim", note: "CalculiX: C3D8I por omissão; code_aster: 3D_SI; OpenRadioss: Isolid 24" },
   { group: "Elementos", feature: "Hexaedros quadráticos (20 nós)", calculix: "sim", code_aster: "sim", openradioss: "nao" },
+  { group: "Elementos", feature: "Cascas (placas finas)", calculix: "sim", code_aster: "parcial", openradioss: "nao", note: "code_aster: um corpo, estática linear e modal, sem laminado" },
   { group: "Condições", feature: "Encastramento", calculix: "sim", code_aster: "sim", openradioss: "sim" },
   { group: "Condições", feature: "Simetria (plano)", calculix: "sim", code_aster: "sim", openradioss: "sim", note: "faces planas alinhadas com X, Y ou Z" },
   { group: "Condições", feature: "Deslocamento imposto", calculix: "sim", code_aster: "sim", openradioss: "parcial", note: "OpenRadioss: só deslocamento nulo (use forças)" },
@@ -65,6 +66,7 @@ export function usedFeatures(s: FemStudy): string[] {
   if (s.analysis === "static" && (s.steps?.length ?? 0) > 1) used.push("Passos de carga múltiplos");
   const hex = s.mesh.element === "hex";
   used.push(hex ? (s.mesh.order === 1 ? "Hexaedros lineares (8 nós)" : "Hexaedros quadráticos (20 nós)") : (s.mesh.order === 1 ? "Tetraedros lineares (4 nós)" : "Tetraedros quadráticos (10 nós)"));
+  if (s.shell) used.push("Cascas (placas finas)");
   for (const l of s.loads) {
     used.push(l.kind === "fixed" ? "Encastramento" : l.kind === "symmetry" ? "Simetria (plano)" : l.kind === "displacement" ? "Deslocamento imposto" : l.kind === "force" ? "Força nas faces" : l.kind === "pointForce" ? "Força pontual (nó mais próximo)" : l.kind === "pressure" ? "Pressão" : l.kind === "gravity" ? "Gravidade" : l.kind === "spring" ? "Molas à terra" : l.kind === "mass" ? "Massas pontuais" : l.kind === "coupling" ? "Acoplamentos rígidos/distribuídos (RBE2/RBE3)" : "Temperatura, convecção, fluxo de calor");
   }

@@ -169,7 +169,7 @@ async function runAster(c: FemCase, dir: string, log: Log, regenerate: boolean):
   const rd = (f: string) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : undefined);
   const u = rd("u.tab");
   if (!u) throw new Error(`O code_aster não escreveu os resultados:\n${tail(join(dir, "job.mess"), 30)}`);
-  const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab") }, ac.nodeOrder);
+  const fem = asterResult(c, msh, { u, vm: rd("vm.tab"), freq: rd("freq.tab"), reac: rd("reac.tab"), peeq: rd("peeq.tab"), vm2: rd("vm2.tab") }, ac.nodeOrder);
   const elements = [...elementsOf(solidBlocks(msh, c.bodies))].length;
   const summary: [string, string][] = [["Malha", `${ac.nodeOrder.length} nós · ${elements} ${meshKind(c)}`], ...fem.summary];
   return { ok: true, physics: "fem", solver: "code_aster", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: elements, log: tail(join(dir, "job.mess")) };
@@ -221,7 +221,7 @@ async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean
 }
 
 export async function runFem(c: FemCase, dir: string, log: Log, regenerate: boolean): Promise<Omit<RunResult, "seconds" | "hypotheses">> {
-  if (c.shell && c.solver !== "calculix") throw new Error("Cascas (S3/S6): só com o CalculiX nesta versão");
+  if (c.shell && c.solver === "openradioss") throw new Error("Cascas (S3/S6): só com o CalculiX ou o code_aster nesta versão");
   if (c.solver === "code_aster") return runAster(c, dir, log, regenerate);
   if (c.solver === "openradioss") return runRadioss(c, dir, log, regenerate);
   const t = tools();
