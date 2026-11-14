@@ -118,7 +118,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
       {s.analysis === "static" && <StepsEditor s={s} up={up} />}
       {s.analysis === "dynamic" && <DynamicEditor d={s.dynamic ?? { scheme: "implicit", duration: 0.01, load: "step" }} onChange={(dynamic) => up({ dynamic })} />}
       {(s.analysis === "modal" || s.analysis === "buckling") && <Field label="N.º de modos"><input type="number" min="1" max="50" value={s.modes ?? 6} onChange={(e) => up({ modes: Number((e.target as HTMLInputElement).value) || 6 })} /></Field>}
-      {(s.shell || ((s.solver ?? "calculix") === "calculix" && s.analysis !== "thermal")) && <ShellEditor s={s} up={up} />}
+      {(s.shell || (s.solver ?? "calculix") === "calculix") && <ShellEditor s={s} up={up} />}
       </>}
       {section === "material" && <fieldset class="checklist">
         <legend class="field-label">Material</legend>

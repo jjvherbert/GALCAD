@@ -60,9 +60,21 @@ test("casca: a normal da face inverte a ordem dos nós", () => {
   assert.deepEqual(rows, ["1, 1, 3, 2", "2, 1, 4, 3"]);
 });
 
-test("casca: quadriláteros e análise térmica dão erro", () => {
+test("casca: quadriláteros dão erro", () => {
   assert.throws(() => calculixDeck(plateCase(), parseMsh(plateMsh(true))), /quadriláteros/);
-  assert.throws(() => calculixDeck({ ...plateCase(), analysis: "thermal" }, parseMsh(plateMsh())), /Casca: só um corpo/);
+});
+
+test("casca: térmica — *HEAT TRANSFER, condutividade, convecção e fluxo na face de topo (F2/S2)", () => {
+  const c: FemCase = { ...plateCase(), analysis: "thermal", edgeGroups: { FIX: [1] },
+    loads: [{ kind: "temperature", group: "FIX", t: 100 }, { kind: "convection", group: "P", h: 10, tInf: 20 }, { kind: "heatFlux", group: "P", q: 500 }] };
+  const { inp } = calculixDeck(c, parseMsh(plateMsh()));
+  assert.match(inp, /\*HEAT TRANSFER/);
+  assert.match(inp, /\*CONDUCTIVITY\n50\n/);
+  assert.match(inp, /\*SHELL SECTION/);
+  assert.match(inp, /N_FIX, 11, 11, 100/);
+  assert.match(inp, /\*FILM\n(\d+, F2, 20, 0\.01\n){2}/);
+  assert.match(inp, /\*DFLUX\n(\d+, S2, 0\.5\n){2}/);
+  assert.doesNotMatch(inp, /\*ELASTIC/);
 });
 
 test("casca: .frd com base/meio/topo — tensões da face pior, deslocamentos do meio", () => {
