@@ -23,6 +23,8 @@ export interface PlanInput {
   seeds: PlanSeed[];
   /** Faces mapeadas pedidas pelo utilizador (tags). */
   mapped: number[];
+  /** Mínimo de elementos nas arestas da espessura (arestas ≤ 15 % da maior dimensão do volume); 0/omitido = sem controlo. */
+  layers?: number;
   /** Nome de cada sólido (avisos). */
   names?: string[];
 }
@@ -34,6 +36,9 @@ export type MeshPlan = Pick<FemCaseMesh, "hexMethod" | "volumes" | "surfaces" | 
  * arestas, 12 arestas): os restantes têm de ser divididos em blocos (como no Femap) ou ir para a
  * subdivisão.
  */
+/** Fração da maior dimensão do volume abaixo da qual uma aresta conta como espessura. */
+const THIN = 0.15;
+
 export function meshPlan(p: PlanInput): MeshPlan {
   const warnings: string[] = [], notes: string[] = [];
   const tagOf = (list: TopoDS_Shape[], s: TopoDS_Shape) => list.findIndex((x) => x.IsSame(s)) + 1;
@@ -109,6 +114,15 @@ export function meshPlan(p: PlanInput): MeshPlan {
   p.faces.forEach((_, i) => { for (const e of faceEdges(i + 1)) edgeFaces.set(e, [...(edgeFaces.get(e) ?? []), i + 1]); });
   const want = (t: number) => Math.max(1, Math.ceil(edgeInfo(t).length / Math.min(p.size, ...(edgeFaces.get(t) ?? []).map((f) => p.localSize.get(f) ?? Infinity)) - 1e-9));
 
+  // camadas na espessura: arestas curtas face à maior dimensão do volume ficam com ≥ layers elementos
+  const layers = Math.max(0, Math.round(p.layers ?? 0));
+  const thin = new Set<number>();
+  if (layers > 1) p.solids.forEach((s) => {
+    const b = bbox(s), L = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+    for (const e of explore(s, "edge")) { const t = tagOf(p.edges, e); if (t && edgeInfo(t).verts.length === 2 && edgeInfo(t).length <= THIN * L) thin.add(t); }
+  });
+  const atLeast = (t: number, n: number) => (thin.has(t) ? Math.max(n, layers) : n);
+
   const classes = new Map<number, number[]>();
   for (const t of parent.keys()) classes.set(find(t), [...(classes.get(find(t)) ?? []), t]);
   const curves: NonNullable<FemCaseMesh["curves"]> = [];
@@ -136,7 +150,7 @@ export function meshPlan(p: PlanInput): MeshPlan {
     const seeded = members.filter((t) => seedOf.has(t));
     const ns = [...new Set(seeded.map((t) => seedOf.get(t)!.n))];
     if (ns.length > 1) warnings.push(`Seeds incompatíveis nas arestas opostas ${seeded.join(", ")} (${ns.join(" vs ")} elementos): usado o maior — numa malha mapeada as arestas opostas têm o mesmo n.º de elementos`);
-    const n = seeded.length ? Math.max(...ns) : Math.max(...members.map(want));
+    const n = seeded.length ? Math.max(...ns) : Math.max(...members.map((t) => atLeast(t, want(t))));
     // distribuição: a das seeds; as arestas sem seed seguem a primeira seed com distribuição, no mesmo sentido geométrico
     const ref = seeded.find((t) => seedOf.get(t)!.seed.bias !== 1);
     for (const t of members) {
@@ -150,12 +164,20 @@ export function meshPlan(p: PlanInput): MeshPlan {
   }
   // seeds fora das faces mapeadas: discretização imposta da aresta (o resto da malha adapta-se)
   for (const [t, { n, seed }] of seedOf) if (!parent.has(t)) curve(t, n, dist(resolve(seed, t), n), true);
+  // arestas da espessura sem seed nem face mapeada: discretização imposta com o mínimo de camadas
+  let thinCount = 0;
+  for (const t of thin) {
+    if (seedOf.has(t)) continue;
+    thinCount++;
+    if (!parent.has(t) && want(t) < layers) curve(t, layers, {}, false);
+  }
   curves.sort((a, b) => a.tag - b.tag);
 
   if (method === "structured") notes.push(`hexaedros estruturados (mapeados) em ${volumes.length} volume(s), ${surfaces.size} faces mapeadas`);
   if (method === "subdivision") notes.push("hexaedros por subdivisão de uma malha tetraédrica (cada tetraedro em 4 hexaedros)");
   if (p.element !== "hex" && surfaces.size) notes.push(`${surfaces.size} face(s) mapeada(s)`);
   if (tri) notes.push(`${tri} face(s) mapeada(s) triangular(es): as 3 arestas com o mesmo n.º de elementos${p.element === "hex" ? ", triângulos no canto degenerado" : ""}`);
+  if (thinCount) notes.push(`${thinCount} aresta(s) na espessura com ≥ ${layers} elementos${p.element === "tet" ? " (em tetraedros só nas arestas; o interior das faces segue o tamanho global — para camadas reais usar hexaedros ou tamanho ≤ espessura / camadas)" : ""}`);
   const user = curves.filter((c) => c.user).length;
   if (user) notes.push(`${user} aresta(s) com seed`);
   return { hexMethod: method, volumes: volumes.length ? volumes : undefined, surfaces: surfaces.size ? [...surfaces].sort((a, b) => a - b) : undefined, curves: curves.length ? curves : undefined, warnings, notes };

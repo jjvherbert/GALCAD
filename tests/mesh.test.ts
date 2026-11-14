@@ -328,3 +328,29 @@ test("face mapeada triangular: as 3 arestas com o mesmo n.º de elementos e o Gm
   assert.ok(h.quality!.elements > 0);
   near(h.quality!.volume, 6000, 1e-6);
 });
+
+test("camadas na espessura: chapa fina com ≥ 3 elementos nas arestas de 2 mm (tetraedros e hexaedros)", async () => {
+  const s = new SketchBuilder();
+  s.rect(0, 0, 100, 50, 100, 50);
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 2 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const left = r.ctx.body!.faces.find((x) => { const p = faceProps(x.face); return p.normal && Math.abs(Math.abs(p.normal[0]) - 1) < 1e-9 && Math.abs(p.center[0]) < 1e-6; })!;
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [{ kind: "face", name: left.name }] }];
+  const thick = (c: { box: { min: number[]; max: number[] } }) => Math.abs(c.box.max[2] - c.box.min[2] - 2) < 1e-6 && Math.abs(c.box.max[0] - c.box.min[0]) < 1e-6;
+  const tet = await solve(doc, fem({ mesh: { size: 10, order: 1, curvature: 0, layers: 3 }, loads }));
+  const tc = tet.c.mesh.curves!.filter(thick);
+  assert.equal(tc.length, 4);
+  assert.ok(tc.every((x) => x.n === 3 && !x.user));
+  assert.equal(tet.c.mesh.curves!.length, 4, "só as arestas da espessura");
+  assert.ok(tet.c.hypotheses.some((h) => h.includes("4 aresta(s) na espessura com ≥ 3 elementos")));
+  const hex = await solve(doc, fem({ mesh: { size: 10, order: 1, curvature: 0, layers: 3, element: "hex" }, loads }));
+  assert.deepEqual(hex.c.mesh.curves!.filter(thick).map((x) => x.n), [3, 3, 3, 3]);
+  // sem camadas: 1 elemento na espessura (tamanho 10 > 2 mm)
+  const none = await solve(doc, fem({ mesh: { size: 10, order: 1, curvature: 0, element: "hex" }, loads }));
+  assert.deepEqual(none.c.mesh.curves!.filter(thick).map((x) => x.n), [1, 1, 1, 1]);
+  if (!T.gmsh) return;
+  const h = await previewMesh(tet.dir);
+  near(h.quality!.volume, 10000, 1e-6);
+});
