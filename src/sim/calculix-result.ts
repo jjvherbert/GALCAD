@@ -460,6 +460,8 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       if (s || sv) {
         const vm = sv ? field(sv, (v) => v[0]) : field(s, (v) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2)));
         fields.push({ name: "Tensão de von Mises", unit: "MPa", values: vm });
+        // componentes do tensor (eixos globais), para verificação contra referências (NAFEMS LE1…)
+        if (s && s.components.length >= 6) ["σxx", "σyy", "σzz", "τxy", "τyz", "τxz"].forEach((n, i) => fields.push({ name: `Tensão ${n}`, unit: "MPa", values: field(s, (v) => v[i]) }));
         if (!c.nonlinear?.plasticity) safetyField(vm);
         stressSummary([(sv ?? s)!], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
       }
@@ -502,6 +504,8 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
     let dispB = lastOf("DISP"), stB = lastOf("STRESS"), vmB = lastOf("VMIS"), tB = lastOf("NDTEMP");
     const value = (t: number, q: string): number | undefined => {
       if (q === "T") return tB?.data.get(t)?.[0];
+      const si = ["sxx", "syy", "szz", "sxy", "syz", "sxz"].indexOf(q);
+      if (si >= 0) return stB && stB.components.length >= 6 ? stB.data.get(t)?.[si] : undefined;
       if (q === "vm") {
         const v = vmB?.data.get(t);
         if (v) return v[0];
@@ -512,7 +516,7 @@ export function femResultFrom(c: FemCase, m: Msh, blocks: FrdBlock[], d: ReturnT
       if (!u) return undefined;
       return q === "u" ? Math.hypot(u[0], u[1], u[2]) : u["xyz".indexOf(q[1])];
     };
-    const UNIT: Record<string, string> = { u: "mm", ux: "mm", uy: "mm", uz: "mm", vm: "MPa", T: "°C" };
+    const UNIT: Record<string, string> = { u: "mm", ux: "mm", uy: "mm", uz: "mm", vm: "MPa", T: "°C", sxx: "MPa", syy: "MPa", szz: "MPa", sxy: "MPa", syz: "MPa", sxz: "MPa" };
     const probeAt = (pr: NonNullable<FemCase["probes"]>[number]): { v?: number; where: string } => {
       let v: number | undefined, where = "";
       if (pr.group) {

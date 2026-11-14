@@ -108,7 +108,7 @@ export interface FemCase {
    */
   bodies?: { group: string; path: string; name: string; material: SimMaterial; bbox: { min: V3; max: V3 } }[];
   /** Sondas: grupo de faces (média por área) ou ponto (nó mais próximo), mm. */
-  probes?: { key: string; name: string; quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T"; group?: string; point?: V3; stat?: "mean" | "max" }[];
+  probes?: { key: string; name: string; quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T" | "sxx" | "syy" | "szz" | "sxy" | "syz" | "sxz"; group?: string; point?: V3; stat?: "mean" | "max" }[];
   /**
    * Contacto entre faces de corpos diferentes (grupos escravo/mestre): colado (`tie`, por omissão) ou
    * com atrito de Coulomb μ e separação (`contact`, penalidade face a face).

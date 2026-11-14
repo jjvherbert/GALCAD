@@ -231,7 +231,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
               <button class="icon" aria-label={`Retirar sonda ${i + 1}`} onClick={() => up({ probes: (s.probes ?? []).filter((_, k) => k !== i) })}>✕</button>
             </div>
             <div class="row">
-              <Select label="Grandeza" value={pr.quantity} options={[["u", "|u| (mm)"], ["ux", "ux"], ["uy", "uy"], ["uz", "uz"], ["vm", "von Mises (MPa)"], ["T", "Temperatura (°C)"]]} onChange={(quantity) => set({ quantity })} />
+              <Select label="Grandeza" value={pr.quantity} options={[["u", "|u| (mm)"], ["ux", "ux"], ["uy", "uy"], ["uz", "uz"], ["vm", "von Mises (MPa)"], ["sxx", "σxx (MPa)"], ["syy", "σyy (MPa)"], ["szz", "σzz (MPa)"], ["sxy", "τxy (MPa)"], ["syz", "τyz (MPa)"], ["sxz", "τxz (MPa)"], ["T", "Temperatura (°C)"]]} onChange={(quantity) => set({ quantity })} />
               <Select label="Onde" value={pr.at.kind} options={[["faces", "Média em faces"], ["point", "Ponto (nó mais próximo)"]]} onChange={(k) => set({ at: k === "faces" ? { kind: "faces", faces: [] } : { kind: "point", point: [0, 0, 0] } })} />
             </div>
             {pr.at.kind === "faces"

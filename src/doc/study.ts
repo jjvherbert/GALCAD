@@ -222,9 +222,12 @@ export interface FemNonlinear {
  * Sonda: grandeza num ponto (nó mais próximo) ou média ponderada pela área sobre faces. É o que se
  * deve usar na convergência da malha (os máximos junto a singularidades não convergem).
  */
+export type StressComponent = "sxx" | "syy" | "szz" | "sxy" | "syz" | "sxz";
+
 export interface Probe {
   name: string;
-  quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T";
+  /** sxx…sxz: componentes do tensor das tensões nos eixos globais (MPa; sólidos). */
+  quantity: "u" | "ux" | "uy" | "uz" | "vm" | "T" | StressComponent;
   at: { kind: "faces"; faces: TopoRef[] } | { kind: "point"; point: [Expr, Expr, Expr] };
   /** Nas faces: média ponderada pela área (por omissão) ou máximo nos nós. */
   stat?: "mean" | "max";

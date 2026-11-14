@@ -2108,6 +2108,18 @@ function femResultFrom(c, m, blocks, d) {
 					unit: "MPa",
 					values: vm
 				});
+				if (s && s.components.length >= 6) [
+					"σxx",
+					"σyy",
+					"σzz",
+					"τxy",
+					"τyz",
+					"τxz"
+				].forEach((n, i) => fields.push({
+					name: `Tensão ${n}`,
+					unit: "MPa",
+					values: field(s, (v) => v[i])
+				}));
 				if (!c.nonlinear?.plasticity) safetyField(vm);
 				stressSummary([sv ?? s], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
 			}
@@ -2190,6 +2202,15 @@ function femResultFrom(c, m, blocks, d) {
 		let dispB = lastOf("DISP"), stB = lastOf("STRESS"), vmB = lastOf("VMIS"), tB = lastOf("NDTEMP");
 		const value = (t, q) => {
 			if (q === "T") return tB?.data.get(t)?.[0];
+			const si = [
+				"sxx",
+				"syy",
+				"szz",
+				"sxy",
+				"syz",
+				"sxz"
+			].indexOf(q);
+			if (si >= 0) return stB && stB.components.length >= 6 ? stB.data.get(t)?.[si] : void 0;
 			if (q === "vm") {
 				const v = vmB?.data.get(t);
 				if (v) return v[0];
@@ -2206,7 +2227,13 @@ function femResultFrom(c, m, blocks, d) {
 			uy: "mm",
 			uz: "mm",
 			vm: "MPa",
-			T: "°C"
+			T: "°C",
+			sxx: "MPa",
+			syy: "MPa",
+			szz: "MPa",
+			sxy: "MPa",
+			syz: "MPa",
+			sxz: "MPa"
 		};
 		const probeAt = (pr) => {
 			let v, where = "";
@@ -4752,6 +4779,7 @@ function asterCase(c, m) {
 	if (c.analysis === "static" || c.dynamic) {
 		if (shell) for (const [r, u] of [["RSUP", 39], ["RINF", 43]]) C.push(`T${r} = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=${r}, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))`, `IMPR_TABLE(TABLE=T${r}, UNITE=${u}, FORMAT='TABLEAU')`);
 		else C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
+		if (!shell && !c.dynamic) C.push("TG = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='SG', RESULTAT=RES, NOM_CHAM='SIGM_NOEU', GROUP_NO='NALL', NOM_CMP=('SIXX', 'SIYY', 'SIZZ', 'SIXY', 'SIYZ', 'SIXZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TG, UNITE=44, FORMAT='TABLEAU')");
 		if (supports.length && !c.dynamic) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
 		if (plas) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
 	}
@@ -4777,7 +4805,8 @@ function asterCase(c, m) {
 				"F libr freq.tab R 40",
 				"F libr reac.tab R 41",
 				"F libr peeq.tab R 42",
-				"F libr vm2.tab R 43"
+				"F libr vm2.tab R 43",
+				"F libr sig.tab R 44"
 			].join("\n") + "\n"
 		},
 		nodeOrder,
@@ -4834,6 +4863,14 @@ function asterResult(c, m, t, nodeOrder) {
 			"DZ"
 		]),
 		...vm,
+		...nodal(t.sig, "STRESS", [
+			"SIXX",
+			"SIYY",
+			"SIZZ",
+			"SIXY",
+			"SIYZ",
+			"SIXZ"
+		]),
 		...nodal(t.peeq, "PE", ["V1"])
 	];
 	const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite).slice(0, c.modes);
@@ -5093,7 +5130,8 @@ async function runAster(c, dir, log, regenerate) {
 		freq: rd("freq.tab"),
 		reac: rd("reac.tab"),
 		peeq: rd("peeq.tab"),
-		vm2: rd("vm2.tab")
+		vm2: rd("vm2.tab"),
+		sig: rd("sig.tab")
 	}, ac.nodeOrder);
 	const elements = [...elementsOf(solidBlocks(msh, c.bodies))].length;
 	return {
