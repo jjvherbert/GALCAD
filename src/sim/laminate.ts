@@ -235,6 +235,9 @@ export interface OrthoPly {
   theta: number;
   /** Condutividade térmica ao longo das fibras e na transversal (mesmas unidades do k do material); sem elas fica o k do material do estudo. */
   k?: number; k2?: number;
+  /** Constantes fora do plano (laminado sólido 3D): omissas = transversalmente isotrópico —
+   *  E3 = E2, ν13 = ν23 = ν12, G13 = G12, G23 = E2/(2(1 + ν12)). */
+  e3?: number; nu13?: number; nu23?: number; g13?: number; g23?: number;
   /** Extensões de rotura (%) nos eixos do material, para os critérios por camada. */
   strains?: PlyStrains;
   /** Origem (rótulo para relatórios). */
@@ -272,12 +275,20 @@ export function isoPlyToOrtho(input: PlyInput, theta = 0): OrthoPly[] | null {
 }
 
 /** Erro de uma camada ortotrópica fisicamente impossível, ou `null` se é válida. */
+/** Constantes de engenharia 3D da camada, pela ordem do CalculiX: E1, E2, E3, ν12, ν13, ν23, G12, G13, G23. */
+export function plyConstants3D(p: OrthoPly): number[] {
+  const e3 = p.e3 ?? p.e2, nu13 = p.nu13 ?? p.nu12, nu23 = p.nu23 ?? p.nu12;
+  return [p.e1, p.e2, e3, p.nu12, nu13, nu23, p.g12, p.g13 ?? p.g12, p.g23 ?? p.e2 / (2 * (1 + p.nu12))];
+}
+
 export function orthoPlyError(p: OrthoPly): string | null {
   if (!(p.e1 > 0 && p.e2 > 0 && p.g12 > 0)) return "Os módulos E1, E2 e G12 têm de ser positivos.";
   if (!(p.t > 0)) return "A espessura da camada tem de ser positiva.";
   if (!Number.isFinite(p.theta)) return "O ângulo da camada tem de ser um número.";
   // Estabilidade (matriz de flexibilidade definida positiva): 1 − ν12·ν21 > 0.
   if (!(Math.abs(p.nu12) < Math.sqrt(p.e1 / p.e2))) return "O coeficiente de Poisson ν12 tem de ter |ν12| < √(E1/E2).";
+  for (const [k, v] of [["E3", p.e3], ["G13", p.g13], ["G23", p.g23]] as const) if (v !== undefined && !(v > 0)) return `O módulo ${k} tem de ser positivo.`;
+  for (const [k, v] of [["ν13", p.nu13], ["ν23", p.nu23]] as const) if (v !== undefined && !(Math.abs(v) < 1)) return `O coeficiente de Poisson ${k} tem de ter |${k}| < 1.`;
   return null;
 }
 

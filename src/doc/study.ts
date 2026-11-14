@@ -311,6 +311,12 @@ export interface FemStudy {
    * (o resto fica com `plies` ou isotrópico com `thickness`).
    */
   shell?: { thickness: Expr; plies?: OrthoPly[]; regions?: { faces: TopoRef[]; plies: OrthoPly[] }[] };
+  /**
+   * Laminado sólido (só CalculIX, corpo único): o volume é dividido em camadas planas ao longo de z,
+   * a partir de z0 (omisso = fundo da caixa do corpo), com as espessuras das camadas; θ roda a direção 1
+   * em torno de z a partir de x. Use partições da malha em z nas interfaces para os elementos não as cruzarem.
+   */
+  solidLaminate?: { plies: OrthoPly[]; z0?: Expr };
 }
 
 export interface CfdMesh {

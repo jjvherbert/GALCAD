@@ -51,6 +51,7 @@ type Vec3D = [number, number, number];
 export function assemblyStudyCase(bodies: AsmBody[], s: FemStudy, scope: Ctx["scope"], title: string): SimFiles {
   const report: StepReport = { warnings: [] };
   if (!bodies.length) throw new Error("A montagem não tem corpos sólidos para o estudo");
+  if (s.solidLaminate) throw new Error("Laminado sólido: só num corpo único (não em montagens)");
   const faces: CaseFace[] = [];
   const offset: number[] = [];
   for (const bd of bodies) {

@@ -300,6 +300,16 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   // malha manual: seeds, faces mapeadas e hexaedros
   const element = s.mesh.element ?? "tet";
   const shell = s.shell ? shellCheck(s, sc, tags) : undefined;
+  let solidLaminate: FemCase["solidLaminate"];
+  if (s.solidLaminate) {
+    const L = s.solidLaminate;
+    if (s.shell) throw new Error("Laminado sólido: não pode ser usado com casca");
+    if ((s.solver ?? "calculix") !== "calculix") throw new Error("Laminado sólido: só no CalculiX");
+    if (s.analysis === "thermal") throw new Error("Laminado sólido: ainda não na análise térmica");
+    if (!L.plies?.length) throw new Error("Laminado sólido: sem camadas");
+    L.plies.forEach((p, k) => { const e = orthoPlyError(p); if (e) throw new Error(`Laminado sólido, camada ${k + 1}: ${e}`); });
+    solidLaminate = { plies: L.plies, z0: evalParam(L.z0, sc, "Laminado sólido: z0", box.min[2]) };
+  }
   const localSize = new Map<number, number>();
   for (const l of local) for (const t of groups[l.group]) localSize.set(t, Math.min(l.size, localSize.get(t) ?? Infinity));
   const plan = element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1 ? meshPlan({
@@ -358,7 +368,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     : `Estática não linear (${[nl.geometry && "grandes deslocamentos e rotações", nl.plasticity && `plasticidade de von Mises com encruamento isotrópico ${curve?.length ? "multilinear" : "bilinear"}`].filter(Boolean).join("; ")}), carga aplicada em ${nl.increments}+ incrementos, cargas de direção fixa, sem contacto`;
   return {
     format: "cadp-sim-case", version: 1, physics: "fem", solver: s.solver ?? "calculix", title: s.name, analysis: s.analysis, modes: s.modes ?? 6, nonlinear: nl, dynamic, ...(stepIdx.size ? { steps: s.steps!.map((st, k) => st.name || `Passo ${k + 1}`) } : {}), probes: probes.length ? probes : undefined,
-    ...(shell ? { shell } : {}), material: s.material, groups, ...(Object.keys(edgeGroups).length ? { edgeGroups, edgeLength } : {}), faces, loads, bbox: box,
+    ...(shell ? { shell } : {}), ...(solidLaminate ? { solidLaminate } : {}), material: s.material, groups, ...(Object.keys(edgeGroups).length ? { edgeGroups, edgeLength } : {}), faces, loads, bbox: box,
     mesh: {
       size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local,
       ...(element === "hex" ? { element, integration: s.mesh.integration ?? (s.mesh.order === 2 ? "reduced" : "incompatible") } : {}),
@@ -367,6 +377,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     },
     hypotheses: [
       analysisHyp,
+      ...(solidLaminate ? [`Laminado sólido: ${solidLaminate.plies.length} camadas ortotrópicas em z a partir de z = ${solidLaminate.z0} mm (${solidLaminate.plies.map((p) => `${p.theta}°/${p.t}`).join(", ")}); cada elemento fica na camada do seu centroide`] : []),
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
       ...(edits.length ? [`Malha editada à mão: ${edits.filter((e) => e.kind === "move").length} nó(s) movido(s), ${edits.filter((e) => e.kind === "delete").length} apagamento(s) de elementos — as faces e arestas das cargas/apoios que deixam de ser fronteira saem dos grupos; confirmar na pré-visualização`] : []),

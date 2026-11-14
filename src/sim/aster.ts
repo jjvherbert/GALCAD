@@ -216,6 +216,7 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
 
 /** Ficheiro de comandos (.comm, sintaxe Python do code_aster) e .export para o run_aster. */
 export function asterCase(c: FemCase, m: Msh): AsterFiles {
+  if (c.solidLaminate) throw new Error("code_aster: o laminado sólido ainda não está neste adaptador (use o CalculiX)");
   if (c.analysis !== "static" && c.analysis !== "modal" && c.analysis !== "dynamic") throw new Error(`code_aster: análise "${c.analysis}" ainda não suportada neste adaptador (use o CalculiX)`);
   if ((c.ties ?? []).some((t) => t.kind === "contact")) throw new Error("code_aster: o contacto com atrito ainda não está neste adaptador (use o CalculiX ou contacto colado)");
   if (c.loads.some((l) => l.kind === "coupling")) throw new Error("code_aster: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");

@@ -424,6 +424,16 @@ test("partições: plano inclinado x + y = 50 corta o perfil em L em 3 blocos", 
   assert.throws(() => studyCase(r.ctx, fem({ material: steel, analysis: "modal", loads: tf("20") })), /só na análise estática/);
   assert.throws(() => studyCase(r.ctx, fem({ material: steel, loads: tf("  ") })), /indique T\(x, y, z\)/);
   assert.throws(() => studyCase(r.ctx, fem({ material: steel, loads: tf("foo*x") })), /variável desconhecida "foo"/);
+  // laminado sólido: só CalculiX, sem casca, não na térmica, com camadas válidas
+  const ply = { e1: 1e5, e2: 5e3, g12: 3e3, nu12: 0.4, t: 5, theta: 0 };
+  const sl = (patch: Partial<FemStudy>, plies = [ply, { ...ply, theta: 90 }]) => fem({ loads, solidLaminate: { plies }, ...patch });
+  assert.match(JSON.stringify(studyCase(r.ctx, sl({})).case), /Laminado sólido: 2 camadas/);
+  // (com casca o corpo sólido já é recusado antes; a guarda própria fica para chapas)
+  assert.throws(() => studyCase(r.ctx, sl({ shell: { thickness: 1 } })), /casca/);
+  assert.throws(() => studyCase(r.ctx, sl({ solver: "code_aster" })), /só no CalculiX/);
+  assert.throws(() => studyCase(r.ctx, sl({ analysis: "thermal" })), /ainda não na análise térmica/);
+  assert.throws(() => studyCase(r.ctx, sl({}, [])), /sem camadas/);
+  assert.throws(() => studyCase(r.ctx, sl({}, [{ ...ply, e3: -1 } as typeof ply])), /camada 1:/);
   if (!T.gmsh) return;
   const h = await previewMesh(cut.dir);
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
