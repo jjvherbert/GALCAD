@@ -5059,6 +5059,16 @@ const logOf = (dir) => {
 };
 /** Descrição curta dos elementos da malha (resumo). */
 const meshKind = (c) => c.shell ? `cascas ${c.mesh.order === 2 ? "S6" : "S3"} (t = ${c.shell.thickness} mm)` : c.mesh.element === "hex" ? `hexaedros ${c.mesh.order === 2 ? "de 20 nós" : "de 8 nós"}${c.mesh.hexMethod === "subdivision" ? " (subdivisão)" : " (estruturados)"}` : `tetraedros de ordem ${c.mesh.order}`;
+/** Ficheiro de resultados nativo do solver (MED do code_aster, FRD do CalculiX) para descarregar, até 64 MB. */
+function nativeFile(dir, file, name, mime) {
+	const p = join(dir, file);
+	if (!existsSync(p) || statSync(p).size > 64e6) return [];
+	return [{
+		name,
+		mime,
+		base64: readFileSync(p).toString("base64")
+	}];
+}
 /** code_aster: mesma malha Gmsh, malha ASTER + .comm gerados aqui, run_aster com o .export. */
 async function runAster(c, dir, log, regenerate) {
 	const t = tools();
@@ -5096,7 +5106,8 @@ async function runAster(c, dir, log, regenerate) {
 		view: femView(fem),
 		metrics: fem.metrics,
 		cells: elements,
-		log: tail(join(dir, "job.mess"))
+		log: tail(join(dir, "job.mess")),
+		files: nativeFile(dir, "job.rmed", "resultados.med", "application/x-hdf5")
 	};
 }
 /**
@@ -5224,7 +5235,8 @@ async function runFem(c, dir, log, regenerate) {
 		view: femView(fem),
 		metrics: fem.metrics,
 		cells: deck.elements,
-		log: tail(join(dir, "log.ccx"))
+		log: tail(join(dir, "log.ccx")),
+		files: nativeFile(dir, "job.frd", "resultados.frd", "text/plain")
 	};
 }
 // src/sim/openfoam.ts

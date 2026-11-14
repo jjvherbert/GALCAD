@@ -60,6 +60,9 @@ test("code_aster: consola — flecha de Timoshenko, von Mises e reação", { ski
   assert.equal(r.solver, "code_aster");
   near(-tipMean(r.fem!, 2), delta, 0.03);
   near(r.fem!.reactions[0][2], F, 1e-3);
+  // o .rmed do code_aster volta para a app (HDF5) para o ParaView/Salome
+  const med = r.files?.find((f) => f.name === "resultados.med");
+  assert.ok(med && Buffer.from(med.base64, "base64").subarray(1, 4).toString() === "HDF");
 });
 
 test("code_aster: consola com força numa aresta e apoio numa aresta", { skip: !has && "code_aster não instalado", timeout: 600000 }, async () => {
@@ -205,6 +208,7 @@ for (const order of [1, 2] as const) {
     near(umax(ra), umax(rc), 0.05);
     near(umax(ra), delta, 0.1);
     near(vm(ra), vm(rc), 0.15);
+    assert.match(Buffer.from(rc.files!.find((f) => f.name === "resultados.frd")!.base64, "base64").toString("latin1"), /DISP/);
     const ma = await run(doc, st("code_aster", "modal")), mc = await run(doc, st("calculix", "modal"));
     near(ma.fem!.frequencies[0], mc.fem!.frequencies[0], 0.05);
   });
