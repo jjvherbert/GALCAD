@@ -113,7 +113,9 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
   const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
   // geo já existente e sem regenerar: corre-o tal como está (pode ter sido editado à mão)
   if (!o.regenerate && existsSync(geo)) {
-    try { await run(t.gmsh.path, args(nt), dir, "log.gmsh", log, undefined, { timeoutSec }); }
+    // só o HXT (Algorithm3D = 10) é paralelo; o resto com -nt 1, senão a malha muda de corrida para corrida
+    const hxt = /^\s*Mesh\.Algorithm3D\s*=\s*10\s*;/m.test(readFileSync(geo, "utf8"));
+    try { await run(t.gmsh.path, args(hxt ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec }); }
     catch (e) { throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? (e as Error).message); }
     return read();
   }
