@@ -541,7 +541,9 @@ test("SU2: malha de fluido do Gmsh com os marcadores (interno e externo)", { ski
   const { doc, face } = await bar();
   const base = { ...newCfdStudy("c1", 1), solver: "su2" as const, turbulence: "kOmegaSST" as const, iterations: 100 };
   const internal = await solve(doc, { ...base, inlet: { faces: [face(0, 0)], velocity: [1, 0, 0] }, outlet: { faces: [face(0, 100)] }, mesh: { size: 4 } });
-  execFileSync(T.gmsh!.path, ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", "1"], { cwd: internal.dir, stdio: "ignore" });
+  // lançadores .cmd/.bat (Windows) só correm pelo cmd.exe — o Node recusa-os sem shell (EINVAL)
+  const gmsh = T.gmsh!.path, sh = process.platform === "win32" && /\.(cmd|bat)$/i.test(gmsh);
+  execFileSync(sh ? `"${gmsh}"` : gmsh, ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", "1"], { cwd: internal.dir, stdio: "ignore", shell: sh });
   const m1 = readFileSync(join(internal.dir, "mesh.su2"), "utf8");
   assert.match(m1, /NDIME= 3/);
   for (const k of ["inlet", "outlet", "walls"]) assert.match(m1, new RegExp(`MARKER_TAG= ${k}`));
@@ -552,7 +554,7 @@ test("SU2: malha de fluido do Gmsh com os marcadores (interno e externo)", { ski
   const xs = m1.split(/\n/).filter((l) => /^\s*-?\d+\.\d+(e[-+]\d+)?\s+-?\d/.test(l)).map((l) => Number(l.trim().split(/\s+/)[0]));
   assert.ok(Math.max(...xs) <= 0.1 + 1e-9 && Math.max(...xs) > 0.09, String(Math.max(...xs)));
   const external = await solve(doc, { ...base, regime: "external", freestream: { velocity: [5, 0, 0], domain: [1, 2, 1] }, mesh: { size: 20 } });
-  execFileSync(T.gmsh!.path, ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", "1"], { cwd: external.dir, stdio: "ignore" });
+  execFileSync(sh ? `"${gmsh}"` : gmsh, ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", "1"], { cwd: external.dir, stdio: "ignore", shell: sh });
   const m2 = readFileSync(join(external.dir, "mesh.su2"), "utf8");
   const markers = [...m2.matchAll(/MARKER_TAG= (\w+)\s+MARKER_ELEMS= (\d+)/g)].map((x) => [x[1], Number(x[2])]);
   assert.deepEqual(markers.map((x) => x[0]).sort(), ["body", "farfield"]);
