@@ -4724,8 +4724,9 @@ async function gmshMeshRaw(c, dir, log, o) {
 	const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : void 0;
 	const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
 	if (!o.regenerate && existsSync(geo)) {
+		const hxt = /^\s*Mesh\.Algorithm3D\s*=\s*10\s*;/m.test(readFileSync(geo, "utf8"));
 		try {
-			await run(t.gmsh.path, args(nt), dir, "log.gmsh", log, void 0, { timeoutSec });
+			await run(t.gmsh.path, args(hxt ? nt : "1"), dir, "log.gmsh", log, void 0, { timeoutSec });
 		} catch (e) {
 			throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? e.message);
 		}
