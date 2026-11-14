@@ -2,7 +2,8 @@
 // faces planas coincidentes, verificados com o CalculiX contra soluções analíticas.
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { SketchBuilder, initKernel } from "./helpers.ts";
@@ -11,6 +12,9 @@ import { addFeature } from "../src/doc/io.ts";
 import { type CadProject, newAssembly, newPart, newProject } from "../src/doc/project.ts";
 import { type FemStudy, SIM_MATERIALS, newFemStudy } from "../src/doc/study.ts";
 import { runCase, tools } from "../tools/cad-runner.ts";
+import { parseMsh } from "../src/sim/msh.ts";
+import { radiossDeck } from "../src/sim/radioss.ts";
+import type { FemCase } from "../src/sim/case.ts";
 
 before(initKernel);
 
@@ -50,7 +54,7 @@ async function solve(pr: CadProject, study: FemStudy) {
   const r = await new KernelService().assemblyStudyCase(pr, pr.assemblies[0].id, study.id);
   const dir = mkdtempSync(join(tmpdir(), "cad-asm-"));
   for (const [p, data] of Object.entries(r.files)) { mkdirSync(dirname(join(dir, p)), { recursive: true }); writeFileSync(join(dir, p), data); }
-  return { r, run: () => runCase(dir) };
+  return { r, dir, run: () => runCase(dir) };
 }
 
 const fem = (patch: Partial<FemStudy>): FemStudy => ({ ...newFemStudy("s1", 1), material: { ...SIM_MATERIALS[0] }, mesh: { size: 2.5, order: 2, curvature: 0 }, ...patch });
@@ -178,3 +182,60 @@ for (const solver of ["calculix", "code_aster"] as const) {
     near(f.reactions[0][2], P, 1e-3);
   });
 }
+
+// OpenRadioss: bloco 20 × 20 × 10 sobre base 40 × 40 × 10 fixa; o topo do bloco sobe a 1 m/s durante 1 ms (1 mm)
+const radStudy = (mode: "bonded" | "friction") => fem({
+  solver: "openradioss", analysis: "dynamic", contact: { mode, mu: 0.3 },
+  mesh: { size: 5, order: 1, curvature: 0, element: "hex", integration: "reduced" },
+  // 1 m/s = 1 mm/ms durante 1 ms → 1 mm (o aço atravessa 10 mm em ~2 µs: quase estático)
+  dynamic: { scheme: "explicit", duration: 0.001, load: "step", frames: 10 },
+  loads: [
+    { kind: "fixed", faces: [{ kind: "face", name: `c1/${F.z0}` }] },
+    { kind: "displacement", faces: [{ kind: "face", name: `c2/${F.z1}` }], ux: 0, uy: 0, uz: 1, velocity: true },
+  ],
+  probes: [{ name: "Meio do bloco", quantity: "uz", at: { kind: "point", point: [20, 20, 15] } }],
+});
+
+test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito → /INTER/TYPE24 (superfície-superfície, μ)", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
+  const pr = project([10, 10, 10], [[40, 40, 10], [20, 20, 10]]);
+  for (const mode of ["bonded", "friction"] as const) {
+    const { r, dir } = await solve(pr, radStudy(mode));
+    const c = r.case as FemCase;
+    assert.equal(c.solver, "openradioss");
+    spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: dir, shell: /\.(cmd|bat)$/i.test(T.gmsh!.path) });
+    const m = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
+    const S = radiossDeck(c, m).starter.split("\n");
+    // superfície mestra por segmentos de 4 nós (hexaedros), nós escravos num /GRNOD
+    const seg = S.indexOf(S.find((l) => l.startsWith("/SURF/SEG/"))!);
+    assert.ok(seg > 0);
+    const s1 = S[seg + 3];
+    assert.equal(s1.length, 50);
+    assert.ok(s1.slice(10).match(/.{10}/g)!.every((x) => +x > 0));
+    const k = S.findIndex((l) => l.startsWith("/INTER/"));
+    assert.equal(S[k], mode === "bonded" ? "/INTER/TYPE2/1" : "/INTER/TYPE24/1");
+    const id1 = +S[k + 3].slice(0, 10), surf = +S[k + 3].slice(10, 20);
+    assert.ok(S[seg] === `/SURF/SEG/${surf}`);
+    if (mode === "bonded") assert.ok(S.includes(`/GRNOD/NODE/${id1}`));
+    else {
+      assert.ok(S.includes(`/SURF/SEG/${id1}`) && id1 !== surf); // superfície escrava
+      assert.equal(+S[k + 7].slice(40, 50), 0); // Igap0
+      assert.equal(+S[k + 9].slice(20, 40), 0.3); // Fric
+      assert.equal(S[k + 13].length, 60);
+    }
+    assert.deepEqual(S.filter((l) => l.length > 100), [], "linhas fora das colunas");
+  }
+});
+
+test("OpenRadioss real: bloco colado estica, com atrito descola e sobe inteiro", { skip: !(T.gmsh && T.openradioss) && "OpenRadioss não instalado (CAD_RADIOSS_DIR)", timeout: 1800000 }, async () => {
+  const pr = project([10, 10, 10], [[40, 40, 10], [20, 20, 10]]);
+  const uz = async (mode: "bonded" | "friction") => {
+    const res = await (await solve(pr, radStudy(mode))).run();
+    assert.ok(res.ok, JSON.stringify(res.warnings));
+    return res.fem!.timeHistory!.series.find((x) => x.key === "probe1")!.values.at(-1)!;
+  };
+  // colado: o fundo do bloco fica preso à base, que também estica (só presa por baixo) → a interface sobe δᵢ
+  // e o meio do bloco δᵢ + (1 − δᵢ)/2, entre 0,5 e 1 mm (real ≈ 0,77); com atrito separa-se → sobe 1 mm
+  const glued = await uz("bonded"), free = await uz("friction");
+  assert.ok(glued > 0.5 && glued < 0.9, `colado ${glued}`);
+  near(free, 1, 0.05);
+});
