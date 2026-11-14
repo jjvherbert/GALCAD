@@ -1820,10 +1820,6 @@ function femResult(c, m, frd, dat, supportLoad = [
 	const parsed = parseFrd(frd);
 	return femResultFrom(c, m, c.shell ? shellFrdBlocks(m, parsed, shellLayerCount(c), c) : parsed.blocks, d);
 }
-/**
-* Resultado a partir de blocos nodais (DISP, STRESS ou VMIS, PE, NDTEMP — o formato do `.frd`) e dos
-* valores do solver (frequências, fatores, reações): comum ao CalculiX e ao code_aster.
-*/
 function femResultFrom(c, m, blocks, d) {
 	const r = { blocks };
 	const { positions, triangles, index } = exteriorSurface(m, c.bodies, !!c.shell);
@@ -1841,20 +1837,39 @@ function femResultFrom(c, m, blocks, d) {
 	const metrics = [];
 	const max = (a) => a.reduce((x, y) => Math.max(x, y), 0);
 	const vmOf = (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 + (v[2] - v[0]) ** 2) + 3 * (v[3] ** 2 + v[4] ** 2 + v[5] ** 2));
+	const parts = c.shell ? [{
+		name: "",
+		material: c.material,
+		blocks: shellBlocks(m)
+	}] : c.bodies?.length ? c.bodies.map((b) => ({
+		name: b.name,
+		material: b.material,
+		blocks: solidBlocks(m, [b])
+	})) : [{
+		name: "",
+		material: c.material,
+		blocks: solidBlocks(m)
+	}];
+	const safetyField = (vm) => {
+		const yieldAt = /* @__PURE__ */ new Map();
+		for (const p of parts) {
+			if (!p.material.yield) continue;
+			for (const e of elementsOf(p.blocks)) for (const n of e.nodes) yieldAt.set(n, Math.min(yieldAt.get(n) ?? Infinity, p.material.yield));
+		}
+		if (!yieldAt.size) return;
+		const values = order.map((t, i) => {
+			const y = yieldAt.get(t);
+			return y === void 0 || vm[i] <= 0 ? 10 : Math.min(10, y / vm[i]);
+		});
+		fields.push({
+			name: "Fator de segurança (cedência)",
+			unit: "",
+			values,
+			reverse: true
+		});
+	};
 	const stressSummary = (sb, label, withSafety) => {
-		const per = (c.shell ? [{
-			name: "",
-			material: c.material,
-			blocks: shellBlocks(m)
-		}] : c.bodies?.length ? c.bodies.map((b) => ({
-			name: b.name,
-			material: b.material,
-			blocks: solidBlocks(m, [b])
-		})) : [{
-			name: "",
-			material: c.material,
-			blocks: solidBlocks(m)
-		}]).map((p) => {
+		const per = parts.map((p) => {
 			const nodes = /* @__PURE__ */ new Set();
 			for (const e of elementsOf(p.blocks)) for (const n of e.nodes) nodes.add(n);
 			let vm = 0;
@@ -1923,11 +1938,14 @@ function femResultFrom(c, m, blocks, d) {
 			unit: "mm",
 			values: env
 		});
-		if (hasS) fields.push({
-			name: "Tensão de von Mises máx. no tempo",
-			unit: "MPa",
-			values: vmEnv
-		});
+		if (hasS) {
+			fields.push({
+				name: "Tensão de von Mises máx. no tempo",
+				unit: "MPa",
+				values: vmEnv
+			});
+			safetyField(vmEnv);
+		}
 		const pick = [.../* @__PURE__ */ new Set([...Array.from({ length: Math.min(24, frames.length) }, (_, i) => Math.round(i * (frames.length - 1) / Math.max(1, Math.min(24, frames.length) - 1))), peak])].sort((a, b) => a - b);
 		for (const i of pick) displacements.push({
 			label: `t = ${(times[i] * 1e3).toPrecision(4)} ms${i === peak ? " (pico)" : ""}`,
@@ -2008,6 +2026,7 @@ function femResultFrom(c, m, blocks, d) {
 					unit: "MPa",
 					values: vm
 				});
+				if (!c.nonlinear?.plasticity) safetyField(vm);
 				stressSummary([sv ?? s], "Tensão de von Mises máx.", !c.nonlinear?.plasticity);
 			}
 			const fb = lastOf("FI");
@@ -2990,7 +3009,8 @@ function femView(r) {
 	return {
 		fields: r.fields.map((f) => ({
 			name: f.name,
-			unit: f.unit
+			unit: f.unit,
+			...f.reverse ? { reverse: true } : {}
 		})),
 		modes: r.displacements.map((d) => d.label),
 		layers: [{

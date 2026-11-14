@@ -2,7 +2,8 @@
 // térmica obrigatória (sem valores por defeito escondidos).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { femResultFrom, type FrdBlock } from "../src/sim/calculix-result.ts";
+import { FS_FIELD_CAP, femResultFrom, type FrdBlock } from "../src/sim/calculix-result.ts";
+import { femView } from "../src/sim/result.ts";
 import { calculixDeck } from "../src/sim/calculix.ts";
 import { gci } from "../src/sim/convergence.ts";
 import { checkStudy } from "../src/sim/modelcheck.ts";
@@ -154,4 +155,22 @@ test("Plasticidade multilinear: *PLASTIC com os pontos (σ, εp) da curva; o cor
   assert.equal(al[0], `${alu.yield}, 0.`);
   // sem plasticidade, nenhuma curva entra no deck
   assert.ok(!/\*PLASTIC/.test(calculixDeck({ ...c, nonlinear: undefined }, parseMsh(MSH)).inp));
+});
+
+test("FS como campo: cedência/σvm por nó, cada corpo com a sua cedência, teto em FS_FIELD_CAP e escala invertida", () => {
+  const r = femResultFrom(base, parseMsh(MSH), blocks, dat);
+  const f = r.fields.find((x) => x.name === "Fator de segurança (cedência)")!;
+  assert.ok(f && f.reverse, "campo com escala invertida");
+  assert.ok(Math.abs(Math.min(...f.values) - alu.yield! / 100) < 1e-12, "mínimo = alumínio a 100 MPa");
+  assert.ok(f.values.some((x) => Math.abs(x - 235 / 150) < 1e-12), "aço a 150 MPa");
+  assert.equal(Math.max(...f.values), FS_FIELD_CAP);
+  assert.equal(femView(r).fields.find((x) => x.name === f.name)?.reverse, true);
+});
+
+test("FS como campo: ausente com plasticidade ou sem cedência em nenhum material", () => {
+  const plast = femResultFrom({ ...base, nonlinear: { plasticity: true } } as FemCase, parseMsh(MSH), blocks, dat);
+  assert.ok(!plast.fields.some((x) => x.name.startsWith("Fator de segurança")));
+  const noY = (m: typeof steel) => ({ ...m, yield: undefined });
+  const c = { ...base, bodies: base.bodies!.map((b) => ({ ...b, material: noY(b.material) })) };
+  assert.ok(!femResultFrom(c, parseMsh(MSH), blocks, dat).fields.some((x) => x.name.startsWith("Fator de segurança")));
 });

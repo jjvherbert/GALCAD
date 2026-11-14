@@ -19,7 +19,8 @@ export interface ResultLayer {
 }
 
 export interface ResultView {
-  fields: { name: string; unit: string }[];
+  /** `reverse`: escala invertida (valores baixos são os críticos, ex.: fator de segurança). */
+  fields: { name: string; unit: string; reverse?: boolean }[];
   /** Rótulos das deformadas (estática: "Deformada"; modal/encurvadura: um por modo). */
   modes: string[];
   layers: ResultLayer[];
@@ -28,7 +29,7 @@ export interface ResultView {
 /** Resultado FEM como uma camada única (superfície exterior da malha). */
 export function femView(r: FemResult): ResultView {
   return {
-    fields: r.fields.map((f) => ({ name: f.name, unit: f.unit })),
+    fields: r.fields.map((f) => ({ name: f.name, unit: f.unit, ...(f.reverse ? { reverse: true } : {}) })),
     modes: r.displacements.map((d) => d.label),
     layers: [{ name: "Peça", visible: true, positions: r.positions, triangles: r.triangles, values: r.fields.map((f) => f.values), displacements: r.displacements.map((d) => d.values) }],
   };

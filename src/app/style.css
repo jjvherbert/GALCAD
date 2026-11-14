@@ -391,6 +391,7 @@ button.on { background: var(--accent-soft); border-color: var(--accent); }
 
 /* simulação */
 .legend.sequential { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #440154, #3e4989, #26828e, #35b779, #b5de2b, #fde725); }
+.legend.sequential.reverse { transform: scaleX(-1); }
 .info-table { width: 100%; font-size: 12px; border-collapse: collapse; }
 .info-table td { padding: 1px 4px; border-bottom: 1px solid var(--line); }
 .info-table td:last-child { text-align: right; }
