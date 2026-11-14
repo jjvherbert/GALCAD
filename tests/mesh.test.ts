@@ -411,6 +411,12 @@ test("partições: plano inclinado x + y = 50 corta o perfil em L em 3 blocos", 
   assert.equal(Object.values(cut.c.groups).filter((t) => t.length === 1).length, 2, JSON.stringify(cut.c.groups));
   assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [0, 0, 0], at: 1 }] }, loads })), /normal do plano não pode ser nula/);
   assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [1, 1, 0], at: 200 }] }, loads })), /não atravessa o sólido/);
+  // `cut@<face>`: as arestas que o corte abre numa face (a base y = 0 é cortada em x = 50; a ponta x = 100 não)
+  const part = { size: 5, order: 1 as const, partitions: [{ axis: "n" as const, normal: [1, 1, 0] as [number, number, number], at: "50 / sqrt(2)" }] };
+  const onCut = (f: TopoRef): FemStudy["loads"] => [...loads, { kind: "displacement", faces: [], edges: [{ kind: "edge", name: `cut@${f.name}` }], uz: 0 }];
+  assert.doesNotThrow(() => studyCase(r.ctx, fem({ mesh: part, loads: onCut(face(1, 0)) })));
+  assert.throws(() => studyCase(r.ctx, fem({ mesh: part, loads: onCut(face(0, 100)) })), /nenhuma partição corta a face/);
+  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1 }, loads: onCut(face(1, 0)) })), /só existem com partições da malha/);
   if (!T.gmsh) return;
   const h = await previewMesh(cut.dir);
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
