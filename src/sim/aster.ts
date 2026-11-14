@@ -10,7 +10,7 @@
 // escrava presos ao volume do corpo mestre).
 // Unidades: mm, N, MPa, t, s (como no CalculiX).
 import type { FemCase } from "./case.ts";
-import { type Msh, edgeBlocks, elementsOf, faceBlocks, solidBlocks } from "./msh.ts";
+import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
 import { type FemResult, type FrdBlock, femResultFrom, springWeights, trimNum } from "./calculix.ts";
@@ -36,13 +36,36 @@ function pointNodes(c: FemCase, m: Msh, nodes: number[]): { node: number; dist: 
 
 /** Malha ASTER: COOR_3D, elementos de volume e de face, GROUP_MA e GROUP_NO com os nomes dos grupos. */
 export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number[]; areas: Record<string, number>; edgeNodes: Record<string, { group: string; w: number }[]>; springs: { group: string; k: [number, number, number] }[]; masses: { group: string; nodes: string; m: number }[]; warnings: string[] } {
-  if (!solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
+  if (!c.shell && !solidBlocks(m, c.bodies).length) throw new Error("A malha não tem elementos de volume nos grupos dos corpos");
   const L: string[] = ["TITRE", ` ${c.title.replace(/[^\x20-\x7e]/g, "_").slice(0, 70)}`, "FINSF", "%"];
   const used = new Set<number>();
   const cells: { name: string; type: string; nodes: number[] }[] = [];
   // células por corpo (montagens: B1, B2, …; peça: SOLID)
   const bodyCells: Record<string, string[]> = {};
-  for (const g of c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"]) {
+  // casca: células TRIA3/TRIA6 com a normal alinhada com a da face (como no CalculiX: a pressão fica
+  // com o sinal certo); as faces dos grupos são as próprias células (chave: nós ordenados)
+  const shellCell = new Map<string, string>();
+  const key = (n: number[]) => [...n].sort((a, b) => a - b).join(",");
+  if (c.shell) {
+    const blocks = shellBlocks(m);
+    if (!blocks.length) throw new Error("A malha não tem elementos de casca (grupo SHELL)");
+    bodyCells.SOLID = [];
+    for (const b of blocks) {
+      const fn = c.faces[b.entity - 1]?.normal;
+      for (const e of elementsOf([b])) {
+        const [a, p, q] = e.nodes.slice(0, 3).map((t) => m.nodes.get(t)!);
+        const u = [p[0] - a[0], p[1] - a[1], p[2] - a[2]], v = [q[0] - a[0], q[1] - a[1], q[2] - a[2]];
+        const nz = fn ? fn[0] * (u[1] * v[2] - u[2] * v[1]) + fn[1] * (u[2] * v[0] - u[0] * v[2]) + fn[2] * (u[0] * v[1] - u[1] * v[0]) : 1;
+        const order = e.type === 9 ? (nz < 0 ? [0, 2, 1, 5, 4, 3] : [0, 1, 2, 3, 4, 5]) : nz < 0 ? [0, 2, 1] : [0, 1, 2];
+        const n = order.map((i) => e.nodes[i]);
+        n.forEach((x) => used.add(x));
+        const name = `M${cells.length + 1}`;
+        cells.push({ name, type: e.type === 9 ? "TRIA6" : "TRIA3", nodes: n });
+        bodyCells.SOLID.push(name);
+        shellCell.set(key(n), name);
+      }
+    }
+  } else for (const g of c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"]) {
     bodyCells[g] = [];
     for (const e of elementsOf(solidBlocks(m, [{ group: g }]))) {
       const st = SOLIDS[e.type];
@@ -77,6 +100,8 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
     for (const { type, nodes } of elementsOf(faceBlocks(m, name))) {
       nodes.forEach((x) => ns.add(x));
       A += faceIntegrals(type, nodes.map((x) => m.nodes.get(x)!)).area;
+      const own = c.shell ? shellCell.get(key(nodes)) : undefined;
+      if (own) { faceGroups[name].push(own); continue; }
       const id = `F${faces.length + 1}`;
       faces.push({ name: id, type: FACES[type].aster, nodes: FACES[type].toAster.map((i) => nodes[i]) });
       faceGroups[name].push(id);
@@ -99,7 +124,7 @@ export function asterMesh(c: FemCase, m: Msh): { mail: string; nodeOrder: number
       nodes.forEach((x, i) => w.set(x, (w.get(x) ?? 0) + li.nodal[i]));
     }
     if (!w.size) warnings.push(`O grupo ${name} não tem linhas na malha`);
-    if ([...w.keys()].some((x) => !used.has(x))) warnings.push(`Grupo ${name}: nós das arestas fora dos elementos de volume`);
+    if ([...w.keys()].some((x) => !used.has(x))) warnings.push(`Grupo ${name}: nós das arestas fora dos elementos${c.shell ? " de casca" : " de volume"}`);
     const ns = [...w.keys()].filter((x) => used.has(x)).sort((a, b) => a - b);
     nodeGroups[name] = ns;
     if (forceEdges.has(name) && len > 0) {
@@ -196,6 +221,12 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   if (c.loads.some((l) => l.kind === "coupling")) throw new Error("code_aster: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
   if (c.loads.some((l) => (l.kind === "displacement" || l.kind === "spring") && l.csys)) throw new Error("code_aster: os referenciais locais (deslocamentos e molas) ainda não estão neste adaptador (use o CalculiX)");
   if (c.analysis === "static" && (c.steps?.length ?? 0) > 1) throw new Error("code_aster: os passos de carga múltiplos ainda não estão neste adaptador (use o CalculiX)");
+  const shell = c.shell;
+  if (shell) {
+    if (shell.plies?.length || shell.regions?.some((r) => r.plies.length)) throw new Error("code_aster: o laminado em casca ainda não está neste adaptador (use o CalculiX)");
+    if (c.bodies?.length) throw new Error("code_aster: casca só com um corpo");
+    if (c.analysis === "dynamic" || c.nonlinear) throw new Error("code_aster: casca só na estática linear e na modal (use o CalculiX)");
+  }
   const { mail, nodeOrder, areas, edgeNodes, springs, masses, warnings } = asterMesh(c, m);
   const mat = c.material;
   const nl = c.analysis === "static" ? c.nonlinear : undefined;
@@ -208,12 +239,15 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   C.push("DEBUT(LANG='FR')", "MA = LIRE_MAILLAGE(FORMAT='ASTER', UNITE=20)");
   // a pressão segue a normal dos elementos de face: orientá-los para fora do volume
   const presGroups = c.loads.flatMap((ld) => (ld.kind === "pressure" ? [`'${ld.group}'`] : []));
-  if (presGroups.length) C.push(`MA = MODI_MAILLAGE(reuse=MA, MAILLAGE=MA, ORIE_PEAU=_F(GROUP_MA_PEAU=(${presGroups.join(", ")},)))`);
+  // casca: TRIA6 → TRIA7 (o COQUE_3D pede o nó central); DKT nos TRIA3
+  const quad = !!shell && shellBlocks(m).some((b) => b.type === 9);
+  if (quad) C.push("MA = CREA_MAILLAGE(MAILLAGE=MA, MODI_MAILLE=_F(TOUT='OUI', OPTION='TRIA6_7'))");
+  if (presGroups.length && !shell) C.push(`MA = MODI_MAILLAGE(reuse=MA, MAILLAGE=MA, ORIE_PEAU=_F(GROUP_MA_PEAU=(${presGroups.join(", ")},)))`);
   // hexaedros: integração reduzida = 3D_SI (sous-intégré); o code_aster não tem modos incompatíveis
   const hex = c.mesh.element === "hex";
   const explicit = c.dynamic?.scheme === "explicit";
   // o explícito (DIFF_CENT) não existe nos elementos sub-integrados (3D_SI)
-  const modelisation = hex && c.mesh.integration === "reduced" && !explicit ? "3D_SI" : "3D";
+  const modelisation = shell ? (quad ? "COQUE_3D" : "DKT") : hex && c.mesh.integration === "reduced" && !explicit ? "3D_SI" : "3D";
   if (hex && c.mesh.integration === "reduced" && explicit) warnings.push("code_aster explícito: os hexaedros passam a integração completa (o 3D_SI não tem explícito)");
   if (hex && c.mesh.order === 1 && c.mesh.integration !== "reduced") warnings.push("code_aster: HEXA8 com integração completa (o code_aster não tem modos incompatíveis como o C3D8I) bloqueia em flexão — use hexaedros de 20 nós ou o CalculiX");
   // molas: as células POI1 passam ao modelo discreto DIS_T (a 2.ª atribuição sobrepõe-se à 1.ª)
@@ -226,8 +260,9 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     ...(springs.length ? [`_F(GROUP_MA=(${springs.map((s) => `'${s.group}'`).join(", ")},), CARA='M_T_D_N', VALE=0.)`] : []),
     ...masses.flatMap((x) => [`_F(GROUP_MA='${x.group}', CARA='K_T_D_N', VALE=(0., 0., 0.))`, `_F(GROUP_MA='${x.group}', CARA='M_T_D_N', VALE=${num(x.m)})`]),
   ];
-  if (dis.length) C.push(`CARA = AFFE_CARA_ELEM(MODELE=MO, DISCRET=(${dis.join(", ")}))`);
-  const cara = discrete.length ? " CARA_ELEM=CARA," : "";
+  const coque = shell ? `COQUE=_F(GROUP_MA='SOLID', EPAIS=${num(shell.thickness)}, VECTEUR=(1., 0., 0.))` : "";
+  if (dis.length || coque) C.push(`CARA = AFFE_CARA_ELEM(MODELE=MO, ${[dis.length && `DISCRET=(${dis.join(", ")})`, coque].filter(Boolean).join(", ")})`);
+  const cara = discrete.length || shell ? " CARA_ELEM=CARA," : "";
   // plasticidade: com alguma curva multilinear, todos os materiais passam à curva de tração
   // (VMIS_ISOT_TRAC, uma só relação para o modelo); senão, encruamento linear (VMIS_ISOT_LINE)
   const trac = !!nl?.plasticity && (c.bodies?.length ? c.bodies.map((b) => b.material) : [mat]).some((x) => x.plasticCurve?.length);
@@ -260,7 +295,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   let grav = "";
   for (const ld of c.loads) {
     switch (ld.kind) {
-      case "fixed": ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.)`); break;
+      case "fixed": ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.${shell ? ", DRX=0., DRY=0., DRZ=0." : ""})`); break;
       case "displacement": {
         const comps = ld.u.map((u, k) => (u === null ? "" : `D${"XYZ"[k]}=${num(u)}`)).filter(Boolean);
         // na dinâmica, os deslocamentos impostos não nulos seguem a amplitude
@@ -325,9 +360,17 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
     C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""} EXCIT=(${excit},), COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
   } else if (c.analysis === "modal") {
+    // mais 3 modos do que os pedidos e a verificação de Sturm feita à parte só até ao último pedido:
+    // a do CALC_MODES conta até ao último calculado e falha quando esse é metade de um par duplo
+    // (simetrias); assim só deixa passar se nenhum modo abaixo dos pedidos ficou por calcular
     C.push(
       `ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM,${cara}${hasBc ? " CHARGE=BC," : ""} NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))`,
-      `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes}))`,
+      `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes + 3}), VERI_MODE=_F(STURM='NON'))`,
+      `_FQ = sorted(RES.getAccessParameters()['FREQ'])[:${c.modes}]`,
+      "_BAND = (max(0., _FQ[0] * 0.995), _FQ[-1] * 1.005)",
+      "_NB = INFO_MODE(MATR_RIGI=K, MATR_MASS=M, TYPE_MODE='DYNAMIQUE', FREQ=_BAND)['NB_MODE', 1]",
+      "_NC = len([f for f in RES.getAccessParameters()['FREQ'] if _BAND[0] <= f <= _BAND[1]])",
+      "if _NB > _NC: raise ValueError('Sturm: ha %d modos entre %g e %g Hz e so foram calculados %d' % (_NB, _BAND[0], _BAND[1], _NC))",
       "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))",
       "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')",
     );
@@ -348,20 +391,27 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   // tensões só nos volumes (os discretos não têm SIGM_NOEU)
   const solidOnly = discrete.length ? " GROUP_MA='SOLID'," : "";
   // resultados: deslocamentos em todos os nós e, na estática, von Mises, plasticidade e reações
-  if (c.analysis === "static") {
+  // casca: tensões na face superior e na inferior (EXTR_COQUE); von Mises = o maior das duas
+  if (shell && c.analysis === "static") {
+    C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES, CONTRAINTE=('SIGM_ELNO',), FORCE=('REAC_NODA',))`);
+    for (const [r, niv] of [["RSUP", "SUP"], ["RINF", "INF"]]) C.push(`${r} = POST_CHAMP(RESULTAT=RES,${solidOnly} EXTR_COQUE=_F(NOM_CHAM=('SIGM_ELNO',), NUME_COUCHE=1, NIVE_COUCHE='${niv}'))`, `${r} = CALC_CHAMP(reuse=${r}, RESULTAT=${r}, CRITERES=('SIEQ_ELNO', 'SIEQ_NOEU',))`);
+  } else if (c.analysis === "static") {
     C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',), FORCE=('REAC_NODA',)${nl?.plasticity ? ", VARI_INTERNE=('VARI_NOEU',)" : ""})`);
   } else if (c.dynamic) C.push(`RES = CALC_CHAMP(reuse=RES, RESULTAT=RES,${solidOnly} CONTRAINTE=('SIGM_NOEU',), CRITERES=('SIEQ_NOEU',))`);
-  C.push("TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
+  const orders = c.analysis === "modal" ? `NUME_ORDRE=(${Array.from({ length: c.modes }, (_, i) => i + 1).join(", ")},)` : "TOUT_ORDRE='OUI'";
+  C.push(`TU = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='U', RESULTAT=RES, NOM_CHAM='DEPL', GROUP_NO='NALL', NOM_CMP=('DX', 'DY', 'DZ'), ${orders}))`, "IMPR_TABLE(TABLE=TU, UNITE=38, FORMAT='TABLEAU')");
   if (c.analysis === "static" || c.dynamic) {
-    C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
+    if (shell) for (const [r, u] of [["RSUP", 39], ["RINF", 43]]) C.push(`T${r} = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=${r}, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))`, `IMPR_TABLE(TABLE=T${r}, UNITE=${u}, FORMAT='TABLEAU')`);
+    else C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
     if (supports.length && !c.dynamic) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
     if (nl?.plasticity) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
   }
-  C.push("IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES))", "FIN()");
+  // casca: só os deslocamentos no .rmed (os campos com sub-pontos do TRIA7 não se exportam em MED)
+  C.push(`IMPR_RESU(FORMAT='MED', UNITE=80, RESU=_F(RESULTAT=RES${shell ? ", NOM_CHAM='DEPL'" : ""}))`, "FIN()");
   const exp = [
     "P actions make_etude", "P time_limit 1800", "P memory_limit 4096", "P ncpus 1", "P mpi_nbcpu 1", "P mode interactif",
     "F comm job.comm D 1", "F mail mesh.mail D 20", "F mess job.mess R 6", "F resu job.resu R 8", "F rmed job.rmed R 80",
-    "F libr u.tab R 38", "F libr vm.tab R 39", "F libr freq.tab R 40", "F libr reac.tab R 41", "F libr peeq.tab R 42",
+    "F libr u.tab R 38", "F libr vm.tab R 39", "F libr freq.tab R 40", "F libr reac.tab R 41", "F libr peeq.tab R 42", "F libr vm2.tab R 43",
   ];
   return { files: { "mesh.mail": mail, "job.comm": C.join("\n") + "\n", "job.export": exp.join("\n") + "\n" }, nodeOrder, warnings };
 }
@@ -380,7 +430,7 @@ export function parseAsterTable(text: string): Record<string, string>[] {
 /** Tag Gmsh de um nó da tabela: nome "N<tag>" ou, nas versões que numeram, o índice (1…) na ordem escrita. */
 export const asterNode = (s: string, order: number[]) => (/^N\d+$/.test(s) ? Number(s.slice(1)) : order[Number(s) - 1]);
 
-export interface AsterTables { u: string; vm?: string; freq?: string; reac?: string; peeq?: string }
+export interface AsterTables { u: string; vm?: string; freq?: string; reac?: string; peeq?: string; /** Casca: von Mises da face inferior (o vm é o da superior). */ vm2?: string }
 
 /** Resultado (mesmo formato do CalculiX) a partir das tabelas escritas pelo .comm deste adaptador. */
 export function asterResult(c: FemCase, m: Msh, t: AsterTables, nodeOrder: number[]): FemResult {
@@ -397,11 +447,14 @@ export function asterResult(c: FemCase, m: Msh, t: AsterTables, nodeOrder: numbe
     }
     return [...byOrder].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
   };
-  const blocks = [...nodal(t.u, "DISP", ["DX", "DY", "DZ"]), ...nodal(t.vm, "VMIS", ["VMIS"]), ...nodal(t.peeq, "PE", ["V1"])];
-  const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite);
+  const vm = nodal(t.vm, "VMIS", ["VMIS"]);
+  // casca: em cada nó, o maior von Mises das faces superior e inferior
+  nodal(t.vm2, "VMIS", ["VMIS"]).forEach((b2, i) => { const b = vm[i]; if (!b) { vm[i] = b2; return; } for (const [n, v] of b2.data) if (!((b.data.get(n)?.[0] ?? -Infinity) >= v[0])) b.data.set(n, v); });
+  const blocks = [...nodal(t.u, "DISP", ["DX", "DY", "DZ"]), ...vm, ...nodal(t.peeq, "PE", ["V1"])];
+  const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite).slice(0, c.modes);
   const reactionHistory = parseAsterTable(t.reac ?? "").map((r) => ({ time: c.nonlinear ? Number(r.INST ?? 1) : 1, f: [Number(r.DX), Number(r.DY), Number(r.DZ)] as [number, number, number] }))
     .filter((r) => r.f.every(Number.isFinite) && !(c.nonlinear && r.time === 0));
   // REAC_NODA = FORC_NODA − cargas = reação dos apoios sobre a peça (já sem a parcela das cargas nos apoios)
   const res = femResultFrom(c, m, blocks, { frequencies, buckling: [], reactions: reactionHistory.length ? [reactionHistory.at(-1)!.f] : [], reactionHistory });
-  return { ...res, hypotheses: [...res.hypotheses, "Calculado com o code_aster (EDF, GPL-3.0); adaptador verificado com o code_aster 18.1 nos casos analíticos de referência (consola, pressão, modal, plasticidade uniaxial, elástica, montagem colada)"] };
+  return { ...res, hypotheses: [...res.hypotheses, "Calculado com o code_aster (EDF, GPL-3.0); adaptador verificado com o code_aster 18.1 nos casos analíticos de referência (consola, pressão, modal, plasticidade uniaxial, elástica, montagem colada, placa em casca)"] };
 }

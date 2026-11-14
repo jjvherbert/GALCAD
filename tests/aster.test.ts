@@ -86,7 +86,8 @@ test("code_aster: comandos da estática linear, não linear e modal", () => {
   assert.match(nl, /VARI_INTERNE=\('VARI_NOEU',\)/);
   assert.match(asterCase({ ...base, nonlinear: { geometry: true, plasticity: false, increments: 4 } }, m).files["job.comm"], /RELATION='ELAS', DEFORMATION='GREEN_LAGRANGE'/);
   const modal = asterCase({ ...base, analysis: "modal" }, m);
-  assert.match(modal.files["job.comm"], /CALC_MODES\(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F\(NMAX_FREQ=4\)\)/);
+  assert.match(modal.files["job.comm"], /CALC_MODES\(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F\(NMAX_FREQ=7\), VERI_MODE=_F\(STURM='NON'\)\)/);
+  assert.match(modal.files["job.comm"], /INFO_MODE\(MATR_RIGI=K, MATR_MASS=M, TYPE_MODE='DYNAMIQUE', FREQ=_BAND\)/);
   assert.ok(!/CH = AFFE_CHAR_MECA/.test(modal.files["job.comm"]));
   assert.match(modal.files["job.export"], /F mail mesh\.mail D 20/);
   assert.throws(() => asterCase({ ...base, analysis: "thermal" }, m), /não suportada/);

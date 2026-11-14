@@ -131,7 +131,10 @@ function shellCheck(s: FemStudy, sc: Ctx["scope"], tags: (refs: TopoRef[], what:
   const thickness = plies ? plies.reduce((a, p) => a + p.t, 0) : evalParam(s.shell!.thickness, sc, "Espessura da casca");
   if (!(thickness > 0)) throw new Error("Espessura da casca: tem de ser positiva");
   const no = (what: string) => { throw new Error(`Casca: ${what} ainda não é suportado`); };
-  if ((s.solver ?? "calculix") !== "calculix") no(`o solver ${s.solver}`);
+  const sv = s.solver ?? "calculix";
+  if (sv !== "calculix" && sv !== "code_aster") no(`o solver ${s.solver}`);
+  if (sv === "code_aster" && plies) throw new Error("Casca: o laminado ainda não está no code_aster (use o CalculiX)");
+  if (sv === "code_aster" && s.analysis === "buckling") no("a encurvadura em casca no code_aster");
   if (s.analysis !== "static" && s.analysis !== "modal" && s.analysis !== "buckling") no(`a análise ${s.analysis}`);
   if (s.nonlinear?.geometry || s.nonlinear?.plasticity) no("a análise não linear");
   if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1 || s.mesh.partitions?.length) no("a malha manual (hexaedros, seeds, faces mapeadas ou partições)");

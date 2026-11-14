@@ -98,6 +98,6 @@ test("casca: superfície, qualidade e pré-visualização", () => {
   assert.ok(meshPreview(plateCase(), m).summary.some(([, v]) => /espessura/.test(v)));
 });
 
-test("casca: só com o CalculiX", async () => {
-  await assert.rejects(runFem({ ...plateCase(), solver: "code_aster" }, ".", () => {}, false), /Cascas/);
+test("casca: não com o OpenRadioss", async () => {
+  await assert.rejects(runFem({ ...plateCase(), solver: "openradioss" }, ".", () => {}, false), /Cascas/);
 });
