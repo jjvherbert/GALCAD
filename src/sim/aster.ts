@@ -9,7 +9,7 @@
 // Montagens: um GROUP_MA e um material por corpo; contacto colado por LIAISON_MAIL (nós da face
 // escrava presos ao volume do corpo mestre).
 // Unidades: mm, N, MPa, t, s (como no CalculiX).
-import { type FemCase, amplitudeIntegral } from "./case.ts";
+import { type FemCase, amplitudeIntegral, thermalFieldAt } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, faceIntegrals, lineIntegrals } from "./elements.ts";
 import { stableIncrement } from "./quality.ts";
@@ -282,14 +282,27 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     }
     // Rayleigh no code_aster: AMOR_ALPHA multiplica a rigidez e AMOR_BETA a massa (C = AMOR_BETA·M + AMOR_ALPHA·K)
     const damp = c.dynamic && (c.dynamic.alpha || c.dynamic.beta) ? `, AMOR_ALPHA=${num(c.dynamic.beta)}, AMOR_BETA=${num(c.dynamic.alpha)}` : "";
-    C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)}${damp})${plast})`);
+    const alpha = tField ? `, ALPHA=${num(m2.alpha ?? 0)}` : "";
+    C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)}${alpha}${damp})${plast})`);
   };
+  // campo de temperatura: calculado aqui em cada nó (pela ordem da malha) e passado como variável de comando TEMP
+  const tField = c.loads.find((l) => l.kind === "thermalField");
+  let varc = "";
+  if (tField) {
+    const T = thermalFieldAt(tField);
+    C.push("CHT = CREA_CHAMP(OPERATION='AFFE', TYPE_CHAM='NOEU_TEMP_R', MAILLAGE=MA, AFFE=_F(TOUT='OUI', NOM_CMP='TEMP', VALE=0.))");
+    const vals = nodeOrder.map((n) => num(T(m.nodes.get(n)!)));
+    C.push("CHT.setValues([");
+    for (let k = 0; k < vals.length; k += 8) C.push(`  ${vals.slice(k, k + 8).join(", ")},`);
+    C.push("])");
+    varc = `, AFFE_VARC=_F(TOUT='OUI', NOM_VARC='TEMP', CHAM_GD=CHT, VALE_REF=${num(tField.tRef)})`;
+  }
   if (c.bodies?.length) {
     c.bodies.forEach((b, k) => material(`MAT${k + 1}`, b.material));
-    C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=(${c.bodies.map((b, k) => `_F(GROUP_MA='${b.group}', MATER=MAT${k + 1})`).join(", ")},))`);
+    C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=(${c.bodies.map((b, k) => `_F(GROUP_MA='${b.group}', MATER=MAT${k + 1})`).join(", ")},)${varc})`);
   } else {
     material("MAT", mat);
-    C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
+    C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT)${varc})`);
   }
   // apoios (BC) e cargas (CH) em cargas separadas: nos não lineares só as cargas sobem em rampa
   const ddl: string[] = [], ddlAmp: string[] = [], ddlVel: string[] = [], force: string[] = [], pres: string[] = [], nodal: string[] = [];
@@ -339,7 +352,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
         if (g > 0) for (const x of masses) nodal.push(`_F(GROUP_NO='${x.nodes}', FX=${num(x.m * ld.g[0])}, FY=${num(x.m * ld.g[1])}, FZ=${num(x.m * ld.g[2])})`);
         break;
       }
-      case "spring": case "mass": case "coupling": break;
+      case "spring": case "mass": case "coupling": case "thermalField": break;
       default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
     }
   }

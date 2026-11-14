@@ -96,3 +96,55 @@ for (const solver of ["calculix", "code_aster"] as const) {
     near(v, -5.38, 0.05);
   });
 }
+
+/** NAFEMS LE11: cilindro/cone/esfera de parede espessa (revolução de 90°) sob o campo de temperatura
+ *  T = (√(x² + y²) + z)/1000 °C, α = 2,3e-4, E = 210 GPa, ν = 0,3. Apoios: simetria em x = 0 e y = 0;
+ *  uz = 0 nas faces planas z = 0 e z = 1797,1 (corpo em z ≥ 0). Alvo: σzz no ponto A (1000, 0, 0) = −105 MPa. */
+async function le11() {
+  const s = new SketchBuilder({ kind: "std", name: "XZ" });
+  const P = (x: number, y: number) => s.point(x, y, { fixed: true });
+  const O = P(0, 0);
+  // perfil no plano XZ (x = raio, y do esboço = z global), coordenadas da geometria de referência (m → mm)
+  const zc = 1000 * Math.SQRT1_2, zTop = 1797.107, rc = Math.sqrt(1400 ** 2 - zc ** 2);
+  const a = P(1000, 0), b = P(1400, 0), c = P(rc, zc), d = P(1000, 1397.107);
+  const e = P(1000, zTop), f = P(zc, zTop), g = P(zc, zc);
+  s.line(a, b);
+  s.entities["arcOut"] = { type: "arc", c: O, s: b, e: c, r: 1400, a0: 0, a1: Math.asin(zc / 1400) } as never;
+  s.line(c, d); s.line(d, e); s.line(e, f); s.line(f, g);
+  s.entities["arcIn"] = { type: "arc", c: O, s: a, e: g, r: 1000, a0: 0, a1: Math.PI / 4 } as never;
+  const axis = s.line(P(0, -400), P(0, -200), true);
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "revolve", sketch: "f1", axis: { kind: "sketchLine", sketch: "f1", entity: axis }, op: "add", angle: 90 }).doc;
+  const r = await new Engine().rebuild(doc);
+  const faces = r.ctx.body!.faces.map((x) => ({ name: x.name, p: faceProps(x.face) }));
+  const plane = (axis: 0 | 1 | 2, v: number): TopoRef => {
+    const x = faces.find((q) => q.p.normal && Math.abs(Math.abs(q.p.normal[axis]) - 1) < 1e-6 && Math.abs(q.p.center[axis] - v) < 1e-3);
+    assert.ok(x, `face plana ${"xyz"[axis]} = ${v} não encontrada`);
+    return { kind: "face", name: x.name };
+  };
+  return { doc, plane, zTop };
+}
+
+for (const solver of ["calculix", "code_aster"] as const) {
+  const has = !!(T.gmsh && (solver === "calculix" ? T.calculix : T.code_aster));
+  test(`NAFEMS LE11 (${solver}): σzz no ponto A = −105 MPa`, { skip: !has && `${solver} não instalado`, timeout: 900000 }, async () => {
+    const { doc, plane, zTop } = await le11();
+    const s: FemStudy = {
+      ...newFemStudy("s1", 1), solver,
+      material: { ...SIM_MATERIALS[0], name: "LE11", E: 210000, nu: 0.3, alpha: 2.3e-4 },
+      mesh: { size: 80, order: 2, curvature: 12 },
+      loads: [
+        { kind: "symmetry", faces: [plane(0, 0), plane(1, 0)] },
+        { kind: "displacement", faces: [plane(2, 0), plane(2, zTop)], uz: 0 },
+        { kind: "thermalField", t: "(sqrt(x^2 + y^2) + z)/1000", tRef: 0 },
+      ],
+      probes: [{ name: "σzz A", quantity: "szz", at: { kind: "point", point: [1000, 0, 0] } }],
+    } as FemStudy;
+    const r = await run(doc, s);
+    assert.match(r.solver ?? "", solver === "calculix" ? /calculix/i : /code_aster/);
+    const v = r.fem!.metrics.find((m) => m.key === "probe1")!.value;
+    console.log(`LE11 ${solver}: σzz(A) = ${v}`);
+    near(v, -105, 0.05);
+  });
+}

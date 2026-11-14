@@ -4,6 +4,382 @@ import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+// src/doc/expr.ts
+var ExprError = class extends Error {
+	pos;
+	constructor(message, pos) {
+		super(message);
+		this.pos = pos;
+	}
+};
+const UNITS = {
+	mm: 1,
+	cm: 10,
+	m: 1e3,
+	in: 25.4,
+	ft: 304.8,
+	deg: 1,
+	rad: 180 / Math.PI
+};
+const D2R = Math.PI / 180;
+const FUNCS = {
+	sin: {
+		n: [1, 1],
+		f: (a) => Math.sin(a * D2R)
+	},
+	cos: {
+		n: [1, 1],
+		f: (a) => Math.cos(a * D2R)
+	},
+	tan: {
+		n: [1, 1],
+		f: (a) => Math.tan(a * D2R)
+	},
+	asin: {
+		n: [1, 1],
+		f: (a) => Math.asin(a) / D2R
+	},
+	acos: {
+		n: [1, 1],
+		f: (a) => Math.acos(a) / D2R
+	},
+	atan: {
+		n: [1, 1],
+		f: (a) => Math.atan(a) / D2R
+	},
+	atan2: {
+		n: [2, 2],
+		f: (y, x) => Math.atan2(y, x) / D2R
+	},
+	sqrt: {
+		n: [1, 1],
+		f: Math.sqrt
+	},
+	abs: {
+		n: [1, 1],
+		f: Math.abs
+	},
+	exp: {
+		n: [1, 1],
+		f: Math.exp
+	},
+	ln: {
+		n: [1, 1],
+		f: Math.log
+	},
+	log: {
+		n: [1, 1],
+		f: Math.log10
+	},
+	pow: {
+		n: [2, 2],
+		f: Math.pow
+	},
+	round: {
+		n: [1, 1],
+		f: Math.round
+	},
+	floor: {
+		n: [1, 1],
+		f: Math.floor
+	},
+	ceil: {
+		n: [1, 1],
+		f: Math.ceil
+	},
+	min: {
+		n: [1, 64],
+		f: Math.min
+	},
+	max: {
+		n: [1, 64],
+		f: Math.max
+	},
+	if: {
+		n: [3, 3],
+		f: (c, a, b) => c ? a : b
+	},
+	clamp: {
+		n: [3, 3],
+		f: (x, a, b) => Math.min(Math.max(x, a), b)
+	},
+	sign: {
+		n: [1, 1],
+		f: Math.sign
+	}
+};
+/** Palavras reservadas dos operadores lógicos. */
+const WORD_OPS = {
+	and: "&&",
+	or: "||",
+	not: "!"
+};
+const CONSTS = {
+	pi: Math.PI,
+	e: Math.E
+};
+function tokenize(src) {
+	const toks = [];
+	let i = 0;
+	while (i < src.length) {
+		const ch = src[i];
+		if (/\s/.test(ch)) {
+			i++;
+			continue;
+		}
+		if (/[0-9.]/.test(ch)) {
+			const m = /^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/.exec(src.slice(i));
+			if (!m) throw new ExprError(`Número inválido`, i);
+			toks.push({
+				t: "num",
+				v: m[0],
+				pos: i
+			});
+			i += m[0].length;
+			continue;
+		}
+		if (/[\p{L}_]/u.test(ch)) {
+			const m = /^[\p{L}_][\p{L}\p{N}_]*/u.exec(src.slice(i));
+			toks.push(m[0] in WORD_OPS ? {
+				t: "op",
+				v: WORD_OPS[m[0]],
+				pos: i
+			} : {
+				t: "id",
+				v: m[0],
+				pos: i
+			});
+			i += m[0].length;
+			continue;
+		}
+		const two = src.slice(i, i + 2);
+		if ([
+			"<=",
+			">=",
+			"==",
+			"!=",
+			"&&",
+			"||"
+		].includes(two)) {
+			toks.push({
+				t: "op",
+				v: two,
+				pos: i
+			});
+			i += 2;
+			continue;
+		}
+		if ("+-*/%^(),<>!".includes(ch)) {
+			toks.push({
+				t: "op",
+				v: ch,
+				pos: i
+			});
+			i++;
+			continue;
+		}
+		throw new ExprError(`Carácter inesperado "${ch}"`, i);
+	}
+	toks.push({
+		t: "end",
+		v: "",
+		pos: src.length
+	});
+	return toks;
+}
+/** Converte texto numa árvore. Lança ExprError com a posição do erro. */
+function parse(src) {
+	const toks = tokenize(src);
+	let i = 0;
+	const peek = () => toks[i];
+	const eat = (v) => {
+		const t = toks[i];
+		if (v !== void 0 && t.v !== v) throw new ExprError(t.t === "end" ? `Falta "${v}"` : `Esperava "${v}"`, t.pos);
+		i++;
+		return t;
+	};
+	const isOp = (...v) => peek().t === "op" && v.includes(peek().v);
+	const expr = () => {
+		let a = and();
+		while (isOp("||")) {
+			eat();
+			a = {
+				k: "bin",
+				op: "||",
+				a,
+				b: and()
+			};
+		}
+		return a;
+	};
+	const and = () => {
+		let a = cmp();
+		while (isOp("&&")) {
+			eat();
+			a = {
+				k: "bin",
+				op: "&&",
+				a,
+				b: cmp()
+			};
+		}
+		return a;
+	};
+	const cmp = () => {
+		const a = sum();
+		if (isOp("<", "<=", ">", ">=", "==", "!=")) return {
+			k: "bin",
+			op: eat().v,
+			a,
+			b: sum()
+		};
+		return a;
+	};
+	const sum = () => {
+		let a = term();
+		while (peek().t === "op" && (peek().v === "+" || peek().v === "-")) a = {
+			k: "bin",
+			op: eat().v,
+			a,
+			b: term()
+		};
+		return a;
+	};
+	const term = () => {
+		let a = unary();
+		while (peek().t === "op" && "*/%".includes(peek().v)) a = {
+			k: "bin",
+			op: eat().v,
+			a,
+			b: unary()
+		};
+		return a;
+	};
+	const unary = () => {
+		if (peek().t === "op" && peek().v === "!") {
+			eat();
+			return {
+				k: "not",
+				a: unary()
+			};
+		}
+		if (peek().t === "op" && peek().v === "-") {
+			eat();
+			return {
+				k: "neg",
+				a: unary()
+			};
+		}
+		if (peek().t === "op" && peek().v === "+") {
+			eat();
+			return unary();
+		}
+		return power();
+	};
+	const power = () => {
+		const a = atom();
+		if (peek().t === "op" && peek().v === "^") {
+			eat();
+			return {
+				k: "bin",
+				op: "^",
+				a,
+				b: unary()
+			};
+		}
+		return a;
+	};
+	const atom = () => {
+		const t = peek();
+		if (t.t === "num") {
+			eat();
+			let v = parseFloat(t.v);
+			const u = peek();
+			if (u.t === "id" && u.v in UNITS && !(toks[i + 1]?.v === "(")) {
+				eat();
+				v *= UNITS[u.v];
+			}
+			return {
+				k: "num",
+				v
+			};
+		}
+		if (t.t === "id") {
+			eat();
+			if (peek().v === "(") {
+				eat("(");
+				const args = [];
+				if (peek().v !== ")") {
+					args.push(expr());
+					while (peek().v === ",") {
+						eat(",");
+						args.push(expr());
+					}
+				}
+				eat(")");
+				const fn = FUNCS[t.v];
+				if (!fn) throw new ExprError(`Função desconhecida "${t.v}"`, t.pos);
+				if (args.length < fn.n[0] || args.length > fn.n[1]) throw new ExprError(`"${t.v}" espera ${fn.n[0] === fn.n[1] ? fn.n[0] : `${fn.n[0]}–${fn.n[1]}`} argumento(s)`, t.pos);
+				return {
+					k: "call",
+					fn: t.v,
+					args,
+					pos: t.pos
+				};
+			}
+			return {
+				k: "var",
+				name: t.v,
+				pos: t.pos
+			};
+		}
+		if (t.v === "(") {
+			eat("(");
+			const e = expr();
+			eat(")");
+			return e;
+		}
+		throw new ExprError(t.t === "end" ? "Expressão incompleta" : `Inesperado "${t.v}"`, t.pos);
+	};
+	const root = expr();
+	if (peek().t !== "end") throw new ExprError(`Inesperado "${peek().v}"`, peek().pos);
+	return root;
+}
+const EQ_TOL = 1e-9;
+function evaluate(node, scope) {
+	switch (node.k) {
+		case "num": return node.v;
+		case "neg": return -evaluate(node.a, scope);
+		case "not": return evaluate(node.a, scope) ? 0 : 1;
+		case "var": {
+			if (node.name in CONSTS) return CONSTS[node.name];
+			const v = scope(node.name);
+			if (v === void 0) throw new ExprError(`Variável desconhecida "${node.name}"`, node.pos);
+			return v;
+		}
+		case "call": return FUNCS[node.fn].f(...node.args.map((a) => evaluate(a, scope)));
+		case "bin": {
+			const a = evaluate(node.a, scope), b = evaluate(node.b, scope);
+			switch (node.op) {
+				case "+": return a + b;
+				case "-": return a - b;
+				case "*": return a * b;
+				case "/": return a / b;
+				case "%": return a % b;
+				case "^": return Math.pow(a, b);
+				case "<": return a < b ? 1 : 0;
+				case "<=": return a <= b + EQ_TOL * Math.max(1, Math.abs(b)) ? 1 : 0;
+				case ">": return a > b ? 1 : 0;
+				case ">=": return a >= b - EQ_TOL * Math.max(1, Math.abs(b)) ? 1 : 0;
+				case "==": return Math.abs(a - b) <= EQ_TOL * Math.max(1, Math.abs(a), Math.abs(b)) ? 1 : 0;
+				case "!=": return Math.abs(a - b) > EQ_TOL * Math.max(1, Math.abs(a), Math.abs(b)) ? 1 : 0;
+				case "&&": return a && b ? 1 : 0;
+				case "||": return a || b ? 1 : 0;
+			}
+		}
+	}
+	throw new Error("nó inválido");
+}
 // src/sim/case.ts
 /** A carga está ativa no passo k (sem `steps`: em todos). */
 const activeIn = (l, k) => !l.steps || l.steps.includes(k);
@@ -31,6 +407,15 @@ const unit = (p) => {
 * (iguais em todo o lado) ou cilíndrico (radial, tangencial, axial de a para b). Erro se o
 * referencial for degenerado; no cilíndrico, null para um ponto sobre o eixo.
 */
+/** Função T(p) (°C) de um campo de temperatura; erro se der um valor não finito. */
+function thermalFieldAt(l) {
+	const node = parse(l.t);
+	return (p) => {
+		const T = evaluate(node, (n) => n === "x" ? p[0] : n === "y" ? p[1] : n === "z" ? p[2] : l.vars[n]);
+		if (!Number.isFinite(T)) throw new Error(`Campo de temperatura: valor não finito em (${p.join(", ")})`);
+		return T;
+	};
+}
 function csysAxes(c, p = [
 	0,
 	0,
@@ -2429,6 +2814,7 @@ function calculixDeck(c, m) {
 	const warnings = [];
 	const groupsOfBodies = c.bodies?.length ? c.bodies.map((b) => b.group) : ["SOLID"];
 	const thermal = c.analysis === "thermal";
+	const tField = c.loads.find((l) => l.kind === "thermalField");
 	if (c.shell && c.bodies?.length) throw new Error("Casca: só um corpo");
 	const regions = c.shell?.regions?.filter((r) => r.plies.length) ?? [];
 	const plies = c.shell?.plies?.length ? c.shell.plies : regions.length ? [] : void 0;
@@ -2584,7 +2970,7 @@ function calculixDeck(c, m) {
 		}
 		L.push("*ELASTIC", `${fmt$1(mat.E)}, ${fmt$1(mat.nu)}`, "*DENSITY", fmt$1(mat.density * 1e-9));
 		if (c.dynamic && (c.dynamic.alpha || c.dynamic.beta)) L.push(`*DAMPING, ALPHA=${fmt$1(c.dynamic.alpha)}, BETA=${fmt$1(c.dynamic.beta)}`);
-		if (mat.alpha) L.push("*EXPANSION", fmt$1(mat.alpha));
+		if (mat.alpha) L.push(tField ? `*EXPANSION, ZERO=${fmt$1(tField.tRef)}` : "*EXPANSION", fmt$1(mat.alpha));
 		if (c.nonlinear?.plasticity) {
 			if (!(mat.yield > 0)) throw new Error(`Plasticidade: o material ${mat.name} não tem tensão de cedência`);
 			if (mat.plasticCurve?.length) {
@@ -2785,6 +3171,7 @@ function calculixDeck(c, m) {
 		});
 	});
 	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
+	else if (tField) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", `NALL, ${fmt$1(tField.tRef)}`);
 	const v0 = c.dynamic?.v0;
 	if (v0) L.push("*INITIAL CONDITIONS, TYPE=VELOCITY", ...v0.flatMap((v, k) => v ? [`NALL, ${k + 1}, ${fmt$1(v * 1e3)}`] : []));
 	const stepCards = (k) => {
@@ -2868,6 +3255,12 @@ function calculixDeck(c, m) {
 							cload.set(n, acc);
 						}
 					});
+					break;
+				}
+				case "thermalField": {
+					const T = thermalFieldAt(ld);
+					loads.push("*TEMPERATURE");
+					for (const [n, p] of [...m.nodes].sort((a, b) => a[0] - b[0])) if (used.has(n)) loads.push(`${n}, ${fmt$1(T(p))}`);
 					break;
 				}
 				case "convection":
@@ -4056,6 +4449,7 @@ function radiossDeck(c, m) {
 		if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "coupling") throw new Error("OpenRadioss: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "displacement" && ld.csys) throw new Error("OpenRadioss: os deslocamentos em referencial local ainda não estão neste adaptador (use o CalculiX)");
+		if (ld.kind === "thermalField") throw new Error("OpenRadioss: o campo de temperatura ainda não está neste adaptador (use o CalculiX ou o code_aster na estática)");
 		if (ld.kind === "mass") throw new Error("OpenRadioss: as massas pontuais ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
 		if (ld.kind === "fixed" || ld.kind === "displacement") {
@@ -4649,14 +5043,26 @@ function asterCase(c, m) {
 			plast = `, TRACTION=_F(SIGM=${tr})`;
 		}
 		const damp = c.dynamic && (c.dynamic.alpha || c.dynamic.beta) ? `, AMOR_ALPHA=${num(c.dynamic.beta)}, AMOR_BETA=${num(c.dynamic.alpha)}` : "";
-		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)}${damp})${plast})`);
+		const alpha = tField ? `, ALPHA=${num(m2.alpha ?? 0)}` : "";
+		C.push(`${name} = DEFI_MATERIAU(ELAS=_F(E=${num(m2.E)}, NU=${num(m2.nu)}, RHO=${num(m2.density * 1e-9)}${alpha}${damp})${plast})`);
 	};
+	const tField = c.loads.find((l) => l.kind === "thermalField");
+	let varc = "";
+	if (tField) {
+		const T = thermalFieldAt(tField);
+		C.push("CHT = CREA_CHAMP(OPERATION='AFFE', TYPE_CHAM='NOEU_TEMP_R', MAILLAGE=MA, AFFE=_F(TOUT='OUI', NOM_CMP='TEMP', VALE=0.))");
+		const vals = nodeOrder.map((n) => num(T(m.nodes.get(n))));
+		C.push("CHT.setValues([");
+		for (let k = 0; k < vals.length; k += 8) C.push(`  ${vals.slice(k, k + 8).join(", ")},`);
+		C.push("])");
+		varc = `, AFFE_VARC=_F(TOUT='OUI', NOM_VARC='TEMP', CHAM_GD=CHT, VALE_REF=${num(tField.tRef)})`;
+	}
 	if (c.bodies?.length) {
 		c.bodies.forEach((b, k) => material(`MAT${k + 1}`, b.material));
-		C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=(${c.bodies.map((b, k) => `_F(GROUP_MA='${b.group}', MATER=MAT${k + 1})`).join(", ")},))`);
+		C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=(${c.bodies.map((b, k) => `_F(GROUP_MA='${b.group}', MATER=MAT${k + 1})`).join(", ")},)${varc})`);
 	} else {
 		material("MAT", mat);
-		C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
+		C.push(`CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT)${varc})`);
 	}
 	const ddl = [], ddlAmp = [], ddlVel = [], force = [], pres = [], nodal = [];
 	let pf = 0;
@@ -4716,7 +5122,8 @@ function asterCase(c, m) {
 		}
 		case "spring":
 		case "mass":
-		case "coupling": break;
+		case "coupling":
+		case "thermalField": break;
 		default: warnings.push(`code_aster: condição "${ld.kind}" ignorada (térmica)`);
 	}
 	if (!ddl.length && !springs.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");

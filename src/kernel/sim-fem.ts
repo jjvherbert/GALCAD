@@ -1,6 +1,7 @@
 // Estudos: caso FEM de uma peça (apoios, cargas, malha e hipóteses).
 import { type FemStudy, type LoadCsys, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
+import { exprIdentifiers } from "../doc/expr.ts";
 import type { MeshEdit } from "../sim/mshedit.ts";
 import { type Expr, type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
@@ -8,7 +9,7 @@ import { partitionSolid } from "./partition.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
 import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
 import { edgeProps, faceProps } from "./occ-props.ts";
-import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup } from "../sim/case.ts";
+import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup, thermalFieldAt } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, shellOf, tagsOf, n3 } from "./sim-common.ts";
 import { orthoPlyError } from "../sim/laminate.ts";
 
@@ -188,13 +189,32 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
   s.loads.forEach((l, i) => {
     const n0 = loads.length;
     loadCase(l, i);
-    if (!stepIdx.size || !l.steps || l.kind === "spring" || l.kind === "mass") return;
+    if (!stepIdx.size || !l.steps || l.kind === "spring" || l.kind === "mass" || l.kind === "thermalField") return;
     const ks = l.steps.map((id) => stepIdx.get(id)).filter((k): k is number => k !== undefined).sort((a, b) => a - b);
     if (!ks.length) report.warnings.push(`Condição ${i + 1}: não está ativa em nenhum passo`);
     if (ks.length < stepIdx.size) for (let j = n0; j < loads.length; j++) loads[j].steps = ks;
   });
   function loadCase(l: FemStudy["loads"][number], i: number) {
     if (l.kind === "gravity") { loads.push({ kind: "gravity", g: n3(l.g, sc, "Gravidade") }); return; }
+    if (l.kind === "thermalField") {
+      const what = `Condição ${i + 1}: campo de temperatura`;
+      if (s.analysis !== "static") throw new Error(`${what}: só na análise estática`);
+      const src = String(l.t ?? "").trim();
+      if (!src) throw new Error(`${what}: indique T(x, y, z)`);
+      const vars: Record<string, number> = {};
+      try {
+        for (const id of exprIdentifiers(src)) {
+          if (id === "x" || id === "y" || id === "z") continue;
+          const v = sc(id);
+          if (v === undefined) throw new Error(`variável desconhecida "${id}"`);
+          vars[id] = v;
+        }
+        const mid: V3 = [0, 1, 2].map((k) => (box.min[k] + box.max[k]) / 2) as V3;
+        thermalFieldAt({ t: src, vars })(mid);
+      } catch (e) { throw new Error(`${what}: ${(e as Error).message}`); }
+      loads.push({ kind: "thermalField", t: src, vars, tRef: evalParam(l.tRef, sc, `${what}: temperatura de referência`, 0) });
+      return;
+    }
     if (l.kind === "pointForce") { loads.push({ kind: "pointForce", point: n3(l.point, sc, `Condição ${i + 1}: ponto`), f: n3(l.f, sc, `Condição ${i + 1}: força`) }); return; }
     const g = loadGroup(i, l.kind);
     const edges = loadEdges(s, l);

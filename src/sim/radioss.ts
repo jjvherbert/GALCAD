@@ -165,6 +165,7 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
     if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
     if (ld.kind === "coupling") throw new Error("OpenRadioss: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
     if (ld.kind === "displacement" && ld.csys) throw new Error("OpenRadioss: os deslocamentos em referencial local ainda não estão neste adaptador (use o CalculiX)");
+    if (ld.kind === "thermalField") throw new Error("OpenRadioss: o campo de temperatura ainda não está neste adaptador (use o CalculiX ou o code_aster na estática)");
     if (ld.kind === "mass") throw new Error("OpenRadioss: as massas pontuais ainda não estão neste adaptador (use o CalculiX)");
     if (ld.kind === "pointForce") throw new Error("OpenRadioss: a força pontual ainda não está neste adaptador (use força nas faces)");
     if (ld.kind === "fixed" || ld.kind === "displacement") {

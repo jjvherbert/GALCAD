@@ -21,14 +21,15 @@ export function Field({ label, children, hint }: { label: string; children: Comp
 }
 
 /** Campo numérico que aceita expressões com variáveis ("L/2", "10 cm"). */
-export function ExprInput({ label, value, onChange, unit = "mm", allowEmpty }: { label: string; value: Expr | undefined; onChange: (v: Expr | undefined) => void; unit?: string; allowEmpty?: boolean }) {
+export function ExprInput({ label, value, onChange, unit = "mm", allowEmpty, free }: { label: string; value: Expr | undefined; onChange: (v: Expr | undefined) => void; unit?: string; allowEmpty?: boolean; free?: string[] }) {
   const st = useStoreKeys("result");
   const text = value === undefined ? "" : String(value);
   let shown = "", err = "";
   if (text.trim()) {
     try {
-      const v = evalExpr(typeof value === "number" ? value : text, (n) => st.result?.variables.values[n]);
-      if (typeof value === "string" && !/^[-+]?[\d.]+$/.test(text)) shown = `= ${fmt(v)} ${unit}`;
+      // `free`: variáveis livres (p. ex. x, y, z num campo) — valida a expressão com 0 e não mostra o valor
+      const v = evalExpr(typeof value === "number" ? value : text, (n) => (free?.includes(n) ? 0 : st.result?.variables.values[n]));
+      if (typeof value === "string" && !free?.length && !/^[-+]?[\d.]+$/.test(text)) shown = `= ${fmt(v)} ${unit}`;
     } catch (e) { err = (e as Error).message; }
   } else if (!allowEmpty) err = "Obrigatório";
   return (
