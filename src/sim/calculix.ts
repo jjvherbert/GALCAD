@@ -3,7 +3,7 @@
 //
 // Unidades do deck: mm, N, MPa, t (tonelada), s. Massa volúmica g/cm³ → t/mm³ (× 1e-9); térmica:
 // k em W/(m·K) = N/(s·K) (igual), h em W/(m²·K) → N/(mm·s·K) (× 1e-3), q em W/m² → N/(mm·s) (× 1e-3).
-import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
+import { type CaseCsys, type FemCase, type FemCaseLoad, type V3, activeIn, amplitudeIntegral, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
 import { type Msh, edgeBlocks, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
 import { FACES, SOLIDS, type SolidType, faceIntegrals, faceKey, lineIntegrals } from "./elements.ts";
 import { stableIncrement, stableIncrementShell } from "./quality.ts";
@@ -362,7 +362,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
   // cartões de um passo de carga (k = índice em `c.steps`; undefined = um só passo, todas as cargas):
   // apoios, cargas e a parcela das cargas que cai nos nós dos apoios
   const stepCards = (k?: number) => {
-    const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [];
+    const bcs: string[] = [], loads: string[] = [], bcsAmp: string[] = [], bcsVel: string[] = [];
     const cload = new Map<number, [number, number, number]>();
     const moments: string[] = [];
     for (const ld of c.loads) {
@@ -370,7 +370,8 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       switch (ld.kind) {
         case "fixed": bcs.push(`N_${ld.group}, 1, ${c.shell ? 6 : 3}`); break;
         // na dinâmica, os deslocamentos impostos não nulos seguem a amplitude
-        case "displacement": ld.u.forEach((u, k) => { if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(u)}`); }); break;
+        // velocidade imposta (m/s → mm/s): deslocamento v·∫a(t), com a amplitude integrada (A2)
+        case "displacement": ld.u.forEach((u, k) => { if (u !== null) (c.dynamic && u !== 0 ? (ld.velocity ? bcsVel : bcsAmp) : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt(ld.velocity && u ? u * 1000 : u)}`); }); break;
         case "temperature": bcs.push(`N_${ld.group}, 11, 11, ${fmt(ld.t)}`); break;
         case "pointForce": {
           // nó da malha mais próximo do ponto (só nós que pertencem a elementos)
@@ -477,7 +478,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
       }
     }
     if (moments.length) loads.push("*CLOAD", ...moments);
-    return { bcs, bcsAmp, loads, supportLoad };
+    return { bcs, bcsAmp, bcsVel, loads, supportLoad };
   };
   const nSteps = c.analysis === "static" && (c.steps?.length ?? 0) > 1 ? c.steps!.length : 1;
   const cards = nSteps > 1 ? c.steps!.map((_, k) => stepCards(k)) : [stepCards()];
@@ -505,6 +506,11 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     dyn = { dt, increments, frequency: Math.max(1, Math.round(increments / D.frames)), stable: !!st };
     L.push("*AMPLITUDE, NAME=A1");
     for (let k = 0; k < D.amplitude.length; k += 4) L.push(D.amplitude.slice(k, k + 4).flatMap(([t, v]) => [fmt(t), fmt(v)]).join(", "));
+    if (cards[0].bcsVel.length) {
+      const A2 = amplitudeIntegral(D.amplitude, D.duration);
+      L.push("*AMPLITUDE, NAME=A2");
+      for (let k = 0; k < A2.length; k += 4) L.push(A2.slice(k, k + 4).flatMap(([t, v]) => [fmt(t), fmt(v)]).join(", "));
+    }
     const ld0 = cards[0].loads;
     for (let i = 0; i < ld0.length; i++) if (/^\*(CLOAD|DLOAD|DFLUX|FILM)$/.test(ld0[i])) ld0[i] += ", AMPLITUDE=A1";
   }
@@ -515,6 +521,7 @@ export function calculixDeck(c: FemCase, m: Msh): Deck {
     if (k === 0) {
       if (cd.bcs.length) L.push("*BOUNDARY", ...cd.bcs);
       if (cd.bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...cd.bcsAmp);
+      if (cd.bcsVel.length) L.push("*BOUNDARY, AMPLITUDE=A2", ...cd.bcsVel);
       if (c.analysis !== "modal") L.push(...cd.loads);
       return;
     }

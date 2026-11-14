@@ -142,6 +142,8 @@ function checkFem(s: FemStudy, assembly: boolean): CheckItem[] {
     if (l.kind === "coupling" && [...(l.f ?? []), ...(l.mo ?? [])].every((x) => !num(x))) add("info", "conditions", `${name}: sem força nem momento no ponto (só liga as faces)`);
     if (l.kind === "pressure" && num(l.p) === 0) add("aviso", "conditions", `${name}: pressão nula`);
     if (l.kind === "gravity" && l.g.every((x) => num(x) === 0)) add("aviso", "conditions", `${name}: gravidade nula`);
+    if (l.kind === "displacement" && l.velocity && s.analysis !== "dynamic") add("erro", "conditions", `${name}: a velocidade imposta só existe na análise dinâmica`);
+    if (l.kind === "displacement" && l.velocity && l.csys) add("erro", "conditions", `${name}: a velocidade imposta só aceita o referencial global`);
     if (l.kind === "displacement" && [l.ux, l.uy, l.uz].every((x) => x === undefined || x === "")) add("aviso", "conditions", `${name}: nenhuma direção impedida nem imposta`);
     if (l.kind === "convection" && num(l.h) !== undefined && !(num(l.h)! > 0)) add("aviso", "conditions", `${name}: h tem de ser positivo`);
     const thermalKind = l.kind === "temperature" || l.kind === "convection" || l.kind === "heatFlux";

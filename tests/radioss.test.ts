@@ -106,9 +106,15 @@ test("OpenRadioss: Starter e Engine (unidades kg–mm–ms, colunas fixas, forç
   // só deslocamentos não nulos: nenhum /BCS
   const d3 = radiossDeck({ ...c, loads: [{ kind: "displacement", group: "L1_FIXED", u: [null, null, -1] }] }, m).starter;
   assert.ok(!d3.includes("/BCS/") && d3.includes("/IMPDISP/1"));
+  // velocidade imposta: /IMPVEL com os mesmos cartões (m/s = mm/ms), zeros continuam em /BCS
+  const D4 = radiossDeck({ ...c, loads: [{ kind: "displacement", group: "L1_FIXED", u: [0, null, -2], velocity: true }] }, m).starter.split("\n");
+  const iv = D4.indexOf("/IMPVEL/1");
+  assert.ok(iv > 0 && !D4.includes("/IMPVEL/2") && !D4.includes("/IMPDISP/1") && D4.includes("/BCS/1"));
+  assert.equal(D4[iv + 3].slice(10, 20).trim(), "Z");
+  assert.equal(Number(D4[iv + 5].slice(20, 40)), -2);
   // quadráticos recusados (o explícito quer elementos lineares)
   const q = await solve(doc, study(face, { mesh: { size: 5, order: 2, curvature: 0, element: "hex" } }));
-  spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: q.dir });
+  spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: q.dir, shell: /\.(cmd|bat)$/i.test(T.gmsh!.path) });
   assert.throws(() => radiossDeck(q.c, parseMsh(readFileSync(join(q.dir, "mesh.msh"), "utf8"))), /elementos lineares/);
   // só explícito
   await assert.rejects(async () => solve(doc, study(face, { dynamic: { scheme: "implicit", duration: 1e-3, load: "step" } })), /só integração explícita/);

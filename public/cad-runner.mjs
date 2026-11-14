@@ -68,6 +68,32 @@ function amplitudeAt(c, t) {
 	for (let i = 1; i < a.length; i++) if (t <= a[i][0]) return a[i - 1][1] + (a[i][1] - a[i - 1][1]) * (t - a[i - 1][0]) / (a[i][0] - a[i - 1][0] || 1);
 	return a[a.length - 1][1];
 }
+/**
+* Integral no tempo da amplitude (∫₀ᵗ a dτ, em s), em tabela: a velocidade imposta v·a(t) passa a
+* deslocamento imposto v·∫a nos solvers que só impõem deslocamentos. Exato nos vértices; `sub` pontos
+* por troço (o integral de um troço linear é uma parábola); prolongada até `until` e um pouco além.
+*/
+function amplitudeIntegral(a, until, sub = 8) {
+	const pts = a.length ? a.map(([t, v]) => [t, v]) : [[0, 1]];
+	if (pts[0][0] > 0) pts.unshift([0, pts[0][1]]);
+	const end = Math.max(until, pts[pts.length - 1][0]);
+	if (pts[pts.length - 1][0] < end) pts.push([end, pts[pts.length - 1][1]]);
+	const tail = pts[pts.length - 1][1];
+	pts.push([end * 1.5 || 1, tail]);
+	const out = [[pts[0][0], 0]];
+	let acc = 0;
+	for (let i = 1; i < pts.length; i++) {
+		const [t0, f0] = pts[i - 1], [t1, f1] = pts[i], h = t1 - t0;
+		if (!(h > 0)) continue;
+		const n = f0 === f1 ? 1 : sub;
+		for (let j = 1; j <= n; j++) {
+			const s = h * j / n;
+			out.push([t0 + s, acc + f0 * s + (f1 - f0) * s * s / (2 * h)]);
+		}
+		acc += h * (f0 + f1) / 2;
+	}
+	return out;
+}
 /** Número de camadas das secções de casca (o máximo da base e das regiões; isotrópico conta 1). */
 function shellLayerCount(c) {
 	const s = c.shell;
@@ -2731,7 +2757,7 @@ function calculixDeck(c, m) {
 	const v0 = c.dynamic?.v0;
 	if (v0) L.push("*INITIAL CONDITIONS, TYPE=VELOCITY", ...v0.flatMap((v, k) => v ? [`NALL, ${k + 1}, ${fmt$1(v * 1e3)}`] : []));
 	const stepCards = (k) => {
-		const bcs = [], loads = [], bcsAmp = [];
+		const bcs = [], loads = [], bcsAmp = [], bcsVel = [];
 		const cload = /* @__PURE__ */ new Map();
 		const moments = [];
 		for (const ld of c.loads) {
@@ -2742,7 +2768,7 @@ function calculixDeck(c, m) {
 					break;
 				case "displacement":
 					ld.u.forEach((u, k) => {
-						if (u !== null) (c.dynamic && u !== 0 ? bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt$1(u)}`);
+						if (u !== null) (c.dynamic && u !== 0 ? ld.velocity ? bcsVel : bcsAmp : bcs).push(`N_${ld.group}, ${k + 1}, ${k + 1}, ${fmt$1(ld.velocity && u ? u * 1e3 : u)}`);
 					});
 					break;
 				case "temperature":
@@ -2906,6 +2932,7 @@ function calculixDeck(c, m) {
 		return {
 			bcs,
 			bcsAmp,
+			bcsVel,
 			loads,
 			supportLoad
 		};
@@ -2952,6 +2979,11 @@ function calculixDeck(c, m) {
 		};
 		L.push("*AMPLITUDE, NAME=A1");
 		for (let k = 0; k < D.amplitude.length; k += 4) L.push(D.amplitude.slice(k, k + 4).flatMap(([t, v]) => [fmt$1(t), fmt$1(v)]).join(", "));
+		if (cards[0].bcsVel.length) {
+			const A2 = amplitudeIntegral(D.amplitude, D.duration);
+			L.push("*AMPLITUDE, NAME=A2");
+			for (let k = 0; k < A2.length; k += 4) L.push(A2.slice(k, k + 4).flatMap(([t, v]) => [fmt$1(t), fmt$1(v)]).join(", "));
+		}
 		const ld0 = cards[0].loads;
 		for (let i = 0; i < ld0.length; i++) if (/^\*(CLOAD|DLOAD|DFLUX|FILM)$/.test(ld0[i])) ld0[i] += ", AMPLITUDE=A1";
 	}
@@ -2960,6 +2992,7 @@ function calculixDeck(c, m) {
 		if (k === 0) {
 			if (cd.bcs.length) L.push("*BOUNDARY", ...cd.bcs);
 			if (cd.bcsAmp.length) L.push("*BOUNDARY, AMPLITUDE=A1", ...cd.bcsAmp);
+			if (cd.bcsVel.length) L.push("*BOUNDARY, AMPLITUDE=A2", ...cd.bcsVel);
 			if (c.analysis !== "modal") L.push(...cd.loads);
 			return;
 		}
@@ -3945,7 +3978,7 @@ function radiossDeck(c, m) {
 	};
 	const faceNodes = (g) => [...new Set([...elementsOf(faceBlocks(m, g))].flatMap((e) => e.nodes))].sort((a, b) => a - b);
 	S.push("/FUNCT/1", "amplitude", "#                  X                   Y", ...D.amplitude.map(([t, v]) => `${F(t * 1e3)}${F(v)}`));
-	let bcs = 0, loads = 0, imps = 0;
+	let bcs = 0, loads = 0, imps = 0, impv = 0;
 	for (const ld of c.loads) {
 		if (ld.kind === "spring") throw new Error("OpenRadioss: as molas ainda não estão neste adaptador (use o CalculiX)");
 		if (ld.kind === "coupling") throw new Error("OpenRadioss: os acoplamentos (RBE2/RBE3) ainda não estão neste adaptador (use o CalculiX)");
@@ -3962,7 +3995,7 @@ function radiossDeck(c, m) {
 			if (fix.some(Boolean)) S.push(`/BCS/${++bcs}`, `apoio ${ld.group}`, "#  Tra rot   skew_ID  grnod_ID", `   ${fix.map((x) => x ? "1" : "0").join("")} 000${I(0)}${I(g)}`);
 			if (ld.kind === "displacement") ld.u.forEach((u, k) => {
 				if (u === null || u === 0) return;
-				S.push(`/IMPDISP/${++imps}`, `deslocamento ${"XYZ"[k]} ${ld.group}`, "#funct_IDT       Dir   skew_ID sensor_ID  grnod_ID  frame_ID     Icoor", `${I(1)}${"XYZ"[k].padStart(10)}${I(0)}${I(0)}${I(g)}${I(0)}${I(0)}`, "#           Ascale_x            Fscale_Y              Tstart               Tstop", `${F(1)}${F(u)}${F(0)}${F(0)}`);
+				S.push(ld.velocity ? `/IMPVEL/${++impv}` : `/IMPDISP/${++imps}`, `${ld.velocity ? "velocidade" : "deslocamento"} ${"XYZ"[k]} ${ld.group}`, "#funct_IDT       Dir   skew_ID sensor_ID  grnod_ID  frame_ID     Icoor", `${I(1)}${"XYZ"[k].padStart(10)}${I(0)}${I(0)}${I(g)}${I(0)}${I(0)}`, "#           Ascale_x            Fscale_Y              Tstart               Tstop", `${F(1)}${F(u)}${F(0)}${F(0)}`);
 			});
 		}
 	}
@@ -4530,7 +4563,7 @@ function asterCase(c, m) {
 		material("MAT", mat);
 		C.push("CM = AFFE_MATERIAU(MAILLAGE=MA, AFFE=_F(TOUT='OUI', MATER=MAT))");
 	}
-	const ddl = [], ddlAmp = [], force = [], pres = [], nodal = [];
+	const ddl = [], ddlAmp = [], ddlVel = [], force = [], pres = [], nodal = [];
 	let pf = 0;
 	let grav = "";
 	for (const ld of c.loads) switch (ld.kind) {
@@ -4538,6 +4571,13 @@ function asterCase(c, m) {
 			ddl.push(`_F(GROUP_NO='${ld.group}', DX=0., DY=0., DZ=0.${shell ? ", DRX=0., DRY=0., DRZ=0." : ""})`);
 			break;
 		case "displacement": {
+			if (c.dynamic && ld.velocity) {
+				const zero = ld.u.map((u, k) => u === 0 ? `D${"XYZ"[k]}=0.` : "").filter(Boolean);
+				const vel = ld.u.map((u, k) => u ? `D${"XYZ"[k]}=${num(u * 1e3)}` : "").filter(Boolean);
+				if (zero.length) ddl.push(`_F(GROUP_NO='${ld.group}', ${zero.join(", ")})`);
+				if (vel.length) ddlVel.push(`_F(GROUP_NO='${ld.group}', ${vel.join(", ")})`);
+				break;
+			}
 			const comps = ld.u.map((u, k) => u === null ? "" : `D${"XYZ"[k]}=${num(u)}`).filter(Boolean);
 			if (comps.length) (c.dynamic && ld.u.some((u) => u !== null && u !== 0) ? ddlAmp : ddl).push(`_F(GROUP_NO='${ld.group}', ${comps.join(", ")})`);
 			break;
@@ -4587,7 +4627,7 @@ function asterCase(c, m) {
 	if (!ddl.length && !springs.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
 	const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
 	const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
-	if (!bcParts.length && !springs.length && !ddlAmp.length && !c.dynamic) throw new Error("code_aster: o estudo não tem apoios nem ligações");
+	if (!bcParts.length && !springs.length && !ddlAmp.length && !ddlVel.length && !c.dynamic) throw new Error("code_aster: o estudo não tem apoios nem ligações");
 	const hasBc = bcParts.length > 0;
 	if (hasBc) C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
 	const chParts = [
@@ -4599,6 +4639,7 @@ function asterCase(c, m) {
 	const hasCh = chParts.length > 0 && (c.analysis === "static" || c.analysis === "dynamic");
 	if (hasCh) C.push(`CH = AFFE_CHAR_MECA(MODELE=MO, ${chParts.join(", ")})`);
 	if (ddlAmp.length) C.push(`BCA = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddlAmp.join(", ")},))`);
+	if (ddlVel.length) C.push(`BCV = AFFE_CHAR_MECA(MODELE=MO, DDL_IMPO=(${ddlVel.join(", ")},))`);
 	const supports = c.loads.flatMap((ld) => ld.kind === "fixed" || ld.kind === "displacement" ? [`'${ld.group}'`] : []);
 	if (c.dynamic) {
 		const D = c.dynamic;
@@ -4612,11 +4653,13 @@ function asterCase(c, m) {
 		const n = Math.ceil(D.duration / dt - 1e-9), every = Math.max(1, Math.round(n / D.frames));
 		const vale = D.amplitude.flatMap(([t, v]) => [num(t), num(v)]);
 		C.push(`F1 = DEFI_FONCTION(NOM_PARA='INST', VALE=(${vale.join(", ")}), PROL_DROITE='CONSTANT', PROL_GAUCHE='CONSTANT')`);
+		if (ddlVel.length) C.push(`F2 = DEFI_FONCTION(NOM_PARA='INST', VALE=(${amplitudeIntegral(D.amplitude, D.duration).flatMap(([t, v]) => [num(t), num(v)]).join(", ")}), PROL_DROITE='LINEAIRE', PROL_GAUCHE='CONSTANT')`);
 		C.push(`LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=${num(D.duration)}, NOMBRE=${n}))`);
 		const excit = [
 			hasBc && "_F(CHARGE=BC)",
 			hasCh && "_F(CHARGE=CH, FONC_MULT=F1)",
-			ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)"
+			ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)",
+			ddlVel.length && "_F(CHARGE=BCV, FONC_MULT=F2)"
 		].filter(Boolean).join(", ");
 		const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
 		if (D.v0) C.push(`V0 = CREA_CHAMP(TYPE_CHAM='NOEU_DEPL_R', OPERATION='AFFE', MODELE=MO, AFFE=_F(TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), VALE=(${D.v0.map((v) => num(v * 1e3)).join(", ")})))`);

@@ -202,7 +202,10 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       case "fixed": loads.push({ kind: "fixed", group: g }); break;
       case "displacement": {
         const csys = loadCsys(l.csys, sc, i);
-        loads.push({ kind: "displacement", group: g, u: [l.ux, l.uy, l.uz].map((x, k) => (x === undefined || x === "" ? null : evalParam(x, sc, `Deslocamento ${"XYZ"[k]}`))), ...(csys && { csys }) });
+        const vel = !!l.velocity;
+        if (vel && s.analysis !== "dynamic") throw new Error(`Condição ${i + 1}: a velocidade imposta só existe na análise dinâmica`);
+        if (vel && csys) throw new Error(`Condição ${i + 1}: a velocidade imposta só aceita o referencial global`);
+        loads.push({ kind: "displacement", group: g, u: [l.ux, l.uy, l.uz].map((x, k) => (x === undefined || x === "" ? null : evalParam(x, sc, `${vel ? "Velocidade" : "Deslocamento"} ${"XYZ"[k]}`))), ...(csys && { csys }), ...(vel && { velocity: true }) });
         break;
       }
       case "force": {
