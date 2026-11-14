@@ -418,6 +418,8 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   if (c.analysis === "static" || c.dynamic) {
     if (shell) for (const [r, u] of [["RSUP", 39], ["RINF", 43]]) C.push(`T${r} = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=${r}, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))`, `IMPR_TABLE(TABLE=T${r}, UNITE=${u}, FORMAT='TABLEAU')`);
     else C.push("TS = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='VM', RESULTAT=RES, NOM_CHAM='SIEQ_NOEU', GROUP_NO='NALL', NOM_CMP=('VMIS',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TS, UNITE=39, FORMAT='TABLEAU')");
+    // componentes do tensor (estático em sólidos), mesma ordem do bloco STRESS do CalculiX
+    if (!shell && !c.dynamic) C.push("TG = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='SG', RESULTAT=RES, NOM_CHAM='SIGM_NOEU', GROUP_NO='NALL', NOM_CMP=('SIXX', 'SIYY', 'SIZZ', 'SIXY', 'SIYZ', 'SIXZ'), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TG, UNITE=44, FORMAT='TABLEAU')");
     if (supports.length && !c.dynamic) C.push(`TR = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='R', RESULTAT=RES, NOM_CHAM='REAC_NODA', GROUP_NO=(${supports.join(", ")},), RESULTANTE=('DX', 'DY', 'DZ'), TOUT_ORDRE='OUI'))`, "IMPR_TABLE(TABLE=TR, UNITE=41, FORMAT='TABLEAU')");
     if (plas) C.push("TP = POST_RELEVE_T(ACTION=_F(OPERATION='EXTRACTION', INTITULE='P', RESULTAT=RES, NOM_CHAM='VARI_NOEU', GROUP_NO='NALL', NOM_CMP=('V1',), TOUT_ORDRE='OUI'))", "IMPR_TABLE(TABLE=TP, UNITE=42, FORMAT='TABLEAU')");
   }
@@ -426,7 +428,7 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   const exp = [
     "P actions make_etude", "P time_limit 1800", "P memory_limit 4096", "P ncpus 1", "P mpi_nbcpu 1", "P mode interactif",
     "F comm job.comm D 1", "F mail mesh.mail D 20", "F mess job.mess R 6", "F resu job.resu R 8", "F rmed job.rmed R 80",
-    "F libr u.tab R 38", "F libr vm.tab R 39", "F libr freq.tab R 40", "F libr reac.tab R 41", "F libr peeq.tab R 42", "F libr vm2.tab R 43",
+    "F libr u.tab R 38", "F libr vm.tab R 39", "F libr freq.tab R 40", "F libr reac.tab R 41", "F libr peeq.tab R 42", "F libr vm2.tab R 43", "F libr sig.tab R 44",
   ];
   return { files: { "mesh.mail": mail, "job.comm": C.join("\n") + "\n", "job.export": exp.join("\n") + "\n" }, nodeOrder, warnings };
 }
@@ -445,7 +447,7 @@ export function parseAsterTable(text: string): Record<string, string>[] {
 /** Tag Gmsh de um nó da tabela: nome "N<tag>" ou, nas versões que numeram, o índice (1…) na ordem escrita. */
 export const asterNode = (s: string, order: number[]) => (/^N\d+$/.test(s) ? Number(s.slice(1)) : order[Number(s) - 1]);
 
-export interface AsterTables { u: string; vm?: string; freq?: string; reac?: string; peeq?: string; /** Casca: von Mises da face inferior (o vm é o da superior). */ vm2?: string }
+export interface AsterTables { u: string; vm?: string; freq?: string; reac?: string; peeq?: string; /** Casca: von Mises da face inferior (o vm é o da superior). */ vm2?: string; /** Componentes σ (SIGM_NOEU) dos sólidos em estático. */ sig?: string }
 
 /** Resultado (mesmo formato do CalculiX) a partir das tabelas escritas pelo .comm deste adaptador. */
 export function asterResult(c: FemCase, m: Msh, t: AsterTables, nodeOrder: number[]): FemResult {
@@ -465,7 +467,7 @@ export function asterResult(c: FemCase, m: Msh, t: AsterTables, nodeOrder: numbe
   const vm = nodal(t.vm, "VMIS", ["VMIS"]);
   // casca: em cada nó, o maior von Mises das faces superior e inferior
   nodal(t.vm2, "VMIS", ["VMIS"]).forEach((b2, i) => { const b = vm[i]; if (!b) { vm[i] = b2; return; } for (const [n, v] of b2.data) if (!((b.data.get(n)?.[0] ?? -Infinity) >= v[0])) b.data.set(n, v); });
-  const blocks = [...nodal(t.u, "DISP", ["DX", "DY", "DZ"]), ...vm, ...nodal(t.peeq, "PE", ["V1"])];
+  const blocks = [...nodal(t.u, "DISP", ["DX", "DY", "DZ"]), ...vm, ...nodal(t.sig, "STRESS", ["SIXX", "SIYY", "SIZZ", "SIXY", "SIYZ", "SIXZ"]), ...nodal(t.peeq, "PE", ["V1"])];
   const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite).slice(0, c.modes);
   const reactionHistory = parseAsterTable(t.reac ?? "").map((r) => ({ time: c.nonlinear ? Number(r.INST ?? 1) : 1, f: [Number(r.DX), Number(r.DY), Number(r.DZ)] as [number, number, number] }))
     .filter((r) => r.f.every(Number.isFinite) && !(c.nonlinear && r.time === 0));
