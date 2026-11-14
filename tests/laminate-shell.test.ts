@@ -115,8 +115,33 @@ test("laminado: erros com malha linear e análise não estática", () => {
   c.mesh.order = 1;
   assert.throws(() => calculixDeck(c, parseMsh(plateMsh(1))), /requer malha de ordem 2/);
   const f = lamCase();
-  f.analysis = "dynamic";
-  assert.throws(() => calculixDeck(f, parseMsh(plateMsh())), /só estática, modal ou encurvadura/);
+  f.analysis = "thermal";
+  assert.throws(() => calculixDeck(f, parseMsh(plateMsh())));
+});
+
+test("laminado: dinâmica implícita — *DYNAMIC, DIRECT e saída por camada (OUTPUT=2D)", () => {
+  const c = lamCase();
+  c.analysis = "dynamic";
+  c.dynamic = { scheme: "implicit", duration: 1e-3, dt: 1e-5, amplitude: [[0, 0], [1e-4, 1], [1, 1]], alpha: 0, beta: 0, frames: 10 };
+  const d = calculixDeck(c, parseMsh(plateMsh()));
+  assert.ok(d.inp.includes("*DYNAMIC, DIRECT"));
+  assert.match(d.inp, /\*SHELL SECTION[^\n]*COMPOSITE/);
+  assert.match(d.inp, /\*NODE FILE, FREQUENCY=\d+, OUTPUT=2D/);
+  assert.match(d.inp, /\*EL FILE, FREQUENCY=\d+, OUTPUT=2D/);
+  assert.equal(d.dynamic!.dt, 1e-5);
+});
+
+test("laminado: dinâmica explícita sem passo — passo estável finito da casca (0,35·lc/c)", () => {
+  const c = lamCase();
+  c.analysis = "dynamic";
+  c.dynamic = { scheme: "explicit", duration: 1e-4, amplitude: [[0, 0], [1e-5, 1], [1, 1]], alpha: 0, beta: 0, frames: 10 };
+  const d = calculixDeck(c, parseMsh(plateMsh()));
+  assert.ok(d.inp.includes("*DYNAMIC, EXPLICIT, DIRECT"));
+  // tri de catetos 10: A = 50, aresta máx. 10√2, lc = 2A/máx·0,5 (tri6) ≈ 3,54 mm; c = √(E/(ρ(1−ν²)))
+  const vel = Math.sqrt(40000 / (1.6e-9 * (1 - 0.09)));
+  const lc = (2 * 50) / (10 * Math.SQRT2) * 0.5;
+  assert.ok(Number.isFinite(d.dynamic!.dt));
+  assert.ok(Math.abs(d.dynamic!.dt - 0.35 * lc / vel) / d.dynamic!.dt < 1e-6, String(d.dynamic!.dt));
 });
 
 test("laminado: modal e encurvadura — secção composta, densidade por camada, só deslocamentos", () => {
