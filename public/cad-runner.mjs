@@ -2728,6 +2728,8 @@ function calculixDeck(c, m) {
 		});
 	});
 	if (thermal) L.push("*INITIAL CONDITIONS, TYPE=TEMPERATURE", "NALL, 20.");
+	const v0 = c.dynamic?.v0;
+	if (v0) L.push("*INITIAL CONDITIONS, TYPE=VELOCITY", ...v0.flatMap((v, k) => v ? [`NALL, ${k + 1}, ${fmt$1(v * 1e3)}`] : []));
 	const stepCards = (k) => {
 		const bcs = [], loads = [], bcsAmp = [];
 		const cload = /* @__PURE__ */ new Map();
@@ -4045,12 +4047,16 @@ function radiossDeck(c, m) {
 		const all = group("amortecimento", nodeIds);
 		S.push("/DAMP/1", "Rayleigh", "#              alpha                beta  grnod_ID   skew_ID              Tstart               Tstop", `${F(D.alpha / 1e3)}${F(D.beta * 1e3)}${I(all)}${I(0)}${F(0)}${F(0)}`);
 	}
+	if (D.v0) {
+		const all = group("velocidade inicial", nodeIds);
+		S.push("/INIVEL/TRA/1", "velocidade inicial", "#                 Vx                  Vy                  Vz  grnod_ID   skew_ID", `${F(D.v0[0])}${F(D.v0[1])}${F(D.v0[2])}${I(all)}${I(0)}`);
+	}
 	S.push("/END");
 	const T = D.duration * 1e3;
 	const E = [
 		"#RADIOSS ENGINE",
 		`/RUN/${name}/1`,
-		F(T),
+		F(T + T / D.frames / 2),
 		"/ANIM/DT",
 		`${F(0)}${F(T / D.frames)}`,
 		"/ANIM/VECT/DISP",
@@ -4581,7 +4587,7 @@ function asterCase(c, m) {
 	if (!ddl.length && !springs.length) warnings.push("Sem apoios: o modelo pode ter movimento de corpo rígido");
 	const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
 	const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
-	if (!bcParts.length && !springs.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
+	if (!bcParts.length && !springs.length && !ddlAmp.length && !c.dynamic) throw new Error("code_aster: o estudo não tem apoios nem ligações");
 	const hasBc = bcParts.length > 0;
 	if (hasBc) C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
 	const chParts = [
@@ -4613,7 +4619,8 @@ function asterCase(c, m) {
 			ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)"
 		].filter(Boolean).join(", ");
 		const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
-		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""} EXCIT=(${excit},), COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
+		if (D.v0) C.push(`V0 = CREA_CHAMP(TYPE_CHAM='NOEU_DEPL_R', OPERATION='AFFE', MODELE=MO, AFFE=_F(TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), VALE=(${D.v0.map((v) => num(v * 1e3)).join(", ")})))`);
+		C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""}${excit ? ` EXCIT=(${excit},),` : ""}${D.v0 ? " ETAT_INIT=_F(VITE=V0)," : ""} COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
 	} else if (c.analysis === "modal") C.push(`ASSEMBLAGE(MODELE=MO, CHAM_MATER=CM,${cara}${hasBc ? " CHARGE=BC," : ""} NUME_DDL=CO('NU'), MATR_ASSE=(_F(MATRICE=CO('K'), OPTION='RIGI_MECA'), _F(MATRICE=CO('M'), OPTION='MASS_MECA')))`, `RES = CALC_MODES(MATR_RIGI=K, MATR_MASS=M, OPTION='PLUS_PETITE', CALC_FREQ=_F(NMAX_FREQ=${c.modes + 3}), VERI_MODE=_F(STURM='NON'))`, `_FQ = sorted(RES.getAccessParameters()['FREQ'])[:${c.modes}]`, "_BAND = (max(0., _FQ[0] * 0.995), _FQ[-1] * 1.005)", "_NB = INFO_MODE(MATR_RIGI=K, MATR_MASS=M, TYPE_MODE='DYNAMIQUE', FREQ=_BAND)['NB_MODE', 1]", "_NC = len([f for f in RES.getAccessParameters()['FREQ'] if _BAND[0] <= f <= _BAND[1]])", "if _NB > _NC: raise ValueError('Sturm: ha %d modos entre %g e %g Hz e so foram calculados %d' % (_NB, _BAND[0], _BAND[1], _NC))", "TF = RECU_TABLE(CO=RES, NOM_PARA=('FREQ',))", "IMPR_TABLE(TABLE=TF, UNITE=40, FORMAT='TABLEAU')");
 	else if (!nl) {
 		const excit = [hasBc && "_F(CHARGE=BC)", hasCh && "_F(CHARGE=CH)"].filter(Boolean).join(", ");

@@ -168,12 +168,18 @@ export function radiossDeck(c: FemCase, m: Msh): RadiossFiles {
     const all = group("amortecimento", nodeIds);
     S.push("/DAMP/1", "Rayleigh", "#              alpha                beta  grnod_ID   skew_ID              Tstart               Tstop", `${F(D.alpha / 1000)}${F(D.beta * 1000)}${I(all)}${I(0)}${F(0)}${F(0)}`);
   }
+  // velocidade inicial de todos os nós (m/s = mm/ms); os /BCS anulam-na nas direções presas
+  if (D.v0) {
+    const all = group("velocidade inicial", nodeIds);
+    S.push("/INIVEL/TRA/1", "velocidade inicial", "#                 Vx                  Vy                  Vz  grnod_ID   skew_ID", `${F(D.v0[0])}${F(D.v0[1])}${F(D.v0[2])}${I(all)}${I(0)}`);
+  }
   S.push("/END");
 
   // Engine: duração, animações (deslocamentos e von Mises) a D.frames instantes; passo estável do próprio Radioss
   const T = D.duration * 1000;
   const E = [
-    "#RADIOSS ENGINE", `/RUN/${name}/1`, F(T),
+    // o Engine pára em T antes de escrever a animação de T: corre meio intervalo a mais para a incluir
+    "#RADIOSS ENGINE", `/RUN/${name}/1`, F(T + T / D.frames / 2),
     "/ANIM/DT", `${F(0)}${F(T / D.frames)}`,
     "/ANIM/VECT/DISP", "/ANIM/ELEM/VONM",
     "/PRINT/-1000",

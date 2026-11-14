@@ -337,7 +337,8 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
   // contacto colado: nós da face escrava ligados ao volume do corpo mestre
   const ties = (c.ties ?? []).filter((t) => t.masterBody).map((t) => `_F(GROUP_MA_MAIT='${t.masterBody}', GROUP_NO_ESCL='${t.slave}_L')`);
   const bcParts = [ddl.length && `DDL_IMPO=(${ddl.join(", ")},)`, ties.length && `LIAISON_MAIL=(${ties.join(", ")},)`].filter(Boolean);
-  if (!bcParts.length && !springs.length) throw new Error("code_aster: o estudo não tem apoios nem ligações");
+  // em dinâmica a massa torna o sistema invertível: um corpo livre (ex.: só velocidade inicial) é válido
+  if (!bcParts.length && !springs.length && !ddlAmp.length && !c.dynamic) throw new Error("code_aster: o estudo não tem apoios nem ligações");
   // só molas: sem carga de apoios (BC)
   const hasBc = bcParts.length > 0;
   if (hasBc) C.push(`BC = AFFE_CHAR_MECA(MODELE=MO, ${bcParts.join(", ")})`);
@@ -358,7 +359,9 @@ export function asterCase(c: FemCase, m: Msh): AsterFiles {
     C.push(`LR = DEFI_LIST_REEL(DEBUT=0., INTERVALLE=_F(JUSQU_A=${num(D.duration)}, NOMBRE=${n}))`);
     const excit = [hasBc && "_F(CHARGE=BC)", hasCh && "_F(CHARGE=CH, FONC_MULT=F1)", ddlAmp.length && "_F(CHARGE=BCA, FONC_MULT=F1)"].filter(Boolean).join(", ");
     const schema = explicit ? "SCHEMA='DIFF_CENT', FORMULATION='ACCELERATION'" : "SCHEMA='NEWMARK', FORMULATION='DEPLACEMENT'";
-    C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""} EXCIT=(${excit},), COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
+    // velocidade inicial de todos os nós (m/s → mm/s) como estado inicial
+    if (D.v0) C.push(`V0 = CREA_CHAMP(TYPE_CHAM='NOEU_DEPL_R', OPERATION='AFFE', MODELE=MO, AFFE=_F(TOUT='OUI', NOM_CMP=('DX', 'DY', 'DZ'), VALE=(${D.v0.map((v) => num(v * 1000)).join(", ")})))`);
+    C.push(`RES = DYNA_NON_LINE(MODELE=MO, CHAM_MATER=CM,${cara}${explicit ? " MASS_DIAG='OUI'," : ""}${excit ? ` EXCIT=(${excit},),` : ""}${D.v0 ? " ETAT_INIT=_F(VITE=V0)," : ""} COMPORTEMENT=_F(RELATION='ELAS', DEFORMATION='PETIT', TOUT='OUI'), INCREMENT=_F(LIST_INST=LR), SCHEMA_TEMPS=_F(${schema}), ARCHIVAGE=_F(PAS_ARCH=${every}))`);
   } else if (c.analysis === "modal") {
     // mais 3 modos do que os pedidos e a verificação de Sturm feita à parte só até ao último pedido:
     // a do CALC_MODES conta até ao último calculado e falha quando esse é metade de um par duplo

@@ -58,7 +58,7 @@ test("OpenRadioss: Starter e Engine (unidades kg–mm–ms, colunas fixas, forç
   const { doc, face } = await bar();
   const { dir, c } = await solve(doc, study(face, { dynamic: { scheme: "explicit", duration: 1.2e-3, load: "step", frames: 48, alpha: 500 } }));
   assert.equal(c.solver, "openradioss");
-  spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: dir });
+  spawnSync(T.gmsh!.path, ["mesh.geo", "-3", "-o", "mesh.msh", "-nt", "1"], { cwd: dir, shell: /\.(cmd|bat)$/i.test(T.gmsh!.path) });
   const m = parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8"));
   const d = radiossDeck(c, m);
   const S = d.starter.split("\n");
@@ -88,7 +88,7 @@ test("OpenRadioss: Starter e Engine (unidades kg–mm–ms, colunas fixas, forç
   assert.deepEqual([S[fn + 3], S[fn + 4]].map((l) => [Number(l.slice(0, 20)), Number(l.slice(20, 40))]), [[0, 1], [1.2, 1]]);
   // Rayleigh: α em 1/ms
   assert.equal(Number(S[S.indexOf("/DAMP/1") + 3].slice(0, 20)), 0.5);
-  assert.match(d.engine, /\/RUN\/galcad\/1\n\s+1\.2\n\/ANIM\/DT\n\s+0\s+0\.025\n\/ANIM\/VECT\/DISP\n\/ANIM\/ELEM\/VONM/);
+  assert.match(d.engine, /\/RUN\/galcad\/1\n\s+1\.2125\n\/ANIM\/DT\n\s+0\s+0\.025\n\/ANIM\/VECT\/DISP\n\/ANIM\/ELEM\/VONM/);
   assert.ok(d.starter.trimEnd().endsWith("/END"));
   // molas à terra: ainda não neste adaptador
   assert.throws(() => radiossDeck({ ...c, loads: [...c.loads, { kind: "spring", group: "L1_FIXED", k: [10, 10, 10] }] }, m), /molas ainda não estão/);
@@ -158,4 +158,16 @@ test("OpenRadioss real: deslocamento imposto em rampa (/IMPDISP) — a ponta seg
   // a sonda está na face movida: o valor de maior módulo é o imposto, uz = −0,1 mm (e no fim também)
   near(r.metrics.find((x) => x.key === "probe1")!.value, -0.1, 0.02);
   near(r.fem!.timeHistory!.series.find((x) => x.key === "probe1")!.values.at(-1)!, -0.1, 0.02);
+});
+
+test("OpenRadioss real: barra livre a v₀ = −1 m/s desce 1 mm em 1 ms (/INIVEL)", { skip: !(T.gmsh && T.openradioss) && "OpenRadioss não instalado (CAD_RADIOSS_DIR)", timeout: 1800000 }, async () => {
+  const { doc, face } = await bar();
+  const r = await (await solve(doc, study(face, {
+    mesh: { size: 5, order: 1, curvature: 0, element: "hex", integration: "reduced" },
+    dynamic: { scheme: "explicit", duration: 1e-3, load: "step", frames: 20, v0: [0, 0, -1] },
+    loads: [],
+  }))).run();
+  assert.ok(r.ok, JSON.stringify(r.warnings));
+  // corpo livre sem forças: movimento de corpo rígido, uz(1 ms) = −1 m/s × 1 ms = −1 mm
+  near(r.metrics.find((x) => x.key === "probe1")!.value, -1, 0.02);
 });

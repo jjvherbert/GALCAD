@@ -204,6 +204,8 @@ export interface FemDynamic {
   beta?: Expr;
   /** Instantes guardados (deformadas e histórias), por omissão 50. */
   frames?: number;
+  /** Velocidade inicial de todo o corpo (m/s, componentes globais X, Y, Z), por exemplo numa queda ou num impacto. */
+  v0?: [Expr, Expr, Expr];
 }
 
 /** Não linearidades da análise estática. */
