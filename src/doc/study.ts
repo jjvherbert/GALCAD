@@ -150,7 +150,17 @@ export interface SimMesh {
    * cada bloco de 6 faces pode levar hexaedros estruturados; cargas, apoios e seeds passam às sub-faces/arestas.
    */
   partitions?: { axis: "x" | "y" | "z"; at: Expr }[];
+  /**
+   * Edição de nós e elementos individuais depois da malha (Abaqus: Edit Mesh; Femap: Modify):
+   * mover o nó mais próximo de `at` para `to`, ou apagar o elemento em `at` (ou todos os que têm o
+   * centro dentro de `radius`). Localizadas por coordenadas, sobrevivem à regeneração da malha.
+   */
+  edits?: MeshEditSpec[];
 }
+
+export type MeshEditSpec =
+  | { kind: "move"; at: [Expr, Expr, Expr]; to: [Expr, Expr, Expr] }
+  | { kind: "delete"; at: [Expr, Expr, Expr]; radius?: Expr };
 
 /**
  * Seed de arestas: n.º de elementos por aresta ou tamanho dos elementos, com distribuição — a razão

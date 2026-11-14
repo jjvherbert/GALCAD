@@ -1,6 +1,7 @@
 // Estudos: caso FEM de uma peça (apoios, cargas, malha e hipóteses).
 import { type FemStudy, type LoadCsys, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
+import type { MeshEdit } from "../sim/mshedit.ts";
 import { type Expr, type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
 import { partitionSolid } from "./partition.ts";
@@ -245,6 +246,10 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
     mapped: s.mesh.mapped?.length ? tags(s.mesh.mapped, "Faces mapeadas") : [], layers: s.mesh.layers,
   }) : undefined;
   report.warnings.push(...(plan?.warnings ?? []));
+  const v3 = (e: Expr[], what: string) => e.map((x, k) => evalParam(x, sc, `${what} ${"XYZ"[k]}`)) as [number, number, number];
+  const edits: MeshEdit[] = (s.mesh.edits ?? []).map((e, i) => e.kind === "move"
+    ? { kind: "move", at: v3(e.at, `Edição ${i + 1}: ponto`), to: v3(e.to, `Edição ${i + 1}: destino`) }
+    : { kind: "delete", at: v3(e.at, `Edição ${i + 1}: ponto`), ...(e.radius === undefined || e.radius === "" ? {} : { radius: evalParam(e.radius, sc, `Edição ${i + 1}: raio`) }) });
   const meshHyp = shell
     ? `Malha: cascas triangulares de ordem ${s.mesh.order} (${s.mesh.order === 2 ? "S6" : "S3"}, Gmsh), tamanho máx. ${size} mm — confirmar a convergência refinando`
     : element === "hex"
@@ -290,11 +295,13 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       size, minSize: evalParam(s.mesh.minSize, sc, "Tamanho mínimo", size / 10), curvature: s.mesh.curvature ?? 12, order: s.mesh.order, local,
       ...(element === "hex" ? { element, integration: s.mesh.integration ?? (s.mesh.order === 2 ? "reduced" : "incompatible") } : {}),
       ...(plan && !shell ? { hexMethod: plan.hexMethod, volumes: plan.volumes, surfaces: plan.surfaces, curves: plan.curves } : {}),
+      ...(edits.length ? { edits } : {}),
     },
     hypotheses: [
       analysisHyp,
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
+      ...(edits.length ? [`Malha editada à mão: ${edits.filter((e) => e.kind === "move").length} nó(s) movido(s), ${edits.filter((e) => e.kind === "delete").length} apagamento(s) de elementos — as faces e arestas das cargas/apoios que deixam de ser fronteira saem dos grupos; confirmar na pré-visualização`] : []),
       ...(geo.note ? [geo.note] : []),
       ...(shell ? [shell.plies
         ? `Casca laminada (Mindlin, S6, *SHELL SECTION COMPOSITE) na superfície média da chapa: ${shell.plies.length} camadas [${shell.plies.map((p) => `${p.theta}°`).join("/")}] da base para o topo, espessura total ${shell.thickness} mm; ângulos medidos a partir do eixo x projetado na superfície; camadas ortotrópicas (E3 = E2, G13 = G12); tensões da camada e da altura com maior von Mises; a pressão atua segundo a normal da superfície`

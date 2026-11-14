@@ -388,3 +388,37 @@ test("partições: perfil em L dividido em 3 blocos dá hexaedros estruturados, 
   const h = await previewMesh(cut.dir);
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
 });
+
+test("CalculiX: malha editada à mão — nó movido e elemento apagado chegam ao solver", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 600000 }, async () => {
+  const { doc, face } = await bar();
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -F] }];
+  const s0 = await solve(doc, fem({ mesh: { size: 5, order: 1, element: "hex" }, loads }));
+  const base = await s0.run();
+  assert.ok(base.ok, JSON.stringify(base));
+  // apaga o hexaedro de 5 mm com centro em (52.5, 2.5, 7.5) e puxa o canto (50, 0, 10) 1 mm para fora
+  const edits = [{ kind: "delete" as const, at: [52.5, 2.5, 7.5] as [number, number, number] }, { kind: "move" as const, at: [50, 0, 10] as [number, number, number], to: [50, -1, 10] as [number, number, number] }];
+  const s = await solve(doc, fem({ mesh: { size: 5, order: 1, element: "hex", edits }, loads }));
+  assert.ok(s.c.hypotheses.some((h) => /Malha editada à mão/.test(h)));
+  const r = await s.run();
+  assert.ok(r.ok, JSON.stringify(r));
+  // n.º de hexaedros escritos no deck: linhas de dados dos cartões *ELEMENT, TYPE=C3D8…
+  const hexes = (dir: string) => {
+    let on = false, n = 0;
+    for (const l of readFileSync(join(dir, "job.inp"), "utf8").split(/\r?\n/)) {
+      if (l.startsWith("*")) on = /^\*ELEMENT\b.*TYPE\s*=\s*C3D8/i.test(l);
+      else if (on && /^\s*\d+\s*,/.test(l)) n++;
+    }
+    return n;
+  };
+  const n0 = hexes(s0.dir);
+  assert.ok(n0 > 0, "o deck de base tem de ter hexaedros");
+  assert.equal(hexes(s.dir), n0 - 1, "o elemento apagado não pode chegar ao CalculiX");
+  const f = r.fem!;
+  let moved = false;
+  for (let i = 0; i < f.positions.length; i += 3) if (Math.hypot(f.positions[i] - 50, f.positions[i + 1] + 1, f.positions[i + 2] - 10) < 1e-6) moved = true;
+  assert.ok(moved, "o nó movido tem de estar na posição nova nos resultados");
+  // um furo de 1/80 do volume a meio vão amolece a consola, mas pouco; a reação continua a equilibrar a carga
+  const w0 = tip(base).w, w1 = tip(r).w;
+  assert.ok(w1 > w0 && w1 < 1.05 * w0, `${w1} vs ${w0}`);
+  near(tip(r).R, F, 1e-3);
+});

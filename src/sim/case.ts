@@ -3,6 +3,7 @@
 // viaja no ficheiro `case.json` do caso exportado e é lido pelo agente local.
 import type { SimMaterial } from "../doc/study.ts";
 import type { OrthoPly } from "./laminate.ts";
+import type { MeshEdit } from "./mshedit.ts";
 
 /** Região de uma casca laminada: faces (tags) com camadas próprias, da base para o topo. */
 export type ShellRegion = { faces: number[]; plies: OrthoPly[] };
@@ -65,6 +66,8 @@ export interface FemCaseMesh {
    * pontas/no meio) — as do utilizador e as propagadas pelas faces mapeadas.
    */
   curves?: { tag: number; n: number; progression?: number; bump?: number; box: { min: V3; max: V3 }; length: number; user?: boolean }[];
+  /** Edições de nós/elementos aplicadas à malha gerada (mm), pela ordem dada. */
+  edits?: MeshEdit[];
 }
 
 export interface FemCase {

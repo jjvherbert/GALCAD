@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { CfdCase, FemCase, SimCase } from "../src/sim/case.ts";
 import { type Algo3D, femGeo, type GeoOpts, su2Geo } from "../src/sim/gmsh.ts";
 import { edgeBlocks, elementsOf, faceBlocks, parseMsh, physicalBlocks, solidBlocks, type Msh } from "../src/sim/msh.ts";
+import { applyMeshEdits } from "../src/sim/mshedit.ts";
 import { faceIntegrals, lineIntegrals } from "../src/sim/elements.ts";
 import { type VtkFrame, parseVtk, radiossBlocks, radiossDeck } from "../src/sim/radioss.ts";
 import { calculixDeck, femResult, femResultFrom } from "../src/sim/calculix.ts";
@@ -91,7 +92,17 @@ const ALGO_NAMES: Record<Algo3D, string> = { 1: "Delaunay", 4: "Frontal", 10: "H
  * otimização de ordem 2 → (FEM) com reparação OCC, cada tentativa com limite de tempo; a reparação só
  * é aceite se os grupos continuarem a bater certo. Devolve a malha lida (FEM) ou `undefined` (SU2).
  */
+/** Malha Gmsh com as edições de nós/elementos (FemMesh.edits) já aplicadas: pré-visualização, qualidade e solvers veem todos a malha editada. */
 export async function gmshMesh(c: SimCase, dir: string, log: Log, o: { kind: "fem" | "su2"; regenerate: boolean; preview?: boolean }): Promise<Msh | undefined> {
+  const m = await gmshMeshRaw(c, dir, log, o);
+  const edits = o.kind === "fem" ? (c as FemCase).mesh.edits ?? [] : [];
+  if (!m || !edits.length) return m;
+  const r = applyMeshEdits(m, edits);
+  for (const n of r.notes) log(`Malha editada: ${n}`);
+  return r.msh;
+}
+
+async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" | "su2"; regenerate: boolean; preview?: boolean }): Promise<Msh | undefined> {
   const t = tools();
   if (!t.gmsh) throw new Error("Gmsh não encontrado (instale o Gmsh ou defina CAD_GMSH)");
   const geo = join(dir, "mesh.geo");

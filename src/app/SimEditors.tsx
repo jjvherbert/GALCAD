@@ -1,7 +1,7 @@
 // Editores de pré-processamento do painel de simulação: FEM (cargas, conjuntos, dinâmica, malha, montagem) e CFD.
 import { useState } from "preact/hooks";
 import type { Expr } from "../doc/types.ts";
-import { type CfdStudy, type FemDynamic, type FemLoad, type LoadCsys, type FemSet, type FemStudy, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS, loadEdges, loadFaces, setKind } from "../doc/study.ts";
+import { type CfdStudy, type FemDynamic, type FemLoad, type LoadCsys, type FemSet, type FemStudy, type MeshEditSpec, type MeshSeed, type Probe, type SimMesh, SIM_FLUIDS, loadEdges, loadFaces, setKind } from "../doc/study.ts";
 import { allMaterials } from "./material-library.ts";
 import { type SimSection, store, useStoreKeys } from "./store.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, newLoad } from "./sim-actions.ts";
@@ -432,6 +432,25 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
         ))}
         <button class="small" onClick={() => set({ partitions: [...(m.partitions ?? []), { axis: "x", at: 0 }] })}>+ partição</button>
         {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Cargas, apoios, seeds e refinamentos passam às sub-faces. Só sólidos.</p>}
+      </fieldset>
+      <fieldset class="checklist">
+        <legend class="field-label">Edição de nós/elementos</legend>
+        {(m.edits ?? []).map((ed, i) => {
+          const upd = (x: MeshEditSpec) => set({ edits: (m.edits ?? []).map((y, k) => (k === i ? x : y)) });
+          return (
+            <div class="kw-item" key={i}>
+              <div class="row">
+                <Select label="Ação" value={ed.kind} options={[["move", "Mover nó"], ["delete", "Apagar elemento(s)"]]} onChange={(kind) => upd(kind === "move" ? { kind, at: ed.at, to: ed.kind === "move" ? ed.to : [...ed.at] as [Expr, Expr, Expr] } : { kind, at: ed.at })} />
+                {ed.kind === "delete" && <ExprInput label="Raio (opcional)" unit="mm" allowEmpty value={ed.radius} onChange={(radius) => upd({ ...ed, radius })} />}
+                <button class="icon" aria-label={`Retirar edição ${i + 1}`} onClick={() => { const e = (m.edits ?? []).filter((_, k) => k !== i); set({ edits: e.length ? e : undefined }); }}>✕</button>
+              </div>
+              <Vec3Input label={ed.kind === "move" ? "Nó em" : "Centro"} unit="mm" value={ed.at} onChange={(at) => upd({ ...ed, at })} />
+              {ed.kind === "move" && <Vec3Input label="Para" unit="mm" value={ed.to} onChange={(to) => upd({ ...ed, to })} />}
+            </div>
+          );
+        })}
+        <button class="small" onClick={() => set({ edits: [...(m.edits ?? []), { kind: "move", at: [0, 0, 0], to: [0, 0, 0] }] })}>+ edição</button>
+        {(m.edits ?? []).length > 0 && <p class="field-hint">Aplicadas à malha gerada, pela ordem: mover o nó mais próximo do ponto (recusa se inverter um elemento) ou apagar o elemento que contém o ponto (com raio, todos os elementos cujo centro fica dentro). As faces de cargas e apoios que deixam de ser fronteira saem dos grupos. Como se localizam por coordenadas, sobrevivem a regenerar a mesma malha.</p>}
       </fieldset>
       <fieldset class="checklist">
         <legend class="field-label">Refinamento local</legend>
