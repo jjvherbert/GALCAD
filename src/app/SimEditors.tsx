@@ -418,7 +418,7 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
         <button class="small" onClick={() => { set({ seeds: [...seeds, { edges: [], mode: "count", value: 10 }] }); store.set({ pickTarget: { field: `seed${seeds.length}`, accept: ["edge", "face"] } }); }}>+ seed</button>
         <p class="field-hint">Com a seleção de arestas ligada, clique nas arestas no 3D e ajuste ao vivo: +/− ou Shift+roda mudam o n.º (ou o tamanho), B muda a distribuição. Uma face escolhida conta como as suas arestas. Nas malhas mapeadas o n.º de elementos passa às arestas opostas; a distribuição também, no mesmo sentido. Confira o resultado na pré-visualização.</p>
       </fieldset>
-      <RefList field="mesh.mapped" label="Faces mapeadas (4 arestas)" accept={["face"]} refs={m.mapped ?? []} onChange={(mapped) => set({ mapped })} />
+      <RefList field="mesh.mapped" label="Faces mapeadas (3 ou 4 arestas)" accept={["face"]} refs={m.mapped ?? []} onChange={(mapped) => set({ mapped })} />
       <fieldset class="checklist">
         <legend class="field-label">Refinamento local</legend>
         {(m.local ?? []).map((l, i) => (

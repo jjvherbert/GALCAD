@@ -305,3 +305,26 @@ test("convergência ±3 níveis num ponto: 7 malhas, monotonia, extrapolação e
   assert.equal(r.convergence!.meshes.length, 3);
   assert.ok(r.summary.some(([k]) => /Sonda: Ponta/.test(k)));
 });
+
+test("face mapeada triangular: as 3 arestas com o mesmo n.º de elementos e o Gmsh malha-a", async () => {
+  const s = new SketchBuilder();
+  const [a, b, c] = [s.point(0, 0), s.point(40, 0), s.point(0, 30)];
+  s.line(a, b); s.line(b, c); s.line(c, a);
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const top = r.ctx.body!.faces.find((x) => { const p = faceProps(x.face); return p.normal && Math.abs(Math.abs(p.normal[2]) - 1) < 1e-9 && Math.abs(p.center[2] - 10) < 1e-6; })!;
+  const e0 = namedEdges(r.ctx.body!).find((x) => { const p = edgeProps(x.edge); return Math.abs(p.mid[2] - 10) < 1e-6 && Math.abs(p.mid[1]) < 1e-6; })!;
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [{ kind: "face", name: top.name }] }];
+  const t = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, mapped: [{ kind: "face", name: top.name }], seeds: [{ edges: [{ kind: "edge", name: e0.name }], mode: "count", value: 6 }] }, loads }));
+  const onTop = t.c.mesh.curves!.filter((x) => Math.abs(x.box.min[2] - 10) < 1e-6 && Math.abs(x.box.max[2] - 10) < 1e-6);
+  assert.equal(onTop.length, 3);
+  assert.deepEqual(onTop.map((x) => x.n), [6, 6, 6]);
+  assert.equal(t.c.mesh.surfaces!.length, 1);
+  assert.ok(t.c.hypotheses.some((h) => h.includes("1 face(s) mapeada(s) triangular(es)")));
+  if (!T.gmsh) return;
+  const h = await previewMesh(t.dir);
+  assert.ok(h.quality!.elements > 0);
+  near(h.quality!.volume, 6000, 1e-6);
+});
