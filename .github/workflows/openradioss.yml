@@ -42,7 +42,7 @@ jobs:
         if: failure()
         run: |
           mkdir -p rad-debug
-          for d in /tmp/cad-rad-*; do [ -d "$d" ] && cp -r "$d" rad-debug/ ; done
+          for d in /tmp/cad-rad-* /tmp/cad-asm-*; do [ -d "$d" ] && cp -r "$d" rad-debug/ ; done
           find rad-debug -name "*.vtk" -delete
           ls -R rad-debug | head -50
       - uses: actions/upload-artifact@v4
