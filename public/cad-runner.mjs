@@ -3914,7 +3914,6 @@ const ids = (list) => {
 };
 function radiossDeck(c, m) {
 	if (c.analysis !== "dynamic" || c.dynamic?.scheme !== "explicit") throw new Error("OpenRadioss: só dinâmica explícita (escolha «Dinâmica transitória» e «Explícita»)");
-	if ((c.ties ?? []).length) throw new Error("OpenRadioss: montagens com contacto ainda não estão neste adaptador (use uma peça)");
 	if (Object.keys(c.edgeGroups ?? {}).length) throw new Error("OpenRadioss: condições em arestas ainda não estão neste adaptador (escolha faces)");
 	const warnings = [];
 	const D = c.dynamic;
@@ -3999,6 +3998,23 @@ function radiossDeck(c, m) {
 		return id;
 	};
 	const faceNodes = (g) => [...new Set([...elementsOf(faceBlocks(m, g))].flatMap((e) => e.nodes))].sort((a, b) => a - b);
+	let sid = 0, inter = 0;
+	for (const t of c.ties ?? []) {
+		const segs = [...elementsOf(faceBlocks(m, t.master))];
+		const slave = faceNodes(t.slave);
+		if (!segs.length || !slave.length) {
+			warnings.push(`Contacto ${t.name}: faces sem malha`);
+			continue;
+		}
+		const surf = ++sid;
+		S.push(`/SURF/SEG/${surf}`, title(`mestra ${t.master}`), "#  seg_ID  node_ID1  node_ID2  node_ID3  node_ID4", ...segs.map((e, k) => {
+			const n = e.nodes.slice(0, e.nodes.length >= 8 || e.nodes.length === 4 ? 4 : 3);
+			return `${I(k + 1)}${[...n, n[n.length === 4 ? 3 : 2]].slice(0, 4).map(I).join("")}`;
+		}));
+		const g = group(`escrava ${t.slave}`, slave);
+		if (t.kind === "contact") S.push(`/INTER/TYPE7/${++inter}`, title(`contacto ${t.name}`), "#grnd_IDs  surf_IDm      Istf      Ithe      Igap                Ibag      Idel     Icurv      Iadm", `${I(g)}${I(surf)}${I(0)}${I(0)}${I(0)}${"".padStart(10)}${I(0)}${I(0)}${I(0)}${I(0)}`, "#          Fscalegap             GAP_MAX             Fpenmax", `${F(0)}${F(0)}${F(0)}`, "#              Stmin               Stmax          %mesh_size               dtmin  Irem_gap", `${F(0)}${F(0)}${F(0)}${F(0)}${I(0)}`, "#              Stfac                Fric              Gapmin              Tstart               Tstop", `${F(1)}${F(t.mu ?? 0)}${F(0)}${F(0)}${F(0)}`, "#      IBC                        Inacti               VIS_S               VIS_F              Bumult", `${"000".padStart(10)}${"".padStart(10)}${I(6)}${F(0)}${F(0)}${F(0)}`, "#    Ifric    Ifiltr               Xfreq     Iform   sens_ID", `${I(0)}${I(0)}${F(0)}${I(0)}${I(0)}`);
+		else S.push(`/INTER/TYPE2/${++inter}`, title(`colado ${t.name}`), "#grnd_IDs  surf_IDm    Ignore  Spotflag     Level   Isearch     Idel2                        dsearch", `${I(g)}${I(surf)}${I(1)}${I(0)}${I(0)}${I(0)}${I(0)}${"".padStart(10)}${F(Math.max(t.tolerance, .001))}`);
+	}
 	S.push("/FUNCT/1", "amplitude", "#                  X                   Y", ...D.amplitude.map(([t, v]) => `${F(t * 1e3)}${F(v)}`));
 	let bcs = 0, loads = 0, imps = 0, impv = 0;
 	for (const ld of c.loads) {
