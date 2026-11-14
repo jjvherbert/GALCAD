@@ -10,7 +10,7 @@ import { agentStatus, exportStudyCase, resultView } from "./sim-client.ts";
 import { layerShown, toggleLayer } from "../sim/result.ts";
 import { AssemblyBodies, CfdEditor, FemEditor } from "./SimEditors.tsx";
 import { CheckPanel } from "./SimCheck.tsx";
-import { BEHAVIOUR, ConvergencePlot, JobProgress, num, pct, QualityReport, ResultExports, SimLegend, SweepPlot, TimePlot } from "./SimResults.tsx";
+import { BEHAVIOUR, ConvergencePlot, JobProgress, num, pct, QualityReport, ResultExports, ResultProbe, SimLegend, SweepPlot, TimePlot } from "./SimResults.tsx";
 
 const SECTION_TITLE: Record<SimSection, string> = {
   study: "Estudo", material: "Material", conditions: "Cargas e apoios", contact: "Contacto entre corpos", mesh: "Malha",
@@ -149,6 +149,7 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
                 </fieldset>
               )}
               <SimLegend />
+              <ResultProbe />
             </>
           )}
           {r.fem?.timeHistory && <TimePlot h={r.fem.timeHistory} />}

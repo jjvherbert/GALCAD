@@ -1,12 +1,12 @@
 // Resultados do painel de simulação: exportação, progresso do trabalho, histórias no tempo, qualidade da malha e convergência.
 import { useState } from "preact/hooks";
-import { useStoreKeys } from "./store.ts";
+import { store, useStoreKeys } from "./store.ts";
 import { download } from "./fileio.ts";
 import { fmt, toCsvText, type Table } from "../sim/convreport.ts";
 import { cancelActiveStudy } from "./sim-actions.ts";
-import { Select } from "./forms.tsx";
+import { Select, usePickTarget } from "./forms.tsx";
 import { type RunResult, resultView } from "./sim-client.ts";
-import { fieldRange } from "../sim/result.ts";
+import { fieldRange, probeResult, type ProbeValue } from "../sim/result.ts";
 import { toVtu } from "../sim/export-vtu.ts";
 
 /** Extrair os resultados do cálculo: resumo, histórias no tempo, métricas, qualidade da malha e JSON. */
@@ -120,6 +120,42 @@ export function SimLegend() {
       <div class={f.reverse ? "legend sequential reverse" : "legend sequential"} />
       <div class="legend-labels"><span>{fmt(range[0])}</span><span>{f.unit}</span><span>{fmt(range[1])}</span></div>
     </>
+  );
+}
+
+/** Sonda: clicar num ponto da peça e ver os valores de todos os campos (e o deslocamento da deformada) ali. */
+export function ResultProbe() {
+  const st = useStoreKeys("simResult", "simView", "pickTarget");
+  const [probes, setProbes] = useState<ProbeValue[]>([]);
+  const view = resultView(st.simResult?.result);
+  const active = st.pickTarget?.field === "result-probe";
+  usePickTarget("result-probe", (p) => {
+    if ((p.kind !== "face" && p.kind !== "edge") || !p.point || !view) return;
+    const at = [p.point[0], p.point[1], p.point[2]] as [number, number, number];
+    const r = probeResult(view, at, st.simView.hidden, st.simView.disp);
+    if (r) setProbes((old) => [r, ...old].slice(0, 5));
+    store.set({ pickTarget: null });
+  });
+  if (!view) return null;
+  const f = (x: number) => (Math.abs(x) >= 1000 || (Math.abs(x) < 0.01 && x !== 0) ? x.toExponential(3) : x.toFixed(4));
+  const xyz = (v: number[]) => v.map((x) => +x.toFixed(3)).join(", ");
+  return (
+    <details open class="history">
+      <summary>Sondas</summary>
+      <div class="row">
+        <button class="small" onClick={() => store.set({ pickTarget: active ? null : { field: "result-probe", accept: ["face"] } })}>{active ? "Clique na peça…" : "Sonda no 3D"}</button>
+        {probes.length > 0 && <button class="small" onClick={() => setProbes([])}>Limpar</button>}
+      </div>
+      {probes.map((p, i) => (
+        <table class="info-table" key={i}>
+          <tbody>
+            <tr><th colSpan={2}>{p.layer} · ({xyz(p.point)}) mm{p.distance > 1e-6 ? ` · a ${f(p.distance)} mm do clique` : ""}</th></tr>
+            {view.fields.map((fd, k) => p.values[k] === null ? null : <tr key={k}><td>{fd.name}</td><td>{f(p.values[k]!)} {fd.unit}</td></tr>)}
+            {p.disp && <tr><td>Deslocamento ({view.modes[st.simView.disp] ?? "deformada"})</td><td>({xyz(p.disp)}) mm</td></tr>}
+          </tbody>
+        </table>
+      ))}
+    </details>
   );
 }
 
