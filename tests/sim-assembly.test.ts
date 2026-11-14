@@ -233,8 +233,9 @@ test("OpenRadioss real: bloco colado estica, com atrito descola e sobe inteiro",
     assert.ok(res.ok, JSON.stringify(res.warnings));
     return res.fem!.timeHistory!.series.find((x) => x.key === "probe1")!.values.at(-1)!;
   };
-  // colado: a base prende o fundo do bloco → o meio sobe ~ metade (0,5 mm); com atrito separa-se → sobe 1 mm
+  // colado: o fundo do bloco fica preso à base, que também estica (só presa por baixo) → a interface sobe δᵢ
+  // e o meio do bloco δᵢ + (1 − δᵢ)/2, entre 0,5 e 1 mm (real ≈ 0,77); com atrito separa-se → sobe 1 mm
   const glued = await uz("bonded"), free = await uz("friction");
-  assert.ok(glued > 0.3 && glued < 0.75, `colado ${glued}`);
+  assert.ok(glued > 0.5 && glued < 0.9, `colado ${glued}`);
   near(free, 1, 0.05);
 });
