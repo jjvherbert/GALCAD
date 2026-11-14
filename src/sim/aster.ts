@@ -449,7 +449,7 @@ export function asterResult(c: FemCase, m: Msh, t: AsterTables, nodeOrder: numbe
   };
   const vm = nodal(t.vm, "VMIS", ["VMIS"]);
   // casca: em cada nó, o maior von Mises das faces superior e inferior
-  nodal(t.vm2, "VMIS", ["VMIS"]).forEach((b2, i) => { const b = vm[i]; if (!b) { vm[i] = b2; return; } for (const [n, v] of b2.data) if (!(b.data.get(n)?.[0]! >= v[0])) b.data.set(n, v); });
+  nodal(t.vm2, "VMIS", ["VMIS"]).forEach((b2, i) => { const b = vm[i]; if (!b) { vm[i] = b2; return; } for (const [n, v] of b2.data) if (!((b.data.get(n)?.[0] ?? -Infinity) >= v[0])) b.data.set(n, v); });
   const blocks = [...nodal(t.u, "DISP", ["DX", "DY", "DZ"]), ...vm, ...nodal(t.peeq, "PE", ["V1"])];
   const frequencies = parseAsterTable(t.freq ?? "").map((r) => Number(r.FREQ)).filter(Number.isFinite).slice(0, c.modes);
   const reactionHistory = parseAsterTable(t.reac ?? "").map((r) => ({ time: c.nonlinear ? Number(r.INST ?? 1) : 1, f: [Number(r.DX), Number(r.DY), Number(r.DZ)] as [number, number, number] }))

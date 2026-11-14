@@ -4684,7 +4684,7 @@ function asterResult(c, m, t, nodeOrder) {
 			vm[i] = b2;
 			return;
 		}
-		for (const [n, v] of b2.data) if (!(b.data.get(n)?.[0] >= v[0])) b.data.set(n, v);
+		for (const [n, v] of b2.data) if (!((b.data.get(n)?.[0] ?? -Infinity) >= v[0])) b.data.set(n, v);
 	});
 	const blocks = [
 		...nodal(t.u, "DISP", [
