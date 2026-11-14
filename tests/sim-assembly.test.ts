@@ -187,7 +187,8 @@ for (const solver of ["calculix", "code_aster"] as const) {
 const radStudy = (mode: "bonded" | "friction") => fem({
   solver: "openradioss", analysis: "dynamic", contact: { mode, mu: 0.3 },
   mesh: { size: 5, order: 1, curvature: 0, element: "hex", integration: "reduced" },
-  dynamic: { scheme: "explicit", duration: 1, load: "step", frames: 10 },
+  // 1 m/s = 1 mm/ms durante 1 ms → 1 mm (o aço atravessa 10 mm em ~2 µs: quase estático)
+  dynamic: { scheme: "explicit", duration: 0.001, load: "step", frames: 10 },
   loads: [
     { kind: "fixed", faces: [{ kind: "face", name: `c1/${F.z0}` }] },
     { kind: "displacement", faces: [{ kind: "face", name: `c2/${F.z1}` }], ux: 0, uy: 0, uz: 1, velocity: true },

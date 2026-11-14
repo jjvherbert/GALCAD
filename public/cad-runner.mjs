@@ -5170,7 +5170,7 @@ async function runRadioss(c, dir, log, regenerate) {
 		reactions: [],
 		reactionHistory: []
 	});
-	const dtm = /TIME STEP\s*[:=]?\s*([\d.Ee+-]+)/.exec(out1) ?? /DT\s*=\s*([\d.Ee+-]+)/.exec(out1);
+	const dtm = /^\s*\d+\s+[\d.]+(?:E[+-]?\d+)?\s+(\d*\.\d+E[+-]\d+)\s+[A-Z]+/m.exec(out1);
 	return {
 		ok: true,
 		physics: "fem",

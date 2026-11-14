@@ -215,7 +215,8 @@ async function runRadioss(c: FemCase, dir: string, log: Log, regenerate: boolean
     frames.push(parseVtk(res.stdout));
   }
   const fem = femResultFrom(c, msh, radiossBlocks(frames), { frequencies: [], buckling: [], reactions: [], reactionHistory: [] });
-  const dtm = /TIME STEP\s*[:=]?\s*([\d.Ee+-]+)/.exec(out1) ?? /DT\s*=\s*([\d.Ee+-]+)/.exec(out1);
+  // passo das linhas de ciclo do Engine («CYCLE TIME TIME-STEP ELEMENT …»), o primeiro (estável inicial)
+  const dtm = /^\s*\d+\s+[\d.]+(?:E[+-]?\d+)?\s+(\d*\.\d+E[+-]\d+)\s+[A-Z]+/m.exec(out1);
   const summary: [string, string][] = [["Malha", `${deck.nodes} nós · ${deck.elements} ${meshKind(c)}`], ["Integração no tempo", `explícita (OpenRadioss), passo estável do Engine${dtm ? ` ≈ ${(Number(dtm[1]) / 1000).toExponential(3)} s` : ""}, ${frames.length} animações`], ...fem.summary];
   return { ok: true, physics: "fem", solver: "OpenRadioss (OpenCourant)", summary, warnings, fem, view: femView(fem), metrics: fem.metrics, cells: deck.elements, log: tail(join(dir, `${deck.name}_0001.out`)) };
 }
