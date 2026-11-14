@@ -151,8 +151,14 @@ export interface MeshSeed {
   mode: "count" | "size";
   value: Expr;
   bias?: Expr;
-  /** Elementos pequenos no início da aresta, no fim, nas duas pontas ou no meio. */
-  biasAt?: "start" | "end" | "ends" | "center";
+  /**
+   * Elementos pequenos no início da aresta, no fim, nas duas pontas, no meio ou junto a um vértice
+   * (`vertex`: em cada aresta, na ponta mais próxima de `biasPoint` — o sentido deixa de depender
+   * da orientação interna das arestas).
+   */
+  biasAt?: "start" | "end" | "ends" | "center" | "vertex";
+  /** Vértice escolhido no 3D para `biasAt: "vertex"`. */
+  biasPoint?: Vec3;
 }
 
 /**

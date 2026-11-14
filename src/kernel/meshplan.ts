@@ -7,7 +7,7 @@ import type { TopoDS_Shape } from "./occ.ts";
 import { bbox, edgeProps, explore } from "./occ.ts";
 import type { FemCaseMesh, V3 } from "../sim/case.ts";
 
-export interface PlanSeed { tags: number[]; mode: "count" | "size"; value: number; bias: number; biasAt: "start" | "end" | "ends" | "center" }
+export interface PlanSeed { tags: number[]; mode: "count" | "size"; value: number; bias: number; biasAt: "start" | "end" | "ends" | "center" | "vertex"; biasPoint?: V3 }
 
 export interface PlanInput {
   /** Sólidos pela ordem do BREP (volume k+1 do Gmsh). */
@@ -107,6 +107,14 @@ export function meshPlan(p: PlanInput): MeshPlan {
     const r = sd.bias ** (1 / (n - 1));
     return { progression: (sd.biasAt === "end") === same ? 1 / r : r };
   };
+  /** "vertex": em cada aresta, os pequenos ficam na ponta mais próxima do vértice escolhido. */
+  const resolve = (sd: PlanSeed, t: number): PlanSeed => {
+    if (sd.biasAt !== "vertex") return sd;
+    if (!sd.biasPoint) return { ...sd, biasAt: "start" };
+    const x = edgeInfo(t), q = sd.biasPoint;
+    const d2 = (a: V3) => (a[0] - q[0]) ** 2 + (a[1] - q[1]) ** 2 + (a[2] - q[2]) ** 2;
+    return { ...sd, biasAt: d2(x.end) < d2(x.start) ? "end" : "start" };
+  };
   const curve = (t: number, n: number, d: { progression?: number; bump?: number }, user: boolean) => {
     const x = edgeInfo(t);
     curves.push({ tag: t, n, ...d, box: x.box, length: x.length, ...(user ? { user } : {}) });
@@ -120,15 +128,15 @@ export function meshPlan(p: PlanInput): MeshPlan {
     const ref = seeded.find((t) => seedOf.get(t)!.seed.bias !== 1);
     for (const t of members) {
       const own = seedOf.get(t);
-      if (own) { curve(t, n, dist(own.seed, n), true); continue; }
+      if (own) { curve(t, n, dist(resolve(own.seed, t), n), true); continue; }
       if (!ref) { curve(t, n, {}, false); continue; }
       const a = edgeInfo(ref), b = edgeInfo(t);
       const same = (a.end[0] - a.start[0]) * (b.end[0] - b.start[0]) + (a.end[1] - a.start[1]) * (b.end[1] - b.start[1]) + (a.end[2] - a.start[2]) * (b.end[2] - b.start[2]) >= 0;
-      curve(t, n, dist(seedOf.get(ref)!.seed, n, same), false);
+      curve(t, n, dist(resolve(seedOf.get(ref)!.seed, ref), n, same), false);
     }
   }
   // seeds fora das faces mapeadas: discretização imposta da aresta (o resto da malha adapta-se)
-  for (const [t, { n, seed }] of seedOf) if (!parent.has(t)) curve(t, n, dist(seed, n), true);
+  for (const [t, { n, seed }] of seedOf) if (!parent.has(t)) curve(t, n, dist(resolve(seed, t), n), true);
   curves.sort((a, b) => a.tag - b.tag);
 
   if (method === "structured") notes.push(`hexaedros estruturados (mapeados) em ${volumes.length} volume(s), ${surfaces.size} faces mapeadas`);

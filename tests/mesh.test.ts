@@ -112,6 +112,24 @@ test("plano da malha: classes de arestas opostas, seeds e distribuição", async
   assert.ok(c.hypotheses.some((h) => /hexaedros estruturados/.test(h) && /C3D8I/.test(h)));
 });
 
+test("seed junto a um vértice: pequenos na ponta mais próxima do ponto, seja qual for o sentido da aresta", async () => {
+  const { doc, face, edge } = await bar();
+  const r = await new Engine().rebuild(doc);
+  const edges = [edge(0, [0, 0]), edge(0, [10, 0]), edge(0, [0, 10]), edge(0, [10, 10])];
+  for (const [x, biasPoint] of [[100, [100, 0, 0]], [0, [0, 10, 10]]] as const) {
+    const p = seedPreview(r.ctx, fem({ mesh: { size: 5, order: 1, seeds: [{ edges, mode: "count", value: 20, bias: 5, biasAt: "vertex", biasPoint: [...biasPoint] }] }, loads: [{ kind: "fixed", faces: [face(0, 0)] }] }));
+    assert.deepEqual(p.warnings, []);
+    const user = p.edges.filter((e) => e.kind === "user");
+    assert.equal(user.length, 4);
+    for (const e of user) {
+      const dx = Array.from({ length: 20 }, (_, i) => ({ at: (e.points[3 * i] + e.points[3 * i + 3]) / 2, d: Math.abs(e.points[3 * i + 3] - e.points[3 * i]) }));
+      const small = dx.reduce((a, b) => (b.d < a.d ? b : a));
+      assert.ok(Math.abs(small.at - x) < 5, `menor elemento em x=${small.at}, esperado junto a ${x}`);
+      near(Math.max(...dx.map((v) => v.d)) / small.d, 5, 1e-3);
+    }
+  }
+});
+
 test("pré-visualização das seeds: nós por aresta sem Gmsh (seed, propagadas, automáticas e distribuição)", async () => {
   const { doc, face, edge } = await bar();
   const r = await new Engine().rebuild(doc);

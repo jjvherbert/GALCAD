@@ -36,19 +36,20 @@ export function stepSeed(step: 1 | -1) {
 }
 
 const BIAS_CYCLE: (MeshSeed["biasAt"] | null)[] = [null, "start", "end", "ends", "center"];
-const BIAS_NAME: Record<NonNullable<MeshSeed["biasAt"]>, string> = { start: "pequenos no início", end: "pequenos no fim", ends: "pequenos nas pontas", center: "pequenos no meio" };
+const BIAS_NAME: Record<NonNullable<MeshSeed["biasAt"]>, string> = { start: "pequenos no início", end: "pequenos no fim", ends: "pequenos nas pontas", center: "pequenos no meio", vertex: "pequenos junto ao vértice" };
 
 /** Distribuição da seed ativa (sem razão definida = uniforme). */
 export function seedBiasName(sd: MeshSeed): string {
   return sd.bias == null || sd.bias === "" || sd.bias === 1 ? "uniforme" : BIAS_NAME[sd.biasAt ?? "start"];
 }
 
-/** B: uniforme → início → fim → pontas → meio → uniforme (razão 3 quando não havia). */
+/** B: uniforme → início → fim → pontas → meio (→ vértice, se já escolhido) → uniforme (razão 3 quando não havia). */
 export function cycleSeedBias() {
   const sd = activeSeed();
   if (!sd) return;
   const uniform = seedBiasName(sd) === "uniforme";
-  const next = BIAS_CYCLE[(BIAS_CYCLE.indexOf(uniform ? null : sd.biasAt ?? "start") + 1) % BIAS_CYCLE.length];
+  const cycle = sd.biasPoint ? [...BIAS_CYCLE, "vertex" as const] : BIAS_CYCLE;
+  const next = cycle[(cycle.indexOf(uniform ? null : sd.biasAt ?? "start") + 1) % cycle.length];
   patchSeed(() => (next ? { biasAt: next, bias: uniform ? 3 : sd.bias } : { bias: undefined, biasAt: undefined }));
 }
 

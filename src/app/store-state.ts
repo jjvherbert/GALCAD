@@ -20,7 +20,7 @@ export type Analysis =
 export type Pick =
   /** `body`: "" = corpo sólido, senão o id do corpo de superfície; `point`: ponto clicado. */
   | { kind: "face"; name: string; hint: GeoHint; type: string; body?: string; point?: Vec3; component?: string }
-  | { kind: "edge"; name: string; hint: GeoHint; type: string; component?: string }
+  | { kind: "edge"; name: string; hint: GeoHint; type: string; point?: Vec3; component?: string }
   | { kind: "plane"; ref: PlaneRef; label: string }
   | { kind: "axis"; ref: AxisRef; label: string }
   | { kind: "region"; sketch: string; sig: string[]; seed: [number, number] };

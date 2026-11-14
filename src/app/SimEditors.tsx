@@ -17,16 +17,16 @@ const STRUCT = STRUCT_LOADS;
 const edgeLoad = (l: FemLoad): l is Extract<FemLoad, { kind: "fixed" | "displacement" | "force" | "spring" | "mass" | "coupling" }> => l.kind === "fixed" || l.kind === "displacement" || l.kind === "force" || l.kind === "spring" || l.kind === "mass" || l.kind === "coupling";
 const THERM = THERMAL_LOADS;
 
-/** Escolher um ponto clicando numa face do modelo (o ponto da peça mais próximo do clique). */
-function PointPick({ field, onPick }: { field: string; onPick: (p: [number, number, number]) => void }) {
+/** Escolher um ponto clicando numa face do modelo (o ponto da peça mais próximo do clique), ou numa aresta com `edges`. */
+function PointPick({ field, onPick, edges, label = "Escolher ponto no 3D" }: { field: string; onPick: (p: [number, number, number]) => void; edges?: boolean; label?: string }) {
   const st = useStoreKeys("pickTarget");
   const active = st.pickTarget?.field === field;
   usePickTarget(field, (p) => {
-    if (p.kind !== "face" || !p.point) return;
+    if ((p.kind !== "face" && p.kind !== "edge") || !p.point) return;
     onPick(p.point.map((x) => Math.round(x * 100) / 100) as [number, number, number]);
     store.set({ pickTarget: null });
   });
-  return <button class="small" onClick={() => store.set({ pickTarget: active ? null : { field, accept: ["face"] } })}>{active ? "Clique na peça…" : "Escolher ponto no 3D"}</button>;
+  return <button class="small" onClick={() => store.set({ pickTarget: active ? null : { field, accept: edges ? ["edge", "face"] : ["face"] } })}>{active ? "Clique na peça…" : label}</button>;
 }
 
 function Vec3Input({ label, unit, value, onChange }: { label: string; unit: string; value: [Expr, Expr, Expr]; onChange: (v: [Expr, Expr, Expr]) => void }) {
@@ -363,7 +363,7 @@ function DynamicEditor({ d, onChange }: { d: FemDynamic; onChange: (d: FemDynami
   );
 }
 
-const SEED_AT: [NonNullable<MeshSeed["biasAt"]>, string][] = [["start", "No início da aresta"], ["end", "No fim da aresta"], ["ends", "Nas duas pontas"], ["center", "No meio"]];
+const SEED_AT: [NonNullable<MeshSeed["biasAt"]>, string][] = [["start", "No início da aresta"], ["end", "No fim da aresta"], ["ends", "Nas duas pontas"], ["center", "No meio"], ["vertex", "Junto a um vértice"]];
 
 /**
  * Malha manual ao estilo do Femap: tamanho global e local, tetraedros ou hexaedros (estruturados ou
@@ -404,8 +404,14 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
             </div>
             <div class="row">
               <ExprInput label="Razão maior/menor" unit="" allowEmpty value={sd.bias} onChange={(bias) => setSeed(i, { bias })} />
-              <Select label="Elementos pequenos" value={sd.biasAt ?? "start"} options={SEED_AT} onChange={(biasAt) => setSeed(i, { biasAt })} />
+              <Select label="Elementos pequenos" value={sd.biasAt ?? "start"} options={SEED_AT} onChange={(biasAt) => { setSeed(i, { biasAt }); if (biasAt === "vertex" && !sd.biasPoint) store.set({ pickTarget: { field: `seedv${i}`, accept: ["edge", "face"] } }); }} />
             </div>
+            {sd.biasAt === "vertex" && (
+              <div class="row">
+                <span class="field-hint">{sd.biasPoint ? `Vértice (${sd.biasPoint.join(", ")}) mm — em cada aresta, a ponta mais próxima` : "Clique perto do vértice, numa aresta"}</span>
+                <PointPick field={`seedv${i}`} edges label={sd.biasPoint ? "Mudar vértice" : "Escolher vértice"} onPick={(biasPoint) => setSeed(i, { biasPoint })} />
+              </div>
+            )}
             <RefList field={`seed${i}`} label="Arestas" accept={["edge", "face"]} refs={sd.edges} onChange={(edges) => setSeed(i, { edges })} />
           </div>
         ))}
