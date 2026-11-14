@@ -416,6 +416,33 @@ test("partições: plano inclinado x + y = 50 corta o perfil em L em 3 blocos", 
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
 });
 
+test("partições: pelo plano de uma face (Extend Face) — as faces interiores do L dão os mesmos 3 blocos hexaédricos", async () => {
+  const s = new SketchBuilder();
+  const p = [[0, 0], [100, 0], [100, 20], [20, 20], [20, 60], [0, 60]].map(([x, y]) => s.point(x, y));
+  p.forEach((a, i) => s.line(a, p[(i + 1) % p.length]));
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const face = (axis: 0 | 1 | 2, v: number): TopoRef => {
+    const f = r.ctx.body!.faces.find((x) => { const q = faceProps(x.face); return q.normal && Math.abs(Math.abs(q.normal[axis]) - 1) < 1e-9 && Math.abs(q.center[axis] - v) < 1e-6; })!;
+    return { kind: "face", name: f.name };
+  };
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(1, 60)] }, { kind: "force", faces: [face(0, 100)], f: [0, -100, 0] }];
+  // as faces interiores y = 20 (braço horizontal) e x = 20 (braço vertical), prolongadas, cortam os dois cantos
+  const cut = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, element: "hex", partitions: [{ axis: "f", at: 0, face: face(1, 20) }, { axis: "f", at: 0, face: face(0, 20) }] }, loads }));
+  assert.equal(cut.c.mesh.hexMethod, "structured");
+  assert.deepEqual(cut.c.mesh.volumes, [1, 2, 3]);
+  assert.equal(cut.c.faces.filter((f) => f.name.startsWith("corte ")).length, 2);
+  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
+  // uma face exterior não atravessa o sólido; sem face escolhida, erro claro
+  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0, face: face(1, 0) }] }, loads })), /Partição pela face .*não atravessa o sólido/);
+  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0 }] }, loads })), /escolha a face plana/);
+  if (!T.gmsh) return;
+  const h = await previewMesh(cut.dir);
+  near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
+});
+
 test("CalculiX: malha editada à mão — nó movido e elemento apagado chegam ao solver", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 600000 }, async () => {
   const { doc, face } = await bar();
   const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -F] }];

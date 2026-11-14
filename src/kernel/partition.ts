@@ -8,7 +8,7 @@ import { type TopoDS_Shape, T, bbox, explore, gpPln, listToArray, makeList, oc }
 import { ShapeIndex } from "./naming.ts";
 
 /** Plano de corte: perpendicular a X, Y ou Z em `at`, ou inclinado ("n"): n̂·x = at com n̂ = normal normalizada. */
-export interface CutPlane { axis: "x" | "y" | "z" | "n"; at: number; normal?: [number, number, number] }
+export interface CutPlane { axis: "x" | "y" | "z" | "n"; at: number; normal?: [number, number, number]; /** Nome nas mensagens de erro. */ label?: string }
 
 export interface Partitioned {
   /** Compound dos blocos (vai para o model.brep). */
@@ -47,7 +47,7 @@ export function partitionSolid(solid: TopoDS_Shape, planes: CutPlane[]): Partiti
       const d = q[0] * n[0] + q[1] * n[1] + q[2] * n[2];
       lo = Math.min(lo, d); hi = Math.max(hi, d);
     }
-    const label = p.axis === "n" ? `Partição n·x = ${p.at}` : `Partição ${p.axis.toUpperCase()} = ${p.at}`;
+    const label = p.label ?? (p.axis === "n" ? `Partição n·x = ${p.at}` : `Partição ${p.axis.toUpperCase()} = ${p.at}`);
     const what = p.axis === "n" ? "n·x" : p.axis.toUpperCase();
     if (!(p.at > lo + eps && p.at < hi - eps)) throw new Error(`${label}: o plano não atravessa o sólido (${what} de ${+lo.toFixed(4)} a ${+hi.toFixed(4)})`);
     // origem do plano: o centro da caixa projetado sobre ele (a face quadrada cobre o sólido todo)
