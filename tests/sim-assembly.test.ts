@@ -195,7 +195,7 @@ const radStudy = (mode: "bonded" | "friction") => fem({
   probes: [{ name: "Meio do bloco", quantity: "uz", at: { kind: "point", point: [20, 20, 15] } }],
 });
 
-test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito → /INTER/TYPE7 (μ, Inacti = 5)", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
+test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito → /INTER/TYPE24 (superfície-superfície, μ)", { skip: !T.gmsh && "Gmsh não instalado" }, async () => {
   const pr = project([10, 10, 10], [[40, 40, 10], [20, 20, 10]]);
   for (const mode of ["bonded", "friction"] as const) {
     const { r, dir } = await solve(pr, radStudy(mode));
@@ -211,12 +211,14 @@ test("OpenRadioss: contacto entre corpos — colado → /INTER/TYPE2, atrito →
     assert.equal(s1.length, 50);
     assert.ok(s1.slice(10).match(/.{10}/g)!.every((x) => +x > 0));
     const k = S.findIndex((l) => l.startsWith("/INTER/"));
-    assert.equal(S[k], mode === "bonded" ? "/INTER/TYPE2/1" : "/INTER/TYPE7/1");
-    const grnd = +S[k + 3].slice(0, 10), surf = +S[k + 3].slice(10, 20);
-    assert.ok(S.includes(`/GRNOD/NODE/${grnd}`) && S[seg] === `/SURF/SEG/${surf}`);
-    if (mode === "friction") {
+    assert.equal(S[k], mode === "bonded" ? "/INTER/TYPE2/1" : "/INTER/TYPE24/1");
+    const id1 = +S[k + 3].slice(0, 10), surf = +S[k + 3].slice(10, 20);
+    assert.ok(S[seg] === `/SURF/SEG/${surf}`);
+    if (mode === "bonded") assert.ok(S.includes(`/GRNOD/NODE/${id1}`));
+    else {
+      assert.ok(S.includes(`/SURF/SEG/${id1}`) && id1 !== surf); // superfície escrava
+      assert.equal(+S[k + 7].slice(40, 50), 0); // Igap0
       assert.equal(+S[k + 9].slice(20, 40), 0.3); // Fric
-      assert.equal(+S[k + 11].slice(30, 40), 5); // Inacti
       assert.equal(S[k + 13].length, 60);
     }
     assert.deepEqual(S.filter((l) => l.length > 100), [], "linhas fora das colunas");
