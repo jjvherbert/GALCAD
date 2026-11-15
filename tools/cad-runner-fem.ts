@@ -69,20 +69,39 @@ export function checkGroups(c: FemCase, m: Msh): string[] {
  * `null` se não reconhecer nada. As faces do Gmsh têm a numeração do núcleo (o BREP é o mesmo).
  */
 export function gmshError(logText: string): string | null {
-  const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim());
+  // linhas «Error :» com conteúdo (o resumo final do Gmsh traz separadores «-----» e cabeçalhos sem informação)
+  const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim())
+    .filter((l) => /[a-z0-9]/i.test(l) && !/^(mesh generation error summary|\d+ (error|warning)s?\b.*|check the full log.*)$/i.test(l));
   if (!errs.length) return null;
   const all = errs.join("\n");
   const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
   const where = faces.length ? ` (faces ${faces.join(", ")})` : "";
+  // falta de um módulo na compilação do Gmsh, não um defeito da peça (o «No elements in volume» que se segue é consequência)
+  if (/requires Netgen/i.test(all))
+    return "O Gmsh falhou: o algoritmo Frontal 3D não está disponível nesta instalação (precisa do Netgen).";
   if (/self[- ]?intersect|intersecting facets|overlapping facets|PLC Error|invalid PLC/i.test(all))
     return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
   if (/boundary recovery|could not recover/i.test(all))
     return `O gerador 3D não conseguiu respeitar a malha das faces${where}. Normalmente é uma face muito fina ou um ângulo muito agudo; tente um tamanho de elemento menor nessa zona.`;
+  if (/impossible to mesh periodic surface|not forming a closed loop/i.test(all))
+    return `Não foi possível malhar faces curvas fechadas (cilindros, cones ou toros)${where}: a malha das arestas não fecha à volta delas. Tente um tamanho de elemento menor ou mais pontos por curvatura.`;
   if (/no (volume|elements) in|not closed|unable to recover the volume|no tetrahedra/i.test(all))
     return `A geometria não forma um volume fechado${where}. Verifique se o sólido é estanque (sem faces em falta).`;
   if (/degenerat|small edge|too small|zero length/i.test(all))
     return `Há arestas ou faces degeneradas/minúsculas${where}. Remova detalhes muito pequenos ou aumente o tamanho mínimo.`;
   return `O Gmsh falhou: ${errs[errs.length - 1]}`;
+}
+
+/**
+ * Erro se a malha FEM não tiver elementos da dimensão pedida (volume, ou superfície nas cascas): o Gmsh
+ * às vezes termina sem erro mas sem gerar o volume (p. ex. faces que não fecham depois da reparação),
+ * e uma malha só de triângulos não pode ser dada como boa.
+ */
+export function requireMeshDim(msh: Msh, dim: 2 | 3): void {
+  if (msh.blocks.some((b) => b.dim === dim && b.tags.length > 0)) return;
+  throw new Error(dim === 3
+    ? "O Gmsh terminou sem gerar elementos de volume (só superfície). A geometria provavelmente não fecha um volume estanque ou tem faces que se tocam/sobrepõem."
+    : "O Gmsh terminou sem gerar elementos de superfície.");
 }
 
 const ALGO_NAMES: Record<Algo3D, string> = { 1: "Delaunay", 4: "Frontal", 10: "HXT" };
@@ -117,22 +136,32 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
     const hxt = /^\s*Mesh\.Algorithm3D\s*=\s*10\s*;/m.test(readFileSync(geo, "utf8"));
     try { await run(t.gmsh.path, args(hxt ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec }); }
     catch (e) { throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? (e as Error).message); }
-    return read();
+    const m = read();
+    if (m) requireMeshDim(m, (c as FemCase).shell ? 2 : 3);
+    return m;
   }
   // casca (malha 2D): o algoritmo 3D não conta, só se tenta sem otimização de ordem 2 e com reparação
   const shell = o.kind === "fem" && !!(c as FemCase).shell;
-  const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
-  if (o.kind === "fem") attempts.push({ algorithm3D: 4, optimizeHO: false, heal: true });
+  const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 1, optimizeHO: false }, { algorithm3D: 4, optimizeHO: false }];
+  // o Frontal 3D precisa do Netgen, que nem todas as compilações do Gmsh trazem: a reparação usa o Delaunay
+  if (o.kind === "fem") attempts.push({ algorithm3D: 1, optimizeHO: false, heal: true });
   const start = Date.now();
-  let last: Error | undefined, diag: string | null = null;
+  const errors = new MeshErrors();
+  let last: Error | undefined;
+  let skipHO = false, triedNoHO = false;
   for (const [k, g] of attempts.entries()) {
-    if (k > 0 && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
+    if (skipHO && g.optimizeHO !== false) continue;
+    // depois de uma falha da otimização de ordem 2, a primeira tentativa sem ela corre mesmo com o tempo esgotado
+    const rescue = skipHO && !triedNoHO && g.optimizeHO === false;
+    if (g.optimizeHO === false) triedNoHO = true;
+    if (k > 0 && !rescue && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
     write(g);
     log(`Malha: tentativa ${k + 1}/${attempts.length} — ${shell ? "malha de superfície" : ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
     try {
       // só o HXT é paralelo; os outros com -nt 1 (resultado reprodutível)
       await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec });
       const msh = read();
+      if (msh) requireMeshDim(msh, shell ? 2 : 3);
       if (g.heal && msh) {
         const w = checkGroups(c as FemCase, msh);
         if (w.length) { last = new Error(`A reparação da geometria alterou as faces das condições:\n${w.join("\n")}`); continue; }
@@ -142,11 +171,33 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
     } catch (e) {
       if (e instanceof CancelledError) throw e;
       last = e as Error;
-      diag ??= gmshError(logOf(dir));
+      errors.add(last.message, gmshError(logOf(dir)));
+      // a otimização de ordem 2 falhou: repeti-la com outro algoritmo raramente ajuda — saltar para as tentativas sem ela
+      if (hoFailed(logOf(dir))) skipHO = true;
       log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
     }
   }
-  throw new Error(diag ?? last?.message ?? "A malha falhou");
+  throw new Error(errors.best() ?? last?.message ?? "A malha falhou");
+}
+
+/** O log do Gmsh mostra que a otimização dos elementos de ordem 2 não atingiu o jacobiano mínimo. */
+export const hoFailed = (logText: string) => /Optimization failed|Failed to reach critical value/i.test(logText);
+
+/** Escolhe a mensagem a mostrar depois de todas as tentativas: faces curvas fechadas por malhar (a causa
+ *  de raiz, que depois aparece como «volume não fechado») > diagnóstico específico do log > «sem elementos
+ *  de volume» > erro genérico do Gmsh. Em cada categoria fica a primeira ocorrência. */
+export class MeshErrors {
+  private periodic: string | null = null;
+  private diag: string | null = null;
+  private noDim: string | null = null;
+  private generic: string | null = null;
+  add(message: string, d: string | null) {
+    if (d?.startsWith("Não foi possível malhar faces curvas fechadas")) this.periodic ??= d;
+    if (/sem gerar elementos/.test(message)) this.noDim ??= message;
+    else if (d?.startsWith("O Gmsh falhou")) this.generic ??= d;
+    else if (d) this.diag ??= d;
+  }
+  best(): string | null { return this.periodic ?? this.diag ?? this.noDim ?? this.generic; }
 }
 
 const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh"), "utf8"); } catch { return ""; } };

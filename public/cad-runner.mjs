@@ -1590,7 +1590,11 @@ function meshQuality(m, bodies, shell = false) {
 			if (l.level === "error") errors += fail[i];
 		});
 		const v = list.map((x) => x.v);
-		const min = Math.min(...v), max = Math.max(...v);
+		let min = Infinity, max = -Infinity;
+		for (const x of v) {
+			if (x < min) min = x;
+			if (x > max) max = x;
+		}
 		const range = key === "sj" ? [Math.min(0, min), 1] : key === "minAngle" || key === "maxAngle" ? [0, 180] : key === "shape" ? [0, 1] : [Math.min(min, 1), Math.max(max, 1 + 1e-9)];
 		const edges = Array.from({ length: 11 }, (_, i) => range[0] + (range[1] - range[0]) * i / 10);
 		const counts = new Array(10).fill(0);
@@ -2074,6 +2078,12 @@ function shellSurface(m) {
 		faces
 	};
 }
+/** Maior etiqueta de nó (ciclo: o spread de um Map grande rebenta a pilha). */
+function maxKey(m) {
+	let k = -Infinity;
+	for (const x of m.keys()) if (x > k) k = x;
+	return k;
+}
 /**
 * Casca: o CalculiX expande cada S3/S6 num sólido de 3 camadas de nós (base, meio, topo) e o `.frd` só
 * tem os nós expandidos (numeração nova). Volta aos nós da malha pelas coordenadas: o nó do meio está na
@@ -2085,18 +2095,22 @@ function shellFrdBlocks(m, frd, plies = 0, c) {
 	const used = /* @__PURE__ */ new Set();
 	for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
 	if (plies > 1) return compositeFrdBlocks(m, frd, used, plies, c);
-	const nk = Math.max(...m.nodes.keys());
+	const nk = maxKey(m.nodes);
 	const pts = [...frd.nodes.values()];
 	if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
 	const lo = [
-		0,
-		1,
-		2
-	].map((k) => Math.min(...pts.map((p) => p[k]))), hi = [
-		0,
-		1,
-		2
-	].map((k) => Math.max(...pts.map((p) => p[k])));
+		Infinity,
+		Infinity,
+		Infinity
+	], hi = [
+		-Infinity,
+		-Infinity,
+		-Infinity
+	];
+	for (const p of pts) for (let k = 0; k < 3; k++) {
+		if (p[k] < lo[k]) lo[k] = p[k];
+		if (p[k] > hi[k]) hi[k] = p[k];
+	}
 	const diag = Math.hypot(...hi.map((x, k) => x - lo[k])) || 1;
 	const h = .001 * diag, tol = 1e-4 * diag;
 	const cell = (p) => p.map((x) => Math.floor(x / h));
@@ -2181,7 +2195,7 @@ const vonMises = (v) => Math.sqrt(.5 * ((v[0] - v[1]) ** 2 + (v[1] - v[2]) ** 2 
 * todas as secções que tocam o nó, com a região (−1 = base), a camada (1…) e o modo.
 */
 function compositeFrdBlocks(m, frd, used, plies, c) {
-	const nk = Math.max(...m.nodes.keys()), B = 3 + 3 * plies;
+	const nk = maxKey(m.nodes), B = 3 + 3 * plies;
 	const regions = c?.shell?.regions?.filter((r) => r.plies.length) ?? [];
 	const sections = [c?.shell?.plies ?? [], ...regions.map((r) => r.plies)].map((ps) => {
 		const split = ps.length ? splitPlies(ps, plies) : [];
@@ -5420,16 +5434,27 @@ function checkGroups(c, m) {
 * `null` se não reconhecer nada. As faces do Gmsh têm a numeração do núcleo (o BREP é o mesmo).
 */
 function gmshError(logText) {
-	const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim());
+	const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim()).filter((l) => /[a-z0-9]/i.test(l) && !/^(mesh generation error summary|\d+ (error|warning)s?\b.*|check the full log.*)$/i.test(l));
 	if (!errs.length) return null;
 	const all = errs.join("\n");
 	const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
 	const where = faces.length ? ` (faces ${faces.join(", ")})` : "";
+	if (/requires Netgen/i.test(all)) return "O Gmsh falhou: o algoritmo Frontal 3D não está disponível nesta instalação (precisa do Netgen).";
 	if (/self[- ]?intersect|intersecting facets|overlapping facets|PLC Error|invalid PLC/i.test(all)) return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
 	if (/boundary recovery|could not recover/i.test(all)) return `O gerador 3D não conseguiu respeitar a malha das faces${where}. Normalmente é uma face muito fina ou um ângulo muito agudo; tente um tamanho de elemento menor nessa zona.`;
+	if (/impossible to mesh periodic surface|not forming a closed loop/i.test(all)) return `Não foi possível malhar faces curvas fechadas (cilindros, cones ou toros)${where}: a malha das arestas não fecha à volta delas. Tente um tamanho de elemento menor ou mais pontos por curvatura.`;
 	if (/no (volume|elements) in|not closed|unable to recover the volume|no tetrahedra/i.test(all)) return `A geometria não forma um volume fechado${where}. Verifique se o sólido é estanque (sem faces em falta).`;
 	if (/degenerat|small edge|too small|zero length/i.test(all)) return `Há arestas ou faces degeneradas/minúsculas${where}. Remova detalhes muito pequenos ou aumente o tamanho mínimo.`;
 	return `O Gmsh falhou: ${errs[errs.length - 1]}`;
+}
+/**
+* Erro se a malha FEM não tiver elementos da dimensão pedida (volume, ou superfície nas cascas): o Gmsh
+* às vezes termina sem erro mas sem gerar o volume (p. ex. faces que não fecham depois da reparação),
+* e uma malha só de triângulos não pode ser dada como boa.
+*/
+function requireMeshDim(msh, dim) {
+	if (msh.blocks.some((b) => b.dim === dim && b.tags.length > 0)) return;
+	throw new Error(dim === 3 ? "O Gmsh terminou sem gerar elementos de volume (só superfície). A geometria provavelmente não fecha um volume estanque ou tem faces que se tocam/sobrepõem." : "O Gmsh terminou sem gerar elementos de superfície.");
 }
 const ALGO_NAMES = {
 	1: "Delaunay",
@@ -5482,7 +5507,9 @@ async function gmshMeshRaw(c, dir, log, o) {
 		} catch (e) {
 			throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? e.message);
 		}
-		return read();
+		const m = read();
+		if (m) requireMeshDim(m, c.shell ? 2 : 3);
+		return m;
 	}
 	const shell = o.kind === "fem" && !!c.shell;
 	const attempts = shell ? [{ algorithm3D: 1 }, {
@@ -5492,19 +5519,28 @@ async function gmshMeshRaw(c, dir, log, o) {
 		{ algorithm3D: 1 },
 		{ algorithm3D: 10 },
 		{
+			algorithm3D: 1,
+			optimizeHO: false
+		},
+		{
 			algorithm3D: 4,
 			optimizeHO: false
 		}
 	];
 	if (o.kind === "fem") attempts.push({
-		algorithm3D: 4,
+		algorithm3D: 1,
 		optimizeHO: false,
 		heal: true
 	});
 	const start = Date.now();
-	let last, diag = null;
+	const errors = new MeshErrors();
+	let last;
+	let skipHO = false, triedNoHO = false;
 	for (const [k, g] of attempts.entries()) {
-		if (k > 0 && Date.now() - start > 2 * timeoutSec * 1e3) {
+		if (skipHO && g.optimizeHO !== false) continue;
+		const rescue = skipHO && !triedNoHO && g.optimizeHO === false;
+		if (g.optimizeHO === false) triedNoHO = true;
+		if (k > 0 && !rescue && Date.now() - start > 2 * timeoutSec * 1e3) {
 			log(`Malha: tempo total esgotado, sem mais tentativas.`);
 			break;
 		}
@@ -5513,6 +5549,7 @@ async function gmshMeshRaw(c, dir, log, o) {
 		try {
 			await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, void 0, { timeoutSec });
 			const msh = read();
+			if (msh) requireMeshDim(msh, shell ? 2 : 3);
 			if (g.heal && msh) {
 				const w = checkGroups(c, msh);
 				if (w.length) {
@@ -5525,12 +5562,33 @@ async function gmshMeshRaw(c, dir, log, o) {
 		} catch (e) {
 			if (e instanceof CancelledError) throw e;
 			last = e;
-			diag ??= gmshError(logOf(dir));
+			errors.add(last.message, gmshError(logOf(dir)));
+			if (hoFailed(logOf(dir))) skipHO = true;
 			log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
 		}
 	}
-	throw new Error(diag ?? last?.message ?? "A malha falhou");
+	throw new Error(errors.best() ?? last?.message ?? "A malha falhou");
 }
+/** O log do Gmsh mostra que a otimização dos elementos de ordem 2 não atingiu o jacobiano mínimo. */
+const hoFailed = (logText) => /Optimization failed|Failed to reach critical value/i.test(logText);
+/** Escolhe a mensagem a mostrar depois de todas as tentativas: faces curvas fechadas por malhar (a causa
+*  de raiz, que depois aparece como «volume não fechado») > diagnóstico específico do log > «sem elementos
+*  de volume» > erro genérico do Gmsh. Em cada categoria fica a primeira ocorrência. */
+var MeshErrors = class {
+	periodic = null;
+	diag = null;
+	noDim = null;
+	generic = null;
+	add(message, d) {
+		if (d?.startsWith("Não foi possível malhar faces curvas fechadas")) this.periodic ??= d;
+		if (/sem gerar elementos/.test(message)) this.noDim ??= message;
+		else if (d?.startsWith("O Gmsh falhou")) this.generic ??= d;
+		else if (d) this.diag ??= d;
+	}
+	best() {
+		return this.periodic ?? this.diag ?? this.noDim ?? this.generic;
+	}
+};
 const logOf = (dir) => {
 	try {
 		return readFileSync(join(dir, "log.gmsh"), "utf8");
