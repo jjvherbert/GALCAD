@@ -22,6 +22,8 @@ export interface Partitioned {
   origin: (f: TopoDS_Shape) => TopoDS_Shape | undefined;
   /** N.º de planos que cortaram de facto o sólido. */
   used: number;
+  /** Planos ignorados por não atravessarem o sólido (p. ex. o plano de uma face exterior), com o motivo. */
+  skipped: string[];
 }
 
 const AX = { x: 0, y: 1, z: 2 } as const;
@@ -31,7 +33,7 @@ export function partitionSolid(solid: TopoDS_Shape, planes: CutPlane[]): Partiti
   const b = bbox(solid);
   const far = Math.max(...[0, 1, 2].map((k) => b.max[k] - b.min[k])) * 2 + 1;
   const mid = [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
-  const tools: TopoDS_Shape[] = [];
+  const tools: TopoDS_Shape[] = [], skipped: string[] = [];
   for (const p of planes) {
     const eps = 1e-7 * far;
     let n: [number, number, number];
@@ -49,11 +51,19 @@ export function partitionSolid(solid: TopoDS_Shape, planes: CutPlane[]): Partiti
     }
     const label = p.label ?? (p.axis === "n" ? `Partição n·x = ${p.at}` : `Partição ${p.axis.toUpperCase()} = ${p.at}`);
     const what = p.axis === "n" ? "n·x" : p.axis.toUpperCase();
-    if (!(p.at > lo + eps && p.at < hi - eps)) throw new Error(`${label}: o plano não atravessa o sólido (${what} de ${+lo.toFixed(4)} a ${+hi.toFixed(4)})`);
+    // um plano que não corta nada não estraga a malha: fica de fora, com aviso (não é um erro do estudo)
+    if (!(p.at > lo + eps && p.at < hi - eps)) {
+      skipped.push(`${label}: o plano não atravessa o sólido (${what} de ${+lo.toFixed(4)} a ${+hi.toFixed(4)}) — ignorada`);
+      continue;
+    }
     // origem do plano: o centro da caixa projetado sobre ele (a face quadrada cobre o sólido todo)
     const dm = mid[0] * n[0] + mid[1] * n[1] + mid[2] * n[2] - p.at;
     const org = [0, 1, 2].map((k) => mid[k] - dm * n[k]) as [number, number, number];
     tools.push(T(T(new o.BRepBuilderAPI_MakeFace(gpPln(org, n), -far, far, -far, far)).Face()));
+  }
+  if (!tools.length) {
+    const faces = explore(solid, "face"), edges = explore(solid, "edge");
+    return { shape: solid, solids: [solid], faces, edges, sub: (s) => [s], origin: (f) => faces.find((x) => x.IsSame(f)), used: 0, skipped };
   }
   const sp = T(new o.BRepAlgoAPI_Splitter());
   sp.SetArguments(makeList([solid]));
@@ -73,5 +83,5 @@ export function partitionSolid(solid: TopoDS_Shape, planes: CutPlane[]): Partiti
   };
   const back = new ShapeIndex<TopoDS_Shape>();
   for (const f of explore(solid, "face")) for (const m of sub(f)) back.set(m, f);
-  return { shape, solids, faces, edges, sub, origin: (f) => back.get(f), used: solids.length - 1 };
+  return { shape, solids, faces, edges, sub, origin: (f) => back.get(f), used: solids.length - 1, skipped };
 }
