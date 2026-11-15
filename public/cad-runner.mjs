@@ -5528,7 +5528,8 @@ async function gmshMeshRaw(c, dir, log, o) {
 		heal: true
 	});
 	const start = Date.now();
-	let last, diag = null, noDim = null, generic = null;
+	const errors = new MeshErrors();
+	let last;
 	let skipHO = false, triedNoHO = false;
 	for (const [k, g] of attempts.entries()) {
 		if (skipHO && g.optimizeHO !== false) continue;
@@ -5556,18 +5557,33 @@ async function gmshMeshRaw(c, dir, log, o) {
 		} catch (e) {
 			if (e instanceof CancelledError) throw e;
 			last = e;
-			const d = gmshError(logOf(dir));
-			if (/sem gerar elementos/.test(last.message)) noDim ??= last.message;
-			else if (d?.startsWith("O Gmsh falhou")) generic ??= d;
-			else if (d) diag ??= d;
+			errors.add(last.message, gmshError(logOf(dir)));
 			if (hoFailed(logOf(dir))) skipHO = true;
 			log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
 		}
 	}
-	throw new Error(diag ?? noDim ?? generic ?? last?.message ?? "A malha falhou");
+	throw new Error(errors.best() ?? last?.message ?? "A malha falhou");
 }
 /** O log do Gmsh mostra que a otimização dos elementos de ordem 2 não atingiu o jacobiano mínimo. */
 const hoFailed = (logText) => /Optimization failed|Failed to reach critical value/i.test(logText);
+/** Escolhe a mensagem a mostrar depois de todas as tentativas: faces curvas fechadas por malhar (a causa
+*  de raiz, que depois aparece como «volume não fechado») > diagnóstico específico do log > «sem elementos
+*  de volume» > erro genérico do Gmsh. Em cada categoria fica a primeira ocorrência. */
+var MeshErrors = class {
+	periodic = null;
+	diag = null;
+	noDim = null;
+	generic = null;
+	add(message, d) {
+		if (d?.startsWith("Não foi possível malhar faces curvas fechadas")) this.periodic ??= d;
+		if (/sem gerar elementos/.test(message)) this.noDim ??= message;
+		else if (d?.startsWith("O Gmsh falhou")) this.generic ??= d;
+		else if (d) this.diag ??= d;
+	}
+	best() {
+		return this.periodic ?? this.diag ?? this.noDim ?? this.generic;
+	}
+};
 const logOf = (dir) => {
 	try {
 		return readFileSync(join(dir, "log.gmsh"), "utf8");

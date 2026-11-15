@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { femGeo, minSizeFloor } from "../src/sim/gmsh.ts";
 import { gmshError } from "../tools/cad-runner.ts";
-import { hoFailed, requireMeshDim } from "../tools/cad-runner-fem.ts";
+import { MeshErrors, hoFailed, requireMeshDim } from "../tools/cad-runner-fem.ts";
 import { meshQuality } from "../src/sim/quality.ts";
 import type { Msh } from "../src/sim/msh.ts";
 import type { FemCase } from "../src/sim/case.ts";
@@ -109,4 +109,16 @@ test("meshQuality: 300 mil elementos não rebentam a pilha (sem Math.min(...v))"
   const sj = q.metrics.find((x) => x.key === "sj")!;
   assert.equal(sj.count, 300000);
   assert.ok(sj.min > 0 && sj.max <= 1 + 1e-9);
+});
+
+test("MeshErrors: faces curvas fechadas por malhar ganham ao «volume não fechado» de uma tentativa anterior", () => {
+  const e = new MeshErrors();
+  e.add("x", "A geometria não forma um volume fechado.");
+  e.add("y", "O Gmsh falhou: algo");
+  e.add("z", "Não foi possível malhar faces curvas fechadas (cilindros, cones ou toros) (faces 1, 3): …");
+  assert.match(e.best()!, /faces curvas fechadas/);
+  const f = new MeshErrors();
+  f.add("A malha terminou sem gerar elementos de volume", null);
+  f.add("y", "O Gmsh falhou: algo");
+  assert.match(f.best()!, /sem gerar elementos/);
 });

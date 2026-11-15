@@ -142,8 +142,8 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
   const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
   if (o.kind === "fem") attempts.push({ algorithm3D: 4, optimizeHO: false, heal: true });
   const start = Date.now();
-  // diagnóstico específico (do log) > «sem elementos de volume» > erro genérico do Gmsh > última exceção
-  let last: Error | undefined, diag: string | null = null, noDim: string | null = null, generic: string | null = null;
+  const errors = new MeshErrors();
+  let last: Error | undefined;
   let skipHO = false, triedNoHO = false;
   for (const [k, g] of attempts.entries()) {
     if (skipHO && g.optimizeHO !== false) continue;
@@ -167,20 +167,34 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
     } catch (e) {
       if (e instanceof CancelledError) throw e;
       last = e as Error;
-      const d = gmshError(logOf(dir));
-      if (/sem gerar elementos/.test(last.message)) noDim ??= last.message;
-      else if (d?.startsWith("O Gmsh falhou")) generic ??= d;
-      else if (d) diag ??= d;
+      errors.add(last.message, gmshError(logOf(dir)));
       // a otimização de ordem 2 falhou: repeti-la com outro algoritmo raramente ajuda — saltar para as tentativas sem ela
       if (hoFailed(logOf(dir))) skipHO = true;
       log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
     }
   }
-  throw new Error(diag ?? noDim ?? generic ?? last?.message ?? "A malha falhou");
+  throw new Error(errors.best() ?? last?.message ?? "A malha falhou");
 }
 
 /** O log do Gmsh mostra que a otimização dos elementos de ordem 2 não atingiu o jacobiano mínimo. */
 export const hoFailed = (logText: string) => /Optimization failed|Failed to reach critical value/i.test(logText);
+
+/** Escolhe a mensagem a mostrar depois de todas as tentativas: faces curvas fechadas por malhar (a causa
+ *  de raiz, que depois aparece como «volume não fechado») > diagnóstico específico do log > «sem elementos
+ *  de volume» > erro genérico do Gmsh. Em cada categoria fica a primeira ocorrência. */
+export class MeshErrors {
+  private periodic: string | null = null;
+  private diag: string | null = null;
+  private noDim: string | null = null;
+  private generic: string | null = null;
+  add(message: string, d: string | null) {
+    if (d?.startsWith("Não foi possível malhar faces curvas fechadas")) this.periodic ??= d;
+    if (/sem gerar elementos/.test(message)) this.noDim ??= message;
+    else if (d?.startsWith("O Gmsh falhou")) this.generic ??= d;
+    else if (d) this.diag ??= d;
+  }
+  best(): string | null { return this.periodic ?? this.diag ?? this.noDim ?? this.generic; }
+}
 
 const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh"), "utf8"); } catch { return ""; } };
 
