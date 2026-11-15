@@ -86,7 +86,30 @@ AP242 (17 ficheiros, com reparação): 136/234 (58 %). Um dos ficheiros (FTC 08,
 - Limites que ficam: a casca falha em quase todas as peças reais (limite do `BRepOffset` do OpenCASCADE com muitas faces e filetes), e cerca de 40 % dos filetes e chanfros em arestas escolhidas à sorte falham (arestas curtas, entre filetes existentes ou em superfícies B-spline). No Parasolid/CGM estes casos passam quase sempre.
 - Sonda usada: importação e operações em série, um processo, tempo e mensagem de cada operação; os ficheiros do NIST não são redistribuídos no repositório.
 
+## Montagens grandes
+
+Sonda: N peças-bloco (5 peças diferentes repetidas) inseridas numa montagem, em dois modos: grelha sem mates (cada componente livre, 6 graus de liberdade) e torre em cadeia (cada componente preso ao anterior por 3 mates de coincidência, totalmente definida). Tempos num portátil, um processo.
+
+| Grelha sem mates | N = 1000 |
+|---|---|
+| Montagem (rebuild + poses) | 211 ms |
+| Interferências | 77 ms |
+| Exportação STEP | 1,1 s (17,7 MB) |
+| Exportação STEP AP242 | 73 ms |
+| Memória do processo | ~430 MB |
+| Graus de liberdade | 6N (correto) |
+
+| Torre em cadeia (3N mates) | antes | com jacobiano esparso |
+|---|---|---|
+| N = 50 | 1183 ms | 210 ms |
+| N = 100 | 12 998 ms | 496 ms (cache 357 ms, interferências 651 ms) |
+| N = 300 | — | 3999 ms (~870 MB) |
+
+- O solver de mates (Levenberg-Marquardt, 6 incógnitas por componente livre) calculava o jacobiano reavaliando todos os mates por cada incógnita; agora só perturba um componente de cada vez e só reavalia os mates que lhe tocam, e o produto JᵀJ e a eliminação saltam os zeros. Todas as torres ficam com 0 graus de liberdade.
+- O que sobra com centenas de mates é a resolução densa das equações normais (O(n³) em 6N incógnitas); aceitável até algumas centenas de componentes ligados por mates.
+- Regressão automática: torre de 60 cubos no solver puro (`tests/assembly.test.ts`), dof 0 em ~0,1 s.
+
 ## O que falta para "uso profissional"
 
 - Casca e filetes em peças reais (ver a secção anterior).
-- Testar montagens grandes (modos leves).
+- Montagens com milhares de componentes ligados por mates: precisaria de um solver esparso (ou por subconjuntos) em vez das equações normais densas.

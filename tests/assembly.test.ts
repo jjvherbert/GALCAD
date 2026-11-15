@@ -182,3 +182,25 @@ test("montagem: subconjunto rígido e mate a uma face de dentro do subconjunto",
   assert.ok(r.instances.some((i) => i.path === "c2/c2"));
   assert.equal(r.dof, 3, "plano sobre plano: 2 translações + 1 rotação livres");
 });
+
+test("solver: torre de 60 cubos (jacobiano esparso) → dof 0 e rápido", () => {
+  const N = 60;
+  const comps: SolverComponent[] = [{ id: "c0", fixed: true, pose: { R: I3, t: [0, 0, 0] } }];
+  const mates: SolverMate[] = [];
+  for (let i = 1; i < N; i++) {
+    comps.push({ id: `c${i}`, fixed: false, pose: { R: eulerXYZ([(i % 5) - 2, 2 - (i % 3), (i % 7) - 3]), t: [0.3 * (i % 3), -0.2 * (i % 4), 10 * i + 0.5] } });
+    const a = `c${i - 1}`, b = `c${i}`;
+    mates.push(
+      { id: `z${i}`, kind: "coincident", a, ga: face(2, 1), b, gb: face(2, 0) },
+      { id: `x${i}`, kind: "coincident", a, ga: face(0, 0), b, gb: face(0, 0), align: "aligned" },
+      { id: `y${i}`, kind: "coincident", a, ga: face(1, 0), b, gb: face(1, 0), align: "aligned" },
+    );
+  }
+  const t0 = performance.now();
+  const r = solveMates(comps, mates, 10);
+  const ms = performance.now() - t0;
+  assert.ok(r.ok, JSON.stringify(r.failed));
+  assert.equal(r.dof, 0);
+  nearV(r.poses.get(`c${N - 1}`)!.t, [0, 0, 10 * (N - 1)], 1e-4);
+  assert.ok(ms < 20000, `demorou ${ms.toFixed(0)} ms`); // antes do jacobiano esparso: ~2 s com 50 componentes no núcleo
+});

@@ -154,7 +154,9 @@ function residuals(m: SolverMate, A: World, B: World): number[] {
 export function matrixRank(J: number[][], tol = 1e-7): number {
   const A = J.map((r) => r.slice());
   const m = A.length, n = A[0]?.length ?? 0;
-  const scale = Math.max(1e-300, ...A.flat().map(Math.abs));
+  // sem spread: com milhares de entradas o `Math.max(...)` rebenta a pilha
+  let scale = 1e-300;
+  for (const r of A) for (const v of r) if (Math.abs(v) > scale) scale = Math.abs(v);
   let rank = 0;
   for (let c = 0; c < n && rank < m; c++) {
     let piv = rank;
@@ -162,6 +164,7 @@ export function matrixRank(J: number[][], tol = 1e-7): number {
     if (Math.abs(A[piv][c]) <= tol * scale) continue;
     [A[rank], A[piv]] = [A[piv], A[rank]];
     for (let r = rank + 1; r < m; r++) {
+      if (!A[r][c]) continue; // jacobianos de montagens são esparsos
       const f = A[r][c] / A[rank][c];
       for (let k = c; k < n; k++) A[r][k] -= f * A[rank][k];
     }
@@ -177,10 +180,12 @@ function solveNormal(J: number[][], f: number[], lambda: number): number[] {
   const g = new Array(n).fill(0);
   for (let r = 0; r < J.length; r++) {
     const row = J[r];
-    for (let i = 0; i < n; i++) {
-      if (!row[i]) continue;
+    // cada linha só toca as incógnitas de 1–2 componentes: produto só nas entradas não nulas
+    const nz: number[] = [];
+    for (let i = 0; i < n; i++) if (row[i]) nz.push(i);
+    for (const i of nz) {
       g[i] -= row[i] * f[r];
-      for (let j = 0; j < n; j++) A[i][j] += row[i] * row[j];
+      for (const j of nz) A[i][j] += row[i] * row[j];
     }
   }
   for (let i = 0; i < n; i++) A[i][i] += lambda * (A[i][i] + 1e-9);
@@ -192,6 +197,7 @@ function solveNormal(J: number[][], f: number[], lambda: number): number[] {
     [g[c], g[piv]] = [g[piv], g[c]];
     if (Math.abs(A[c][c]) < 1e-300) continue;
     for (let r = c + 1; r < n; r++) {
+      if (!A[r][c]) continue;
       const k = A[r][c] / A[c][c];
       for (let j = c; j < n; j++) A[r][j] -= k * A[c][j];
       g[r] -= k * g[c];
@@ -249,39 +255,70 @@ export function solveMates(components: SolverComponent[], mates: SolverMate[], s
     try { residuals(m, toWorld(m.ga, ground), toWorld(m.gb, ground)); return true; } catch (e) { failedGeom.push({ id: m.id, error: (e as Error).message }); return false; }
   });
 
+  const lengthFlags = new Map<SolverMate, boolean[]>();
+  const evalMate = (m: SolverMate, poses: Map<string, Pose>): number[] => {
+    if (m.kind === "lock") {
+      const now = relPts(poses, m), ref = lockRef.get(m.id)!;
+      return now.flatMap((p, k) => sub(p, ref[k])).map((x) => x / L);
+    }
+    const r = residuals(m, toWorld(m.ga, poseOf(poses, m.a)), toWorld(m.gb, poseOf(poses, m.b)));
+    // resíduos de posição em mm → adimensionais (flags calculadas uma vez por mate)
+    let fl = lengthFlags.get(m);
+    if (!fl || fl.length !== r.length) lengthFlags.set(m, (fl = r.map((_, k) => isLengthResidual(m, k, r.length))));
+    return r.map((x, k) => (fl![k] ? x / L : x));
+  };
   const evalF = (poses: Map<string, Pose>) => {
     const f: number[] = [];
     const per: number[][] = [];
     for (const m of active) {
-      let r: number[];
-      if (m.kind === "lock") {
-        const now = relPts(poses, m), ref = lockRef.get(m.id)!;
-        r = now.flatMap((p, k) => sub(p, ref[k])).map((x) => x / L);
-      } else {
-        r = residuals(m, toWorld(m.ga, poseOf(poses, m.a)), toWorld(m.gb, poseOf(poses, m.b)));
-        // resíduos de posição em mm → adimensionais
-        r = r.map((x, k) => (isLengthResidual(m, k, r.length) ? x / L : x));
-      }
+      const r = evalMate(m, poses);
       per.push(r);
-      f.push(...r);
+      for (const v of r) f.push(v);
     }
     return { f, per };
+  };
+  // mates que tocam cada componente livre: o jacobiano só tem entradas nessas linhas
+  const touching = free.map((c) => active.map((m, i) => [m, i] as const).filter(([m]) => m.a === c.id || m.b === c.id));
+  /** Jacobiano por diferenças centrais, reavaliando só os mates do componente perturbado (esparso). */
+  const jacobianOf = (x: number[], starts: Mat3[], per: number[][]): number[][] => {
+    const offset: number[] = [];
+    let rows = 0;
+    for (const r of per) { offset.push(rows); rows += r.length; }
+    const J = Array.from({ length: rows }, () => new Array(n).fill(0));
+    const poses = posesOf(x, starts);
+    const h = 1e-7;
+    free.forEach((c, ci) => {
+      const o = ci * 6;
+      const R0 = mm(starts[ci], c.pose.R);
+      const poseAt = (xx: number[]): Pose => ({ R: mm(rodrigues([xx[o + 3], xx[o + 4], xx[o + 5]]), R0), t: add(c.pose.t, [xx[o] * L, xx[o + 1] * L, xx[o + 2] * L]) });
+      for (let j = o; j < o + 6; j++) {
+        const xp = x.slice(); xp[j] += h;
+        const xm = x.slice(); xm[j] -= h;
+        const pp = new Map(poses).set(c.id, poseAt(xp)), pm = new Map(poses).set(c.id, poseAt(xm));
+        for (const [m, i] of touching[ci]) {
+          const fp = evalMate(m, pp), fm = evalMate(m, pm);
+          for (let k = 0; k < fp.length; k++) J[offset[i] + k][j] = (fp[k] - fm[k]) / (2 * h);
+        }
+      }
+    });
+    return J;
   };
 
   const norm2 = (f: number[]) => f.reduce((s, x) => s + x * x, 0);
   const run = (starts: Mat3[]) => {
     let x = new Array(n).fill(0);
-    let { f } = evalF(posesOf(x, starts));
+    let { f, per } = evalF(posesOf(x, starts));
     let cost = norm2(f);
     let lambda = 1e-3;
     let it = 0;
     for (; it < 200 && cost > 1e-24 && n > 0; it++) {
-      const J = jacobian((xx) => evalF(posesOf(xx, starts)).f, x, f);
+      const J = jacobianOf(x, starts, per);
       const dx = solveNormal(J, f, lambda);
       const xn = x.map((v, i) => v + dx[i]);
-      const fn = evalF(posesOf(xn, starts)).f;
+      const en = evalF(posesOf(xn, starts));
+      const fn = en.f;
       const cn = norm2(fn);
-      if (cn < cost) { x = xn; f = fn; cost = cn; lambda = Math.max(1e-9, lambda / 3); }
+      if (cn < cost) { x = xn; f = fn; per = en.per; cost = cn; lambda = Math.max(1e-9, lambda / 3); }
       else { lambda *= 4; if (lambda > 1e8) break; }
       if (dx.every((d) => Math.abs(d) < 1e-14)) break;
     }
@@ -315,7 +352,7 @@ export function solveMates(components: SolverComponent[], mates: SolverMate[], s
   });
   let dof = n;
   if (n > 0 && best.f.length) {
-    const J = jacobian((xx) => evalF(posesOf(xx, best.starts)).f, best.x, best.f);
+    const J = jacobianOf(best.x, best.starts, per);
     dof = n - matrixRank(J, 1e-6);
   }
   return { ok: failed.length === 0, poses, dof, residuals: residualsOut, failed, iterations: best.it };
@@ -334,16 +371,4 @@ function isLengthResidual(m: SolverMate, k: number, len: number): boolean {
     case "tangent": return k === len - 1;
     default: return false;
   }
-}
-
-function jacobian(F: (x: number[]) => number[], x: number[], f0: number[]): number[][] {
-  const h = 1e-7;
-  const J = f0.map(() => new Array(x.length).fill(0));
-  for (let j = 0; j < x.length; j++) {
-    const xp = x.slice(); xp[j] += h;
-    const xm = x.slice(); xm[j] -= h;
-    const fp = F(xp), fm = F(xm);
-    for (let i = 0; i < f0.length; i++) J[i][j] = (fp[i] - fm[i]) / (2 * h);
-  }
-  return J;
 }
