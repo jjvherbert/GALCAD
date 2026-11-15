@@ -2,6 +2,7 @@
 import { FILE_EXTENSION } from "../doc/io.ts";
 import type { ExportFormat } from "../kernel/protocol.ts";
 import { store } from "./store.ts";
+import { bytesToBase64 } from "../doc/base64.ts";
 import { KernelRestartError } from "./kernel-client.ts";
 import { renderDrawing } from "../drawing/render.ts";
 import { toPDF } from "../drawing/pdf.ts";
@@ -46,9 +47,23 @@ export function saveProject() {
   store.set({ dirty: false, message: "Projeto guardado" });
 }
 
-export async function importStep() {
-  const f = await pickTextFile(".step,.stp");
-  if (f) store.addImport(f.name, f.text);
+/** Importa um STEP (texto) ou um STL (binário ou ASCII, guardado em base64 no projeto). */
+export function importStep(): Promise<void> {
+  return new Promise((resolve) => {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept: ".step,.stp,.stl", hidden: true });
+    input.dataset.role = "import-step";
+    document.body.appendChild(input);
+    input.onchange = async () => {
+      const f = input.files?.[0];
+      input.remove();
+      if (f) {
+        if (/\.stl$/i.test(f.name)) store.addImport(f.name, bytesToBase64(new Uint8Array(await f.arrayBuffer())), "stl");
+        else store.addImport(f.name, await f.text());
+      }
+      resolve();
+    };
+    input.click();
+  });
 }
 
 export async function exportAs(format: ExportFormat) {
