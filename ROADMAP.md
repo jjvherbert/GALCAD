@@ -271,7 +271,7 @@ Depois da malha e da dinâmica: módulo de otimização sobre o mesmo estudo —
 
 **Conclusão: ainda não compete como substituto.** É um CAD paramétrico com CAE integrado credível para peças e montagens pequenas, com os solvers abertos de referência (CalculiX, code_aster, OpenFOAM, XFOIL) verificados contra soluções analíticas, automação por scripts e IA e ligação ao fluxo da Galkeel. Para uso profissional faltam, por ordem de impacto:
 
-1. **Robustez do núcleo**: o OpenCASCADE em WASM falha em casos que o Parasolid/CGM resolvem (filetes complexos, cascas, booleanas degeneradas); falta medir a taxa de sucesso num conjunto de peças reais.
+1. **Robustez do núcleo**: o OpenCASCADE em WASM falha em casos que o Parasolid/CGM resolvem (filetes complexos, cascas, booleanas degeneradas). Medido em nov. 2026 nas peças de teste do NIST (AP203): 71 % das operações passam; as booleanas passam todas, a casca quase nunca e cerca de 40 % dos filetes/chanfros falham (ver `docs/VV.md`).
 2. **Escala**: montagens grandes (centenas de peças), modos leves, PDM/versões e trabalho em equipa.
 3. **Funcionalidades de produção**: chapa metálica, soldaduras/perfis, moldes, desenhos com cortes por patamares e normas completas, DWG.
 4. **FEM de nível formal**: cascas e vigas (estruturas de PRFV e chapa), contacto geral (faces curvas, auto-contacto), dinâmica e fadiga, compósitos laminados, e um **dossier de V&V** (benchmarks NAFEMS LE1/LE10/LE11, R0031, comparação com resultados publicados; começado em `docs/VV.md`: LE1 feito, 0,1 % nos dois solvers) — sem isto, não se defende um resultado perante um cliente ou um ON.

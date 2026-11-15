@@ -8,7 +8,7 @@ import { type SketchRegion, computeRegions } from "../regions.ts";
 import { type Ctx, type StepReport, axisOf, edges, planeFrame } from "../context.ts";
 import { type Frame, flipFrame, frameFromEuler, offsetFrame, planesIntersection, rotateFrame, to2D } from "../frame.ts";
 import { nameFresh } from "../naming.ts";
-import { T, edgeProps, explore, v3 } from "../occ.ts";
+import { T, edgeProps, explore, isValid, makeCompound, oc, v3, volume } from "../occ.ts";
 import { applyOp } from "../boolean.ts";
 
 /** Atualiza as entidades convertidas de arestas do modelo, projetando cada aresta no plano do esboço. */
@@ -126,9 +126,21 @@ export async function importFeature(ctx: Ctx, f: ImportFeature & Feature, report
   T(shape);
   const solids = explore(shape.wrapped, "solid");
   if (!solids.length) throw new Error(`"${f.fileName}" não contém sólidos`);
+  // reparação (ShapeFix_Solid): tolerâncias, orientação de cascas e arestas — STEP de outros CAD
+  // chega muitas vezes com folgas que fazem falhar filetes, cascas e booleanas
+  const o = oc();
+  // (só se o sólido reparado for válido e de volume positivo; senão fica o original)
+  const healed = makeCompound(solids.map((s) => {
+    const fx = T(new o.ShapeFix_Solid(o.TopoDS.Solid(s)));
+    fx.Perform(T(new o.Message_ProgressRange()));
+    const h = T(fx.Solid());
+    const vh = volume(h).volume, vs = volume(s).volume;
+    const ok = isValid(h) && vh > 0 && !(isValid(s) && vs > 0 && Math.abs(vh - vs) > 1e-6 * vs);
+    return ok ? h : s;
+  }));
   // faces importadas: nomes pela ordem do ficheiro (estáveis enquanto o ficheiro não mudar)
   let k = 0;
-  const tool = nameFresh(shape.wrapped, f.id, () => `${f.id}:imp${k++}`);
+  const tool = nameFresh(healed, f.id, () => `${f.id}:imp${k++}`);
   report.info = { title: "Importação", rows: [["Ficheiro", f.fileName], ["Sólidos", String(solids.length)], ["Faces", String(tool.faces.length)]] };
   ctx.tools.set(f.id, { body: tool, op: f.op });
   return { ...ctx, body: applyOp(ctx, tool, f.op, f.id) };

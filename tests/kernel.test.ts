@@ -364,3 +364,21 @@ test("regiões: retângulo cortado por uma linha, revolução de metade", async 
   assert.deepEqual(errors(r1), []);
   near(vol(r1), 2 * Math.PI * 20 * 20 * 10, 1e-4);
 });
+
+test("filete/chanfro na costura de um cilindro: erro claro", async () => {
+  const s = new SketchBuilder();
+  s.circle(0, 0, 10);
+  const base = doc(s.build(), { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 20 } });
+  const r0 = await new Engine().rebuild(base.doc);
+  const seam = namedEdges(r0.ctx.body!).find((e) => e.faces.length < 2);
+  assert.ok(seam, "o cilindro devia ter uma aresta de costura");
+  for (const f of [
+    { type: "fillet", refs: [{ kind: "edge", name: seam.name }], radius: 1 },
+    { type: "chamfer", refs: [{ kind: "edge", name: seam.name }], distance: 1 },
+  ] as NewFeature[]) {
+    const { doc: d, id } = addFeature(base.doc, f);
+    const r = await new Engine().rebuild(d);
+    assert.equal(r.status[id].state, "error");
+    assert.match(r.status[id].error!, /costura/);
+  }
+});
