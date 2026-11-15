@@ -71,6 +71,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       normal: c.axis === "n" ? (c.normal ?? [0, 0, 1]).map((v, k) => evalParam(v, ctx.scope, `Partição ${i + 1} normal ${"xyz"[k]}`)) as [number, number, number] : undefined,
     };
   }));
+  report.warnings.push(...p.skipped);
   // nomes: a face de origem (com ~k se foi dividida) ou «corte k» nas faces novas
   const base = p.faces.map((f) => { const o = p.origin(f); return o ? ctx.body!.faces.find((n) => n.face.IsSame(o))?.name ?? "?" : undefined; });
   const total = new Map<string, number>(), seen = new Map<string, number>();
@@ -106,7 +107,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       if (!out.size) throw new Error(`${what}: nenhuma partição corta a face "${nf.name}"`);
       return [...out].sort((a, b) => a - b);
     },
-    note: `Partições: ${cuts.length} plano(s) dividem o sólido em ${p.solids.length} blocos com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas`,
+    note: p.used ? `Partições: ${cuts.length - p.skipped.length} plano(s) dividem o sólido em ${p.solids.length} blocos com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas` : undefined,
   };
 }
 
