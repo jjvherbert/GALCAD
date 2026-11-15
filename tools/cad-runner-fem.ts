@@ -69,7 +69,9 @@ export function checkGroups(c: FemCase, m: Msh): string[] {
  * `null` se não reconhecer nada. As faces do Gmsh têm a numeração do núcleo (o BREP é o mesmo).
  */
 export function gmshError(logText: string): string | null {
-  const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim());
+  // linhas «Error :» com conteúdo (o resumo final do Gmsh traz separadores «-----» e cabeçalhos sem informação)
+  const errs = logText.split(/\r?\n/).filter((l) => /^Error\s*:/.test(l)).map((l) => l.replace(/^Error\s*:\s*/, "").trim())
+    .filter((l) => /[a-z0-9]/i.test(l) && !/^(mesh generation error summary|\d+ (error|warning)s?\b.*|check the full log.*)$/i.test(l));
   if (!errs.length) return null;
   const all = errs.join("\n");
   const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
@@ -83,6 +85,18 @@ export function gmshError(logText: string): string | null {
   if (/degenerat|small edge|too small|zero length/i.test(all))
     return `Há arestas ou faces degeneradas/minúsculas${where}. Remova detalhes muito pequenos ou aumente o tamanho mínimo.`;
   return `O Gmsh falhou: ${errs[errs.length - 1]}`;
+}
+
+/**
+ * Erro se a malha FEM não tiver elementos da dimensão pedida (volume, ou superfície nas cascas): o Gmsh
+ * às vezes termina sem erro mas sem gerar o volume (p. ex. faces que não fecham depois da reparação),
+ * e uma malha só de triângulos não pode ser dada como boa.
+ */
+export function requireMeshDim(msh: Msh, dim: 2 | 3): void {
+  if (msh.blocks.some((b) => b.dim === dim && b.tags.length > 0)) return;
+  throw new Error(dim === 3
+    ? "O Gmsh terminou sem gerar elementos de volume (só superfície). A geometria provavelmente não fecha um volume estanque ou tem faces que se tocam/sobrepõem."
+    : "O Gmsh terminou sem gerar elementos de superfície.");
 }
 
 const ALGO_NAMES: Record<Algo3D, string> = { 1: "Delaunay", 4: "Frontal", 10: "HXT" };
@@ -117,14 +131,17 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
     const hxt = /^\s*Mesh\.Algorithm3D\s*=\s*10\s*;/m.test(readFileSync(geo, "utf8"));
     try { await run(t.gmsh.path, args(hxt ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec }); }
     catch (e) { throw e instanceof CancelledError ? e : new Error(gmshError(logOf(dir)) ?? (e as Error).message); }
-    return read();
+    const m = read();
+    if (m) requireMeshDim(m, (c as FemCase).shell ? 2 : 3);
+    return m;
   }
   // casca (malha 2D): o algoritmo 3D não conta, só se tenta sem otimização de ordem 2 e com reparação
   const shell = o.kind === "fem" && !!(c as FemCase).shell;
   const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
   if (o.kind === "fem") attempts.push({ algorithm3D: 4, optimizeHO: false, heal: true });
   const start = Date.now();
-  let last: Error | undefined, diag: string | null = null;
+  // diagnóstico específico (do log) > «sem elementos de volume» > erro genérico do Gmsh > última exceção
+  let last: Error | undefined, diag: string | null = null, noDim: string | null = null, generic: string | null = null;
   for (const [k, g] of attempts.entries()) {
     if (k > 0 && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
     write(g);
@@ -133,6 +150,7 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
       // só o HXT é paralelo; os outros com -nt 1 (resultado reprodutível)
       await run(t.gmsh.path, args(g.algorithm3D === 10 ? nt : "1"), dir, "log.gmsh", log, undefined, { timeoutSec });
       const msh = read();
+      if (msh) requireMeshDim(msh, shell ? 2 : 3);
       if (g.heal && msh) {
         const w = checkGroups(c as FemCase, msh);
         if (w.length) { last = new Error(`A reparação da geometria alterou as faces das condições:\n${w.join("\n")}`); continue; }
@@ -142,11 +160,14 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
     } catch (e) {
       if (e instanceof CancelledError) throw e;
       last = e as Error;
-      diag ??= gmshError(logOf(dir));
+      const d = gmshError(logOf(dir));
+      if (/sem gerar elementos/.test(last.message)) noDim ??= last.message;
+      else if (d?.startsWith("O Gmsh falhou")) generic ??= d;
+      else if (d) diag ??= d;
       log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
     }
   }
-  throw new Error(diag ?? last?.message ?? "A malha falhou");
+  throw new Error(diag ?? noDim ?? generic ?? last?.message ?? "A malha falhou");
 }
 
 const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh"), "utf8"); } catch { return ""; } };

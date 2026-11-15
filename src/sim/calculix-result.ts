@@ -188,6 +188,13 @@ function shellSurface(m: Msh): ReturnType<typeof exteriorSurface> {
   return { positions, triangles, index, edges, faces };
 }
 
+/** Maior etiqueta de nó (ciclo: o spread de um Map grande rebenta a pilha). */
+function maxKey(m: Map<number, unknown>): number {
+  let k = -Infinity;
+  for (const x of m.keys()) if (x > k) k = x;
+  return k;
+}
+
 /**
  * Casca: o CalculiX expande cada S3/S6 num sólido de 3 camadas de nós (base, meio, topo) e o `.frd` só
  * tem os nós expandidos (numeração nova). Volta aos nós da malha pelas coordenadas: o nó do meio está na
@@ -199,10 +206,11 @@ export function shellFrdBlocks(m: Msh, frd: { nodes: Map<number, [number, number
   const used = new Set<number>();
   for (const e of elementsOf(shellBlocks(m))) for (const t of e.nodes) used.add(t);
   if (plies > 1) return compositeFrdBlocks(m, frd, used, plies, c);
-  const nk = Math.max(...m.nodes.keys());
+  const nk = maxKey(m.nodes);
   const pts = [...frd.nodes.values()];
   if (!pts.length) throw new Error("Resultado de casca sem nós no .frd");
-  const lo = [0, 1, 2].map((k) => Math.min(...pts.map((p) => p[k]))), hi = [0, 1, 2].map((k) => Math.max(...pts.map((p) => p[k])));
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of pts) for (let k = 0; k < 3; k++) { if (p[k] < lo[k]) lo[k] = p[k]; if (p[k] > hi[k]) hi[k] = p[k]; }
   const diag = Math.hypot(...hi.map((x, k) => x - lo[k])) || 1;
   // grelha para a procura do vizinho mais próximo (o .frd tem ~6 algarismos significativos)
   const h = 1e-3 * diag, tol = 1e-4 * diag;
@@ -261,7 +269,7 @@ const vonMises = (v: number[]) => Math.sqrt(0.5 * ((v[0] - v[1]) ** 2 + (v[1] - 
  * todas as secções que tocam o nó, com a região (−1 = base), a camada (1…) e o modo.
  */
 function compositeFrdBlocks(m: Msh, frd: { blocks: FrdBlock[] }, used: Set<number>, plies: number, c?: FemCase): FrdBlock[] {
-  const nk = Math.max(...m.nodes.keys()), B = 3 + 3 * plies;
+  const nk = maxKey(m.nodes), B = 3 + 3 * plies;
   // secções (região ou base) que tocam cada nó, com as camadas já divididas como no .inp
   const regions = c?.shell?.regions?.filter((r) => r.plies.length) ?? [], base = c?.shell?.plies ?? [];
   const sections = [base, ...regions.map((r) => r.plies)].map((ps) => {

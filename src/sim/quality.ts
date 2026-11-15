@@ -182,7 +182,9 @@ export function meshQuality(m: Msh, bodies?: { group: string }[], shell = false)
     const fail = limits.map((_, i) => list.filter((x) => { const l = limitsOf(x.kind)[i]; return l && ((l.min !== undefined && x.v < l.min) || (l.max !== undefined && x.v > l.max)); }).length);
     limits.forEach((l, i) => { if (l.level === "error") errors += fail[i]; });
     const v = list.map((x) => x.v);
-    const min = Math.min(...v), max = Math.max(...v);
+    // ciclo em vez de Math.min(...v): com centenas de milhares de elementos o spread rebenta a pilha
+    let min = Infinity, max = -Infinity;
+    for (const x of v) { if (x < min) min = x; if (x > max) max = x; }
     // histograma de 10 classes (jacobiano e ângulos em gamas fixas, para comparar malhas)
     const range: [number, number] = key === "sj" ? [Math.min(0, min), 1] : key === "minAngle" || key === "maxAngle" ? [0, 180] : key === "shape" ? [0, 1] : [Math.min(min, 1), Math.max(max, 1 + 1e-9)];
     const edges = Array.from({ length: 11 }, (_, i) => range[0] + ((range[1] - range[0]) * i) / 10);
