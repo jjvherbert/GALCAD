@@ -62,7 +62,31 @@ Cada linha corresponde a um ou mais testes em `tests/`:
 | Consola sob degrau (pico ≈ 2× estático em T₁/2) | Dinâmica de 1 GL | OpenRadioss |
 | Encurvadura de placas (k → 4, Johnson) | Teoria de placas | analítico interno |
 
+## Robustez do núcleo em peças reais
+
+Conjunto: os modelos de teste PMI do NIST (CTC 01–05 e FTC 06–11, STEP AP203, 11 peças; e as versões AP242, 17 ficheiros), importados e sujeitos a operações típicas: filete e chanfro de 0,5 mm em 4 arestas, filete de uma face (0,3 mm), casca de 1 mm, furo passante, corte de metade e boss. As operações correm sobre o sólido importado tal como está.
+
+| Operação | AP203 antes | AP203 com reparação na importação |
+|---|---|---|
+| Importação | 11/11 | 11/11 |
+| Filete 0,5 (arestas) | 27/44 | 27/44 |
+| Chanfro 0,5 (arestas) | 25/44 | 25/44 |
+| Filete de face 0,3 | 17/32 | 27/32 |
+| Casca 1 mm | 1/11 | 1/11 |
+| Furo passante | 11/11 | 11/11 |
+| Corte de metade | 11/11 | 11/11 |
+| Boss | 4/11 | 11/11 |
+| **Total** | **107/175 (61 %)** | **124/175 (71 %)** |
+
+AP242 (17 ficheiros, com reparação): 136/234 (58 %). Um dos ficheiros (FTC 08, só malha tesselada) não tem B-rep e falha em tudo menos na importação.
+
+- A importação repara cada sólido com `ShapeFix_Solid` e só aceita o resultado se for válido, tiver volume positivo e não mudar o volume de um sólido que já era válido.
+- Filete e chanfro numa aresta de costura (a linha de fecho de um cilindro) dão agora um erro claro em vez de um erro do núcleo.
+- Booleanas (furo, corte, boss) passam em todas as peças com B-rep.
+- Limites que ficam: a casca falha em quase todas as peças reais (limite do `BRepOffset` do OpenCASCADE com muitas faces e filetes), e cerca de 40 % dos filetes e chanfros em arestas escolhidas à sorte falham (arestas curtas, entre filetes existentes ou em superfícies B-spline). No Parasolid/CGM estes casos passam quase sempre.
+- Sonda usada: importação e operações em série, um processo, tempo e mensagem de cada operação; os ficheiros do NIST não são redistribuídos no repositório.
+
 ## O que falta para "uso profissional"
 
-- Medir a taxa de sucesso do núcleo (OpenCASCADE WASM) num conjunto de peças reais.
+- Casca e filetes em peças reais (ver a secção anterior).
 - Testar montagens grandes (modos leves).

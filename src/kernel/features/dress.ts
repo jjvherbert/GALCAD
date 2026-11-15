@@ -7,6 +7,13 @@ import { T, explore, gpDir, gpPln, makeList, oc, v3 } from "../occ.ts";
 
 type Step<F> = (ctx: Ctx, f: F, report: StepReport) => Ctx;
 
+/** Filete/chanfro só em cantos: uma costura (aresta com uma só face, p. ex. de um cilindro) não tem canto. */
+function corners(es: ReturnType<typeof edges>, what: string) {
+  const seam = es.find((e) => e.faces.length < 2);
+  if (seam) throw new Error(`${what}: a aresta "${seam.name}" é a costura de uma face fechada (não é um canto) — escolha outra`);
+  return es;
+}
+
 function body(ctx: Ctx) {
   if (!ctx.body) throw new Error("Ainda não existe corpo");
   return ctx.body;
@@ -16,7 +23,7 @@ export const fillet: Step<FilletFeature & Feature> = (ctx, f, report) => {
   const b = body(ctx);
   const r = evalParam(f.radius, ctx.scope, "Raio");
   if (r <= 0) throw new Error("Raio: tem de ser positivo");
-  const es = edges(ctx, f.refs, report);
+  const es = corners(edges(ctx, f.refs, report), "Filete");
   if (!es.length) throw new Error("Selecione pelo menos uma aresta");
   const o = oc();
   const mk = T(new o.BRepFilletAPI_MakeFillet(b.shape, o.ChFi3d_FilletShape.ChFi3d_Rational));
@@ -33,7 +40,7 @@ export const chamfer: Step<ChamferFeature & Feature> = (ctx, f, report) => {
   const d1 = evalParam(f.distance, ctx.scope, "Distância");
   const d2 = evalParam(f.distance2, ctx.scope, "Distância 2", d1);
   if (d1 <= 0 || d2 <= 0) throw new Error("Distâncias: têm de ser positivas");
-  const es = edges(ctx, f.refs, report);
+  const es = corners(edges(ctx, f.refs, report), "Chanfro");
   if (!es.length) throw new Error("Selecione pelo menos uma aresta");
   const o = oc();
   const mk = T(new o.BRepFilletAPI_MakeChamfer(b.shape));

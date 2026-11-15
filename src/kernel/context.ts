@@ -184,7 +184,7 @@ export function edges(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedEdge[
       for (const f of faces(ctx, [r], report)) {
         for (const fe of explore(f.face, "edge")) {
           const ne = all.find((e) => e.edge.IsSame(fe));
-          if (!ne) continue;
+          if (!ne || ne.faces.length < 2) continue; // costura de uma face fechada: não é um canto
           const adj = ne.faces.map((n) => body.faces.find((x) => x.name === n)?.face).filter((x) => x !== undefined);
           if (adj.length === 2 && isSmoothEdge(ne.edge, adj[0], adj[1])) { smooth++; continue; }
           found++;
