@@ -76,6 +76,9 @@ export function gmshError(logText: string): string | null {
   const all = errs.join("\n");
   const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
   const where = faces.length ? ` (faces ${faces.join(", ")})` : "";
+  // falta de um módulo na compilação do Gmsh, não um defeito da peça (o «No elements in volume» que se segue é consequência)
+  if (/requires Netgen/i.test(all))
+    return "O Gmsh falhou: o algoritmo Frontal 3D não está disponível nesta instalação (precisa do Netgen).";
   if (/self[- ]?intersect|intersecting facets|overlapping facets|PLC Error|invalid PLC/i.test(all))
     return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
   if (/boundary recovery|could not recover/i.test(all))
@@ -139,8 +142,9 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
   }
   // casca (malha 2D): o algoritmo 3D não conta, só se tenta sem otimização de ordem 2 e com reparação
   const shell = o.kind === "fem" && !!(c as FemCase).shell;
-  const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 4, optimizeHO: false }];
-  if (o.kind === "fem") attempts.push({ algorithm3D: 4, optimizeHO: false, heal: true });
+  const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 1, optimizeHO: false }, { algorithm3D: 4, optimizeHO: false }];
+  // o Frontal 3D precisa do Netgen, que nem todas as compilações do Gmsh trazem: a reparação usa o Delaunay
+  if (o.kind === "fem") attempts.push({ algorithm3D: 1, optimizeHO: false, heal: true });
   const start = Date.now();
   const errors = new MeshErrors();
   let last: Error | undefined;

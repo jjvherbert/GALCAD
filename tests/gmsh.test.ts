@@ -122,3 +122,12 @@ test("MeshErrors: faces curvas fechadas por malhar ganham ao «volume não fecha
   f.add("y", "O Gmsh falhou: algo");
   assert.match(f.best()!, /sem gerar elementos/);
 });
+
+test("gmshError: Frontal sem Netgen não é dado como volume não fechado", () => {
+  const d = gmshError("Error   : Frontal algorithm requires Netgen\nError   : No elements in volume 1\n");
+  assert.match(d ?? "", /Netgen/);
+  const e = new MeshErrors();
+  e.add("x", d);
+  e.add("y", "Há arestas ou faces degeneradas/minúsculas.");
+  assert.match(e.best() ?? "", /degeneradas/);
+});

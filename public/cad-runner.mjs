@@ -5439,6 +5439,7 @@ function gmshError(logText) {
 	const all = errs.join("\n");
 	const faces = [...new Set([...all.matchAll(/surface\s+(\d+)/gi)].map((m) => Number(m[1])))].sort((a, b) => a - b);
 	const where = faces.length ? ` (faces ${faces.join(", ")})` : "";
+	if (/requires Netgen/i.test(all)) return "O Gmsh falhou: o algoritmo Frontal 3D não está disponível nesta instalação (precisa do Netgen).";
 	if (/self[- ]?intersect|intersecting facets|overlapping facets|PLC Error|invalid PLC/i.test(all)) return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
 	if (/boundary recovery|could not recover/i.test(all)) return `O gerador 3D não conseguiu respeitar a malha das faces${where}. Normalmente é uma face muito fina ou um ângulo muito agudo; tente um tamanho de elemento menor nessa zona.`;
 	if (/impossible to mesh periodic surface|not forming a closed loop/i.test(all)) return `Não foi possível malhar faces curvas fechadas (cilindros, cones ou toros)${where}: a malha das arestas não fecha à volta delas. Tente um tamanho de elemento menor ou mais pontos por curvatura.`;
@@ -5518,12 +5519,16 @@ async function gmshMeshRaw(c, dir, log, o) {
 		{ algorithm3D: 1 },
 		{ algorithm3D: 10 },
 		{
+			algorithm3D: 1,
+			optimizeHO: false
+		},
+		{
 			algorithm3D: 4,
 			optimizeHO: false
 		}
 	];
 	if (o.kind === "fem") attempts.push({
-		algorithm3D: 4,
+		algorithm3D: 1,
 		optimizeHO: false,
 		heal: true
 	});
