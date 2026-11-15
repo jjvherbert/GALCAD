@@ -5529,8 +5529,12 @@ async function gmshMeshRaw(c, dir, log, o) {
 	});
 	const start = Date.now();
 	let last, diag = null, noDim = null, generic = null;
+	let skipHO = false, triedNoHO = false;
 	for (const [k, g] of attempts.entries()) {
-		if (k > 0 && Date.now() - start > 2 * timeoutSec * 1e3) {
+		if (skipHO && g.optimizeHO !== false) continue;
+		const rescue = skipHO && !triedNoHO && g.optimizeHO === false;
+		if (g.optimizeHO === false) triedNoHO = true;
+		if (k > 0 && !rescue && Date.now() - start > 2 * timeoutSec * 1e3) {
 			log(`Malha: tempo total esgotado, sem mais tentativas.`);
 			break;
 		}
@@ -5556,11 +5560,14 @@ async function gmshMeshRaw(c, dir, log, o) {
 			if (/sem gerar elementos/.test(last.message)) noDim ??= last.message;
 			else if (d?.startsWith("O Gmsh falhou")) generic ??= d;
 			else if (d) diag ??= d;
+			if (hoFailed(logOf(dir))) skipHO = true;
 			log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
 		}
 	}
 	throw new Error(diag ?? noDim ?? generic ?? last?.message ?? "A malha falhou");
 }
+/** O log do Gmsh mostra que a otimização dos elementos de ordem 2 não atingiu o jacobiano mínimo. */
+const hoFailed = (logText) => /Optimization failed|Failed to reach critical value/i.test(logText);
 const logOf = (dir) => {
 	try {
 		return readFileSync(join(dir, "log.gmsh"), "utf8");

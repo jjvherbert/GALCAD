@@ -144,8 +144,13 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
   const start = Date.now();
   // diagnóstico específico (do log) > «sem elementos de volume» > erro genérico do Gmsh > última exceção
   let last: Error | undefined, diag: string | null = null, noDim: string | null = null, generic: string | null = null;
+  let skipHO = false, triedNoHO = false;
   for (const [k, g] of attempts.entries()) {
-    if (k > 0 && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
+    if (skipHO && g.optimizeHO !== false) continue;
+    // depois de uma falha da otimização de ordem 2, a primeira tentativa sem ela corre mesmo com o tempo esgotado
+    const rescue = skipHO && !triedNoHO && g.optimizeHO === false;
+    if (g.optimizeHO === false) triedNoHO = true;
+    if (k > 0 && !rescue && Date.now() - start > 2 * timeoutSec * 1000) { log(`Malha: tempo total esgotado, sem mais tentativas.`); break; }
     write(g);
     log(`Malha: tentativa ${k + 1}/${attempts.length} — ${shell ? "malha de superfície" : ALGO_NAMES[g.algorithm3D ?? 1]}${g.optimizeHO === false ? ", sem otimização de ordem 2" : ""}${g.heal ? ", com reparação da geometria" : ""}`);
     try {
@@ -166,11 +171,16 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
       if (/sem gerar elementos/.test(last.message)) noDim ??= last.message;
       else if (d?.startsWith("O Gmsh falhou")) generic ??= d;
       else if (d) diag ??= d;
+      // a otimização de ordem 2 falhou: repeti-la com outro algoritmo raramente ajuda — saltar para as tentativas sem ela
+      if (hoFailed(logOf(dir))) skipHO = true;
       log(`Malha: tentativa ${k + 1} falhou — ${last.message.split("\n")[0]}`);
     }
   }
   throw new Error(diag ?? noDim ?? generic ?? last?.message ?? "A malha falhou");
 }
+
+/** O log do Gmsh mostra que a otimização dos elementos de ordem 2 não atingiu o jacobiano mínimo. */
+export const hoFailed = (logText: string) => /Optimization failed|Failed to reach critical value/i.test(logText);
 
 const logOf = (dir: string) => { try { return readFileSync(join(dir, "log.gmsh"), "utf8"); } catch { return ""; } };
 

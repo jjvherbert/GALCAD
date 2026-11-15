@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { femGeo, minSizeFloor } from "../src/sim/gmsh.ts";
 import { gmshError } from "../tools/cad-runner.ts";
-import { requireMeshDim } from "../tools/cad-runner-fem.ts";
+import { hoFailed, requireMeshDim } from "../tools/cad-runner-fem.ts";
 import { meshQuality } from "../src/sim/quality.ts";
 import type { Msh } from "../src/sim/msh.ts";
 import type { FemCase } from "../src/sim/case.ts";
@@ -66,6 +66,11 @@ test("gmshError: faces periódicas que não malham não são confundidas com vol
   assert.match(m, /faces curvas fechadas/);
   assert.match(m, /faces 1, 3/);
   assert.doesNotMatch(m, /volume fechado/);
+});
+
+test("hoFailed: reconhece a falha da otimização de ordem 2 (salta para as tentativas sem ela)", () => {
+  assert.ok(hoFailed("Error   : Failed to reach critical value in pass 0 for measure(s): ScaledJac\nError   : Optimization failed (some measures below critical value)"));
+  assert.ok(!hoFailed("Error   : Impossible to mesh periodic surface 1"));
 });
 
 test("gmshError: ignora os separadores e cabeçalhos do resumo final do Gmsh", () => {
