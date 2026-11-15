@@ -1,7 +1,7 @@
 // OpenCASCADE: amostragem de arestas/fios, grelhas e geometria local de superfícies (Fase 4).
 import type { Vec3 } from "../doc/types.ts";
 import { T, oc, v3, xyz, gpPnt, makeList, type TopoDS_Shape, type TopoDS_Face } from "./occ-core.ts";
-import { distance, vertexAt } from "./occ-props.ts";
+import { distance, isSmoothEdge, vertexAt } from "./occ-props.ts";
 
 /** Normal da face (com a orientação da face) no ponto da superfície mais próximo de `p`. */
 export function normalOnFace(face: TopoDS_Shape, p: Vec3): Vec3 {
@@ -187,4 +187,19 @@ export function poleRowsFace(rows: Vec3[][]): TopoDS_Face {
   const mk = T(new o.BRepBuilderAPI_MakeFace(surf, 1e-7));
   if (!mk.IsDone()) throw new Error("Não foi possível criar a face");
   return T(mk.Face());
+}
+
+/**
+ * Aresta sem canto entre duas faces: concordância G1 (pela regularidade do OCCT) ou, quando essa não
+ * é detetada, normais das duas faces praticamente iguais a meio da aresta (ângulo < `tolDeg`).
+ */
+export function isTangentEdge(e: TopoDS_Shape, f1: TopoDS_Shape, f2: TopoDS_Shape, tolDeg = 1): boolean {
+  if (isSmoothEdge(e, f1, f2)) return true;
+  try {
+    const mid = sampleEdge(e, 3)[1].p;
+    const n1 = normalOnFace(f1, mid), n2 = normalOnFace(f2, mid);
+    return v3.dot(n1, n2) > Math.cos((tolDeg * Math.PI) / 180);
+  } catch {
+    return false;
+  }
 }

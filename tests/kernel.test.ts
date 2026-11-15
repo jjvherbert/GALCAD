@@ -382,3 +382,26 @@ test("filete/chanfro na costura de um cilindro: erro claro", async () => {
     assert.match(r.status[id].error!, /costura/);
   }
 });
+
+test("filete/chanfro numa aresta tangente (já arredondada): erro claro", async () => {
+  const s = new SketchBuilder();
+  s.rect(0, 0, 40, 20, 40, 20);
+  const base = doc(s.build(), { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } });
+  const r0 = await new Engine().rebuild(base.doc);
+  const sharp = namedEdges(r0.ctx.body!)[0];
+  const filleted = addFeature(base.doc, { type: "fillet", refs: [{ kind: "edge", name: sharp.name }], radius: 3 } as NewFeature);
+  const r1 = await new Engine().rebuild(filleted.doc);
+  assert.equal(r1.status[filleted.id].state, "ok");
+  // as arestas entre a face do filete e as faces planas vizinhas são tangentes: não há canto
+  const tangent = namedEdges(r1.ctx.body!).find((e) => e.faces.length === 2 && e.faces.some((n) => n.includes(":fil")) && e.faces.some((n) => !n.includes(":fil")));
+  assert.ok(tangent, "devia haver uma aresta tangente ao filete");
+  for (const f of [
+    { type: "fillet", refs: [{ kind: "edge", name: tangent.name }], radius: 1 },
+    { type: "chamfer", refs: [{ kind: "edge", name: tangent.name }], distance: 1 },
+  ] as NewFeature[]) {
+    const { doc: d, id } = addFeature(filleted.doc, f);
+    const r = await new Engine().rebuild(d);
+    assert.equal(r.status[id].state, "error");
+    assert.match(r.status[id].error!, /tangente/);
+  }
+});

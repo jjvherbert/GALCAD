@@ -6,7 +6,7 @@ import type { SketchRegion } from "./regions.ts";
 import type { SolveResult } from "../sketch/solver.ts";
 import { type Axis, type Frame, STD_AXES, STD_FRAMES, csysAxis, csysPlane, frameFromPlane, to3D } from "./frame.ts";
 import { type NamedBody, type NamedEdge, type NamedFace, namedEdges, resolveEdge, resolveFace } from "./naming.ts";
-import { type TopoDS_Face, type TopoDS_Shape, bbox, edgeProps, explore, faceProps, isSmoothEdge, v3 } from "./occ.ts";
+import { type TopoDS_Face, type TopoDS_Shape, bbox, edgeProps, explore, faceProps, isTangentEdge, v3 } from "./occ.ts";
 
 export interface SketchResult {
   frame: Frame;
@@ -186,7 +186,7 @@ export function edges(ctx: Ctx, refs: TopoRef[], report: StepReport): NamedEdge[
           const ne = all.find((e) => e.edge.IsSame(fe));
           if (!ne || ne.faces.length < 2) continue; // costura de uma face fechada: não é um canto
           const adj = ne.faces.map((n) => body.faces.find((x) => x.name === n)?.face).filter((x) => x !== undefined);
-          if (adj.length === 2 && isSmoothEdge(ne.edge, adj[0], adj[1])) { smooth++; continue; }
+          if (adj.length === 2 && isTangentEdge(ne.edge, adj[0], adj[1])) { smooth++; continue; }
           found++;
           push(ne);
         }
