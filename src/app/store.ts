@@ -332,7 +332,7 @@ export class Store {
   move(id: string, toIndex: number) { treeOps.move(this, id, toIndex); }
   setRollback(index: number | undefined) { treeOps.setRollback(this, index); }
   setVariables(variables: Variable[]) { treeOps.setVariables(this, variables); }
-  addImport(fileName: string, data: string) { treeOps.addImport(this, fileName, data); }
+  addImport(fileName: string, data: string, format: "step" | "stl" = "step") { treeOps.addImport(this, fileName, data, format); }
   pick(p: Pick, additive: boolean) { treeOps.pick(this, p, additive); }
   clearSelection() { treeOps.clearSelection(this); }
   /** Substitui (ou soma) a seleção, por exemplo a partir de uma caixa de seleção. */

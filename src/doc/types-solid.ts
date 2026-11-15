@@ -186,7 +186,8 @@ export interface CsysFeature {
 
 export interface ImportFeature {
   type: "import";
-  format: "step";
+  /** step: texto STEP; stl: bytes do STL em base64. */
+  format: "step" | "stl";
   fileName: string;
   /** Conteúdo do ficheiro (texto STEP). */
   data: string;

@@ -68,7 +68,7 @@ export function Toolbar() {
               <button role="menuitem" onClick={() => runCommand("file.new")}>Novo <kbd>Ctrl+N</kbd></button>
               <button role="menuitem" onClick={() => runCommand("file.open")}>Abrir projeto ({FILE_EXTENSION})… <kbd>Ctrl+O</kbd></button>
               <button role="menuitem" onClick={() => runCommand("file.save")}>Guardar projeto <kbd>Ctrl+S</kbd></button>
-              <button role="menuitem" onClick={() => runCommand("file.import")}>Importar STEP…</button>
+              <button role="menuitem" onClick={() => runCommand("file.import")}>Importar STEP/STL…</button>
               <hr />
               {EXPORTS.map(([f, l]) => <button role="menuitem" key={f} disabled={!st.result?.mesh} onClick={() => runCommand(`export.${f}`)}>Exportar {l}</button>)}
             </div>

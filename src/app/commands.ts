@@ -126,7 +126,7 @@ export const COMMANDS: Command[] = [
   { id: "file.new", label: "Novo", group: "Ficheiro", keys: ["Ctrl+N"], run: () => { if (!busy() && (!store.state.dirty || confirm("Descartar as alterações por guardar?"))) store.newDoc(); } },
   { id: "file.open", label: "Abrir projeto…", group: "Ficheiro", keys: ["Ctrl+O"], run: () => { if (!busy()) void openProject(); } },
   { id: "file.save", label: "Guardar projeto", group: "Ficheiro", keys: ["Ctrl+S"], run: () => { if (!busy()) saveProject(); } },
-  { id: "file.import", label: "Importar STEP…", group: "Ficheiro", run: () => { if (!busy()) void importStep(); } },
+  { id: "file.import", label: "Importar STEP/STL…", group: "Ficheiro", run: () => { if (!busy()) void importStep(); } },
   ...EXPORTS.map(([f, l]): Command => ({ id: `export.${f}`, label: `Exportar ${l}`, group: "Exportar", run: () => void exportAs(f) })),
   { id: "edit.undo", label: "Desfazer", group: "Editar", keys: ["Ctrl+Z"], run: () => store.undo() },
   { id: "edit.redo", label: "Refazer", group: "Editar", keys: ["Ctrl+Y"], run: () => store.redo() },

@@ -10,6 +10,8 @@ import { type Frame, flipFrame, frameFromEuler, offsetFrame, planesIntersection,
 import { nameFresh } from "../naming.ts";
 import { T, edgeProps, explore, isValid, makeCompound, oc, v3, volume } from "../occ.ts";
 import { applyOp } from "../boolean.ts";
+import { readMesh } from "./mesh.ts";
+import { base64ToBytes } from "../../doc/base64.ts";
 
 /** Atualiza as entidades convertidas de arestas do modelo, projetando cada aresta no plano do esboço. */
 function projectExternal<F extends SketchFeature>(ctx: Ctx, f: F, frame: Frame, report: StepReport): F {
@@ -122,8 +124,15 @@ export function csys(ctx: Ctx, f: CsysFeature & Feature): Ctx {
 
 export async function importFeature(ctx: Ctx, f: ImportFeature & Feature, report: StepReport): Promise<Ctx> {
   if (!f.data) throw new Error("Ficheiro vazio");
+  if (f.format === "stl") return importMesh(ctx, f, report, readMesh(base64ToBytes(f.data)));
   const shape = await importSTEP(new Blob([f.data]));
   T(shape);
+  // STEP só com tesselação (AP242 TRIANGULATED_FACE…): as faces não têm superfície e o sólido sai
+  // invertido — passa pela mesma via das malhas (triângulos → faces planas costuradas)
+  if (/TRIANGULATED_FACE|TESSELLATED_|COMPLEX_TRIANGULATED/i.test(f.data)) {
+    const stl = shape.blobSTL({ binary: true, tolerance: 0.01, angularTolerance: 0.1 });
+    return importMesh(ctx, f, report, readMesh(new Uint8Array(await stl.arrayBuffer())));
+  }
   const solids = explore(shape.wrapped, "solid");
   if (!solids.length) throw new Error(`"${f.fileName}" não contém sólidos`);
   // reparação (ShapeFix_Solid): tolerâncias, orientação de cascas e arestas — STEP de outros CAD
@@ -142,6 +151,24 @@ export async function importFeature(ctx: Ctx, f: ImportFeature & Feature, report
   let k = 0;
   const tool = nameFresh(healed, f.id, () => `${f.id}:imp${k++}`);
   report.info = { title: "Importação", rows: [["Ficheiro", f.fileName], ["Sólidos", String(solids.length)], ["Faces", String(tool.faces.length)]] };
+  ctx.tools.set(f.id, { body: tool, op: f.op });
+  return { ...ctx, body: applyOp(ctx, tool, f.op, f.id) };
+}
+
+function importMesh(ctx: Ctx, f: ImportFeature & Feature, report: StepReport, m: ReturnType<typeof readMesh>): Ctx {
+  let k = 0;
+  const open = m.open ? nameFresh(m.open, f.id, () => `${f.id}:mesh${k++}`) : null;
+  if (open) ctx.sheets.set(f.id, open);
+  const rows: [string, string][] = [["Ficheiro", f.fileName], ["Triângulos", String(m.triangles)], ["Sólidos", String(m.solids.length)]];
+  if (open) rows.push(["Superfícies abertas", String(open.faces.length) + " faces"]);
+  if (!m.solids.length) {
+    report.info = { title: "Importação (malha)", rows };
+    report.warnings.push("A malha não é fechada: ficou como superfície (sem volume)");
+    return ctx;
+  }
+  const tool = nameFresh(makeCompound(m.solids), f.id, () => `${f.id}:imp${k++}`);
+  rows.push(["Faces", String(tool.faces.length)]);
+  report.info = { title: "Importação (malha)", rows };
   ctx.tools.set(f.id, { body: tool, op: f.op });
   return { ...ctx, body: applyOp(ctx, tool, f.op, f.id) };
 }

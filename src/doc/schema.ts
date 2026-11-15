@@ -190,7 +190,7 @@ export const FEATURE_SCHEMAS = exact({
     points: z.tuple([vec3, vec3]).optional(),
   }),
   csys: z.object({ type: z.literal("csys"), origin: expr3, rotation: expr3 }),
-  import: z.object({ type: z.literal("import"), format: z.literal("step"), fileName: z.string(), data: z.string(), op }),
+  import: z.object({ type: z.literal("import"), format: z.enum(["step", "stl"]), fileName: z.string(), data: z.string(), op }),
   plugin: z.object({ type: z.literal("plugin"), plugin: z.string(), kind: z.string(), params: z.record(z.string(), expr), op }),
   surfaceExtrude: z.object({
     type: z.literal("surfaceExtrude"),

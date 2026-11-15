@@ -88,10 +88,10 @@ export function setVariables(s: Store, variables: Variable[]) {
   s.commit({ ...s.state.doc, variables }, "Variáveis");
 }
 
-export function addImport(s: Store, fileName: string, data: string) {
+export function addImport(s: Store, fileName: string, data: string, format: "step" | "stl" = "step") {
   const doc = s.state.doc;
   const hasBody = doc.features.some((f) => f.type !== "sketch" && f.type !== "plane" && f.type !== "axis" && f.type !== "csys");
-  const r = addFeature(doc, { type: "import", format: "step", fileName, data, op: hasBody ? "new" : "add", name: fileName.replace(/\.(step|stp)$/i, "") });
+  const r = addFeature(doc, { type: "import", format, fileName, data, op: hasBody ? "new" : "add", name: fileName.replace(/\.(step|stp|stl)$/i, "") });
   s.commit(r.doc, `Importar ${fileName}`);
 }
 

@@ -74,7 +74,7 @@ export function FeatureTree() {
         ))}
         {rb >= doc.features.length && doc.features.length > 0 && <RollbackBar end />}
       </ul>
-      {!doc.features.length && <p class="muted empty">Comece por um <b>Esboço</b> num plano, ou importe um STEP.</p>}
+      {!doc.features.length && <p class="muted empty">Comece por um <b>Esboço</b> num plano, ou importe um STEP ou STL.</p>}
     </div>
   );
 }
