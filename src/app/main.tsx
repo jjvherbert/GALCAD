@@ -141,7 +141,7 @@ function App() {
   // espaço FEM: nós das seeds da malha (meshPlan no worker, sem Gmsh), atualizados ao vivo
   useEffect(() => scheduleSeedPreview((p) => vp.current?.setSeedMarks(p)), [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result]);
   // malha ao vivo (opção no painel da seed): volta a gerar a malha completa após uma pausa nas alterações
-  useEffect(scheduleLiveMesh, [st.workspace, st.simStudy, st.doc, st.project, st.pickTarget, st.liveMesh, st.agent]);
+  useEffect(scheduleLiveMesh, [st.workspace, st.simStudy, st.doc, st.project, st.liveMesh, st.agent]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
   // resultados de simulação (FEM) no 3D
   useEffect(() => {

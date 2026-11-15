@@ -7,6 +7,7 @@ import { type SimSection, store, useStoreKeys } from "./store.ts";
 import { STRUCT_LOADS, THERMAL_LOADS, newLoad } from "./sim-actions.ts";
 import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms.tsx";
 import { ShellEditor } from "./ShellEditor.tsx";
+import { LiveMeshToggle } from "./SeedHud.tsx";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria (plano)", pointForce: "Força pontual", force: "Força total", pressure: "Pressão", gravity: "Gravidade", spring: "Mola à terra", mass: "Massa pontual", coupling: "Acoplamento (RBE2/RBE3)",
@@ -396,7 +397,7 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
   const setSeed = (i: number, p: Partial<MeshSeed>) => set({ seeds: seeds.map((x, k) => (k === i ? { ...x, ...p } : x)) });
   return (
     <>
-      <h3>Malha (Gmsh)</h3>
+      <h3 class="mesh-head">Malha (Gmsh) <LiveMeshToggle /></h3>
       <div class="row">
         <Select label="Elementos" value={m.element ?? "tet"} options={[["tet", "Tetraedros"], ["hex", "Hexaedros"]]} onChange={(element) => set({ element })} />
         <Select label="Ordem" value={String(m.order) as "1" | "2"} options={hex ? [["2", "Quadráticos (20 nós)"], ["1", "Lineares (8 nós)"]] : [["2", "Quadráticos (C3D10)"], ["1", "Lineares (C3D4)"]]} onChange={(o) => set({ order: Number(o) as 1 | 2 })} />
