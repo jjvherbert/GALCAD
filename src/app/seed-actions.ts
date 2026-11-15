@@ -104,5 +104,5 @@ const liveMesh = liveMeshScheduler(() => void rerunLiveMesh());
 export function scheduleLiveMesh() {
   const st = store.state, study = activeStudy("fem");
   const fem = st.workspace === "fem" && study?.physics === "fem" ? study : undefined;
-  liveMesh(liveMeshKey(st.liveMesh, st.agent.token, activeSeedIndex() != null, fem?.id, fem?.mesh));
+  liveMesh(liveMeshKey(st.liveMesh, st.agent.token, fem?.id, fem?.mesh));
 }
