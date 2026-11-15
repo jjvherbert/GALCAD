@@ -80,6 +80,8 @@ export function gmshError(logText: string): string | null {
     return `A superfície da peça intersecta-se a si própria ou tem faces sobrepostas${where}. Reveja arredondamentos/furos tangentes ou faces coincidentes.`;
   if (/boundary recovery|could not recover/i.test(all))
     return `O gerador 3D não conseguiu respeitar a malha das faces${where}. Normalmente é uma face muito fina ou um ângulo muito agudo; tente um tamanho de elemento menor nessa zona.`;
+  if (/impossible to mesh periodic surface|not forming a closed loop/i.test(all))
+    return `Não foi possível malhar faces curvas fechadas (cilindros, cones ou toros)${where}: a malha das arestas não fecha à volta delas. Tente um tamanho de elemento menor ou mais pontos por curvatura.`;
   if (/no (volume|elements) in|not closed|unable to recover the volume|no tetrahedra/i.test(all))
     return `A geometria não forma um volume fechado${where}. Verifique se o sólido é estanque (sem faces em falta).`;
   if (/degenerat|small edge|too small|zero length/i.test(all))

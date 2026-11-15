@@ -61,6 +61,13 @@ test("gmshError: traduz os erros habituais com as faces envolvidas", () => {
   assert.equal(gmshError("Error : Something odd\nError   : Last one"), "O Gmsh falhou: Last one");
 });
 
+test("gmshError: faces periódicas que não malham não são confundidas com volume aberto", () => {
+  const m = gmshError("Error   : The 1D mesh seems not to be forming a closed loop\nError   : Impossible to mesh periodic surface 1\nError   : Impossible to mesh periodic surface 3")!;
+  assert.match(m, /faces curvas fechadas/);
+  assert.match(m, /faces 1, 3/);
+  assert.doesNotMatch(m, /volume fechado/);
+});
+
 test("gmshError: ignora os separadores e cabeçalhos do resumo final do Gmsh", () => {
   const log = "Error : Unable to recover the edge 14 on curve 3 (on surface 2)\nError : ------------------------------\nError : Mesh generation error summary\nError :     1 warning\nError :     2 errors\nError : Check the full log for details\nError : ------------------------------";
   assert.equal(gmshError("Error : ------------------------------\nError : Mesh generation error summary\nError : Check the full log for details"), null);
