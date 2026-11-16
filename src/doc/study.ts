@@ -155,8 +155,10 @@ export interface SimMesh {
    * que cortam o sólido em blocos antes da malha
    * (Abaqus: Partition Cell; Femap: Slice). As faces de corte são partilhadas (malha conforme) e
    * cada bloco de 6 faces pode levar hexaedros estruturados; cargas, apoios e seeds passam às sub-faces/arestas.
+   * Com `onFace` (face plana), o corte fica limitado às linhas que o plano traça nessa face e é varrido
+   * pela espessura ao longo da normal dela: a face oposta recebe a mesma divisão (elementos direitos, bom skew).
    */
-  partitions?: { axis: "x" | "y" | "z" | "n" | "f"; at: Expr; normal?: [Expr, Expr, Expr]; face?: TopoRef }[];
+  partitions?: { axis: "x" | "y" | "z" | "n" | "f"; at: Expr; normal?: [Expr, Expr, Expr]; face?: TopoRef; onFace?: TopoRef }[];
   /**
    * Edição de nós e elementos individuais depois da malha (Abaqus: Edit Mesh; Femap: Modify):
    * mover o nó mais próximo de `at` para `to`, ou apagar o elemento em `at` (ou todos os que têm o
@@ -408,7 +410,7 @@ export function bodyMaterial(s: FemStudy, path: string): SimMaterial {
 
 /** Todas as referências a faces de um estudo (para dependências e validação). */
 export function studyFaces(s: Study): TopoRef[] {
-  if (s.physics === "fem") return [...s.loads.flatMap((l) => loadFaces(s, l)), ...(s.mesh.local ?? []).flatMap((l) => l.faces), ...(s.mesh.partitions ?? []).flatMap((c) => (c.axis === "f" && c.face ? [c.face] : []))];
+  if (s.physics === "fem") return [...s.loads.flatMap((l) => loadFaces(s, l)), ...(s.mesh.local ?? []).flatMap((l) => l.faces), ...(s.mesh.partitions ?? []).flatMap((c) => [...(c.axis === "f" && c.face ? [c.face] : []), ...(c.onFace ? [c.onFace] : [])])];
   return [...(s.inlet?.faces ?? []), ...(s.outlet?.faces ?? [])];
 }
 
