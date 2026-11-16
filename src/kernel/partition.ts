@@ -4,11 +4,18 @@
 // e cada bloco de 6 faces pode ser malhado com hexaedros estruturados. As faces e arestas do corpo
 // original passam para as sub-faces/sub-arestas pelo histórico do corte, para as cargas, apoios e
 // seeds continuarem a apontar para as mesmas superfícies.
-import { type TopoDS_Shape, T, bbox, explore, gpPln, listToArray, makeList, oc } from "./occ.ts";
+import { type TopoDS_Shape, T, bbox, explore, gpPln, gpVec, listToArray, makeCompound, makeList, oc } from "./occ.ts";
 import { ShapeIndex } from "./naming.ts";
 
 /** Plano de corte: perpendicular a X, Y ou Z em `at`, ou inclinado ("n"): n̂·x = at com n̂ = normal normalizada. */
-export interface CutPlane { axis: "x" | "y" | "z" | "n"; at: number; normal?: [number, number, number]; /** Nome nas mensagens de erro. */ label?: string }
+export interface CutPlane {
+  axis: "x" | "y" | "z" | "n"; at: number; normal?: [number, number, number];
+  /** Nome nas mensagens de erro. */ label?: string;
+  /** Partição só nesta face: o corte fica limitado às linhas que o plano traça na face e é varrido ao longo
+   *  de `sweep` (a normal da face) pela espessura, para a face oposta receber a mesma divisão (malha conforme,
+   *  elementos direitos na espessura). */
+  face?: TopoDS_Shape; sweep?: [number, number, number];
+}
 
 export interface Partitioned {
   /** Compound dos blocos (vai para o model.brep). */
@@ -59,7 +66,11 @@ export function partitionSolid(solid: TopoDS_Shape, planes: CutPlane[]): Partiti
     // origem do plano: o centro da caixa projetado sobre ele (a face quadrada cobre o sólido todo)
     const dm = mid[0] * n[0] + mid[1] * n[1] + mid[2] * n[2] - p.at;
     const org = [0, 1, 2].map((k) => mid[k] - dm * n[k]) as [number, number, number];
-    tools.push(T(T(new o.BRepBuilderAPI_MakeFace(gpPln(org, n), -far, far, -far, far)).Face()));
+    const plane = T(T(new o.BRepBuilderAPI_MakeFace(gpPln(org, n), -far, far, -far, far)).Face());
+    if (!p.face) { tools.push(plane); continue; }
+    const tool = sweptCut(plane, p.face, p.sweep, far);
+    if (tool) tools.push(tool);
+    else skipped.push(`${label}: o plano não corta a face escolhida (é paralelo a ela ou passa ao lado) — ignorada`);
   }
   if (!tools.length) {
     const faces = explore(solid, "face"), edges = explore(solid, "edge");
@@ -84,4 +95,22 @@ export function partitionSolid(solid: TopoDS_Shape, planes: CutPlane[]): Partiti
   const back = new ShapeIndex<TopoDS_Shape>();
   for (const f of explore(solid, "face")) for (const m of sub(f)) back.set(m, f);
   return { shape, solids, faces, edges, sub, origin: (f) => back.get(f), used: solids.length - 1, skipped };
+}
+
+/** Linhas do plano sobre a face, varridas ao longo de `dir` de −far a +far (faces de corte pela espessura). */
+function sweptCut(plane: TopoDS_Shape, face: TopoDS_Shape, dir: [number, number, number] | undefined, far: number): TopoDS_Shape | null {
+  const o = oc() as any;
+  const len = dir ? Math.hypot(...dir) : 0;
+  if (!dir || !(len > 1e-12)) throw new Error("Partição numa face: a face tem de ser plana");
+  const d = dir.map((x) => x / len);
+  const s = T(new o.BRepAlgoAPI_Section(plane, face, false));
+  s.Approximation(true);
+  s.Build();
+  if (!s.IsDone() || s.HasErrors()) throw new Error("Partição numa face: a interseção do plano com a face falhou");
+  const edges = explore(T(s.Shape()), "edge");
+  if (!edges.length) return null;
+  const t = T(new o.gp_Trsf());
+  t.SetTranslation(gpVec(d.map((x) => -x * far) as [number, number, number]));
+  const start = T(T(new o.BRepBuilderAPI_Transform(makeCompound(edges), t, true, false)).Shape());
+  return T(T(new o.BRepPrimAPI_MakePrism(start, gpVec(d.map((x) => 2 * x * far) as [number, number, number]), false, true)).Shape());
 }

@@ -445,7 +445,8 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
       <fieldset class="checklist">
         <legend class="field-label">Partições em blocos</legend>
         {(m.partitions ?? []).map((c, i) => (
-          <div class="row" key={i}>
+          <div key={i}>
+          <div class="row">
             <Select label="Plano" value={c.axis} options={[["x", "X = const."], ["y", "Y = const."], ["z", "Z = const."], ["n", "Inclinado (n·x = d)"], ["f", "Plano de uma face"]]} onChange={(axis) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, axis, normal: axis === "n" ? x.normal ?? [1, 1, 0] : undefined, face: axis === "f" ? x.face : undefined } : x)) })} />
             {c.axis === "f" && <RefList field={`mesh.partitions.${i}.face`} label="Face plana" accept={["face"]} single refs={c.face ? [c.face] : []} onChange={(r) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, face: r[0] } : x)) })} />}
             {c.axis === "n" && (["x", "y", "z"] as const).map((a, j) => (
@@ -454,9 +455,11 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
             {c.axis !== "f" && <ExprInput label={c.axis === "n" ? "d" : c.axis.toUpperCase()} unit="mm" value={c.at} onChange={(at) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, at: at ?? 0 } : x)) })} />}
             <button class="icon" aria-label={`Retirar partição ${i + 1}`} onClick={() => { const p = (m.partitions ?? []).filter((_, k) => k !== i); set({ partitions: p.length ? p : undefined }); }}>✕</button>
           </div>
+            <RefList field={`mesh.partitions.${i}.onFace`} label="Só nesta face (opcional)" accept={["face"]} single refs={c.onFace ? [c.onFace] : []} onChange={(r) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, onFace: r[0] } : x)) })} />
+          </div>
         ))}
         <button class="small" onClick={() => set({ partitions: [...(m.partitions ?? []), { axis: "x", at: 0 }] })}>+ partição</button>
-        {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Num plano inclinado a normal não precisa de ser unitária e d é a distância à origem ao longo dela. "Plano de uma face" prolonga o plano de uma face plana do corpo para lá dos seus limites (como o Extend Face do Abaqus). Cargas, apoios, seeds e refinamentos passam às sub-faces. Só sólidos.</p>}
+        {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Num plano inclinado a normal não precisa de ser unitária e d é a distância à origem ao longo dela. "Plano de uma face" prolonga o plano de uma face plana do corpo para lá dos seus limites (como o Extend Face do Abaqus). "Só nesta face" limita o corte às linhas que o plano traça nessa face plana e varre-as pela espessura, na direção da normal da face: a face oposta recebe a mesma divisão e os elementos ficam direitos (bom skew), sem precisar de outra partição. Cargas, apoios, seeds e refinamentos passam às sub-faces. Só sólidos.</p>}
       </fieldset>
       <fieldset class="checklist">
         <legend class="field-label">Edição de nós/elementos</legend>

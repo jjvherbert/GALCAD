@@ -469,6 +469,49 @@ test("partições: pelo plano de uma face (Extend Face) — as faces interiores 
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
 });
 
+test("partições só numa face: o corte é varrido pela espessura e a face oposta recebe a mesma divisão", async () => {
+  const s = new SketchBuilder();
+  s.rect(0, 0, 100, 50, 100, 50);
+  let doc = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const face = (axis: 0 | 1 | 2, v: number): TopoRef => {
+    const f = r.ctx.body!.faces.find((x) => { const q = faceProps(x.face); return q.normal && Math.abs(Math.abs(q.normal[axis]) - 1) < 1e-9 && Math.abs(q.center[axis] - v) < 1e-6; })!;
+    return { kind: "face", name: f.name };
+  };
+  const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -100] }];
+  // placa 100 × 50 × 10: corte X = 40 só na face de topo, sem nada na de baixo
+  const cut = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, element: "hex", partitions: [{ axis: "x", at: 40, onFace: face(2, 10) }], local: [{ faces: [face(2, 0)], size: 5 }] }, loads }));
+  assert.equal(cut.c.mesh.hexMethod, "structured");
+  assert.deepEqual(cut.c.mesh.volumes, [1, 2]);
+  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 2 blocos")), JSON.stringify(cut.c.hypotheses));
+  // a face de baixo (z = 0) também ficou dividida em 2 (o corte atravessa a espessura direito)
+  assert.equal(cut.c.groups.R1.length, 2, JSON.stringify(cut.c.groups));
+  // plano paralelo à face escolhida: não a corta — ignorado com aviso
+  const par = studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "z", at: 5, onFace: face(2, 10) }] }, loads }));
+  assert.ok(par.warnings.some((w) => /na face .*não corta a face escolhida .* ignorada/.test(w)), JSON.stringify(par.warnings));
+  // perfil em L: os dois cortes dos cantos só na face de topo dão os mesmos 3 blocos hexaédricos
+  const sl = new SketchBuilder();
+  const p = [[0, 0], [100, 0], [100, 20], [20, 20], [20, 60], [0, 60]].map(([x, y]) => sl.point(x, y));
+  p.forEach((a, i) => sl.line(a, p[(i + 1) % p.length]));
+  let dl = newDocument();
+  dl = addFeature(dl, sl.build()).doc;
+  dl = addFeature(dl, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 10 } }).doc;
+  const rl = await new Engine().rebuild(dl);
+  const top = rl.ctx.body!.faces.find((x) => { const q = faceProps(x.face); return q.normal && Math.abs(q.center[2] - 10) < 1e-6 && Math.abs(Math.abs(q.normal[2]) - 1) < 1e-9; })!;
+  const lf = (axis: 0 | 1 | 2, v: number): TopoRef => ({ kind: "face", name: rl.ctx.body!.faces.find((x) => { const q = faceProps(x.face); return q.normal && Math.abs(Math.abs(q.normal[axis]) - 1) < 1e-9 && Math.abs(q.center[axis] - v) < 1e-6; })!.name });
+  const onTop: TopoRef = { kind: "face", name: top.name };
+  const L = await solve(dl, fem({ mesh: { size: 5, order: 1, curvature: 0, element: "hex", partitions: [{ axis: "x", at: 20, onFace: onTop }, { axis: "y", at: 20, onFace: onTop }] }, loads: [{ kind: "fixed", faces: [lf(1, 60)] }, { kind: "force", faces: [lf(0, 100)], f: [0, -100, 0] }] }));
+  assert.equal(L.c.mesh.hexMethod, "structured");
+  assert.deepEqual(L.c.mesh.volumes, [1, 2, 3]);
+  if (!T.gmsh) return;
+  const h = await previewMesh(cut.dir);
+  near(h.quality!.volume, 100 * 50 * 10, 1e-6);
+  const hl = await previewMesh(L.dir);
+  near(hl.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
+});
+
 test("CalculiX: malha editada à mão — nó movido e elemento apagado chegam ao solver", { skip: !hasFem && "Gmsh/CalculiX não instalados", timeout: 600000 }, async () => {
   const { doc, face } = await bar();
   const loads: FemStudy["loads"] = [{ kind: "fixed", faces: [face(0, 0)] }, { kind: "force", faces: [face(0, 100)], f: [0, 0, -F] }];
