@@ -4,11 +4,12 @@ import { useState } from "preact/hooks";
 import type { Feature } from "../doc/types.ts";
 import { FEATURE_ICONS as ICONS, dependents, featureLabel } from "../doc/features.ts";
 import { store, useStoreKeys } from "./store.ts";
+import { type Anchor, FloatingMenu, anchorOf } from "./FloatingMenu.tsx";
 
 
 export function FeatureTree() {
   const { doc, result, selectedFeature } = useStoreKeys("doc", "result", "selectedFeature");
-  const [menu, setMenu] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ id: string; anchor: Anchor } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const rb = doc.rollback ?? doc.features.length;
@@ -41,9 +42,10 @@ export function FeatureTree() {
         {state === "error" && <span class="badge err" aria-label="Erro">✕</span>}
         {state === "warning" && <span class="badge warn" aria-label="Aviso">⚠</span>}
         {s?.ms !== undefined && s.ms > 200 && <span class="ms">{s.ms} ms</span>}
-        <button class="icon menu-btn" aria-label={`Ações de ${f.name}`} onClick={(e) => { e.stopPropagation(); setMenu(menu === f.id ? null : f.id); }}>⋯</button>
-        {menu === f.id && (
-          <div class="menu" role="menu" onClick={(e) => { e.stopPropagation(); setMenu(null); }}>
+        <button class="icon menu-btn" data-menu-anchor aria-label={`Ações de ${f.name}`} aria-haspopup="menu" aria-expanded={menu?.id === f.id}
+          onClick={(e) => { e.stopPropagation(); setMenu(menu?.id === f.id ? null : { id: f.id, anchor: anchorOf(e.currentTarget) }); }}>⋯</button>
+        {menu?.id === f.id && (
+          <FloatingMenu anchor={menu.anchor} class="tree-menu" label={`Ações de ${f.name}`} onClose={() => setMenu(null)}>
             <button role="menuitem" onClick={() => store.editFeature(f.id)}>Editar</button>
             {sketchOf && <button role="menuitem" onClick={() => store.editSketch(sketchOf)}>Editar esboço</button>}
             <button role="menuitem" onClick={() => setRenaming(f.id)}>Renomear</button>
@@ -56,7 +58,7 @@ export function FeatureTree() {
               const names = deps.map((d) => doc.features.find((x) => x.id === d)?.name).join(", ");
               if (!deps.length || confirm(`Apagar "${f.name}" apaga também: ${names}. Continuar?`)) store.deleteFeature(f.id);
             }}>Apagar</button>
-          </div>
+          </FloatingMenu>
         )}
       </li>
     );
