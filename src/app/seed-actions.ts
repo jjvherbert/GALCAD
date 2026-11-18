@@ -5,8 +5,10 @@ import type { MeshSeed } from "../doc/study.ts";
 import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { externalParts } from "./store-features.ts";
 import { store } from "./store.ts";
-import { activeStudy, cancelActiveStudy, patchMesh, runActiveStudy } from "./sim-actions.ts";
-import { liveMeshKey, liveMeshScheduler } from "./live-mesh.ts";
+import { activeStudy, cancelActiveStudy, currentGeom, patchMesh, runActiveStudy } from "./sim-actions.ts";
+import { type LiveRun, keyDoc, liveMeshKey, liveMeshScheduler, lru, materialsRev } from "./live-mesh.ts";
+import { geomRev } from "./workflow.ts";
+import type { State } from "./store-state.ts";
 
 /** Índice da seed cuja lista de arestas está em seleção no 3D (pickTarget `seed<i>`). */
 export function activeSeedIndex(): number | null {
@@ -87,22 +89,39 @@ export function scheduleSeedPreview(show: (p: SeedPreview | null) => void, delay
   }, delay);
 }
 
-let meshRun: Promise<void> | null = null;
-/** Malha ao vivo: pára a malha anterior ainda em curso (nunca um cálculo) e gera a nova. */
-async function rerunLiveMesh() {
-  if (store.state.simBusy === "run") return;
-  if (store.state.simBusy === "mesh") { await cancelActiveStudy(); await meshRun; }
-  if (store.state.simBusy) return;
-  const p = runActiveStudy(true);
-  meshRun = p;
-  await p;
-  if (meshRun === p) meshRun = null;
-}
-const liveMesh = liveMeshScheduler(() => void rerunLiveMesh());
+// últimas malhas ao vivo por chave: desfazer uma edição volta à malha anterior sem a refazer
+const meshCache = lru<NonNullable<State["simResult"]>>(5);
 
-/** Chamado a cada alteração do estado: agenda a malha ao vivo se as definições da malha mudaram. */
+/** Uma malha ao vivo: da cache se a chave já foi gerada, senão no agente (sem tocar no erro global). */
+async function liveMeshRun(key: string): Promise<LiveRun> {
+  const hit = meshCache.get(key);
+  if (hit && hit.doc === keyDoc(key)) { store.set({ simResult: hit, simHidden: false, liveMeshError: null }); return "ok"; }
+  const r = await runActiveStudy(true, { live: true });
+  if (r.ok) {
+    const res = store.state.simResult;
+    if (res) meshCache.set(key, res);
+    return "ok";
+  }
+  if (r.error) { store.set({ liveMeshError: r.error }); return "error"; }
+  return "cancelled";
+}
+const liveMesh = liveMeshScheduler(liveMeshRun, {
+  blocked: () => !!store.state.simBusy,
+  cancel: () => void cancelActiveStudy(),
+});
+
+/**
+ * Chamado a cada alteração do estado: agenda a malha ao vivo quando muda algo de que ela depende
+ * (geometria, materiais, definições da malha, estudo ou documento) — ou retoma depois de um cálculo.
+ */
 export function scheduleLiveMesh() {
   const st = store.state, study = activeStudy("fem");
   const fem = st.workspace === "fem" && study?.physics === "fem" ? study : undefined;
-  liveMesh(liveMeshKey(st.liveMesh, st.agent.token, fem?.id, fem?.mesh));
+  const on = st.liveMesh && !!st.agent.token && !!fem;
+  const key = on && fem ? liveMeshKey({
+    on, token: st.agent.token, doc: store.activeAssembly()?.id ?? st.doc.id, studyId: fem.id,
+    geom: geomRev(currentGeom()), materials: materialsRev(fem), mesh: fem.mesh,
+  }) : null;
+  if (key === null && st.liveMeshError) store.set({ liveMeshError: null });
+  liveMesh(key);
 }

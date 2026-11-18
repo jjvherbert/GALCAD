@@ -7,7 +7,7 @@ import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
 import { type GeomSnapshot, assemblySnapshot, geomRev, markDonePatch, partSnapshot, touchUser, validate } from "./workflow.ts";
 import { allMaterials } from "./material-library.ts";
-import { CancelledError, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
+import { CancelledError, type RunResult, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
 
 /** Estudos do documento ativo (peça ou montagem), opcionalmente só de uma física. */
 export function activeStudies(physics?: "fem" | "cfd"): Study[] {
@@ -80,26 +80,33 @@ export function deleteStudy(id: string) {
   store.set({ simStudy: null, simResult: null });
 }
 
-/** Calcula o estudo ativo no agente (ou só a malha), com as opções de convergência da barra/painel. */
-export async function runActiveStudy(meshOnly = false) {
+/** Resultado de `runActiveStudy`: `skipped` quando nem começou (sem estudo, ocupado, inválido). */
+export interface RunOutcome { ok: boolean; cancelled?: boolean; skipped?: boolean; error?: string; result?: RunResult }
+
+/**
+ * Calcula o estudo ativo no agente (ou só a malha), com as opções de convergência da barra/painel.
+ * `live` (malha ao vivo): uma falha não vai para o `error` global (quem chama mostra-a no
+ * `liveMeshError`) e parar não deixa mensagem — a malha seguinte vem logo a seguir.
+ */
+export async function runActiveStudy(meshOnly = false, o: { live?: boolean } = {}): Promise<RunOutcome> {
   const st = store.state;
   const s = activeStudy(st.workspace === "cfd" ? "cfd" : st.workspace === "fem" ? "fem" : undefined);
-  if (!s) { store.set({ error: "Crie primeiro um estudo" }); return; }
-  if (st.simBusy) return;
-  if (meshOnly && s.physics !== "fem") { store.set({ error: "A pré-visualização da malha é para estudos FEM" }); return; }
+  if (!s) { store.set({ error: "Crie primeiro um estudo" }); return { ok: false, skipped: true }; }
+  if (st.simBusy) return { ok: false, skipped: true };
+  if (meshOnly && s.physics !== "fem") { store.set({ error: "A pré-visualização da malha é para estudos FEM" }); return { ok: false, skipped: true }; }
   if (!meshOnly) {
     // a verificação do modelo apanha antes do solver o que o impede de correr (erros bloqueiam; avisos não);
     // no FEM, sem apoios ou sem cargas (quando o tipo os exige) também bloqueia
     const asm = !!store.activeAssembly();
     const err = s.physics === "fem" ? validate(s, "todos", asm).find((i) => i.level === "erro") : checkStudy(s, asm).find((i) => i.level === "erro");
-    if (err) { store.set({ error: `${err.text} — ver «Verificação do modelo»`, simSection: "check" }); return; }
+    if (err) { store.set({ error: `${err.text} — ver «Verificação do modelo»`, simSection: "check" }); return { ok: false, skipped: true }; }
   }
   const doc = store.activeAssembly()?.id ?? st.doc.id;
   const cc = s.convergence;
   const conv = !meshOnly && cc?.enabled ? convOptions(cc) : undefined;
   const ac = new AbortController();
   job = ac;
-  store.set({ simBusy: meshOnly ? "mesh" : "run", simProgress: { elapsed: 0, tail: "" }, error: null });
+  store.set({ simBusy: meshOnly ? "mesh" : "run", simProgress: { elapsed: 0, tail: "" }, ...(o.live ? {} : { error: null }) });
   // progresso ao vivo: tempo decorrido e cauda do registo do solver (o agente responde só no fim)
   const t0 = Date.now();
   const poll = setInterval(async () => {
@@ -111,7 +118,7 @@ export async function runActiveStudy(meshOnly = false) {
     // limites da malha e de cada passo do solver: os das Definições
     const opts = { signal: ac.signal, meshTimeout: st.settings.meshTimeout, solveTimeout: st.settings.solveTimeout };
     const { result } = meshOnly ? await previewStudyMesh(s.id, st.agent.url, st.agent.token, opts) : await runStudy(s.id, st.agent.url, st.agent.token, conv, opts);
-    store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
+    store.set({ simResult: { doc, studyId: s.id, result }, liveMeshError: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
     // cálculo feito: os passos «Verificar» e «Correr» ficam concluídos com a geometria e os dados de agora
     if (!meshOnly && s.physics === "fem") markStepsDone(s.id, ["verificar", "correr"]);
     // o estudo de convergência fica guardado no estudo (últimos 6) para consultar, comparar e exportar
@@ -120,10 +127,16 @@ export async function runActiveStudy(meshOnly = false) {
       const run: StoredConvergence = { id: `c${Date.now().toString(36)}`, at: new Date().toISOString(), solver: result.solver, report: result.convergence };
       if (cur) updateStudy(s.id, { convergenceRuns: [run, ...(cur.convergenceRuns ?? [])].slice(0, 6) });
     }
+    return { ok: true, result };
   } catch (e) {
     // parar não é uma falha: mensagem neutra, sem o estado de erro
-    if (e instanceof CancelledError) store.set({ message: `${meshOnly ? "Malha parada" : "Cálculo parado"} — ${e.message}` });
-    else store.set({ error: (e as Error).message });
+    if (e instanceof CancelledError) {
+      if (!o.live) store.set({ message: `${meshOnly ? "Malha parada" : "Cálculo parado"} — ${e.message}` });
+      return { ok: false, cancelled: true };
+    }
+    const error = (e as Error).message;
+    if (!o.live) store.set({ error });
+    return { ok: false, error };
   } finally {
     clearInterval(poll);
     if (job === ac) job = null;

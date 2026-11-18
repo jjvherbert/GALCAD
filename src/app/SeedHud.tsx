@@ -13,6 +13,17 @@ export function LiveMeshToggle() {
   );
 }
 
+/** Aviso na vista quando a malha ao vivo falhou: a malha mostrada (esbatida) é a anterior. */
+export function LiveMeshStale() {
+  const st = useStoreKeys("liveMesh", "liveMeshError", "simResult", "simHidden");
+  if (!st.liveMesh || !st.liveMeshError || !st.simResult || st.simHidden) return null;
+  return (
+    <div class="live-mesh-stale" role="status" title={st.liveMeshError}>
+      Malha desatualizada — último erro: {st.liveMeshError}
+    </div>
+  );
+}
+
 export function SeedHud() {
   useStoreKeys("pickTarget", "doc", "simStudy");
   const i = activeSeedIndex(), sd = activeSeed();

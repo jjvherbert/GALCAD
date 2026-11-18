@@ -22,7 +22,7 @@ import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { SimPanel } from "./SimPanel.tsx";
 import { conditionAtFace, conditionFaceColors } from "./sim-actions.ts";
 import { activeSeedIndex, handleSeedKey, scheduleLiveMesh, scheduleSeedPreview, stepSeed } from "./seed-actions.ts";
-import { SeedHud } from "./SeedHud.tsx";
+import { LiveMeshStale, SeedHud } from "./SeedHud.tsx";
 import { SimBrowser } from "./SimBrowser.tsx";
 import { AssemblyTree, ComponentPanel, MatePanel } from "./AssemblyUI.tsx";
 import { DrawingEditor } from "./DrawingEditor.tsx";
@@ -66,7 +66,7 @@ function App() {
     "edit", "sketch", "choosingPlane", "confirmed", "pickTarget", "selection", "selectedFeature", "hoverFeature",
     "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy",
     "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
-    "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden", "liveMesh", "agent",
+    "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden", "liveMesh", "liveMeshError", "agent", "simBusy",
   );
   const host = useRef<HTMLDivElement>(null);
   const vp = useRef<Viewport | null>(null);
@@ -141,13 +141,13 @@ function App() {
   // espaço FEM: nós das seeds da malha (meshPlan no worker, sem Gmsh), atualizados ao vivo
   useEffect(() => scheduleSeedPreview((p) => vp.current?.setSeedMarks(p)), [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result]);
   // malha ao vivo (opção no painel da seed): volta a gerar a malha completa após uma pausa nas alterações
-  useEffect(scheduleLiveMesh, [st.workspace, st.simStudy, st.doc, st.project, st.liveMesh, st.agent]);
+  useEffect(scheduleLiveMesh, [st.workspace, st.simStudy, st.doc, st.project, st.liveMesh, st.agent, st.simBusy]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
   // resultados de simulação (FEM) no 3D
   useEffect(() => {
     const show = (st.workspace === "fem" || st.workspace === "cfd") && !st.simHidden && st.active.kind !== "drawing" && st.simResult?.doc === st.active.id;
-    vp.current?.setSimResult(show ? resultView(st.simResult?.result) : null, st.simView);
-  }, [st.simResult, st.simView, st.simHidden, st.workspace, st.active, st.result, st.asmResult]);
+    vp.current?.setSimResult(show ? resultView(st.simResult?.result) : null, st.simView, !!st.liveMeshError && st.liveMesh);
+  }, [st.simResult, st.simView, st.simHidden, st.workspace, st.active, st.result, st.asmResult, st.liveMeshError, st.liveMesh]);
   // PMI 3D: rótulos no modelo (todos os itens com o painel aberto ou quando há uma vista de modelo aplicada)
   useEffect(() => {
     const v = vp.current;
@@ -258,6 +258,7 @@ function App() {
           {st.sketch && <SketchEditor key={st.sketch.id} result={r} />}
           {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[a]).join(" / ")} · Esc para terminar</div>}
           {!st.sketch && /^seed\d+$/.test(st.pickTarget?.field ?? "") && <SeedHud />}
+          {simWs && !st.sketch && <LiveMeshStale />}
         </section>
         {simWs && kind !== "drawing" && <aside class="side side-right ws-side" key={`ws-r-${st.workspace}`}><SimPanel /></aside>}
       </div>

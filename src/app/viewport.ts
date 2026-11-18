@@ -280,7 +280,7 @@ export class Viewport {
    * escolhido na paleta sequencial, com a mesma escala em todas as camadas visíveis, e deformada
    * ampliada. O corpo fica escondido enquanto se mostram resultados FEM; nos CFD fica em arame.
    */
-  setSimResult(r: ResultView | null, view: SimView) { layers.setSimResult(this, r, view); }
+  setSimResult(r: ResultView | null, view: SimView, stale = false) { layers.setSimResult(this, r, view, stale); }
 
   /** Mostra (ou esconde) a rede de controlo da forma livre em edição e o polo selecionado. */
   setPoleNet(net: PoleNet | null, sel: [number, number] | null) {
