@@ -297,14 +297,41 @@ Auditoria de 2026-10-31 (base, esboço, FEM, desenho): nada se pode cancelar (wo
 | F5c | `feat/fem-*`, `feat/sim-*` | **Pendentes soltos** (depois de F3, F4 e F5): por fazer do OpenRadioss, do R3 e dos resultados (sondas, modos animados, FS como campo, `.vtu`/`.med`), pendentes da análise Galkeel/cálculos | **feito** (fechado 2026-11-14): e2e estável (#90, espera pela animação do esboço), laminado em casca modal e encurvadura (#91), deformada animada para modos (#92), FS como campo (#93), export `.vtu` (#94) e ficheiros nativos `.med`/`.frd` (#113), seeds por vértice (#95), faces mapeadas triangulares (#96), camadas na espessura (#97), partições em blocos (#98), edição de nós/elementos (#99), partições inclinadas (#100), sondas nos resultados (#101, #102), malha reprodutível com mesh.geo existente (#103), laminado em dinâmica (#104), partições pelo plano de uma face (#105), cascas no code_aster (#106), laminado na térmica (#107), plasticidade na dinâmica nos três solvers (#111; no CalculiX implícito com elementos quadráticos tende a divergir — aviso, use ordem 1), contacto nas montagens do OpenRadioss (#112) |
 | F5d | `test/vv-*`, `fix/kernel-*` | **Uso profissional**: dossier de V&V (NAFEMS LE1/LE10/LE11, R0031, CalculiX × code_aster), taxa de sucesso do núcleo num conjunto de peças reais e correções, escala de montagens (modos leves) | **feito** (fechado 2026-11-15): fatia 1 (`docs/VV.md`, NAFEMS LE1 com CalculiX e code_aster, σyy(D) = 92,80 MPa contra 92,7; sondas de componentes de tensão σxx…τxz; `SIGM_NOEU` no code_aster); fatia 2 (LE10, σyy(D) = −5,358 contra −5,38; referência `cut@<face>`); fatia 3 (LE11, σzz(A) = −104,3 contra −105; condição campo de temperatura `thermalField` no CalculiX e no code_aster); fatia 4 (R0031(1), σxx(E) = 693 contra 684, uz = −1,061 contra −1,06, σxz(D) = 4,105 contra 4,1; laminado sólido `solidLaminate` no CalculiX); fatia 5 (#118, robustez do núcleo nas peças do NIST: 61 % → 71 % das operações com reparação na importação); fatia 6 (montagens grandes: grelha de 1000 componentes em 0,2 s; torre de 100 componentes com 300 mates de 13 s → 0,5 s com jacobiano esparso no solver de mates) |
 | F5e | `feat/mesh-import` | **Importação de malhas**: STL (ASCII e binário) e STEP só com tesselação (p. ex. NIST FTC 08) como corpos de malha utilizáveis (ver, medir, secções, árvore, referência para modelar); até 50 000 triângulos, faces coplanares juntas até 20 000. **Mais tarde**: converter a malha num sólido B-rep editável, como faz o SolidWorks (reconhecimento de planos/cilindros e costura). A prioridade a seguir (decisão de Juan, nov. 2026) são as questões da **malha FEM** | feito |
+| Bloco C | `feat/*`, `fix/*` (um ramo por pacote) | **Correções do Juan (nov. 2026)**, ver a secção «Bloco C (nov. 2026)»: A arrumação visível — cartão «O que faz», animações, casco Galkeel como plugin, gestos por contexto (C0, C4 · Sonnet); B fluxo de trabalho e FEM guiado (C1a · Opus; C1b, C1c · Sonnet); C sketch e árvore — cotas como no SolidWorks, cantos virtuais, snaps, features no sketch (C2a, C2b, C3a, C5 · Opus; C6, C3b · Sonnet); D malha — malha ao vivo fiável, avaliador com sugestões, partições a partir de sketches (C9b, C9a, C8 · Opus; C9c · Sonnet); E furos (C7a · Sonnet; C7b · Opus, opcional); F materiais, elementos e não linear (C10a, C10e, C10b, C10c, C10d · Opus; C10f · Sonnet) | por fazer |
 | F5f | `fix/kernel-fillet-*` | **Filetes e chanfros robustos**: o que falta depois do #120 (aviso claro em arestas tangentes, chanfros em faces curvas, resultados inválidos e falhas internas): cantos com 3+ arestas, recuo (setback) nos vértices, tentar aresta a aresta quando o conjunto falha. Os filetes que também não fazem sentido no SolidWorks ficam só com aviso claro | por fazer |
 | F5g | `feat/assembly-*` | **Montagens profissionais**: modos leves, PDM/versões e trabalho em equipa, milhares de mates com o solver esparso, edição no contexto da montagem, arrastar com mates, vistas explodidas | por fazer |
 | F5h | `feat/surface-*` | **Superfícies**: continuidade G3, apagar e curar (delete-and-heal) | por fazer |
 | F5i | `feat/pmi-*` | **PMI**: PMI gráfico no STEP (AP242), ISO 286 completa, PMI nas montagens, importação de PMI | por fazer |
 | F5j | `feat/galkeel-*` | **Galkeel ISO 12215-5:2019** (edição atual, depois da verificação cruzada com a de 2008 no #86) | por fazer |
 | F5k | `feat/optim-*` | **Otimização e scripts** (ver a secção «Otimização e scripts») | por fazer |
-| F8 | `feat/sheet-metal` | Chapa metálica (R6) e planificação — depois de F3, F4, F5, F5b–F5d e F5e–F5k (decisão de Juan, nov. 2026: acabar as fases em curso, depois pendentes soltos e uso profissional, só então a chapa) | — |
+| F8 | `feat/sheet-metal` | Chapa metálica (R6) e planificação — depois de F3, F4, F5, F5b–F5d, do bloco C e de F5e–F5k (decisão de Juan, nov. 2026: acabar as fases em curso, depois pendentes soltos e uso profissional, só então a chapa) | — |
 | F7, F6 | — | CAM (R5) e casco Galkeel: adiados | adiado |
+
+### Bloco C (nov. 2026)
+Correções pedidas pelo Juan depois de usar a app. Vêm antes de F5f–F5k.
+
+**Ordem e paralelismo** (`∥` = pode correr em paralelo, só em ficheiros disjuntos):
+```
+A  C0 ─ C4                         (Sonnet)          ∥  B  C1a (Opus) → C1b, C1c (Sonnet)
+C  C2a → C2b → C3a → C5 (Opus) → C6, C3b (Sonnet)    ∥  C1b/C1c
+D  C9b → C9a (Opus) → C9c (Sonnet);  C8 (Opus)
+E  C7a (Sonnet) → C7b (Opus, opcional)               ∥  D
+F  C10a → C10e → C10b → C10c → C10d (Opus) → C10f (Sonnet)  ∥  C10b–d
+```
+- O C9b (malha ao vivo: a chave não inclui a geometria nem os materiais, alterações perdidas durante um cálculo, sem aviso de malha antiga) sobe para primeiro do bloco D e pode correr logo a seguir ao A.
+- Antes do C7a, um PR curto do Opus retira a restrição de `hole.ts` que tira a cabeça aos furos roscados.
+
+**Decisões:**
+- Feita: partições (#124–#126), o que desbloqueia o C8.
+- Em aberto (Juan): C9b logo a seguir ao A; C7b (rosca modelada) sim ou não; quais das propostas P1/P2/P3 entram no ROADMAP; quantos pacotes em paralelo (sugestão: 2); perfil «rigoroso» (sketch sub-definido bloqueia a feature, avisos bloqueiam «Concluir») ou só avisos.
+
+**Regras de delegação:**
+- Um ramo, um PR e um dono por pacote; merge só com o CI verde.
+- Opus: matemática, física, núcleo OCC, modelos de dados, máquinas de estados e undo. Cada PR do Opus termina com uma secção «Contrato» (tipos, funções públicas, invariantes, o que o Sonnet pode assumir).
+- Sonnet: UI contra o contrato, tabelas de dados citadas, testes e documentação. Os PR do Sonnet passam por revisão de código.
+- Cada caso de V&V fica em `docs/VV.md`. Copia-se o comportamento e a matemática publicada, nunca código; cada fórmula ou valor leva a fonte.
+- Defeitos encontrados pelo caminho corrigem-se num PR pequeno e próprio.
+- Alterações de UI só ficam feitas depois de vistas (390 e 1440 px, consola e rede limpas).
 
 ## API de plugins (evolução)
 - Hoje: features de plugin que geram um sólido e um painel de resultados.
