@@ -90,7 +90,8 @@ code { background: var(--panel2); padding: 0 4px; border-radius: 4px; }
 .feat .ms { font-size: 10px; color: var(--muted); }
 .feat .menu-btn { opacity: 0; }
 .feat:hover .menu-btn, .feat.selected .menu-btn { opacity: 1; }
-.feat .menu { left: auto; right: 6px; top: 24px; }
+/* menus flutuantes (FloatingMenu): no <body>, em posição fixa; o JS põe-nos no sítio e mostra-os */
+.menu.floating { position: fixed; z-index: 40; top: 0; left: 0; visibility: hidden; max-width: calc(100vw - 8px); overflow-y: auto; }
 .feat input.rename { flex: 1; padding: 0 4px; }
 .feat.origin .ic { color: var(--muted); }
 .rollback { display: flex; align-items: center; gap: 6px; margin: 2px 8px; padding: 2px 6px; border-top: 3px solid var(--warn); font-size: 11px; color: var(--warn); }

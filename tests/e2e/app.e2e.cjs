@@ -213,13 +213,13 @@ async function main() {
     await p.click(".feat:has-text('Casco1')");
     assert.match(await p.textContent(".side-info"), /Volume imerso ∇4,8\d m³/);
     await p.click(".feat:has-text('Casco1') .menu-btn");
-    await p.click(".feat .menu button:has-text('Rollback')");
+    await p.click(".tree-menu button:has-text('Rollback')");
     await settle();
     assert.ok(Math.abs((await volume()) - v160) < 0.01);
     await p.click(".rollback button:has-text('Avançar')");
     await settle();
     await p.click(".feat:has-text('Casco1') .menu-btn");
-    await p.click(".feat .menu button:has-text('Apagar')");
+    await p.click(".tree-menu button:has-text('Apagar')");
     await settle();
     assert.equal((await states()).length, 1);
     step("importar STEP, casco náutico, rollback e apagar");
