@@ -7,6 +7,7 @@ import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
 import { type GeomSnapshot, assemblySnapshot, geomRev, markDonePatch, partSnapshot, touchUser, validate } from "./workflow.ts";
 import { allMaterials } from "./material-library.ts";
+import { materialsRev, meshStamp } from "./live-mesh.ts";
 import { CancelledError, type RunResult, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
 
 /** Estudos do documento ativo (peça ou montagem), opcionalmente só de uma física. */
@@ -102,6 +103,8 @@ export async function runActiveStudy(meshOnly = false, o: { live?: boolean } = {
     if (err) { store.set({ error: `${err.text} — ver «Verificação do modelo»`, simSection: "check" }); return { ok: false, skipped: true }; }
   }
   const doc = store.activeAssembly()?.id ?? st.doc.id;
+  // o cálculo completo guarda com que geometria/materiais/malha foi feito: a malha ao vivo não o troca por uma malha só
+  const full = !meshOnly && s.physics === "fem" ? meshStamp({ geom: geomRev(currentGeom()), materials: materialsRev(s), mesh: s.mesh }) : undefined;
   const cc = s.convergence;
   const conv = !meshOnly && cc?.enabled ? convOptions(cc) : undefined;
   const ac = new AbortController();
@@ -118,7 +121,7 @@ export async function runActiveStudy(meshOnly = false, o: { live?: boolean } = {
     // limites da malha e de cada passo do solver: os das Definições
     const opts = { signal: ac.signal, meshTimeout: st.settings.meshTimeout, solveTimeout: st.settings.solveTimeout };
     const { result } = meshOnly ? await previewStudyMesh(s.id, st.agent.url, st.agent.token, opts) : await runStudy(s.id, st.agent.url, st.agent.token, conv, opts);
-    store.set({ simResult: { doc, studyId: s.id, result }, liveMeshError: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
+    store.set({ simResult: { doc, studyId: s.id, result, ...(full ? { full } : {}) }, liveMeshError: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
     // cálculo feito: os passos «Verificar» e «Correr» ficam concluídos com a geometria e os dados de agora
     if (!meshOnly && s.physics === "fem") markStepsDone(s.id, ["verificar", "correr"]);
     // o estudo de convergência fica guardado no estudo (últimos 6) para consultar, comparar e exportar

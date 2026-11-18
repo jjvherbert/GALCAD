@@ -11,7 +11,18 @@ import { stableJson } from "./workflow.ts";
 export function liveMeshKey(k: {
   on: boolean; token: string; doc: string; studyId?: string; geom: string; materials: string; mesh?: SimMesh;
 }): string | null {
-  return k.on && k.token && k.studyId && k.mesh ? `${k.doc}|${k.studyId}|${k.geom}|${k.materials}|${stableJson(k.mesh)}` : null;
+  return k.on && k.token && k.studyId && k.mesh ? `${k.doc}|${k.studyId}|${meshStamp(k)}` : null;
+}
+
+/** Impressão do que a malha usa (geometria, materiais, definições): guardada com cada cálculo completo. */
+export const meshStamp = (k: { geom: string; materials: string; mesh?: SimMesh }) => `${k.geom}|${k.materials}|${stableJson(k.mesh ?? null)}`;
+
+/**
+ * O resultado no ecrã já tem a malha desta chave? Um cálculo completo feito com a mesma geometria,
+ * materiais e definições traz a malha (e os resultados) — a malha ao vivo não o substitui.
+ */
+export function fullCovers(key: string, r: { doc: string; studyId: string; full?: string } | null | undefined): boolean {
+  return !!r?.full && key === `${r.doc}|${r.studyId}|${r.full}`;
 }
 
 /** Impressão dos materiais do estudo (o agente separa os corpos/grupos da malha por material). */
