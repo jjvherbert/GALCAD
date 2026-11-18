@@ -4,7 +4,7 @@ import { addFeature, defaultFeatureName, nextFeatureId, updateFeature } from "..
 import type { CadProject, FeatureTemplate, PartDoc } from "../doc/project.ts";
 import { instantiateTemplate as instantiateKnowledge, makeTemplate } from "../doc/knowledge.ts";
 import { defaultFeature } from "./defaults.ts";
-import { PLUGINS } from "../plugins/meta.ts";
+import { knownPlugin } from "../plugins/index.ts";
 import type { Pick } from "./store-state.ts";
 import type { Store } from "./store.ts";
 
@@ -43,7 +43,7 @@ export function startFeature(s: Store, type: FeatureType, opts: Parameters<typeo
   const data = prefill(s, defaultFeature(doc, type, opts));
   let name = defaultFeatureName(doc, type);
   if (data.type === "plugin") {
-    const label = PLUGINS.find((p) => p.id === data.plugin)?.kinds[data.kind]?.label.split(" ")[0] ?? "Plugin";
+    const label = knownPlugin(data.plugin)?.kinds[data.kind]?.label.split(" ")[0] ?? "Plugin";
     const names = new Set(doc.features.map((f) => f.name));
     for (let i = 1; ; i++) if (!names.has(`${label}${i}`)) { name = `${label}${i}`; break; }
   }

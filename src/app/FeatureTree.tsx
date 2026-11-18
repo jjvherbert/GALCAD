@@ -5,10 +5,11 @@ import type { Feature } from "../doc/types.ts";
 import { FEATURE_ICONS as ICONS, dependents, featureLabel } from "../doc/features.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { type Anchor, FloatingMenu, anchorOf } from "./FloatingMenu.tsx";
+import { inactivePluginFeature } from "./plugin-gate.ts";
 
 
 export function FeatureTree() {
-  const { doc, result, selectedFeature } = useStoreKeys("doc", "result", "selectedFeature");
+  const { doc, result, selectedFeature, settings } = useStoreKeys("doc", "result", "selectedFeature", "settings");
   const [menu, setMenu] = useState<{ id: string; anchor: Anchor } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -16,7 +17,7 @@ export function FeatureTree() {
 
   const row = (f: Feature, i: number) => {
     const s = result?.status[f.id];
-    const state = f.suppressed ? "suppressed" : i >= rb ? "rolledBack" : s?.state ?? "pending";
+    const state = f.suppressed || inactivePluginFeature(f, settings.plugins) ? "suppressed" : i >= rb ? "rolledBack" : s?.state ?? "pending";
     const sketchOf = "sketch" in f && typeof f.sketch === "string" ? f.sketch : f.type === "sweep" ? f.profile : undefined;
     return (
       <li key={f.id}
@@ -37,7 +38,7 @@ export function FeatureTree() {
             onKeyDown={(e) => { if (e.key === "Enter") { store.rename(f.id, (e.target as HTMLInputElement).value); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
             onBlur={(e) => { store.rename(f.id, (e.target as HTMLInputElement).value); setRenaming(null); }} />
         ) : (
-          <span class="name">{f.name}<span class="kind"> · {featureLabel(f)}</span></span>
+          <span class="name">{f.name}<span class="kind"> · {inactivePluginFeature(f, settings.plugins) ? "Plugin não carregado" : featureLabel(f)}</span></span>
         )}
         {state === "error" && <span class="badge err" aria-label="Erro">✕</span>}
         {state === "warning" && <span class="badge warn" aria-label="Aviso">⚠</span>}

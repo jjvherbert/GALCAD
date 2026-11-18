@@ -35,6 +35,7 @@ export const desktopAgent = (): { url: string; token: string } | null => (global
 
 export class Store {
   kernel = new KernelClient({
+    flags: () => this.state.settings.plugins,
     timeoutMs: () => this.state.settings.kernelTimeout * 1000,
     // sem reconstrução automática: repetiria o que o utilizador acabou de cancelar (ou entraria em ciclo
     // com um limite de tempo); o worker novo está vazio até à próxima reconstrução

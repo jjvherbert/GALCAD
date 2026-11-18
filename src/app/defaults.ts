@@ -1,6 +1,6 @@
 // Valores por defeito de cada feature nova.
 import type { CadDocument, FeatureData, FeatureType, PlaneRef } from "../doc/types.ts";
-import { PLUGINS } from "../plugins/meta.ts";
+import { activePlugins, ALL_PLUGIN_FLAGS, knownPlugin } from "../plugins/index.ts";
 import { createsSheet } from "../doc/features.ts";
 
 /** Último esboço do documento (antes do índice dado), o candidato natural para a feature seguinte. */
@@ -62,7 +62,7 @@ export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plan
     case "external": return { type, part: "", publication: "", mode: "linked" };
     case "freeform": return { type, source: { kind: "patch", plane: opts.plane ?? { kind: "std", name: "XY" }, width: 100, height: 100, nu: 5, nv: 5 }, moves: [] };
     case "plugin": {
-      const p = PLUGINS.find((x) => x.id === opts.plugin) ?? PLUGINS[0];
+      const p = (opts.plugin ? knownPlugin(opts.plugin) : undefined) ?? activePlugins(ALL_PLUGIN_FLAGS)[0];
       const kind = opts.kind && Object.hasOwn(p.kinds, opts.kind) ? opts.kind : Object.keys(p.kinds)[0];
       const params = Object.fromEntries(Object.entries(p.kinds[kind].params).map(([k, d]) => [k, d.value]));
       return { type, plugin: p.id, kind, params, op: "add" };

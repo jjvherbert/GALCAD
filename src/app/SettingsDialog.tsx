@@ -91,6 +91,11 @@ export function SettingsDialog() {
         </section>
 
         <section>
+          <h3>Módulos</h3>
+          <label class="row"><span>Casco Galkeel (náutica)</span><input type="checkbox" checked={s.plugins.galkeelHull} onChange={(e) => { set({ plugins: { ...s.plugins, galkeelHull: (e.currentTarget as HTMLInputElement).checked } }); store.rebuild(0); }} /></label>
+        </section>
+
+        <section>
           <h3>Solvers</h3>
           <label class="row"><span>Endereço do agente</span>
             <input type="url" value={s.agentUrl} spellcheck={false} onChange={(e) => { const el = e.currentTarget as HTMLInputElement; store.setAgentUrl(el.value); el.value = store.state.settings.agentUrl; }} />

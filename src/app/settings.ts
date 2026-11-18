@@ -1,4 +1,6 @@
 // Preferências do utilizador (por browser). Valores por defeito ao estilo do SolidWorks.
+import type { PluginFlags } from "../plugins/registry.ts";
+
 export type GestureDir = "up" | "upRight" | "right" | "downRight" | "down" | "downLeft" | "left" | "upLeft";
 
 export interface Settings {
@@ -23,6 +25,10 @@ export interface Settings {
   kernelTimeout: number;
   /** Endereço do agente de solvers (só no browser; o token nunca é guardado). */
   agentUrl: string;
+  /** Cartão «O que faz» dos comandos aberto (global; por defeito fechado). */
+  helpExpanded: boolean;
+  /** Plugins opcionais (por defeito desligados). */
+  plugins: PluginFlags;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +46,8 @@ export const DEFAULT_SETTINGS: Settings = {
   solveTimeout: 3600,
   kernelTimeout: 300,
   agentUrl: "http://127.0.0.1:8765",
+  helpExpanded: false,
+  plugins: { galkeelHull: false },
 };
 
 const KEY = "cad-prototipo:settings";
@@ -63,6 +71,7 @@ export function sanitizeSettings(s: Partial<Settings>): Settings {
   const gestures = { ...d.gestures };
   if (s.gestures && typeof s.gestures === "object")
     for (const k of Object.keys(gestures) as GestureDir[]) if (typeof s.gestures[k] === "string") gestures[k] = s.gestures[k];
+  const plugins = s.plugins && typeof s.plugins === "object" ? s.plugins : ({} as Partial<PluginFlags>);
   return {
     reverseWheel: bool(s.reverseWheel, d.reverseWheel),
     arrowStep: clamp(s.arrowStep, LIMITS.arrowStep, d.arrowStep),
@@ -75,6 +84,8 @@ export function sanitizeSettings(s: Partial<Settings>): Settings {
     solveTimeout: clamp(s.solveTimeout, LIMITS.solveTimeout, d.solveTimeout),
     kernelTimeout: clamp(s.kernelTimeout, LIMITS.kernelTimeout, d.kernelTimeout),
     agentUrl: typeof s.agentUrl === "string" && /^https?:\/\/\S+$/.test(s.agentUrl) ? s.agentUrl : d.agentUrl,
+    helpExpanded: bool(s.helpExpanded, d.helpExpanded),
+    plugins: { galkeelHull: bool(plugins.galkeelHull, d.plugins.galkeelHull) },
   };
 }
 
