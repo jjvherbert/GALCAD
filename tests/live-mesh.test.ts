@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { newFemStudy } from "../src/doc/study.ts";
-import { type LiveRun, keyDoc, liveMeshKey, liveMeshScheduler, lru, materialsRev, meshPhase } from "../src/app/live-mesh.ts";
+import { type LiveRun, fullCovers, keyDoc, liveMeshKey, liveMeshScheduler, lru, materialsRev, meshPhase, meshStamp } from "../src/app/live-mesh.ts";
 
 const s = newFemStudy("s1", 1);
 const base = { on: true, token: "tok", doc: "d1", studyId: s.id, geom: "g1", materials: materialsRev(s), mesh: s.mesh };
@@ -120,4 +120,17 @@ test("fase do Gmsh a partir do registo", () => {
   assert.ok(Math.abs(d3!.frac - (0.4 + 0.45 * 0.4)) < 1e-9);
   assert.equal(meshPhase("Info    : Optimizing mesh...")?.label, "A otimizar a malha");
   assert.equal(meshPhase("Info    : Writing 'mesh.inp'...")?.frac, 0.95);
+});
+
+test("um cálculo completo com a mesma malha não é trocado pela malha ao vivo", () => {
+  const k = liveMeshKey(base)!;
+  const full = meshStamp(base);
+  assert.ok(fullCovers(k, { doc: "d1", studyId: s.id, full }));
+  // só malha (sem carimbo), outro documento, outro estudo ou geometria editada: a malha ao vivo corre
+  assert.equal(fullCovers(k, { doc: "d1", studyId: s.id }), false);
+  assert.equal(fullCovers(k, { doc: "d2", studyId: s.id, full }), false);
+  assert.equal(fullCovers(k, { doc: "d1", studyId: "s2", full }), false);
+  assert.equal(fullCovers(liveMeshKey({ ...base, geom: "g2" })!, { doc: "d1", studyId: s.id, full }), false);
+  assert.equal(fullCovers(liveMeshKey({ ...base, mesh: { ...s.mesh, size: 3 } })!, { doc: "d1", studyId: s.id, full }), false);
+  assert.equal(fullCovers(k, null), false);
 });

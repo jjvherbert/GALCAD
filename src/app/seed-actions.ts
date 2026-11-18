@@ -6,7 +6,7 @@ import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { externalParts } from "./store-features.ts";
 import { store } from "./store.ts";
 import { activeStudy, cancelActiveStudy, currentGeom, patchMesh, runActiveStudy } from "./sim-actions.ts";
-import { type LiveRun, keyDoc, liveMeshKey, liveMeshScheduler, lru, materialsRev } from "./live-mesh.ts";
+import { type LiveRun, fullCovers, keyDoc, liveMeshKey, liveMeshScheduler, lru, materialsRev } from "./live-mesh.ts";
 import { geomRev } from "./workflow.ts";
 import type { State } from "./store-state.ts";
 
@@ -94,6 +94,8 @@ const meshCache = lru<NonNullable<State["simResult"]>>(5);
 
 /** Uma malha ao vivo: da cache se a chave já foi gerada, senão no agente (sem tocar no erro global). */
 async function liveMeshRun(key: string): Promise<LiveRun> {
+  // o resultado completo no ecrã já tem esta malha (p. ex. ao voltar a um documento calculado): fica
+  if (fullCovers(key, store.state.simResult)) return "ok";
   const hit = meshCache.get(key);
   if (hit && hit.doc === keyDoc(key)) { store.set({ simResult: hit, simHidden: false, liveMeshError: null }); return "ok"; }
   const r = await runActiveStudy(true, { live: true });
