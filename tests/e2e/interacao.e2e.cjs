@@ -98,9 +98,11 @@ async function main() {
       await p.press(".property-panel label.field:has-text('Profundidade') input", "Tab");
       await p.waitForFunction(() => Number(document.querySelector(".viewport").dataset.previewFaces) > 0, null, { timeout: 15000 }).catch(() => {});
       check("pré-visualização: faces da feature em edição", Number(await ds(p, "previewFaces")) > 0, await ds(p, "previewFaces"));
+      check("o cartão começa fechado", (await p.$eval(".help-card", (e) => e.open)) === false);
       await p.click(".help-card summary");
-      await until(p, () => localStorage.getItem("galcad:help-open") === "0");
-      check("a escolha de recolher fica guardada", (await p.evaluate(() => localStorage.getItem("galcad:help-open"))) === "0");
+      const helpSaved = (v) => p.evaluate((x) => JSON.parse(localStorage.getItem("cad-prototipo:settings") || "{}").helpExpanded === x, v);
+      await until(p, () => JSON.parse(localStorage.getItem("cad-prototipo:settings") || "{}").helpExpanded === true);
+      check("a escolha de expandir fica guardada nas definições", await helpSaved(true));
       await p.click(".property-panel button[title^='Cancelar']");
       await until(p, () => Number(document.querySelector(".viewport").dataset.previewFaces) === 0);
       check("sem pré-visualização fora da edição", Number(await ds(p, "previewFaces")) === 0);

@@ -63,6 +63,8 @@ async function main() {
 
     await p.goto(URL);
     await p.evaluate(() => localStorage.clear());
+    // o casco Galkeel está atrás de uma opção (por defeito desligada): liga-se para o passo do casco
+    await p.evaluate(() => localStorage.setItem("cad-prototipo:settings", JSON.stringify({ plugins: { galkeelHull: true } })));
     await p.reload();
     await settle();
 
@@ -109,6 +111,18 @@ async function main() {
 
     // 3. extrusão 15 mm
     await p.click("button.cmd:has-text('Extrusão')");
+    // cartão «O que faz»: fechado por defeito; Tab até ao resumo e Enter abre
+    await p.waitForSelector(".help-card");
+    assert.equal(await p.$eval(".help-card", (e) => e.open), false, "o cartão deve começar fechado");
+    await p.focus(".property-panel input, .property-panel select");
+    for (let i = 0; i < 40 && !(await p.evaluate(() => document.activeElement?.matches(".help-card > summary"))); i++) await p.keyboard.press(i < 20 ? "Shift+Tab" : "Tab");
+    assert.ok(await p.evaluate(() => document.activeElement?.matches(".help-card > summary")), "o resumo recebe o foco por teclado");
+    await p.keyboard.press("Enter");
+    assert.equal(await p.$eval(".help-card", (e) => e.open), true, "Enter abre o cartão");
+    await p.keyboard.press("Enter");
+    assert.equal(await p.$eval(".help-card", (e) => e.open), false, "Enter volta a fechar");
+    step("cartão «O que faz»: fechado, Tab até ao resumo e Enter abre");
+
     await p.fill(".property-panel .expr input", "15");
     await settle();
     await p.click(".property-panel button:has-text('OK')");
