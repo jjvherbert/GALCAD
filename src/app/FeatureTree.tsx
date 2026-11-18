@@ -50,7 +50,9 @@ export function FeatureTree() {
             <button role="menuitem" onClick={() => store.editFeature(f.id)}>Editar</button>
             {sketchOf && <button role="menuitem" onClick={() => store.editSketch(sketchOf)}>Editar esboço</button>}
             <button role="menuitem" onClick={() => setRenaming(f.id)}>Renomear</button>
-            <button role="menuitem" onClick={() => store.toggleSuppress(f.id)}>{f.suppressed ? "Reativar" : "Suprimir"}</button>
+            {inactivePluginFeature(f, settings.plugins) && !f.suppressed
+              ? <button role="menuitem" onClick={() => store.set({ showSettings: true })}>Ativar o módulo nas Definições…</button>
+              : <button role="menuitem" onClick={() => store.toggleSuppress(f.id)}>{f.suppressed ? "Reativar" : "Suprimir"}</button>}
             <button role="menuitem" onClick={() => store.setRollback(i)}>Rollback para antes desta</button>
             <button role="menuitem" disabled={i === 0} onClick={() => store.move(f.id, i - 1)}>Mover para cima</button>
             <button role="menuitem" disabled={i === doc.features.length - 1} onClick={() => store.move(f.id, i + 1)}>Mover para baixo</button>

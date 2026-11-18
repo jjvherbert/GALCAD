@@ -40,7 +40,7 @@ export function startFeature(s: Store, type: FeatureType, opts: Parameters<typeo
   if (s.state.sketch) return;
   if (type === "sketch") { s.startSketch(opts.plane); return; }
   const doc = s.state.doc;
-  const data = prefill(s, defaultFeature(doc, type, opts));
+  const data = prefill(s, defaultFeature(doc, type, { flags: s.state.settings.plugins, ...opts }));
   let name = defaultFeatureName(doc, type);
   if (data.type === "plugin") {
     const label = knownPlugin(data.plugin)?.kinds[data.kind]?.label.split(" ")[0] ?? "Plugin";

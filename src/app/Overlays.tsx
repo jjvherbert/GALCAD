@@ -98,7 +98,7 @@ export function ContextToolbar() {
 
 /** Barra de atalhos (tecla S): pesquisa de comandos junto ao cursor. */
 export function ShortcutBar() {
-  const st = useStoreKeys("shortcutBar");
+  const st = useStoreKeys("shortcutBar", "settings");
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -109,7 +109,7 @@ export function ShortcutBar() {
     const base = COMMANDS.filter((c) => c.id !== "ui.shortcutBar" && c.id !== "edit.escape" && commandAvailable(c));
     const found = n ? base.filter((c) => norm(c.label).includes(n) || c.id.includes(n)) : base.filter((c) => c.group === "Features" || c.group === "Esboço" || c.id === "view.normal" || c.id === "view.fit");
     return found.slice(0, 14);
-  }, [q]);
+  }, [q, st.settings.plugins]);
   return (
     <Popup at={st.shortcutBar!.at} w={300} h={420} label="Barra de atalhos">
       <input ref={input} class="search" placeholder="Pesquisar comandos…" value={q} aria-label="Pesquisar comandos"

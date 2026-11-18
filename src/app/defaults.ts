@@ -1,6 +1,6 @@
 // Valores por defeito de cada feature nova.
 import type { CadDocument, FeatureData, FeatureType, PlaneRef } from "../doc/types.ts";
-import { activePlugins, ALL_PLUGIN_FLAGS, knownPlugin } from "../plugins/index.ts";
+import { activePlugins, ALL_PLUGIN_FLAGS, knownPlugin, type PluginFlags } from "../plugins/index.ts";
 import { createsSheet } from "../doc/features.ts";
 
 /** Último esboço do documento (antes do índice dado), o candidato natural para a feature seguinte. */
@@ -18,7 +18,7 @@ export function lastSheet(doc: CadDocument, before = doc.rollback ?? doc.feature
   return "";
 }
 
-export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plane?: PlaneRef; plugin?: string; kind?: string } = {}): FeatureData {
+export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plane?: PlaneRef; plugin?: string; kind?: string; flags?: PluginFlags } = {}): FeatureData {
   const sk = lastSketch(doc);
   switch (type) {
     case "sketch": return { type, plane: opts.plane ?? { kind: "std", name: "XY" }, entities: {}, constraints: [] };
@@ -62,7 +62,9 @@ export function defaultFeature(doc: CadDocument, type: FeatureType, opts: { plan
     case "external": return { type, part: "", publication: "", mode: "linked" };
     case "freeform": return { type, source: { kind: "patch", plane: opts.plane ?? { kind: "std", name: "XY" }, width: 100, height: 100, nu: 5, nv: 5 }, moves: [] };
     case "plugin": {
-      const p = (opts.plugin ? knownPlugin(opts.plugin) : undefined) ?? activePlugins(ALL_PLUGIN_FLAGS)[0];
+      // o plugin pedido; senão o primeiro ativo nas definições do utilizador; senão o primeiro instalado
+      const p = (opts.plugin ? knownPlugin(opts.plugin) : undefined) ?? activePlugins(opts.flags ?? ALL_PLUGIN_FLAGS)[0] ?? activePlugins(ALL_PLUGIN_FLAGS)[0];
+      if (!p) throw new Error("Nenhum módulo (plugin) instalado.");
       const kind = opts.kind && Object.hasOwn(p.kinds, opts.kind) ? opts.kind : Object.keys(p.kinds)[0];
       const params = Object.fromEntries(Object.entries(p.kinds[kind].params).map(([k, d]) => [k, d.value]));
       return { type, plugin: p.id, kind, params, op: "add" };

@@ -47,6 +47,8 @@ export interface Command {
   run: () => void;
   /** Comando de criação (repetível com Enter). */
   repeatable?: boolean;
+  /** Id do plugin de que o comando depende: só aparece e corre com esse plugin ativo. */
+  plugin?: string;
 }
 
 let viewport: Viewport | null = null;
@@ -230,7 +232,7 @@ export const COMMANDS: Command[] = [
   { id: "feature.cut", label: "Corte extrudido", short: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy() && store.state.active.kind === "part") { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
   // um comando por tipo de cada plugin instalado; a visibilidade e a execução dependem da flag (`commandAvailable`)
   ...activePlugins(ALL_PLUGIN_FLAGS).flatMap((p) => Object.entries(p.kinds).map(([k, kind]): Command => ({
-    id: `plugin.${p.id}.${k}`, label: `${p.name}: ${kind.label}`, short: kind.label, group: "Módulos", icon: "⧉", repeatable: true,
+    id: `plugin.${p.id}.${k}`, label: `${p.name}: ${kind.label}`, short: kind.label, group: "Módulos", icon: "⧉", repeatable: true, plugin: p.id,
     run: () => { if (!busy() && pluginActive(p.id)) store.startFeature("plugin", { plugin: p.id, kind: k }); },
   }))),
 ];
@@ -242,8 +244,7 @@ function pluginActive(id: string): boolean {
 
 /** Comando disponível com as definições atuais? Os de plugins desligados não aparecem nem correm. */
 export function commandAvailable(c: Command): boolean {
-  const m = /^plugin\.([^.]+)\./.exec(c.id);
-  return !m || pluginActive(m[1]);
+  return !c.plugin || pluginActive(c.plugin);
 }
 
 export const commandById = new Map(COMMANDS.map((c) => [c.id, c]));
