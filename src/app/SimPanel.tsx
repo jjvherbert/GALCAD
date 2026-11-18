@@ -7,7 +7,7 @@ import { ConvergencePanel } from "./ConvergencePanel.tsx";
 import { activeStudy, runActiveStudy, updateStudy } from "./sim-actions.ts";
 import { Check, Field, Select } from "./forms.tsx";
 import { agentStatus, exportStudyCase, resultView } from "./sim-client.ts";
-import { layerShown, toggleLayer } from "../sim/result.ts";
+import { colourField, isMeshPreview, layerShown, toggleLayer } from "../sim/result.ts";
 import { AssemblyBodies, CfdEditor, FemEditor } from "./SimEditors.tsx";
 import { CheckPanel } from "./SimCheck.tsx";
 import { type StepState, STUDY_TYPES, sectionStep, typeOf, validate } from "./workflow.ts";
@@ -95,8 +95,9 @@ function StepFooter({ s, section, assembly }: { s: FemStudy; section: SimSection
 
 /** Pré-visualizar a malha do estudo (Gmsh no agente) e a qualidade, dentro da secção Malha. */
 function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
-  const st = useStoreKeys("simResult", "simBusy", "agent");
+  const st = useStoreKeys("simResult", "simBusy", "agent", "simView");
   const res = st.simResult?.studyId === s.id && st.simResult.doc === doc ? st.simResult.result : null;
+  const v = st.simView;
   return (
     <>
       <div class="row">
@@ -105,9 +106,18 @@ function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
       {st.simBusy === "mesh" && <JobProgress />}
       {res?.quality && (
         <div class="kw-item ok">
-          <table class="info-table">{res.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>
+          <table class="info-table"><tbody>{res.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</tbody></table>
           {res.warnings.map((w) => <p key={w} class="error-text">{w}</p>)}
           <QualityReport q={res.quality} />
+          {res.view && isMeshPreview(res.view) && (
+            <>
+              <Check label="Colorir pela qualidade" value={!!v.quality} onChange={(on) => store.set({ simView: { ...v, quality: on } })} />
+              {v.quality && res.view.fields.length > 1 && (
+                <Select label="Métrica" value={String(v.field)} options={res.view.fields.map((f, k) => [String(k), f.unit ? `${f.name} (${f.unit})` : f.name])} onChange={(x) => store.set({ simView: { ...v, field: Number(x) } })} />
+              )}
+              <SimLegend />
+            </>
+          )}
           <ResultExports r={res} name={s.name} />
         </div>
       )}
@@ -167,12 +177,13 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
       {part === "results" && r && (
         <div class="kw-item ok">
           <b>{r.solver}</b>
-          <table class="info-table">{r.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</table>
+          <table class="info-table"><tbody>{r.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</tbody></table>
           {r.warnings.map((w) => <p key={w} class="error-text">{w}</p>)}
           {r.quality && <QualityReport q={r.quality} />}
           {view && (
             <>
-              {view.fields.length > 0 && (
+              {isMeshPreview(view) && <Check label="Colorir pela qualidade" value={!!v.quality} onChange={(on) => store.set({ simView: { ...v, quality: on } })} />}
+              {view.fields.length > 0 && colourField(view, v) !== null && (
                 <Select label="Campo" value={String(v.field)} options={view.fields.map((f, k) => [String(k), `${f.name} (${f.unit})`])} onChange={(x) => store.set({ simView: { ...v, field: Number(x) } })} />
               )}
               {view.modes.length > 0 && (
@@ -197,8 +208,10 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
             <details class="history">
               <summary>Curva carga–deslocamento ({r.fem.history.length} incrementos)</summary>
               <table class="info-table">
-                <tr><td>Carga</td><td>Desl. máx. (mm) · reação (N)</td></tr>
-                {r.fem.history.map((h) => <tr key={h.time}><td>{(100 * h.time).toFixed(1)} %</td><td>{num(h.umax)} · {h.reaction ? num(Math.hypot(...h.reaction)) : "—"}</td></tr>)}
+                <tbody>
+                  <tr><td>Carga</td><td>Desl. máx. (mm) · reação (N)</td></tr>
+                  {r.fem.history.map((h) => <tr key={h.time}><td>{(100 * h.time).toFixed(1)} %</td><td>{num(h.umax)} · {h.reaction ? num(Math.hypot(...h.reaction)) : "—"}</td></tr>)}
+                </tbody>
               </table>
             </details>
           )}
@@ -206,13 +219,15 @@ function RunBox({ s, doc, part }: { s: Study; doc: string; part: "run" | "result
             <details open class="convergence">
               <summary>Convergência da malha (r = {r.convergence.ratio})</summary>
               <table class="info-table">
-                <tr><td>Malhas</td><td>{r.convergence.meshes.map((m) => m.cells).join(" / ")} {r.physics === "fem" ? "elementos" : "células"}</td></tr>
-                {r.convergence.rows.map((x) => (
-                  <tr key={x.key}>
-                    <td>{x.label}{x.unit && ` (${x.unit})`}</td>
-                    <td>{x.values.map(num).join(" / ")} → <b>{num(x.gci.extrapolated)}</b> · GCI {pct(x.gci.gciFine)} · p = {num(x.gci.p)} · {BEHAVIOUR[x.gci.behaviour]}</td>
-                  </tr>
-                ))}
+                <tbody>
+                  <tr><td>Malhas</td><td>{r.convergence.meshes.map((m) => m.cells).join(" / ")} {r.physics === "fem" ? "elementos" : "células"}</td></tr>
+                  {r.convergence.rows.map((x) => (
+                    <tr key={x.key}>
+                      <td>{x.label}{x.unit && ` (${x.unit})`}</td>
+                      <td>{x.values.map(num).join(" / ")} → <b>{num(x.gci.extrapolated)}</b> · GCI {pct(x.gci.gciFine)} · p = {num(x.gci.p)} · {BEHAVIOUR[x.gci.behaviour]}</td>
+                    </tr>
+                  ))}
+                </tbody>
               </table>
               {r.convergence.sweep && <SweepPlot sw={r.convergence.sweep} ext={r.convergence.rows.find((x) => x.key === r.convergence!.sweep!.metric)?.gci.extrapolated} label={r.convergence.rows.find((x) => x.key === r.convergence!.sweep!.metric)?.label ?? r.convergence.sweep.metric} />}
               {r.convergence.auto && <ConvergencePlot auto={r.convergence.auto} ext={r.convergence.rows.find((x) => x.key === r.convergence!.auto!.metric)?.gci.extrapolated} label={r.convergence.rows.find((x) => x.key === r.convergence!.auto!.metric)?.label ?? r.convergence.auto.metric} />}

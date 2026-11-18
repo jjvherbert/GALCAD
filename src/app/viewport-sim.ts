@@ -1,9 +1,14 @@
 // Malhas dos resultados de simulação no visualizador 3D (camadas FEM/CFD coloridas e deformada).
 import * as THREE from "three";
-import { type ResultView, fieldRange, layerShown } from "../sim/result.ts";
+import { type ResultView, colourField, fieldRange, layerShown } from "../sim/result.ts";
 import { sequentialColor } from "./viewport-style.ts";
 
-export interface SimView { field: number; disp: number; scale: number; hidden: string[]; anim?: boolean }
+/** `quality`: na pré-visualização da malha, colorir pela qualidade em vez do azul-claro liso. */
+export interface SimView { field: number; disp: number; scale: number; hidden: string[]; anim?: boolean; quality?: boolean }
+
+/** Cores da pré-visualização da malha: faces azul-claro e arestas dos elementos a azul. */
+export const MESH_FACE = 0xbfdbfe;
+export const MESH_EDGE = 0x2563eb;
 
 /** Período da deformada animada (ms). */
 export const SIM_ANIM_PERIOD = 1600;
@@ -37,7 +42,8 @@ export function stepSimAnim(group: THREE.Group, t: number): void {
  * resultados FEM, para o mostrar a cinzento por baixo da deformada. Devolve a ampliação usada.
  */
 export function buildSimLayers(group: THREE.Group, r: ResultView, view: SimView, size: number, edges: THREE.LineSegments | null): { dmax: number; k: number } {
-  const range = fieldRange(r, view.field, view.hidden);
+  const field = colourField(r, view);
+  const range = field === null ? null : fieldRange(r, field, view.hidden);
   // ampliação comum a todas as camadas (a maior deformação vale 8 % da cena)
   let dmax = 0;
   for (const l of r.layers) {
@@ -52,13 +58,16 @@ export function buildSimLayers(group: THREE.Group, r: ResultView, view: SimView,
     const pos = new Float32Array(l.positions);
     const d = l.displacements?.[view.disp];
     if (d) for (let i = 0; i < pos.length; i++) pos[i] += d[i] * k;
-    const vals = l.values[view.field];
+    const vals = field === null ? null : l.values[field];
     const col = new Float32Array(pos.length);
     if (vals && range) {
       const [lo, hi] = range;
       // campo constante (ex.: malha toda perfeita): cor do meio da escala, para as arestas se verem
-      const rev = r.fields[view.field]?.reverse;
+      const rev = r.fields[field!]?.reverse;
       vals.forEach((x, i) => { const t = hi > lo ? (x - lo) / (hi - lo) : 0.5; sequentialColor(rev ? 1 - t : t, c); col.set([c.r, c.g, c.b], i * 3); });
+    } else if (l.edges?.length) {
+      c.setHex(MESH_FACE);
+      for (let i = 0; i < col.length; i += 3) col.set([c.r, c.g, c.b], i);
     } else col.fill(0.75);
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -74,7 +83,7 @@ export function buildSimLayers(group: THREE.Group, r: ResultView, view: SimView,
       eg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
       eg.setIndex(l.edges);
       if (ai >= 0) anim[ai].attrs.push(eg.getAttribute("position") as THREE.BufferAttribute);
-      group.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x1f2937, transparent: true, opacity: 0.55 })));
+      group.add(new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: MESH_EDGE, transparent: true, opacity: 0.9 })));
     }
   }
   // contorno da peça não deformada, a cinzento, como referência

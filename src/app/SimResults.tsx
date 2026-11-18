@@ -7,7 +7,7 @@ import { cancelActiveStudy } from "./sim-actions.ts";
 import { meshPhase } from "./live-mesh.ts";
 import { Select, usePickTarget } from "./forms.tsx";
 import { type RunResult, resultView } from "./sim-client.ts";
-import { fieldRange, probeResult, type ProbeValue } from "../sim/result.ts";
+import { colourField, fieldRange, probeResult, type ProbeValue } from "../sim/result.ts";
 import { toVtu } from "../sim/export-vtu.ts";
 
 /** Extrair os resultados do cálculo: resumo, histórias no tempo, métricas, qualidade da malha e JSON. */
@@ -87,13 +87,15 @@ export function QualityReport({ q }: { q: NonNullable<RunResult["quality"]> }) {
     <details open class="quality">
       <summary>Qualidade da malha {q.ok ? "" : "— com elementos inválidos"}</summary>
       <table class="info-table">
-        <tr><td>Métrica</td><td>mín. · média · máx. — fora dos limites</td></tr>
-        {q.metrics.map((x) => (
-          <tr key={x.key}>
-            <td>{x.label}</td>
-            <td>{x.min.toPrecision(3)} · {x.mean.toPrecision(3)} · {x.max.toPrecision(3)}{x.unit} — {x.limits.map((l, i) => <span key={i} class={x.fail[i] ? "error-text" : ""}>{lim(l)}: {x.fail[i]}{i < x.limits.length - 1 ? "; " : ""}</span>)}</td>
-          </tr>
-        ))}
+        <tbody>
+          <tr><td>Métrica</td><td>mín. · média · máx. — fora dos limites</td></tr>
+          {q.metrics.map((x) => (
+            <tr key={x.key}>
+              <td>{x.label}</td>
+              <td>{x.min.toPrecision(3)} · {x.mean.toPrecision(3)} · {x.max.toPrecision(3)}{x.unit} — {x.limits.map((l, i) => <span key={i} class={x.fail[i] ? "error-text" : ""}>{lim(l)}: {x.fail[i]}{i < x.limits.length - 1 ? "; " : ""}</span>)}</td>
+            </tr>
+          ))}
+        </tbody>
       </table>
       {sj && (
         <div class="histogram" aria-label="Histograma do jacobiano escalado">
@@ -114,8 +116,9 @@ export const BEHAVIOUR = { monotonic: "monotónica", oscillatory: "oscilatória"
 export function SimLegend() {
   const st = useStoreKeys("simResult", "simView");
   const view = resultView(st.simResult?.result);
-  const f = view?.fields[st.simView.field];
-  const range = view ? fieldRange(view, st.simView.field, st.simView.hidden) : null;
+  const k = view ? colourField(view, st.simView) : null;
+  const f = k === null ? undefined : view?.fields[k];
+  const range = view && k !== null ? fieldRange(view, k, st.simView.hidden) : null;
   if (!f || !range) return null;
   const fmt = (x: number) => (Math.abs(x) >= 1000 || (Math.abs(x) < 0.01 && x !== 0) ? x.toExponential(2) : x.toFixed(3));
   return (
@@ -187,8 +190,10 @@ export function SweepPlot({ sw, ext, label }: { sw: NonNullable<NonNullable<RunR
         <text x={P - 3} y={Y(v0) + 3} text-anchor="end">{num(v0)}</text>
       </svg>
       <table class="info-table sweep">
-        <tr><td>Nível · tamanho</td><td>Elementos · valor</td></tr>
-        {sw.steps.map((x) => <tr key={x.level} class={x.level === 0 ? "base" : ""}><td>{x.level > 0 ? `+${x.level}` : x.level}{x.level === 0 ? " (pedida)" : ""} · {num(x.size)} mm</td><td>{x.cells} · {num(x.value)}</td></tr>)}
+        <tbody>
+          <tr><td>Nível · tamanho</td><td>Elementos · valor</td></tr>
+          {sw.steps.map((x) => <tr key={x.level} class={x.level === 0 ? "base" : ""}><td>{x.level > 0 ? `+${x.level}` : x.level}{x.level === 0 ? " (pedida)" : ""} · {num(x.size)} mm</td><td>{x.cells} · {num(x.value)}</td></tr>)}
+        </tbody>
       </table>
     </>
   );
@@ -217,8 +222,10 @@ export function ConvergencePlot({ auto, ext, label }: { auto: NonNullable<NonNul
         <text x={P - 3} y={Y(v0) + 3} text-anchor="end">{num(v0)}</text>
       </svg>
       <table class="info-table">
-        <tr><td>Nível · tamanho</td><td>Elementos · valor · GCI</td></tr>
-        {auto.steps.map((x) => <tr key={x.level}><td>{x.level} · {num(x.size)} mm</td><td>{x.cells} · {num(x.value)} · {x.gci !== undefined ? pct(x.gci) : "—"}</td></tr>)}
+        <tbody>
+          <tr><td>Nível · tamanho</td><td>Elementos · valor · GCI</td></tr>
+          {auto.steps.map((x) => <tr key={x.level}><td>{x.level} · {num(x.size)} mm</td><td>{x.cells} · {num(x.value)} · {x.gci !== undefined ? pct(x.gci) : "—"}</td></tr>)}
+        </tbody>
       </table>
     </>
   );
