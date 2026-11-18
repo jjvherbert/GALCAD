@@ -14,6 +14,12 @@ export type { RunResult };
 /** Camadas a mostrar de um resultado (resultados antigos só com a parte FEM: uma camada). */
 export const resultView = (r: RunResult | undefined | null): ResultView | null => (r ? r.view ?? (r.fem ? femView(r.fem) : null) : null);
 
+/** Junta os avisos do caso (planeador da malha, apoios, passos) aos da resposta do agente, sem repetidos:
+ *  o agente só conhece a malha e o solver, e sem isto os avisos do caso perdiam-se na malha e no cálculo. */
+export function withCaseWarnings(caseWarnings: readonly string[], r: RunResult): RunResult {
+  return caseWarnings.length ? { ...r, warnings: [...new Set([...caseWarnings, ...(r.warnings ?? [])])] } : r;
+}
+
 async function caseFiles(studyId: string) {
   const st = store.state;
   if (st.active.kind === "assembly") return store.kernel.assemblyStudyCase(st.project, st.active.id, studyId);
@@ -133,7 +139,7 @@ async function postCase(r: Awaited<ReturnType<typeof caseFiles>>, url: string, t
     body: JSON.stringify({ case: r.case, brep: r.files["model.brep"], stl: Object.keys(stl).length ? stl : undefined, convergence, meshTimeout: opts.meshTimeout, solveTimeout: opts.solveTimeout }),
     signal: opts.signal,
   });
-  return { case: r.case, result: (await agentJson(res, opts.signal)) as RunResult };
+  return { case: r.case, result: withCaseWarnings(r.warnings, (await agentJson(res, opts.signal)) as RunResult) };
 }
 
 /** Polar de um perfil no XFOIL do agente local. */
