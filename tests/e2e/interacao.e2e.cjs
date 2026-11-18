@@ -121,7 +121,11 @@ async function main() {
       await p.waitForSelector(".sim-browser");
       const vb = await p.locator(".viewport canvas").first().boundingBox(); const cx = vb.x + vb.width / 2, cy = vb.y + vb.height / 2; // o canvas, não a área com os painéis
       await p.mouse.move(cx, cy);
-      check("FEM abre no separador «Cargas e apoios» (sem clicar)", /Cargas e apoios/.test(await p.textContent(".tabs button.on")) && /Encastrar/.test(await p.textContent(".tb-row.commands")) && /Cargas e apoios/.test(await p.textContent(".sim-panel .pm-title")));
+      // fluxo guiado (C1a): entra no primeiro passo por fazer (o estudo do fixture não tem passos concluídos)
+      check("FEM abre no primeiro passo por fazer (Estudo)", /Estudo/.test(await p.textContent(".sim-panel .pm-title")), (await p.textContent(".sim-panel .pm-title")).slice(0, 60));
+      await p.click(".tabs button:has-text('Cargas e apoios')");
+      await p.mouse.move(cx, cy);
+      check("separador «Cargas e apoios»: barra e painel", /Encastrar/.test(await p.textContent(".tb-row.commands")) && /Cargas e apoios/.test(await p.textContent(".sim-panel .pm-title")));
       // duplo clique na face com a força (vista da direita) → abre a condição e destaca-a
       await p.keyboard.press("Control+4"); await camIdle(p);
       const d4 = await ds(p, "viewDir");
