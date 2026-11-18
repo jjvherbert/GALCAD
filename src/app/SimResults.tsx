@@ -4,6 +4,7 @@ import { store, useStoreKeys } from "./store.ts";
 import { download } from "./fileio.ts";
 import { fmt, toCsvText, type Table } from "../sim/convreport.ts";
 import { cancelActiveStudy } from "./sim-actions.ts";
+import { meshPhase } from "./live-mesh.ts";
 import { Select, usePickTarget } from "./forms.tsx";
 import { type RunResult, resultView } from "./sim-client.ts";
 import { fieldRange, probeResult, type ProbeValue } from "../sim/result.ts";
@@ -34,6 +35,7 @@ export function JobProgress() {
   const st = useStoreKeys("simProgress", "simBusy");
   const [stopping, setStopping] = useState(false);
   const p = st.simProgress;
+  const ph = st.simBusy === "mesh" && p?.tail ? meshPhase(p.tail) : null;
   const stop = async () => {
     setStopping(true);
     try { await cancelActiveStudy(); } finally { setStopping(false); }
@@ -41,8 +43,8 @@ export function JobProgress() {
   return (
     <div class="sim-job" role="status">
       <div class="sim-progress">
-        <i />
-        <span>{st.simBusy === "mesh" ? "A gerar a malha…" : "A calcular no agente local…"}{p ? ` ${Math.round(p.elapsed)} s` : ""}</span>
+        {ph ? <i class="det" style={{ width: `${Math.round(ph.frac * 100)}%` }} /> : <i />}
+        <span>{st.simBusy === "mesh" ? (ph ? `${ph.label} · ${Math.round(ph.frac * 100)}%` : "A gerar a malha…") : "A calcular no agente local…"}{p ? ` ${Math.round(p.elapsed)} s` : ""}</span>
         <button class="small danger" disabled={stopping} onClick={() => void stop()}>{stopping ? "A parar…" : "Parar"}</button>
       </div>
       {p?.tail && <pre class="sim-tail" aria-label="Registo do solver">{p.tail.split("\n").slice(-8).join("\n")}</pre>}

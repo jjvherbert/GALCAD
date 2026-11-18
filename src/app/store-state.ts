@@ -119,6 +119,8 @@ export interface State {
   simHidden: boolean;
   /** Malha ao vivo: com as seeds em edição, volta a gerar a malha (elementos) a cada alteração. */
   liveMesh: boolean;
+  /** Malha ao vivo: último erro do Gmsh/agente (a malha anterior fica, esbatida, com este aviso). */
+  liveMeshError: string | null;
   agent: { url: string; token: string };
   /** Forma livre em edição: polo selecionado e restrição do arrasto. */
   poleSel: [number, number] | null;
@@ -168,7 +170,7 @@ export const SESSION_KEYS = [
 export const UI_KEYS = [
   "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
   "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "userMaterials", "pmiView", "simView", "simHidden", "liveMesh",
-  "agent", "simBusy", "simProgress",
+  "liveMeshError", "agent", "simBusy", "simProgress",
 ] as const satisfies readonly (keyof State)[];
 export type DocKey = (typeof DOC_KEYS)[number];
 export type SessionKey = (typeof SESSION_KEYS)[number];

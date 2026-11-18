@@ -31,7 +31,8 @@ export function drawPoles(v: Viewport, preview?: { k: number; p: THREE.Vector3 }
   drawPoleNet(v.poleGroup, v.poleNet, v.poleSel, v.camera, v.renderer.domElement, v.el.dataset, preview);
 }
 
-export function setSimResult(v: Viewport, r: ResultView | null, view: SimView) {
+/** `stale`: a malha já não corresponde ao modelo (a malha ao vivo falhou) — mostra-se esbatida. */
+export function setSimResult(v: Viewport, r: ResultView | null, view: SimView, stale = false) {
   v.disposeGroup(v.simGroup);
   v.simGroup.userData.anim = undefined;
   if (!v.simGroup.parent) v.scene.add(v.simGroup);
@@ -39,10 +40,23 @@ export function setSimResult(v: Viewport, r: ResultView | null, view: SimView) {
   if (v.faceMesh) v.faceMesh.visible = !r;
   if (v.edgeLines) v.edgeLines.visible = r ? !fem : v.settings.displayStyle !== "shaded";
   v.el.dataset.sim = r ? "1" : "";
+  if (!r) v.el.dataset.simStale = "";
   v.el.dataset.simLayers = r ? r.layers.filter((l) => layerShown(l, view.hidden)).map((l) => l.name).join("|") : "";
   if (!r) return;
   const { dmax, k } = buildSimLayers(v.simGroup, r, view, v.size, fem ? v.edgeLines : null);
   v.el.dataset.simScale = dmax > 0 ? k.toPrecision(3) : "";
+  v.el.dataset.simStale = stale ? "1" : "";
+  if (stale) {
+    v.simGroup.traverse((o) => {
+      const mats = (o as THREE.Mesh).material;
+      for (const m of Array.isArray(mats) ? mats : mats ? [mats] : []) {
+        m.transparent = true;
+        m.opacity = Math.min(m.opacity, 0.35);
+        m.depthWrite = false;
+        m.needsUpdate = true;
+      }
+    });
+  }
 }
 
 export function applyDisplayStyle(v: Viewport) {
