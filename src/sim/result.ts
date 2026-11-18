@@ -124,3 +124,13 @@ export function probeResult(v: ResultView, at: V3, hidden: readonly string[] = [
     disp: D ? [lerp(D, 3, 0), lerp(D, 3, 1), lerp(D, 3, 2)] : null,
   };
 }
+
+/** Pré-visualização da malha (camadas com arestas dos elementos e sem deformadas). */
+export const isMeshPreview = (v: ResultView) => v.modes.length === 0 && v.layers.some((l) => !!l.edges?.length);
+
+/**
+ * Campo usado para colorir a vista: na pré-visualização da malha só com «Colorir pela qualidade»
+ * (por omissão a malha vê-se lisa, a azul-claro, com as arestas dos elementos); `null` = sem campo.
+ */
+export const colourField = (v: ResultView, view: { field: number; quality?: boolean }): number | null =>
+  isMeshPreview(v) && !view.quality ? null : view.field;
