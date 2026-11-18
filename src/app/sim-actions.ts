@@ -1,9 +1,11 @@
 // Ações dos estudos de simulação partilhadas pela barra do espaço de trabalho, pela árvore do modelo e
 // pelo painel: estudos da peça ou da montagem ativa, criar, gravar, calcular e pré-visualizar a malha.
-import { loadEdges, loadFaces } from "../doc/study.ts";
+import { THERMAL_LOADS, STRUCT_LOADS, loadEdges, loadFaces } from "../doc/study.ts";
 import { type ConvergenceConfig, DEFAULT_CONVERGENCE, type StoredConvergence, type FemLoad, type FemStudy, type SimMesh, type Study, newCfdStudy, newFemStudy } from "../doc/study.ts";
+import type { AssemblyDoc } from "../doc/project.ts";
 import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
+import { type GeomSnapshot, assemblySnapshot, geomRev, markDonePatch, partSnapshot, touchUser, validate } from "./workflow.ts";
 import { allMaterials } from "./material-library.ts";
 import { CancelledError, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
 
@@ -27,7 +29,28 @@ export function saveStudies(next: Study[], label = "Estudos") {
 }
 
 export function updateStudy(id: string, patch: Partial<Study>) {
-  saveStudies(activeStudies().map((x) => (x.id === id ? ({ ...x, ...patch } as Study) : x)));
+  // no FEM, mexer num campo de um passo ainda sem carimbo põe-no «em curso» (fluxo guiado)
+  saveStudies(activeStudies().map((x) => (x.id === id ? ({ ...x, ...patch, ...(x.physics === "fem" ? touchUser(x, patch as Partial<FemStudy>) : undefined) } as Study) : x)));
+}
+
+/** Geometria do documento ativo para os carimbos dos passos: a peça, ou a montagem com a revisão de cada peça. */
+export function currentGeom(): GeomSnapshot {
+  const asm = store.activeAssembly();
+  if (!asm) return partSnapshot(store.state.doc);
+  const p = store.state.project;
+  const seen = new Set<string>();
+  const rev = (ref: { kind: "part" | "assembly"; id: string }): { rev: string; name: string } | undefined => {
+    if (ref.kind === "part") {
+      // a peça aberta pode ter alterações ainda não copiadas para o projeto
+      const d = store.state.doc.id === ref.id ? store.state.doc : p.parts.find((x) => x.id === ref.id);
+      return d ? { rev: geomRev(partSnapshot(d)), name: d.name } : undefined;
+    }
+    const a: AssemblyDoc | undefined = p.assemblies.find((x) => x.id === ref.id);
+    if (!a || seen.has(a.id)) return undefined;
+    seen.add(a.id);
+    return { rev: geomRev(assemblySnapshot(a, rev)), name: a.name };
+  };
+  return assemblySnapshot(asm, rev);
 }
 
 /** Novo estudo FEM (com o tipo de análise) ou CFD (interno/externo); fica escolhido na árvore. */
@@ -65,8 +88,10 @@ export async function runActiveStudy(meshOnly = false) {
   if (st.simBusy) return;
   if (meshOnly && s.physics !== "fem") { store.set({ error: "A pré-visualização da malha é para estudos FEM" }); return; }
   if (!meshOnly) {
-    // a verificação do modelo apanha antes do solver o que o impede de correr (erros bloqueiam; avisos não)
-    const err = checkStudy(s, !!store.activeAssembly()).find((i) => i.level === "erro");
+    // a verificação do modelo apanha antes do solver o que o impede de correr (erros bloqueiam; avisos não);
+    // no FEM, sem apoios ou sem cargas (quando o tipo os exige) também bloqueia
+    const asm = !!store.activeAssembly();
+    const err = s.physics === "fem" ? validate(s, "todos", asm).find((i) => i.level === "erro") : checkStudy(s, asm).find((i) => i.level === "erro");
     if (err) { store.set({ error: `${err.text} — ver «Verificação do modelo»`, simSection: "check" }); return; }
   }
   const doc = store.activeAssembly()?.id ?? st.doc.id;
@@ -87,6 +112,8 @@ export async function runActiveStudy(meshOnly = false) {
     const opts = { signal: ac.signal, meshTimeout: st.settings.meshTimeout, solveTimeout: st.settings.solveTimeout };
     const { result } = meshOnly ? await previewStudyMesh(s.id, st.agent.url, st.agent.token, opts) : await runStudy(s.id, st.agent.url, st.agent.token, conv, opts);
     store.set({ simResult: { doc, studyId: s.id, result }, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, message: `${meshOnly ? "Malha gerada" : result.convergence ? "Convergência calculada" : "Calculado"} em ${result.seconds.toFixed(1)} s`, ...(st.workspace === "fem" || st.workspace === "cfd" ? { simSection: meshOnly ? "mesh" : result.convergence ? "convergence" : "results" } : {}) });
+    // cálculo feito: os passos «Verificar» e «Correr» ficam concluídos com a geometria e os dados de agora
+    if (!meshOnly && s.physics === "fem") markStepsDone(s.id, ["verificar", "correr"]);
     // o estudo de convergência fica guardado no estudo (últimos 6) para consultar, comparar e exportar
     if (result.convergence) {
       const cur = activeStudies().find((x) => x.id === s.id);
@@ -102,6 +129,18 @@ export async function runActiveStudy(meshOnly = false) {
     if (job === ac) job = null;
     store.set({ simBusy: null, simProgress: null });
   }
+}
+
+/** Marca passos do fluxo guiado como concluídos no estudo FEM indicado (carimbo com os dados atuais). */
+export function markStepsDone(id: string, steps: Parameters<typeof markDonePatch>[1][], label = "Concluir passo") {
+  const asm = !!store.activeAssembly();
+  const geom = currentGeom();
+  saveStudies(activeStudies().map((x) => {
+    if (x.id !== id || x.physics !== "fem") return x;
+    let n: FemStudy = x;
+    for (const step of steps) n = { ...n, ...markDonePatch(n, step, geom, asm) };
+    return n;
+  }), label);
 }
 
 /** Pedido em curso ao agente (malha ou cálculo), para o Parar. */
@@ -138,8 +177,7 @@ export function runConvergence() {
   void runActiveStudy(false);
 }
 
-export const STRUCT_LOADS: FemLoad["kind"][] = ["fixed", "displacement", "symmetry", "force", "pointForce", "pressure", "gravity", "spring", "mass", "coupling", "thermalField"];
-export const THERMAL_LOADS: FemLoad["kind"][] = ["temperature", "convection", "heatFlux"];
+export { STRUCT_LOADS, THERMAL_LOADS };
 
 export function newLoad(kind: FemLoad["kind"]): FemLoad {
   switch (kind) {

@@ -1,7 +1,7 @@
 // Painel de simulação da peça (pré-processador F1): estudos FEM (CalculiX) e CFD (OpenFOAM, SU2),
 // condições nas faces pelo nome topológico, malha, exportação do caso e cálculo no agente local.
 import { useState } from "preact/hooks";
-import { type Study } from "../doc/study.ts";
+import { type FemStudy, type Study } from "../doc/study.ts";
 import { type SimSection, desktopAgent, store, useStoreKeys } from "./store.ts";
 import { ConvergencePanel } from "./ConvergencePanel.tsx";
 import { activeStudy, runActiveStudy, updateStudy } from "./sim-actions.ts";
@@ -10,6 +10,8 @@ import { agentStatus, exportStudyCase, resultView } from "./sim-client.ts";
 import { layerShown, toggleLayer } from "../sim/result.ts";
 import { AssemblyBodies, CfdEditor, FemEditor } from "./SimEditors.tsx";
 import { CheckPanel } from "./SimCheck.tsx";
+import { type StepState, STUDY_TYPES, sectionStep, typeOf, validate } from "./workflow.ts";
+import { activeStepStates, chooseStudyType, completeAndNext } from "./workflow-actions.ts";
 import { BEHAVIOUR, ConvergencePlot, JobProgress, num, pct, QualityReport, ResultExports, ResultProbe, SimLegend, SweepPlot, TimePlot } from "./SimResults.tsx";
 
 const SECTION_TITLE: Record<SimSection, string> = {
@@ -37,6 +39,7 @@ export function SimPanel() {
         <span class="pm-title">{title}</span>
         {s && <span class="muted">{s.name}</span>}
       </div>
+      {physics === "fem" && sec === "study" && (!s || s.physics === "fem") && <StudyTypePicker s={s} />}
       {s && sec === "study" && <Field label="Nome"><input value={s.name} onChange={(e) => up({ name: (e.target as HTMLInputElement).value })} /></Field>}
       {s?.physics === "fem" && <FemEditor s={s} up={up} assembly={!!asm} section={sec} />}
       {s?.physics === "fem" && asm && sec === "contact" && <AssemblyBodies s={s} up={up} />}
@@ -46,9 +49,46 @@ export function SimPanel() {
       {s && sec === "convergence" && <ConvergencePanel s={s} />}
       {s && sec === "check" && <CheckPanel s={s} assembly={!!asm} up={up} />}
       {s && (sec === "run" || sec === "results") && <RunBox s={s} doc={docId} part={sec} />}
-      {!s && <p class="field-hint">{asm
+      {s?.physics === "fem" && <StepFooter s={s} section={sec} assembly={!!asm} />}
+      {!s && (physics === "cfd" || (asm && sec === "study")) && <p class="field-hint">{asm
         ? "Os estudos da montagem analisam vários corpos de uma vez: cada instância com o seu material e as faces planas coincidentes entre corpos coladas (contacto colado, *TIE no CalculiX). As faces das condições escolhem-se nos componentes."
         : "Os estudos preparam o modelo de análise dentro do CAD: condições ligadas às faces pelo nome topológico, malha e ficheiros dos solvers abertos. Crie um estudo no separador «Estudo» da barra."}</p>}
+      {!s && physics === "fem" && sec !== "study" && <p class="field-hint">Ainda sem estudo: escolha o tipo de estudo na secção «Estudo».</p>}
+    </div>
+  );
+}
+
+const STATE_CLASS: Record<StepState, string> = { "por fazer": "todo", "em curso": "doing", "concluído": "done", "desatualizado": "stale" };
+
+/** Escolha do tipo de estudo (C1a): cria o estudo ou muda o tipo do estudo aberto. */
+function StudyTypePicker({ s }: { s?: FemStudy }) {
+  const cur = s && typeOf(s);
+  return (
+    <fieldset class="study-types">
+      <legend class="field-label">{s ? "Tipo de estudo" : "Escolha o tipo de estudo para começar"}</legend>
+      {STUDY_TYPES.map((t) => (
+        <button key={t.id} type="button" class={`study-type${t.id === cur ? " on" : ""}`} aria-pressed={t.id === cur} disabled={!!t.disabled} title={t.disabled} onClick={() => chooseStudyType(t.id)}>
+          <b>{t.label}</b>
+          <span>{t.disabled ?? t.description}</span>
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+
+/** Rodapé do passo: o estado (com a razão) e «Concluir e seguir». */
+function StepFooter({ s, section, assembly }: { s: FemStudy; section: SimSection; assembly: boolean }) {
+  const step = sectionStep(section);
+  const info = activeStepStates(s).find((i) => i.id === step);
+  if (!info) return null;
+  const errors = step === "verificar" ? validate(s, "todos", assembly).filter((i) => i.level === "erro") : [];
+  return (
+    <div class="step-footer">
+      <span class={`step-chip ${STATE_CLASS[info.state]}`} title={info.reason}>{info.label}: {info.state}</span>
+      {info.reason && <span class="field-hint step-reason">{info.reason}</span>}
+      {step !== "resultados" && step !== "correr" && (
+        <button class="small primary" disabled={errors.length > 0} title={errors[0]?.text} onClick={() => completeAndNext()}>Concluir e seguir ▸</button>
+      )}
     </div>
   );
 }

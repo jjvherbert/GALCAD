@@ -45,6 +45,15 @@ async function main() {
     await ws("Simulação FEM");
     await p.waitForSelector(".sim-browser");
     check("espaço FEM: árvore e barra próprias", /Consola — estática/.test(await p.textContent(".sim-study.on")) && (await p.$$(".tabs button")).length === 6);
+    // fluxo guiado (C1a): entra no primeiro passo por fazer (Estudo), com a escolha do tipo
+    await p.waitForSelector(`${P} .pm-title:has-text('Estudo')`);
+    check("fluxo: entra no passo Estudo com o tipo escolhido", /Estático linear/.test(await p.textContent(`${P} .study-type.on`)) && await p.$eval(`${P} .study-type:has-text('Fadiga')`, (e) => e.disabled) && !!(await p.$(`${P} .step-chip.todo`)));
+    await p.click(`${P} .study-type.on`);
+    await p.waitForSelector(`${P} .pm-title:has-text('Material')`);
+    check("fluxo: escolher o tipo conclui o Estudo e segue para o Material", !!(await p.$(".sim-node:has-text('Estudo') .step-badge.done")) && !!(await p.$(".sim-node:has-text('Material') .step-badge.todo")));
+    await p.click(`${P} .step-footer button:has-text('Concluir e seguir')`);
+    await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
+    check("fluxo: «Concluir e seguir» conclui o Material e abre Cargas e apoios", !!(await p.$(".sim-node:has-text('Material') .step-badge.done")));
     await p.click(".tabs button:has-text('Cargas e apoios')");
     await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
     const panel = await p.textContent(P);

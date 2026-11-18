@@ -319,7 +319,23 @@ export interface FemStudy {
    * em torno de z a partir de x. Use partições da malha em z nas interfaces para os elementos não as cruzarem.
    */
   solidLaminate?: { plies: OrthoPly[]; z0?: Expr };
+  /**
+   * Fluxo de trabalho guiado (C1a): passos concluídos, cada um com a impressão digital dos dados que
+   * o passo e os de que depende tinham ao concluir (para o marcar desatualizado), e os campos que o
+   * utilizador mudou à mão (a escolha do tipo de estudo não os sobrepõe). Ver `src/app/workflow.ts`.
+   */
+  workflow?: StudyWorkflow;
 }
+
+/** Passos do fluxo guiado de um estudo FEM, pela ordem. */
+export type StepId = "estudo" | "material" | "interacoes" | "cargas" | "malha" | "verificar" | "correr" | "resultados";
+/** Impressão digital de um passo concluído: os seus dados, os dos passos a montante e a geometria. */
+export interface StepStamp { own: string; up?: Partial<Record<StepId, string>>; geom?: Record<string, string> }
+export interface StudyWorkflow { done?: Partial<Record<StepId, StepStamp>>; user?: string[] }
+
+/** Condições de estudos estruturais e térmicos (mudar a análise filtra as que não servem). */
+export const STRUCT_LOADS: FemLoad["kind"][] = ["fixed", "displacement", "symmetry", "force", "pointForce", "pressure", "gravity", "spring", "mass", "coupling", "thermalField"];
+export const THERMAL_LOADS: FemLoad["kind"][] = ["temperature", "convection", "heatFlux"];
 
 export interface CfdMesh {
   /** Tamanho das células de fundo (mm). */
