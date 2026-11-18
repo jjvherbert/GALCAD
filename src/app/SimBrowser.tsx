@@ -9,6 +9,11 @@ import { CONDITION_COLORS, activeStudies, activeStudy, addStudy, deleteStudy, up
 import { runCommand } from "./commands.ts";
 import { checkStudy, checkSummary } from "../sim/modelcheck.ts";
 import { loadEdges, loadFaces } from "../doc/study.ts";
+import { type StepInfo, type StepState } from "./workflow.ts";
+import { activeStepStates } from "./workflow-actions.ts";
+
+const BADGE: Record<StepState, string> = { "por fazer": "todo", "em curso": "doing", "concluído": "done", "desatualizado": "stale" };
+const BADGE_MARK: Record<StepState, string> = { "por fazer": "", "em curso": "…", "concluído": "✓", "desatualizado": "↻" };
 
 const LOAD_SHORT: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento", symmetry: "Simetria", pointForce: "Força pontual", force: "Força", pressure: "Pressão", gravity: "Gravidade", spring: "Mola", mass: "Massa", coupling: "Acoplamento",
@@ -85,11 +90,14 @@ export function SimBrowser() {
     const has = st.simResult?.studyId === s.id && st.simResult.doc === docId;
     return s.physics === "fem" ? femNodes(s, asm, has) : cfdNodes(s, has);
   };
+  // estado dos passos do fluxo guiado (C1a), só no nó principal de cada passo
+  const stepsOf = (s: Study): StepInfo[] => (s.physics === "fem" ? activeStepStates(s) : []);
   return (
     <div class="sim-browser" aria-label="Árvore do modelo de simulação">
       <div class="tree-head"><b>{physics === "fem" ? "Modelo FEM" : "Modelo CFD"}</b><span class="muted">{asm ? store.activeAssembly()!.name : st.doc.name}</span></div>
       {studies.map((s) => {
         const on = s.id === cur?.id;
+        const steps = on ? stepsOf(s) : [];
         return (
           <div key={s.id} class={`sim-study ${on ? "on" : ""}`}>
             <div class="sim-study-head" onClick={() => store.set({ simStudy: s.id, simSection: on ? st.simSection : "study", simResult: on ? st.simResult : null })}>
@@ -103,17 +111,18 @@ export function SimBrowser() {
             </div>
             {on && (
               <ul class="sim-nodes">
-                {nodesOf(s).map((n) => (
+                {nodesOf(s).map((n) => { const step = steps.find((i) => i.section === n.section); return (
                   <li key={n.section}>
                     <button class={`sim-node ${st.simSection === n.section ? "on" : ""} ${n.state ? `st-${n.state}` : ""}`} onClick={() => store.set({ simSection: n.section })}>
                       <span class="ic">{n.icon}</span><span class="lb">{n.label}</span><span class="dt">{n.detail}</span>
+                      {step && <span class={`step-badge ${BADGE[step.state]}`} title={`${step.label}: ${step.state}${step.reason ? ` — ${step.reason}` : ""}`} aria-label={`${step.label}: ${step.state}`}>{BADGE_MARK[step.state]}</span>}
                       {n.state === "warn" && <span class="st" title="Falta informação">!</span>}
                     </button>
                     {n.children?.length ? (
                       <ul class="sim-leaves">{n.children.map((c, k) => <li key={k} title={`Duplo clique: escolher as ${c.edges ? "arestas" : "faces"} desta condição`} onClick={() => store.set({ simSection: n.section })} onDblClick={() => store.set({ simSection: n.section, pickTarget: n.section === "conditions" ? (c.edges ? { field: `loadEdge${k}`, accept: ["edge"] } : { field: `load${k}`, accept: ["face"] }) : null })}><span>{c.color !== undefined && <i class="sw" style={{ background: `#${c.color.toString(16).padStart(6, "0")}` }} />}{c.label}</span><span class="dt">{c.detail}</span></li>)}</ul>
                     ) : null}
                   </li>
-                ))}
+                ); })}
               </ul>
             )}
           </div>

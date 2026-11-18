@@ -4,7 +4,8 @@
 import { PLUGINS } from "../plugins/meta.ts";
 import { type SimSection, type Workspace, store } from "./store.ts";
 import { DRAWING_TABS } from "./drawing-commands.ts";
-import { SIM_MATERIALS } from "../doc/study.ts";
+import { SIM_MATERIALS, type Study } from "../doc/study.ts";
+import { firstOpenSection } from "./workflow-actions.ts";
 
 export interface Tab { id: string; label: string; groups: { title: string; ids: string[] }[] }
 
@@ -150,8 +151,13 @@ export function setWorkspace(ws: Workspace) {
   const keep = studies.some((x) => x.id === st.simStudy);
   store.set({
     workspace: ws, sidePanel: null, edit: null, mateEdit: null, componentEdit: null, pickTarget: null,
-    ...(ws === "fem" || ws === "cfd" ? { simStudy: keep ? st.simStudy : studies[0]?.id ?? null, simSection: keep ? st.simSection : ws === "fem" ? "conditions" : "study" } : {}),
+    ...(ws === "fem" || ws === "cfd" ? { simStudy: keep ? st.simStudy : studies[0]?.id ?? null, simSection: keep ? st.simSection : femEntry(ws, studies[0]) } : {}),
   });
+}
+
+/** Onde entrar no espaço FEM: no primeiro passo por fazer do estudo (C1a); sem estudo, no «Estudo». */
+function femEntry(ws: Workspace, s: Study | undefined): SimSection {
+  return ws === "fem" && s?.physics === "fem" ? firstOpenSection(s) : "study";
 }
 
 /** Abre uma secção do modelo de simulação (árvore → painel). */
