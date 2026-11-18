@@ -1,7 +1,7 @@
 // Espaços de trabalho ao estilo do Fusion 360: o mesmo modelo, visto e trabalhado por módulo. Cada
 // espaço tem a sua barra de comandos (separadores e grupos do CommandManager), a sua árvore à esquerda
 // e os seus painéis; mudar de espaço não altera o modelo, só a forma de o trabalhar.
-import { PLUGINS } from "../plugins/meta.ts";
+import { activePlugins } from "../plugins/index.ts";
 import { type SimSection, type Workspace, store } from "./store.ts";
 import { DRAWING_TABS } from "./drawing-commands.ts";
 import { SIM_MATERIALS, type Study } from "../doc/study.ts";
@@ -59,7 +59,7 @@ const DESIGN_TABS: Tab[] = [
   { id: "knowledge", label: "Conhecimento", groups: [{ title: "Knowledgeware", ids: ["kw.panel", "edit.variables"] }, { title: "Publicação", ids: ["feature.external"] }] },
   { id: "pmi", label: "PMI", groups: [{ title: "PMI 3D e atributos", ids: ["pmi.panel"] }, { title: "Exportar", ids: ["export.step242"] }] },
   { id: "automation", label: "Automação", groups: [{ title: "Scripts", ids: ["script.panel"] }, { title: "Análise integrada", ids: ["galkeel.panel", "calc.panel"] }] },
-  { id: "modules", label: "Módulos", groups: [{ title: "Módulos", ids: PLUGINS.flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)) }] },
+  { id: "modules", label: "Módulos", groups: [{ title: "Módulos", get ids() { return activePlugins(store.state.settings.plugins).flatMap((p) => Object.keys(p.kinds).map((k) => `plugin.${p.id}.${k}`)); } }] },
 ];
 
 const ASM_TABS: Tab[] = [

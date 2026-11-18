@@ -47,3 +47,19 @@ test("jobLimits: aceita, corta nos máximos e ignora inválidos", () => {
   assert.deepEqual(jobLimits({ meshTimeout: -1, solveTimeout: "abc" }), {});
   assert.deepEqual(jobLimits({}), {});
 });
+
+test("sanitizeSettings: plugins e helpExpanded têm defeito seguro e fundem com definições antigas", () => {
+  assert.equal(DEFAULT_SETTINGS.helpExpanded, false);
+  assert.deepEqual(DEFAULT_SETTINGS.plugins, { galkeelHull: false });
+  // definições antigas (sem as chaves novas)
+  const velho = sanitizeSettings({ theme: "dark" });
+  assert.deepEqual(velho.plugins, { galkeelHull: false });
+  assert.equal(velho.helpExpanded, false);
+  // válidos preservados; inválidos descartados
+  assert.equal(sanitizeSettings({ plugins: { galkeelHull: true }, helpExpanded: true }).plugins.galkeelHull, true);
+  assert.equal(sanitizeSettings({ helpExpanded: true }).helpExpanded, true);
+  const mau = sanitizeSettings({ plugins: "sim", helpExpanded: "sim" } as unknown as Partial<Settings>);
+  assert.deepEqual(mau.plugins, { galkeelHull: false });
+  assert.equal(mau.helpExpanded, false);
+  assert.deepEqual(sanitizeSettings({ plugins: { galkeelHull: 1, outro: true } } as unknown as Partial<Settings>).plugins, { galkeelHull: false });
+});

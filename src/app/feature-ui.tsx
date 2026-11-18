@@ -6,7 +6,7 @@ import type { FunctionComponent } from "preact";
 import type { Feature, FeatureOf, FeatureType, HoleKind } from "../doc/types.ts";
 import { SHEET_SOURCES, TOOL_FEATURES } from "../doc/features.ts";
 import { METRIC_SIZES, METRIC } from "../doc/holes.ts";
-import { PLUGINS } from "../plugins/meta.ts";
+import { knownPlugin } from "../plugins/index.ts";
 import { AxisSelect, Check, EndEditor, ExprInput, FeatureChecklist, Field, OPS, PathSelect, PlaneSelect, RefList, RegionList, Select, SketchSelect, SweepOptionsEditor } from "./forms.tsx";
 import { SURFACE_UI } from "./feature-ui-surfaces.tsx";
 import { MISC_UI } from "./feature-ui-misc.tsx";
@@ -208,7 +208,7 @@ const SOLID_UI: { readonly [K in SolidUiType]: FeatureUi<K> } = {
     </>
   ),
   plugin: ({ f, up }) => {
-    const p = PLUGINS.find((x) => x.id === f.plugin);
+    const p = knownPlugin(f.plugin);
     const kind = p?.kinds[f.kind];
     return (
       <>

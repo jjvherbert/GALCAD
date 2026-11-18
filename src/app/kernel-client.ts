@@ -1,6 +1,8 @@
 // Cliente do worker do núcleo: pedidos com id e reconstruções coalescidas (só a mais recente conta).
 // Um pedido que não responde dentro do limite, um erro do worker ou um cancelamento pelo utilizador
 // reiniciam o worker: as promessas pendentes são rejeitadas e nada fica pendurado.
+import { gateRequest } from "./plugin-gate.ts";
+import type { PluginFlags } from "../plugins/registry.ts";
 import type { CadDocument } from "../doc/types.ts";
 import type { CadProject, PartDoc } from "../doc/project.ts";
 import type {
@@ -35,6 +37,8 @@ export interface KernelClientOptions {
   onRestart?: (info: RestartInfo) => void;
   /** Chamado quando o worker passa de livre a ocupado e vice-versa. */
   onBusy?: (busy: boolean) => void;
+  /** Plugins ligados nas definições, lido a cada pedido: as features de plugins desligados vão suprimidas. */
+  flags?: () => PluginFlags;
 }
 
 // o padrão literal `new Worker(new URL(...), ...)` tem de ficar assim para o Vite empacotar o worker
@@ -57,6 +61,7 @@ export class KernelClient {
   private readonly timeoutMs: () => number;
   private readonly onRestart?: (info: RestartInfo) => void;
   private readonly onBusy?: (busy: boolean) => void;
+  private readonly flags?: () => PluginFlags;
   private wasBusy = false;
   private worker!: WorkerLike;
   private seq = 0;
@@ -74,6 +79,7 @@ export class KernelClient {
     this.timeoutMs = opts.timeoutMs ?? (() => DEFAULT_TIMEOUT_MS);
     this.onRestart = opts.onRestart;
     this.onBusy = opts.onBusy;
+    this.flags = opts.flags;
     this.spawn();
   }
 
@@ -141,7 +147,8 @@ export class KernelClient {
     return true;
   }
 
-  private call<T>(req: Request): Promise<T> {
+  private call<T>(request: Request): Promise<T> {
+    const req = this.flags ? gateRequest(request, this.flags()) : request;
     const id = ++this.seq;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { type: req.type, resolve: resolve as (v: never) => void, reject });

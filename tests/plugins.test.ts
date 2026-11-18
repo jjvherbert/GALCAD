@@ -1,7 +1,10 @@
 // Contrato dos plugins: metadados coerentes, ajuda obrigatória e schema dos parâmetros validado antes de construir.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PLUGIN_METAS, PLUGINS, pluginKind } from "../src/plugins/meta.ts";
+import { PLUGIN_METAS, pluginKind } from "../src/plugins/meta.ts";
+import { activePlugins, ALL_PLUGIN_FLAGS } from "../src/plugins/index.ts";
+
+const PLUGINS = activePlugins(ALL_PLUGIN_FLAGS);
 import { evalPluginParams } from "../src/plugins/params.ts";
 import type { PluginKind } from "../src/plugins/types.ts";
 import { FEATURE_HELP, helpForFeature } from "../src/app/feature-help.ts";

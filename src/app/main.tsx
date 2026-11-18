@@ -180,6 +180,8 @@ function App() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t?.tagName === "INPUT" || t?.tagName === "TEXTAREA" || t?.tagName === "SELECT") return;
+      // Enter/Espaço num resumo (cartão «O que faz») abrem-no: não são atalhos
+      if (t?.tagName === "SUMMARY" && (e.key === "Enter" || e.key === " ")) return;
       // no esboço, o editor trata as suas teclas; aqui só as de ficheiro
       if (store.state.sketch && !((e.ctrlKey || e.metaKey) && ["s", "o", "n", ","].includes(e.key.toLowerCase()))) return;
       if (store.state.showVariables || store.state.showSettings || store.state.showMaterials) return;

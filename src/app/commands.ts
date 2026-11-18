@@ -2,7 +2,7 @@
 // Usado pelo teclado, pela barra de atalhos (S), pelos gestos e pelos menus.
 import type { FeatureType, PlaneRef, Vec3 } from "../doc/types.ts";
 import { FEATURE_ICONS, FEATURE_LABELS, SURFACE_TYPES } from "../doc/features.ts";
-import { PLUGINS } from "../plugins/meta.ts";
+import { activePlugins, ALL_PLUGIN_FLAGS } from "../plugins/index.ts";
 import { store } from "./store.ts";
 import type { Viewport } from "./viewport.ts";
 import { VIEWS, type ViewName } from "./viewport-views.ts";
@@ -42,11 +42,13 @@ export interface Command {
   /** Atalhos, no formato "Ctrl+Shift+Z", "F", "Space", "ArrowLeft". */
   keys?: string[];
   icon?: string;
-  /** Rótulo curto na barra (o `label` completo fica na dica e na paleta de comandos). */
-  short?: string;
+  /** Rótulo curto na barra (o `label` completo fica na dica e na paleta de comandos). Obrigatório. */
+  short: string;
   run: () => void;
   /** Comando de criação (repetível com Enter). */
   repeatable?: boolean;
+  /** Id do plugin de que o comando depende: só aparece e corre com esse plugin ativo. */
+  plugin?: string;
 }
 
 let viewport: Viewport | null = null;
@@ -79,6 +81,8 @@ function normalTo() {
   store.set({ message: "Normal a: selecione uma face plana ou um plano" });
 }
 
+const EXPORT_SHORT: Record<string, string> = { step: "STEP AP214", step242: "STEP AP242", stl: "STL", "3mf": "3MF", obj: "OBJ", glb: "glTF" };
+
 const FEATURE_GROUP: Partial<Record<FeatureType, Command["group"]>> = { sketch: "Esboço", plane: "Referências", axis: "Referências", csys: "Referências" };
 
 const MATE_NAMES = { coincident: "coincidente", concentric: "concêntrico", parallel: "paralelo", perpendicular: "perpendicular", distance: "distância", angle: "ângulo", tangent: "tangente", lock: "fixar" } as const;
@@ -88,6 +92,7 @@ function featureCommand(type: FeatureType): Command {
   return {
     id: type === "sketch" ? "sketch.new" : `feature.${type}`,
     label: FEATURE_LABELS[type],
+    short: type === "untrim" ? "Desaparar" : FEATURE_LABELS[type].replace(/^Superfície /, "Sup. "),
     group: FEATURE_GROUP[type] ?? (SURFACE_TYPES.includes(type) ? "Superfícies" : "Features"),
     icon: FEATURE_ICONS[type],
     repeatable: true,
@@ -97,60 +102,60 @@ function featureCommand(type: FeatureType): Command {
 
 export const COMMANDS: Command[] = [
   // vistas (Ctrl+1…8 como no SolidWorks)
-  ...(Object.keys(VIEWS) as ViewName[]).map((n): Command => ({ id: `view.${n}`, label: `Vista ${VIEWS[n].label}`, group: "Vista", keys: [VIEWS[n].key], run: () => viewport?.view(n) })),
-  { id: "view.normal", label: "Normal a", group: "Vista", keys: ["Ctrl+8"], icon: "⊥", run: normalTo },
-  { id: "view.fit", label: "Ajustar ao ecrã", group: "Vista", keys: ["F"], icon: "⤢", run: () => viewport?.fit() },
-  { id: "view.zoomIn", label: "Aproximar", group: "Vista", keys: ["Shift+Z"], run: () => viewport?.zoomAt(1 / 1.25) },
-  { id: "view.zoomOut", label: "Afastar", group: "Vista", keys: ["Z"], run: () => viewport?.zoomAt(1.25) },
-  { id: "view.previous", label: "Vista anterior", group: "Vista", keys: ["Ctrl+Shift+Z"], icon: "⟲", run: () => viewport?.previousView() },
-  { id: "view.orientation", label: "Orientação da vista…", group: "Vista", keys: ["Space"], icon: "⬚", run: () => store.set({ orientationMenu: { at: lastPointer } }) },
-  { id: "view.rotLeft", label: "Rodar para a esquerda", group: "Vista", keys: ["ArrowLeft"], run: () => viewport?.rotateBy(-store.state.settings.arrowStep, 0) },
-  { id: "view.rotRight", label: "Rodar para a direita", group: "Vista", keys: ["ArrowRight"], run: () => viewport?.rotateBy(store.state.settings.arrowStep, 0) },
-  { id: "view.rotUp", label: "Rodar para cima", group: "Vista", keys: ["ArrowUp"], run: () => viewport?.rotateBy(0, -store.state.settings.arrowStep) },
-  { id: "view.rotDown", label: "Rodar para baixo", group: "Vista", keys: ["ArrowDown"], run: () => viewport?.rotateBy(0, store.state.settings.arrowStep) },
-  { id: "view.rot90Left", label: "Rodar 90° para a esquerda", group: "Vista", keys: ["Shift+ArrowLeft"], run: () => viewport?.rotateBy(-90, 0) },
-  { id: "view.rot90Right", label: "Rodar 90° para a direita", group: "Vista", keys: ["Shift+ArrowRight"], run: () => viewport?.rotateBy(90, 0) },
-  { id: "view.rot90Up", label: "Rodar 90° para cima", group: "Vista", keys: ["Shift+ArrowUp"], run: () => viewport?.rotateBy(0, -90) },
-  { id: "view.rot90Down", label: "Rodar 90° para baixo", group: "Vista", keys: ["Shift+ArrowDown"], run: () => viewport?.rotateBy(0, 90) },
-  { id: "view.rollLeft", label: "Rolar para a esquerda", group: "Vista", keys: ["Alt+ArrowLeft"], run: () => viewport?.roll(-store.state.settings.arrowStep) },
-  { id: "view.rollRight", label: "Rolar para a direita", group: "Vista", keys: ["Alt+ArrowRight"], run: () => viewport?.roll(store.state.settings.arrowStep) },
-  { id: "view.panLeft", label: "Deslocar para a esquerda", group: "Vista", keys: ["Ctrl+ArrowLeft"], run: () => viewport?.panBy(-40, 0) },
-  { id: "view.panRight", label: "Deslocar para a direita", group: "Vista", keys: ["Ctrl+ArrowRight"], run: () => viewport?.panBy(40, 0) },
-  { id: "view.panUp", label: "Deslocar para cima", group: "Vista", keys: ["Ctrl+ArrowUp"], run: () => viewport?.panBy(0, -40) },
-  { id: "view.panDown", label: "Deslocar para baixo", group: "Vista", keys: ["Ctrl+ArrowDown"], run: () => viewport?.panBy(0, 40) },
-  { id: "view.styleEdges", label: "Sombreado com arestas", group: "Vista", run: () => setStyle("shadedEdges") },
-  { id: "view.styleShaded", label: "Sombreado", group: "Vista", run: () => setStyle("shaded") },
-  { id: "view.styleWire", label: "Arestas (fio de arame)", group: "Vista", run: () => setStyle("wireframe") },
-  { id: "view.planes", label: "Mostrar/ocultar planos", group: "Vista", run: () => { store.updateSettings({ showPlanes: !store.state.settings.showPlanes }); store.rebuild(0); } },
+  ...(Object.keys(VIEWS) as ViewName[]).map((n): Command => ({ id: `view.${n}`, label: `Vista ${VIEWS[n].label}`, short: VIEWS[n].label, group: "Vista", keys: [VIEWS[n].key], run: () => viewport?.view(n) })),
+  { id: "view.normal", label: "Normal a", short: "Normal a", group: "Vista", keys: ["Ctrl+8"], icon: "⊥", run: normalTo },
+  { id: "view.fit", label: "Ajustar ao ecrã", short: "Ajustar", group: "Vista", keys: ["F"], icon: "⤢", run: () => viewport?.fit() },
+  { id: "view.zoomIn", label: "Aproximar", short: "Aproximar", group: "Vista", keys: ["Shift+Z"], run: () => viewport?.zoomAt(1 / 1.25) },
+  { id: "view.zoomOut", label: "Afastar", short: "Afastar", group: "Vista", keys: ["Z"], run: () => viewport?.zoomAt(1.25) },
+  { id: "view.previous", label: "Vista anterior", short: "Anterior", group: "Vista", keys: ["Ctrl+Shift+Z"], icon: "⟲", run: () => viewport?.previousView() },
+  { id: "view.orientation", label: "Orientação da vista…", short: "Orientação…", group: "Vista", keys: ["Space"], icon: "⬚", run: () => store.set({ orientationMenu: { at: lastPointer } }) },
+  { id: "view.rotLeft", label: "Rodar para a esquerda", short: "Rodar esq.", group: "Vista", keys: ["ArrowLeft"], run: () => viewport?.rotateBy(-store.state.settings.arrowStep, 0) },
+  { id: "view.rotRight", label: "Rodar para a direita", short: "Rodar dir.", group: "Vista", keys: ["ArrowRight"], run: () => viewport?.rotateBy(store.state.settings.arrowStep, 0) },
+  { id: "view.rotUp", label: "Rodar para cima", short: "Rodar cima", group: "Vista", keys: ["ArrowUp"], run: () => viewport?.rotateBy(0, -store.state.settings.arrowStep) },
+  { id: "view.rotDown", label: "Rodar para baixo", short: "Rodar baixo", group: "Vista", keys: ["ArrowDown"], run: () => viewport?.rotateBy(0, store.state.settings.arrowStep) },
+  { id: "view.rot90Left", label: "Rodar 90° para a esquerda", short: "90° esq.", group: "Vista", keys: ["Shift+ArrowLeft"], run: () => viewport?.rotateBy(-90, 0) },
+  { id: "view.rot90Right", label: "Rodar 90° para a direita", short: "90° dir.", group: "Vista", keys: ["Shift+ArrowRight"], run: () => viewport?.rotateBy(90, 0) },
+  { id: "view.rot90Up", label: "Rodar 90° para cima", short: "90° cima", group: "Vista", keys: ["Shift+ArrowUp"], run: () => viewport?.rotateBy(0, -90) },
+  { id: "view.rot90Down", label: "Rodar 90° para baixo", short: "90° baixo", group: "Vista", keys: ["Shift+ArrowDown"], run: () => viewport?.rotateBy(0, 90) },
+  { id: "view.rollLeft", label: "Rolar para a esquerda", short: "Rolar esq.", group: "Vista", keys: ["Alt+ArrowLeft"], run: () => viewport?.roll(-store.state.settings.arrowStep) },
+  { id: "view.rollRight", label: "Rolar para a direita", short: "Rolar dir.", group: "Vista", keys: ["Alt+ArrowRight"], run: () => viewport?.roll(store.state.settings.arrowStep) },
+  { id: "view.panLeft", label: "Deslocar para a esquerda", short: "Deslocar esq.", group: "Vista", keys: ["Ctrl+ArrowLeft"], run: () => viewport?.panBy(-40, 0) },
+  { id: "view.panRight", label: "Deslocar para a direita", short: "Deslocar dir.", group: "Vista", keys: ["Ctrl+ArrowRight"], run: () => viewport?.panBy(40, 0) },
+  { id: "view.panUp", label: "Deslocar para cima", short: "Deslocar cima", group: "Vista", keys: ["Ctrl+ArrowUp"], run: () => viewport?.panBy(0, -40) },
+  { id: "view.panDown", label: "Deslocar para baixo", short: "Deslocar baixo", group: "Vista", keys: ["Ctrl+ArrowDown"], run: () => viewport?.panBy(0, 40) },
+  { id: "view.styleEdges", label: "Sombreado com arestas", short: "Com arestas", group: "Vista", run: () => setStyle("shadedEdges") },
+  { id: "view.styleShaded", label: "Sombreado", short: "Sombreado", group: "Vista", run: () => setStyle("shaded") },
+  { id: "view.styleWire", label: "Arestas (fio de arame)", short: "Arestas", group: "Vista", run: () => setStyle("wireframe") },
+  { id: "view.planes", label: "Mostrar/ocultar planos", short: "Planos", group: "Vista", run: () => { store.updateSettings({ showPlanes: !store.state.settings.showPlanes }); store.rebuild(0); } },
   // ficheiro e edição
-  { id: "file.new", label: "Novo", group: "Ficheiro", keys: ["Ctrl+N"], run: () => { if (!busy() && (!store.state.dirty || confirm("Descartar as alterações por guardar?"))) store.newDoc(); } },
-  { id: "file.open", label: "Abrir projeto…", group: "Ficheiro", keys: ["Ctrl+O"], run: () => { if (!busy()) void openProject(); } },
-  { id: "file.save", label: "Guardar projeto", group: "Ficheiro", keys: ["Ctrl+S"], run: () => { if (!busy()) saveProject(); } },
-  { id: "file.import", label: "Importar STEP/STL…", group: "Ficheiro", run: () => { if (!busy()) void importStep(); } },
-  ...EXPORTS.map(([f, l]): Command => ({ id: `export.${f}`, label: `Exportar ${l}`, group: "Exportar", run: () => void exportAs(f) })),
-  { id: "edit.undo", label: "Desfazer", group: "Editar", keys: ["Ctrl+Z"], run: () => store.undo() },
-  { id: "edit.redo", label: "Refazer", group: "Editar", keys: ["Ctrl+Y"], run: () => store.redo() },
-  { id: "edit.delete", label: "Apagar feature selecionada", group: "Editar", keys: ["Delete"], run: () => { const id = store.state.selectedFeature; if (id && !busy()) store.deleteFeature(id); } },
-  { id: "edit.rebuild", label: "Reconstruir", group: "Editar", keys: ["Ctrl+B"], icon: "🚦", run: () => store.rebuild(0) },
-  { id: "edit.forceRebuild", label: "Forçar reconstrução completa", group: "Editar", keys: ["Ctrl+Q"], run: () => store.rebuild(0, true) },
-  { id: "edit.repeat", label: "Repetir último comando", group: "Editar", keys: ["Enter"], run: repeatLast },
-  { id: "edit.variables", label: "Variáveis globais e equações", group: "Editar", icon: "𝑥", run: () => { if (!store.state.sketch) store.set({ showVariables: true }); } },
-  { id: "edit.settings", label: "Definições…", group: "Editar", keys: ["Ctrl+,"], icon: "⚙", run: () => store.set({ showSettings: true }) },
-  { id: "ui.shortcutBar", label: "Barra de atalhos", group: "Editar", keys: ["S"], run: () => store.set({ shortcutBar: { at: lastPointer } }) },
-  { id: "edit.escape", label: "Cancelar / limpar seleção", group: "Editar", keys: ["Escape"], run: escape },
+  { id: "file.new", label: "Novo", short: "Novo", group: "Ficheiro", keys: ["Ctrl+N"], run: () => { if (!busy() && (!store.state.dirty || confirm("Descartar as alterações por guardar?"))) store.newDoc(); } },
+  { id: "file.open", label: "Abrir projeto…", short: "Abrir…", group: "Ficheiro", keys: ["Ctrl+O"], run: () => { if (!busy()) void openProject(); } },
+  { id: "file.save", label: "Guardar projeto", short: "Guardar", group: "Ficheiro", keys: ["Ctrl+S"], run: () => { if (!busy()) saveProject(); } },
+  { id: "file.import", label: "Importar STEP/STL…", short: "Importar…", group: "Ficheiro", run: () => { if (!busy()) void importStep(); } },
+  ...EXPORTS.map(([f, l]): Command => ({ id: `export.${f}`, label: `Exportar ${l}`, short: EXPORT_SHORT[f] ?? f.toUpperCase(), group: "Exportar", run: () => void exportAs(f) })),
+  { id: "edit.undo", label: "Desfazer", short: "Desfazer", group: "Editar", keys: ["Ctrl+Z"], run: () => store.undo() },
+  { id: "edit.redo", label: "Refazer", short: "Refazer", group: "Editar", keys: ["Ctrl+Y"], run: () => store.redo() },
+  { id: "edit.delete", label: "Apagar feature selecionada", short: "Apagar", group: "Editar", keys: ["Delete"], run: () => { const id = store.state.selectedFeature; if (id && !busy()) store.deleteFeature(id); } },
+  { id: "edit.rebuild", label: "Reconstruir", short: "Reconstruir", group: "Editar", keys: ["Ctrl+B"], icon: "🚦", run: () => store.rebuild(0) },
+  { id: "edit.forceRebuild", label: "Forçar reconstrução completa", short: "Forçar reconstr.", group: "Editar", keys: ["Ctrl+Q"], run: () => store.rebuild(0, true) },
+  { id: "edit.repeat", label: "Repetir último comando", short: "Repetir", group: "Editar", keys: ["Enter"], run: repeatLast },
+  { id: "edit.variables", label: "Variáveis globais e equações", short: "Variáveis", group: "Editar", icon: "𝑥", run: () => { if (!store.state.sketch) store.set({ showVariables: true }); } },
+  { id: "edit.settings", label: "Definições…", short: "Definições…", group: "Editar", keys: ["Ctrl+,"], icon: "⚙", run: () => store.set({ showSettings: true }) },
+  { id: "ui.shortcutBar", label: "Barra de atalhos", short: "Barra de atalhos", group: "Editar", keys: ["S"], run: () => store.set({ shortcutBar: { at: lastPointer } }) },
+  { id: "edit.escape", label: "Cancelar / limpar seleção", short: "Cancelar", group: "Editar", keys: ["Escape"], run: escape },
   // features
   ...(["sketch", "extrude", "revolve", "sweep", "loft", "rib", "hole", "fillet", "chamfer", "shell", "draft", "linearPattern", "circularPattern", "mirror", "plane", "axis", "csys"] as FeatureType[]).map(featureCommand),
   ...SURFACE_TYPES.map(featureCommand),
   featureCommand("external"),
   // análises (Avaliar)
-  { id: "analysis.zebra", label: "Riscas de zebra", group: "Avaliar", icon: "▥", run: () => store.setAnalysis(store.state.analysis?.kind === "zebra" ? null : { kind: "zebra" }) },
-  { id: "analysis.curvature", label: "Curvatura", group: "Avaliar", icon: "◍", run: () => void store.setAnalysis(store.state.analysis?.kind === "curvature" ? null : { kind: "curvature", mode: "gauss" }) },
-  { id: "analysis.draft", label: "Análise de inclinação", group: "Avaliar", icon: "⏣", run: () => store.setAnalysis(store.state.analysis?.kind === "draft" ? null : { kind: "draft", dir: "Z", angle: 1 }) },
-  { id: "analysis.deviation", label: "Análise de desvio (tangência nas arestas)", group: "Avaliar", icon: "∡", run: () => void store.setAnalysis(store.state.analysis?.kind === "deviation" ? null : { kind: "deviation" }) },
-  { id: "analysis.continuity", label: "Continuidade G0–G3 (classe A)", group: "Avaliar", icon: "≋", run: () => void store.setAnalysis(store.state.analysis?.kind === "continuity" ? null : { kind: "continuity" }) },
-  { id: "analysis.highlight", label: "Linhas de realce (highlight)", group: "Avaliar", icon: "☰", run: () => void store.setAnalysis(store.state.analysis?.kind === "highlight" ? null : { kind: "highlight", axis: "X", spacing: 10 }) },
+  { id: "analysis.zebra", label: "Riscas de zebra", short: "Riscas de zebra", group: "Avaliar", icon: "▥", run: () => store.setAnalysis(store.state.analysis?.kind === "zebra" ? null : { kind: "zebra" }) },
+  { id: "analysis.curvature", label: "Curvatura", short: "Curvatura", group: "Avaliar", icon: "◍", run: () => void store.setAnalysis(store.state.analysis?.kind === "curvature" ? null : { kind: "curvature", mode: "gauss" }) },
+  { id: "analysis.draft", label: "Análise de inclinação", short: "Inclinação", group: "Avaliar", icon: "⏣", run: () => store.setAnalysis(store.state.analysis?.kind === "draft" ? null : { kind: "draft", dir: "Z", angle: 1 }) },
+  { id: "analysis.deviation", label: "Análise de desvio (tangência nas arestas)", short: "Desvio", group: "Avaliar", icon: "∡", run: () => void store.setAnalysis(store.state.analysis?.kind === "deviation" ? null : { kind: "deviation" }) },
+  { id: "analysis.continuity", label: "Continuidade G0–G3 (classe A)", short: "Continuidade", group: "Avaliar", icon: "≋", run: () => void store.setAnalysis(store.state.analysis?.kind === "continuity" ? null : { kind: "continuity" }) },
+  { id: "analysis.highlight", label: "Linhas de realce (highlight)", short: "Realce", group: "Avaliar", icon: "☰", run: () => void store.setAnalysis(store.state.analysis?.kind === "highlight" ? null : { kind: "highlight", axis: "X", spacing: 10 }) },
   {
-    id: "analysis.combs", label: "Pentes de curvatura (porcupine)", group: "Avaliar", icon: "⫶",
+    id: "analysis.combs", label: "Pentes de curvatura (porcupine)", short: "Pentes", group: "Avaliar", icon: "⫶",
     run: () => {
       if (store.state.analysis?.kind === "combs") return void store.setAnalysis(null);
       const edges = store.state.selection.filter((s) => s.kind === "edge").map((s) => s.name);
@@ -159,16 +164,16 @@ export const COMMANDS: Command[] = [
   },
   // montagem
   ...(["coincident", "concentric", "parallel", "perpendicular", "distance", "angle", "tangent", "lock"] as const).map((k): Command => ({
-    id: `asm.mate.${k}`, label: `Mate: ${MATE_NAMES[k]}`, group: "Montagem", icon: MATE_ICON[k], repeatable: true,
+    id: `asm.mate.${k}`, label: `Mate: ${MATE_NAMES[k]}`, short: MATE_NAMES[k].charAt(0).toUpperCase() + MATE_NAMES[k].slice(1), group: "Montagem", icon: MATE_ICON[k], repeatable: true,
     run: () => { if (store.state.active.kind === "assembly" && !store.state.mateEdit) store.startMate(k); },
   })),
-  { id: "galkeel.panel", label: "Galkeel: escantilhonamento de painéis (ISO 12215-5 pela galkeel-calculadora) e relatório", group: "Automação", icon: "⚓", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "galkeel" ? null : "galkeel", edit: null }); } },
-  { id: "calc.panel", label: "Cálculos: atmosfera, asa finita, perfis NACA e XFOIL, colunas, placas", group: "Automação", icon: "∫", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "calc" ? null : "calc", edit: null }); } },
-  { id: "script.panel", label: "Scripts: automação, estudos paramétricos e copiloto", group: "Automação", icon: "{}", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "script" ? null : "script", edit: null }); } },
-  { id: "pmi.panel", label: "PMI: cotas, tolerâncias geométricas, referências, vistas de modelo e atributos", group: "PMI", icon: "⌖", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "pmi" ? null : "pmi", edit: null }); } },
-  { id: "sim.panel", label: "Simulação: estudos FEM/CFD, malha e solvers abertos", group: "Simulação", icon: "≋", run: () => setWorkspace("fem") },
+  { id: "galkeel.panel", label: "Galkeel: escantilhonamento de painéis (ISO 12215-5 pela galkeel-calculadora) e relatório", short: "Painéis Galkeel", group: "Automação", icon: "⚓", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "galkeel" ? null : "galkeel", edit: null }); } },
+  { id: "calc.panel", label: "Cálculos: atmosfera, asa finita, perfis NACA e XFOIL, colunas, placas", short: "Cálculos e perfis", group: "Automação", icon: "∫", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "calc" ? null : "calc", edit: null }); } },
+  { id: "script.panel", label: "Scripts: automação, estudos paramétricos e copiloto", short: "Scripts", group: "Automação", icon: "{}", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "script" ? null : "script", edit: null }); } },
+  { id: "pmi.panel", label: "PMI: cotas, tolerâncias geométricas, referências, vistas de modelo e atributos", short: "Anotações PMI", group: "PMI", icon: "⌖", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "pmi" ? null : "pmi", edit: null }); } },
+  { id: "sim.panel", label: "Simulação: estudos FEM/CFD, malha e solvers abertos", short: "Estudos", group: "Simulação", icon: "≋", run: () => setWorkspace("fem") },
   // espaços de trabalho (Fusion)
-  ...WORKSPACES.map((w): Command => ({ id: `ws.${w.id}`, label: `Espaço de trabalho: ${w.label}`, group: "Vista", icon: w.icon, keys: [`Ctrl+Alt+${WORKSPACES.indexOf(w) + 1}`], run: () => setWorkspace(w.id) })),
+  ...WORKSPACES.map((w): Command => ({ id: `ws.${w.id}`, label: `Espaço de trabalho: ${w.label}`, short: w.label, group: "Vista", icon: w.icon, keys: [`Ctrl+Alt+${WORKSPACES.indexOf(w) + 1}`], run: () => setWorkspace(w.id) })),
   // simulação: novos estudos, secções do modelo, malha, cálculo e resultados
   ...([["static", "Estático", "▤"], ["modal", "Modal", "∿"], ["buckling", "Encurvadura", "⌇"], ["dynamic", "Dinâmico", "⏱"], ["thermal", "Térmico", "♨"]] as const).map(([analysis, label, icon]): Command => ({
     id: `sim.new.${analysis}`, label: `Novo estudo ${label.toLowerCase()}`, short: label, group: "Simulação", icon,
@@ -177,7 +182,7 @@ export const COMMANDS: Command[] = [
   { id: "sim.new.cfdInternal", label: "Novo estudo CFD interno (conduta)", short: "Interno", group: "Simulação", icon: "⇉", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "internal" } as never); } },
   { id: "sim.new.cfdExternal", label: "Novo estudo CFD externo (corpo)", short: "Externo", group: "Simulação", icon: "➶", run: () => { if (store.state.workspace !== "cfd") setWorkspace("cfd"); addStudy("cfd", { regime: "external" } as never); } },
   ...([["study", "Estudo: análise e solver", "⚙"], ["material", "Material", "◧"], ["conditions", "Cargas e apoios", "⤓"], ["contact", "Contacto entre corpos", "⧉"], ["mesh", "Malha: elementos, seeds e controlos", "▦"], ["probes", "Sondas", "⌖"], ["convergence", "Convergência da malha: configurar, correr e extrair", "⤳"], ["check", "Verificação do modelo e compatibilidade por solver", "✔"], ["run", "Resolver: solver e convergência", "▶"], ["results", "Resultados", "◑"]] as const).map(([section, label, icon]): Command => ({
-    id: `sim.section.${section}`, label, short: label.split(":")[0].replace(" entre corpos", ""), group: "Simulação", icon, run: () => openSimSection(section),
+    id: `sim.section.${section}`, label, short: section === "check" ? "Verificação" : label.split(":")[0].replace(" entre corpos", ""), group: "Simulação", icon, run: () => openSimSection(section),
   })),
   // cargas, apoios e sondas a partir da barra: abre a secção com a seleção de faces ativa
   ...([["fixed", "Encastramento (apoio fixo nas faces)", "Encastrar", "⊥"], ["displacement", "Deslocamento imposto nas faces", "Deslocam.", "⇥"], ["symmetry", "Simetria: impede o deslocamento normal ao plano (modelo parcial)", "Simetria", "⇋"], ["force", "Força total distribuída nas faces", "Força", "↓"], ["pointForce", "Força concentrada num ponto (nó mais próximo)", "Força pontual", "⬇"], ["pressure", "Pressão normal nas faces", "Pressão", "⇊"], ["gravity", "Gravidade (peso próprio)", "Gravidade", "g"], ["spring", "Mola à terra (fundação elástica nas faces ou arestas)", "Mola", "⌇"], ["mass", "Massa pontual (massa concentrada nas faces ou arestas)", "Massa", "●"], ["coupling", "Acoplamento rígido/distribuído (RBE2/RBE3) a um ponto de referência", "Acoplamento", "⊕"], ["temperature", "Temperatura imposta nas faces", "Temperatura", "🌡"], ["convection", "Convecção nas faces (h, T do fluido)", "Convecção", "≈"], ["heatFlux", "Fluxo de calor nas faces", "Fluxo", "⇶"]] as const).map(([kind, label, short, icon]): Command => ({
@@ -197,16 +202,16 @@ export const COMMANDS: Command[] = [
   { id: "sim.convergence.run", label: "Correr o estudo de convergência da malha", short: "Correr convergência", group: "Simulação", icon: "⤳", run: () => runConvergence() },
   { id: "sim.run", label: "Calcular no agente local", short: "Calcular", group: "Simulação", icon: "▶", keys: ["F5"], run: () => void runActiveStudy(false) },
   { id: "sim.toggleResult", label: "Mostrar/esconder o resultado no 3D", short: "Mostrar/esconder", group: "Simulação", icon: "◐", run: () => store.set({ simHidden: !store.state.simHidden }) },
-  { id: "kw.panel", label: "Conhecimento: regras, verificações, configurações e templates", group: "Conhecimento", icon: "⚙", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "knowledge" ? null : "knowledge" }); } },
-  { id: "asm.bom", label: "Lista de materiais (BOM) e assistente", group: "Montagem", icon: "☰", run: () => { if (store.state.active.kind === "assembly") store.set({ sidePanel: store.state.sidePanel === "bom" ? null : "bom", mateEdit: null, componentEdit: null }); } },
-  { id: "asm.interference", label: "Deteção de interferências", group: "Montagem", icon: "⧯", run: () => { if (store.state.active.kind === "assembly") void store.checkInterference(); } },
+  { id: "kw.panel", label: "Conhecimento: regras, verificações, configurações e templates", short: "Regras e configs.", group: "Conhecimento", icon: "⚙", run: () => { if (store.state.active.kind === "part") store.set({ sidePanel: store.state.sidePanel === "knowledge" ? null : "knowledge" }); } },
+  { id: "asm.bom", label: "Lista de materiais (BOM) e assistente", short: "BOM", group: "Montagem", icon: "☰", run: () => { if (store.state.active.kind === "assembly") store.set({ sidePanel: store.state.sidePanel === "bom" ? null : "bom", mateEdit: null, componentEdit: null }); } },
+  { id: "asm.interference", label: "Deteção de interferências", short: "Interferências", group: "Montagem", icon: "⧯", run: () => { if (store.state.active.kind === "assembly") void store.checkInterference(); } },
   // desenho
   ...([
     ["dr.view.projected", "Vista projetada", "⊞", "projected"], ["dr.view.section", "Vista de corte", "⊟", "section"], ["dr.view.detail", "Vista de pormenor", "⊙", "detail"], ["dr.view.aux", "Vista auxiliar", "⟋", "auxiliary"],
     ["dr.dim", "Cota inteligente", "↔", "dim"], ["dr.note", "Nota", "A", "note"], ["dr.gdt", "Tolerância geométrica", "⌖", "gdt"], ["dr.datum", "Referência (datum)", "▣", "datum"],
     ["dr.surface", "Estado de superfície", "√", "surface"], ["dr.weld", "Símbolo de soldadura", "⌳", "weld"], ["dr.balloon", "Balão", "①", "balloon"], ["dr.bom", "Tabela de BOM", "☰", "bom"],
   ] as const).map(([id, label, icon, kind]): Command => ({
-    id, label, group: "Desenho", icon, repeatable: true,
+    id, label, short: label.replace(/^Vista (de )?/, "").replace(/^./, (c) => c.toUpperCase()), group: "Desenho", icon, repeatable: true,
     run: () => {
       if (store.state.active.kind !== "drawing") return;
       const sel = store.state.drawingSel;
@@ -214,29 +219,40 @@ export const COMMANDS: Command[] = [
       store.set({ drawingTool: { kind, ...(parent ? { parent, points: [] } : {}) } as never });
     },
   })),
-  { id: "dr.create2d", label: "Criar desenho 2D (vistas e escala automáticas)", group: "Desenho", icon: "▤", run: () => store.createDrawing2D() },
+  { id: "dr.create2d", label: "Criar desenho 2D (vistas e escala automáticas)", short: "Criar 2D", group: "Desenho", icon: "▤", run: () => store.createDrawing2D() },
   {
     id: "dr.window", label: "Abrir o desenho numa janela própria (p. ex. noutro monitor)", short: "Nova janela", group: "Desenho", icon: "⧉",
     run: () => { const a = store.state.active; if (a.kind === "drawing") window.open(drawingWindowUrl(location.pathname, a.id), "_blank"); },
   },
-  { id: "dr.modelDims", label: "Importar cotas do modelo", group: "Desenho", icon: "⇲", run: () => drawingAction("modelDims") },
-  { id: "dr.pmi", label: "Importar PMI do modelo (cotas com tolerância, GD&T, referências, rugosidade, notas)", group: "Desenho", icon: "⌖", run: () => drawingAction("pmi") },
-  { id: "dr.autoBalloon", label: "Balões automáticos", group: "Desenho", icon: "⑳", run: () => drawingAction("balloons") },
-  ...(["pdf", "dxf", "svg"] as const).map((f): Command => ({ id: `dr.export.${f}`, label: `Exportar ${f.toUpperCase()}`, group: "Desenho", icon: "⇪", run: () => { if (store.state.active.kind === "drawing") exportDrawing(f); } })),
-  { id: "analysis.off", label: "Desligar análise", group: "Avaliar", run: () => store.setAnalysis(null) },
-  { id: "feature.cut", label: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy() && store.state.active.kind === "part") { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
-  ...PLUGINS.flatMap((p) => Object.entries(p.kinds).map(([k, kind]): Command => ({
-    id: `plugin.${p.id}.${k}`, label: `${p.name}: ${kind.label}`, group: "Módulos", icon: "⧉", repeatable: true,
-    run: () => { if (!busy()) store.startFeature("plugin", { plugin: p.id, kind: k }); },
+  { id: "dr.modelDims", label: "Importar cotas do modelo", short: "Cotas do modelo", group: "Desenho", icon: "⇲", run: () => drawingAction("modelDims") },
+  { id: "dr.pmi", label: "Importar PMI do modelo (cotas com tolerância, GD&T, referências, rugosidade, notas)", short: "PMI do modelo", group: "Desenho", icon: "⌖", run: () => drawingAction("pmi") },
+  { id: "dr.autoBalloon", label: "Balões automáticos", short: "Balões auto.", group: "Desenho", icon: "⑳", run: () => drawingAction("balloons") },
+  ...(["pdf", "dxf", "svg"] as const).map((f): Command => ({ id: `dr.export.${f}`, label: `Exportar ${f.toUpperCase()}`, short: f.toUpperCase(), group: "Desenho", icon: "⇪", run: () => { if (store.state.active.kind === "drawing") exportDrawing(f); } })),
+  { id: "analysis.off", label: "Desligar análise", short: "Desligar", group: "Avaliar", run: () => store.setAnalysis(null) },
+  { id: "feature.cut", label: "Corte extrudido", short: "Corte extrudido", group: "Features", icon: "▯", repeatable: true, run: () => { if (!busy() && store.state.active.kind === "part") { store.startFeature("extrude"); store.updateDraft({ op: "cut", end: { type: "throughAll" } } as never); } } },
+  // um comando por tipo de cada plugin instalado; a visibilidade e a execução dependem da flag (`commandAvailable`)
+  ...activePlugins(ALL_PLUGIN_FLAGS).flatMap((p) => Object.entries(p.kinds).map(([k, kind]): Command => ({
+    id: `plugin.${p.id}.${k}`, label: `${p.name}: ${kind.label}`, short: kind.label, group: "Módulos", icon: "⧉", repeatable: true, plugin: p.id,
+    run: () => { if (!busy() && pluginActive(p.id)) store.startFeature("plugin", { plugin: p.id, kind: k }); },
   }))),
 ];
+
+/** O plugin está ativo com as definições atuais? (o worker não tem localStorage: decide-se aqui, na app) */
+function pluginActive(id: string): boolean {
+  return activePlugins(store.state.settings.plugins).some((p) => p.id === id);
+}
+
+/** Comando disponível com as definições atuais? Os de plugins desligados não aparecem nem correm. */
+export function commandAvailable(c: Command): boolean {
+  return !c.plugin || pluginActive(c.plugin);
+}
 
 export const commandById = new Map(COMMANDS.map((c) => [c.id, c]));
 
 /** Executa um comando pelo id (e memoriza-o para "repetir", se for de criação). */
 export function runCommand(id: string) {
   const c = commandById.get(id);
-  if (!c) return;
+  if (!c || !commandAvailable(c)) return;
   store.closeOverlays();
   if (c.repeatable) store.set({ lastCommand: id });
   c.run();

@@ -4,9 +4,16 @@
 import type { ComponentChildren, JSX } from "preact";
 import type { FeatureType } from "../doc/types.ts";
 import { type ArtKey, CUT_HELP, FEATURE_HELP, type Help } from "./feature-help.ts";
-import { PLUGINS } from "../plugins/meta.ts";
+import { store } from "./store.ts";
+import { activePlugins, ALL_PLUGIN_FLAGS } from "../plugins/index.ts";
 
 export { type Help, helpForFeature } from "./feature-help.ts";
+
+/** Ciclo de cada animação: 1,8 s de movimento + 0,6 s de pausa com o resultado visível. Única fonte da duração (`dur`). */
+export const ANIM_CYCLE_MS = 1800;
+export const ANIM_PAUSE_MS = 600;
+export const ANIM_MS = ANIM_CYCLE_MS + ANIM_PAUSE_MS;
+const DUR = `${ANIM_MS / 1000}s`;
 
 const MOTION = typeof matchMedia === "function" ? !matchMedia("(prefers-reduced-motion: reduce)").matches : true;
 
@@ -14,7 +21,8 @@ const MOTION = typeof matchMedia === "function" ? !matchMedia("(prefers-reduced-
 
 type P2 = [number, number];
 /** Projeção isométrica para o ecrã de 120 × 84. */
-const iso = (x: number, y: number, z: number): P2 => [60 + (x - y) * 0.866, 66 + (x + y) * 0.5 - z];
+const ISO_K = 0.62, ISO_Y0 = 50;
+const iso = (x: number, y: number, z: number): P2 => [60 + (x - y) * 0.866 * ISO_K, ISO_Y0 + ((x + y) * 0.5 - z) * ISO_K];
 const pts = (a: P2[]) => a.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
 const box = (x: number, y: number, z: number, w: number, d: number, h: number) => ({
   top: pts([iso(x, y, z + h), iso(x + w, y, z + h), iso(x + w, y + d, z + h), iso(x, y + d, z + h)]),
@@ -24,9 +32,9 @@ const box = (x: number, y: number, z: number, w: number, d: number, h: number) =
 const floor = (x: number, y: number, w: number, d: number, z = 0) => pts([iso(x, y, z), iso(x + w, y, z), iso(x + w, y + d, z), iso(x, y + d, z)]);
 
 /** `<animate>` em ciclo; em movimento reduzido não anima. */
-function An({ attr, values, dur = 3.4, keyTimes }: { attr: string; values: string[]; dur?: number; keyTimes?: string }) {
+function An({ attr, values, keyTimes }: { attr: string; values: string[]; keyTimes?: string }) {
   if (!MOTION) return null;
-  return <animate attributeName={attr} values={values.join(";")} dur={`${dur}s`} repeatCount="indefinite" keyTimes={keyTimes} />;
+  return <animate attributeName={attr} values={values.join(";")} dur={DUR} repeatCount="indefinite" keyTimes={keyTimes} />;
 }
 
 /** Polígono que muda de forma: `frames` = [antes, depois, depois, antes]; parado mostra o depois. */
@@ -61,7 +69,7 @@ function Solid({ x, y, z = 0, w, d, h, cls = "" }: { x: number; y: number; z?: n
 function Fade({ at = 0.2, children }: { at?: number; children: ComponentChildren }) {
   return (
     <g opacity={MOTION ? 0 : 1}>
-      {MOTION && <animate attributeName="opacity" values="0;1;1;0" keyTimes={`0;${at};0.9;1`} dur="3.4s" repeatCount="indefinite" />}
+      {MOTION && <animate attributeName="opacity" values="0;1;1;0" keyTimes={`0;${at};0.9;1`} dur={DUR} repeatCount="indefinite" />}
       {children}
     </g>
   );
@@ -71,7 +79,7 @@ const Svg = ({ children }: { children: ComponentChildren }) => <svg class="art" 
 
 // --- figuras --------------------------------------------------------------------------
 
-const ART: Record<ArtKey, () => JSX.Element> = {
+export const ART: Record<ArtKey, () => JSX.Element> = {
   sketch: () => (
     <Svg>
       <polygon class="a-plane" points={floor(-10, -10, 60, 60)} />
@@ -104,7 +112,7 @@ const ART: Record<ArtKey, () => JSX.Element> = {
       <rect class="a-sketch" x="60" y="22" width="22" height="42" />
       <g transform="translate(60 0)" opacity={MOTION ? 1 : 1}>
         <g>
-          {MOTION && <animateTransform attributeName="transform" type="scale" values="0.04 1;1 1;1 1;0.04 1" keyTimes="0;0.5;0.9;1" dur="3.4s" repeatCount="indefinite" />}
+          {MOTION && <animateTransform attributeName="transform" type="scale" values="0.04 1;1 1;1 1;0.04 1" keyTimes="0;0.5;0.9;1" dur={DUR} repeatCount="indefinite" />}
           <path class="a-new a-right" d="M-22,24 L-22,62 A22,6 0 0 0 22,62 L22,24 Z" />
           <ellipse class="a-new a-top" cx="0" cy="24" rx="22" ry="6" />
         </g>
@@ -157,8 +165,8 @@ const ART: Record<ArtKey, () => JSX.Element> = {
   ),
   linearPattern: () => (
     <Svg>
-      <Solid x={4} y={22} w={14} d={14} h={14} />
-      {[1, 2, 3].map((i) => <Fade key={i} at={0.1 + 0.16 * i}><Solid x={4 + 20 * i} y={22} w={14} d={14} h={14} cls="a-new" /></Fade>)}
+      <Solid x={4} y={14} w={14} d={14} h={14} />
+      {[1, 2, 3].map((i) => <Fade key={i} at={0.1 + 0.16 * i}><Solid x={4 + 20 * i} y={14} w={14} d={14} h={14} cls="a-new" /></Fade>)}
     </Svg>
   ),
   circularPattern: () => {
@@ -180,7 +188,7 @@ const ART: Record<ArtKey, () => JSX.Element> = {
       <path class="a-right" d="M20,60 L20,20 L44,20 L44,34 L34,34 L34,60 Z" />
       <g transform="translate(60 0)">
         <g opacity={MOTION ? 0 : 1}>
-          {MOTION && <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.3;0.9;1" dur="3.4s" repeatCount="indefinite" />}
+          {MOTION && <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.3;0.9;1" dur={DUR} repeatCount="indefinite" />}
           <path class="a-new a-right" d="M40,60 L40,20 L16,20 L16,34 L26,34 L26,60 Z" />
         </g>
       </g>
@@ -229,7 +237,7 @@ const ART: Record<ArtKey, () => JSX.Element> = {
     <Svg>
       <Solid x={4} y={4} w={40} d={34} h={20} />
       <g>
-        {MOTION && <animateTransform attributeName="transform" type="translate" values="0 0;0 -16;0 -16;0 0" keyTimes="0;0.5;0.9;1" dur="3.4s" repeatCount="indefinite" />}
+        {MOTION && <animateTransform attributeName="transform" type="translate" values="0 0;0 -16;0 -16;0 0" keyTimes="0;0.5;0.9;1" dur={DUR} repeatCount="indefinite" />}
         <polygon class="a-plane" points={floor(-6, -6, 56, 50, 20)} />
       </g>
       <line class="a-axis" x1="94" y1="52" x2="94" y2="36"><An attr="opacity" values={["0", "1", "1", "0"]} /></line>
@@ -259,7 +267,7 @@ const ART: Record<ArtKey, () => JSX.Element> = {
 // Os textos das features vêm de `FEATURE_HELP` (obrigatório por tipo); aqui ficam com o id do comando.
 const featureCommands = (Object.keys(FEATURE_HELP) as FeatureType[]).filter((t) => t !== "sketch").map((t) => [`feature.${t}`, FEATURE_HELP[t]] as const);
 // Cada tipo de feature de plugin traz a sua ajuda (obrigatória em `PluginKind`).
-const pluginCommands = PLUGINS.flatMap((p) => Object.entries(p.kinds).map(([k, kind]) => [`plugin.${p.id}.${k}`, kind.help] as const));
+const pluginCommands = activePlugins(ALL_PLUGIN_FLAGS).flatMap((p) => Object.entries(p.kinds).map(([k, kind]) => [`plugin.${p.id}.${k}`, kind.help] as const));
 
 export const HELP: Record<string, Help> = {
   "sketch.new": FEATURE_HELP.sketch,
@@ -317,13 +325,9 @@ export function FeatureTip({ h, x, y }: { h: Help; x: number; y: number }) {
   );
 }
 
-const KEY = "galcad:help-open";
-const wasOpen = () => { try { return localStorage.getItem(KEY) !== "0"; } catch { return true; } };
-
-/** Cartão «O que faz» no topo do painel de propriedades (recolhível; lembra a escolha). */
 export function HelpCard({ h }: { h: Help }) {
   return (
-    <details class="help-card" open={wasOpen()} onToggle={(e) => { try { localStorage.setItem(KEY, (e.currentTarget as HTMLDetailsElement).open ? "1" : "0"); } catch { /* sem armazenamento */ } }}>
+    <details class="help-card" open={store.state.settings.helpExpanded} onToggle={(e) => { const open = (e.currentTarget as HTMLDetailsElement).open; if (open !== store.state.settings.helpExpanded) store.updateSettings({ helpExpanded: open }); }}>
       <summary>O que faz «{h.title}»</summary>
       <div class="help-row">
         <HelpArt art={h.art} />
