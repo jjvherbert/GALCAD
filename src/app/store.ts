@@ -90,7 +90,7 @@ export class Store {
       edit: null, sketch: null, choosingPlane: false, confirmed: null, simFocus: null, result: null, busy: false, kernelBusy: false, rebuildPending: false, error: null, message: null,
       pickTarget: null, selection: [], selectedFeature: null, showVariables: false, showSettings: false, showMaterials: false, fileName: project.name, dirty: false,
       contextMenu: null, contextToolbar: null, shortcutBar: null, orientationMenu: null, gesture: null, hoverFeature: null,
-      settings, userMaterials: loadMaterials(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, poleSel: null, poleAxis: "free",
+      settings, userMaterials: loadMaterials(), lastCommand: null, analysis: null, mateEdit: null, componentEdit: null, interference: null, sidePanel: null, pmiSel: null, pmiView: null, drawingTool: null, drawingSel: null, advicePreview: null, poleSel: null, poleAxis: "free",
       workspace: drawingId ? "drawing" : "design", simStudy: null, simSection: "study", simBusy: null, simProgress: null,
       simResult: null, simView: { field: 0, disp: 0, scale: 0, hidden: [] }, simHidden: false, liveMesh: true, liveMeshError: null, agent: desktopAgent() ?? { url: settings.agentUrl, token: "" },
     };
@@ -117,7 +117,7 @@ export class Store {
     // o histórico de desfazer referia-se à versão anterior dos documentos
     this.histories.clear();
     this.set({
-      project, doc, active: ref, selection: [], selectedFeature: null, drawingSel: null,
+      project, doc, active: ref, selection: [], selectedFeature: null, drawingSel: null, advicePreview: null,
       ...(ref !== active ? { workspace: "design" as const, drawingResult: null } : {}),
     });
     this.rebuild(0);
