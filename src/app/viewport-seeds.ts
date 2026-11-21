@@ -44,3 +44,39 @@ export function placeSeedLabels(labels: SeedLabel[], camera: THREE.Camera, canva
     l.el.style.transform = `translate(${(((v.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - v.y) / 2) * h).toFixed(1)}px) translate(-50%, -130%)`;
   }
 }
+
+export const ADVICE_COLOR = 0x06b6d4;
+
+/** Fantasmas de uma sugestão do avaliador (C9c): as arestas tocadas (pelas tags do plano de seeds) e os
+ *  planos de partição propostos, translúcidos e por cima de tudo. Devolve o n.º de arestas desenhadas. */
+export function buildAdviceGhosts(g: THREE.Group, preview: { tags: number[]; planes?: { origin: [number, number, number]; normal: [number, number, number] }[] } | null, seeds: SeedPreview | null): number {
+  if (!preview || !seeds) return 0;
+  const want = new Set(preview.tags);
+  const segs: number[] = [];
+  let edges = 0;
+  for (const e of seeds.edges) {
+    if (!want.has(e.tag) || e.points.length < 6) continue;
+    edges++;
+    for (let i = 3; i < e.points.length; i += 3) segs.push(e.points[i - 3], e.points[i - 2], e.points[i - 1], e.points[i], e.points[i + 1], e.points[i + 2]);
+  }
+  if (segs.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(segs, 3));
+    const obj = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: ADVICE_COLOR, depthTest: false, transparent: true, opacity: 0.95 }));
+    obj.renderOrder = 13;
+    g.add(obj);
+  }
+  if (preview.planes?.length) {
+    const box = new THREE.Box3();
+    for (const e of seeds.edges) for (let i = 0; i + 2 < e.points.length; i += 3) box.expandByPoint(new THREE.Vector3(e.points[i], e.points[i + 1], e.points[i + 2]));
+    const size = box.isEmpty() ? 100 : box.getSize(new THREE.Vector3()).length() * 1.1;
+    for (const pl of preview.planes) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial({ color: ADVICE_COLOR, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false, depthTest: false }));
+      mesh.position.set(...pl.origin);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(...pl.normal).normalize());
+      mesh.renderOrder = 12;
+      g.add(mesh);
+    }
+  }
+  return edges;
+}

@@ -75,17 +75,20 @@ export function handleSeedKey(e: KeyboardEvent): boolean {
   return true;
 }
 
-let seq = 0, timer: ReturnType<typeof setTimeout> | undefined;
+let seq = 0, timer: ReturnType<typeof setTimeout> | undefined, last: SeedPreview | null = null;
+
+/** Último plano de seeds mostrado (pontos das arestas): serve para desenhar os fantasmas das sugestões. */
+export function lastSeedPreview(): SeedPreview | null { return last; }
 
 /** Pede ao worker os nós das seeds do estudo FEM ativo (peças), com debounce; null fora do espaço FEM. */
 export function scheduleSeedPreview(show: (p: SeedPreview | null) => void, delay = 150) {
   clearTimeout(timer);
   const id = ++seq, st = store.state, study = activeStudy("fem");
-  if (st.workspace !== "fem" || st.active.kind !== "part" || study?.physics !== "fem" || !st.result?.mesh) { show(null); return; }
+  if (st.workspace !== "fem" || st.active.kind !== "part" || study?.physics !== "fem" || !st.result?.mesh) { last = null; show(null); return; }
   timer = setTimeout(() => {
     store.kernel.meshSeeds(st.doc, externalParts(st.project, st.doc), study.id)
-      .then((p) => { if (id === seq) show(p); })
-      .catch(() => { if (id === seq) show(null); });
+      .then((p) => { if (id === seq) { last = p; show(p); } })
+      .catch(() => { if (id === seq) { last = null; show(null); } });
   }, delay);
 }
 

@@ -3,6 +3,7 @@
 import type { MeshSeed, SimMesh } from "../doc/study.ts";
 import type { TopoRef } from "../doc/types.ts";
 import type { V3 } from "./case.ts";
+import type { SeedPreview } from "../kernel/sim-fem.ts";
 
 /** Alteração à malha que uma sugestão propõe: `set` substitui campos; seeds, partições e refinamentos locais juntam-se aos existentes. */
 export interface MeshPatch {
@@ -66,4 +67,14 @@ export function groupByBlock(list: Suggestion[]): { block: string; items: Sugges
   const m = new Map<string, Suggestion[]>();
   for (const s of list) m.set(s.region.block, [...(m.get(s.region.block) ?? []), s]);
   return [...m].map(([block, items]) => ({ block, items }));
+}
+
+/** Tamanho obtido em cada aresta do plano (comprimento / n.º de elementos) e a razão para o tamanho pretendido. */
+export function sizeMap(p: SeedPreview, target: number): { tag: number; kind: SeedPreview["edges"][number]["kind"]; n: number; length: number; h: number; ratio: number }[] {
+  return p.edges.filter((e) => e.n > 0 && e.points.length >= 6).map((e) => {
+    let length = 0;
+    for (let i = 3; i < e.points.length; i += 3) length += Math.hypot(e.points[i] - e.points[i - 3], e.points[i + 1] - e.points[i - 2], e.points[i + 2] - e.points[i - 1]);
+    const h = length / e.n;
+    return { tag: e.tag, kind: e.kind, n: e.n, length, h, ratio: target > 0 ? h / target : NaN };
+  });
 }

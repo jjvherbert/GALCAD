@@ -123,6 +123,29 @@ async function main() {
       check("pré-visualização: qualidade dos hexaedros", /Jacobiano escalado\s*1\.00 · 1\.00 · 1\.00/.test(q) && /Empeno/.test(q), q.slice(0, 200));
       check("pré-visualização: malha estruturada no 3D", /hexaedros de 20 nós/.test(await p.textContent(`${P} .info-table`)) && (await p.$eval(".viewport", (e) => e.dataset.sim)) === "1");
       await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-malha.png") });
+      // C9c: histogramas por métrica e sugestões; «Aceitar todas» é um só passo de desfazer
+      check("verificar: um histograma por métrica", (await p.$$(`${P} .hist-card .histogram`)).length >= 3);
+      await p.waitForSelector(`${P} details.mesh-advice`, { timeout: 120000 });
+      const saved = () => p.evaluate(() => localStorage.getItem("cad-prototipo:autosave"));
+      // malha grossa para o avaliador ter sugestões
+      const sizeIn = `${P} label.field:has-text('Tamanho máx.') input`;
+      const size0 = await p.inputValue(sizeIn);
+      await p.fill(sizeIn, "40"); await p.press(sizeIn, "Tab");
+      await p.waitForFunction(() => !!document.querySelector(".sim-panel .advice-bar button") && /Aceitar todas/.test(document.querySelector(".sim-panel .advice-bar")?.textContent ?? ""), null, { timeout: 120000 }).catch(() => {});
+      R.push("  " + (await p.textContent(`${P} details.mesh-advice summary`)));
+      await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-sugestoes.png") });
+      if (await p.$(`${P} .advice-bar button:has-text('Aceitar todas')`)) {
+        const s0 = await saved();
+        await p.click(`${P} .advice-bar button:has-text('Aceitar todas')`);
+        await p.waitForFunction((s) => localStorage.getItem("cad-prototipo:autosave") !== s, s0, { timeout: 10000 }).catch(() => {});
+        check("sugestões: «Aceitar todas» altera a malha do estudo", (await saved()) !== s0);
+        await p.click(`${P} .advice-bar button:has-text('Desfazer sugestão')`);
+        await p.waitForFunction((s) => localStorage.getItem("cad-prototipo:autosave") === s, s0, { timeout: 10000 }).catch(() => {});
+        check("sugestões: desfazer repõe a malha num só passo", (await saved()) === s0);
+      } else check("sugestões: «Aceitar todas» com a malha grossa", false, await p.textContent(`${P} details.mesh-advice summary`));
+      // repor o tamanho original (o resto do teste conta com ele)
+      await p.fill(sizeIn, size0); await p.press(sizeIn, "Tab");
+      check("sugestões: tamanho original reposto", (await p.inputValue(sizeIn)) === size0 && /hexaedros/.test(await p.textContent(".sim-node:has-text('Malha')")));
       await calc();
       await p.waitForFunction(() => /Deslocamento máx/.test(document.querySelector(".sim-panel .info-table")?.textContent ?? ""), null, { timeout: 240000 });
       const th = (await p.textContent(`${P} .info-table`)).replace(/\s+/g, " ");

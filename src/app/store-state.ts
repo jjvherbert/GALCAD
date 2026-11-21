@@ -141,6 +141,8 @@ export interface State {
   drawingTool: DrawingTool | null;
   /** Seleção no desenho (vista ou anotação). */
   drawingSel: { kind: "view" | "ann"; id: string } | null;
+  /** Avaliador de malha: fantasmas da sugestão em pré-visualização (arestas pelas tags e planos de corte). */
+  advicePreview: { tags: number[]; planes?: { origin: [number, number, number]; normal: [number, number, number] }[] } | null;
 }
 
 export type Workspace = "design" | "fem" | "cfd" | "drawing";
@@ -166,6 +168,7 @@ export const DOC_KEYS = [
 export const SESSION_KEYS = [
   "edit", "sketch", "choosingPlane", "confirmed", "simFocus", "pickTarget", "selection", "selectedFeature", "hoverFeature",
   "lastCommand", "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy", "simSection", "drawingTool", "drawingSel",
+  "advicePreview",
 ] as const satisfies readonly (keyof State)[];
 export const UI_KEYS = [
   "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",

@@ -9,6 +9,7 @@ import { Select, usePickTarget } from "./forms.tsx";
 import { type RunResult, resultView } from "./sim-client.ts";
 import { colourField, fieldRange, probeResult, type ProbeValue } from "../sim/result.ts";
 import { toVtu } from "../sim/export-vtu.ts";
+import { failFromHist, type QualityMetric } from "../sim/quality.ts";
 
 /** Extrair os resultados do cálculo: resumo, histórias no tempo, métricas, qualidade da malha e JSON. */
 export function ResultExports({ r, name }: { r: RunResult; name: string }) {
@@ -103,8 +104,45 @@ export function QualityReport({ q }: { q: NonNullable<RunResult["quality"]> }) {
         </div>
       )}
       {sj && <p class="muted">Jacobiano escalado de {sj.hist.edges[0].toFixed(1)} a 1 (1 = elemento perfeito)</p>}
+      <MetricHistograms metrics={q.metrics} />
       {q.worst.length > 0 && <p class="muted">Piores elementos: {q.worst.slice(0, 5).map((w) => `n.º ${w.element} (J = ${w.sj.toFixed(2)}, em ${w.center.map((v) => v.toFixed(1)).join(", ")} mm)`).join("; ")}</p>}
       <p class="field-hint">Limites por omissão: ângulos das faces, razão de aspeto e fator de forma como no Verify Mesh do Abaqus/CAE; jacobiano e empeno como no Femap. Elementos assinalados longe das zonas de interesse costumam ser aceitáveis.</p>
+    </details>
+  );
+}
+
+/** Malha → Verificar: um histograma por métrica com o limite editável (como no Femap/Ansys); os intervalos fora
+ *  do limite ficam a vermelho e a contagem é estimada pelo histograma (não recalcula a malha). */
+function MetricHistograms({ metrics }: { metrics: QualityMetric[] }) {
+  const [over, setOver] = useState<Record<string, number>>({});
+  return (
+    <details class="quality-hists">
+      <summary>Verificar: histogramas e limites</summary>
+      <div class="hist-grid">
+        {metrics.filter((x) => x.count > 0).map((x) => {
+          const base = x.limits[0] ?? {};
+          const side: "min" | "max" = base.min !== undefined ? "min" : "max";
+          const value = over[x.key] ?? base[side];
+          const limit = value === undefined ? {} : { [side]: value };
+          const peak = Math.max(...x.hist.counts, 1);
+          const bad = (i: number) => { const mid = (x.hist.edges[i] + x.hist.edges[i + 1]) / 2; return side === "min" ? value !== undefined && mid < value : value !== undefined && mid > value; };
+          return (
+            <div key={x.key} class="hist-card" data-metric={x.key}>
+              <div class="hist-head"><b>{x.label}</b> <span class="muted">{x.count} elementos</span></div>
+              <div class="histogram" aria-label={`Histograma: ${x.label}`}>
+                {x.hist.counts.map((n, i) => <div key={i} class={`bar${bad(i) ? " bad" : ""}`} title={`${x.hist.edges[i].toPrecision(3)}–${x.hist.edges[i + 1].toPrecision(3)}${x.unit}: ${n}`} style={{ height: `${(100 * n) / peak}%` }} />)}
+              </div>
+              <p class="muted hist-axis"><span>{x.hist.edges[0].toPrecision(3)}{x.unit}</span><span>{x.hist.edges[x.hist.edges.length - 1].toPrecision(3)}{x.unit}</span></p>
+              <label class="hist-limit">
+                {side === "min" ? "Mínimo" : "Máximo"} aceite
+                <input type="number" step="any" value={value ?? ""} onInput={(e) => { const v = Number((e.target as HTMLInputElement).value); setOver({ ...over, [x.key]: v }); }} />
+                {over[x.key] !== undefined && <button class="small" onClick={() => { const { [x.key]: _, ...rest } = over; setOver(rest); }}>Repor</button>}
+              </label>
+              <p class={failFromHist(x.hist, limit) ? "error-text" : "muted"}>Fora do limite: {over[x.key] === undefined ? x.fail[0] ?? 0 : `≈ ${failFromHist(x.hist, limit)} (estimativa pelo histograma)`}</p>
+            </div>
+          );
+        })}
+      </div>
     </details>
   );
 }

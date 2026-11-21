@@ -273,3 +273,14 @@ export function stableIncrementShell(m: Msh, mat: { E: number; nu: number; densi
   }
   return best;
 }
+
+/** Elementos fora de um limite estimados pelo histograma (para limites escolhidos na UI, sem recalcular a
+ *  malha): conta os intervalos cujo centro viola o limite. Exato quando o limite cai numa fronteira de intervalo. */
+export function failFromHist(hist: { edges: number[]; counts: number[] }, limit: { min?: number; max?: number }): number {
+  let n = 0;
+  hist.counts.forEach((c, i) => {
+    const mid = (hist.edges[i] + hist.edges[i + 1]) / 2;
+    if ((limit.min !== undefined && mid < limit.min) || (limit.max !== undefined && mid > limit.max)) n += c;
+  });
+  return n;
+}

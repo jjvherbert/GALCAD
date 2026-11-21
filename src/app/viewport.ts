@@ -28,7 +28,7 @@ import * as mouse from "./viewport-mouse.ts";
 import * as nav from "./viewport-nav.ts";
 import * as layers from "./viewport-layers.ts";
 import * as hover from "./viewport-hover.ts";
-import { type SeedLabel, buildSeedMarks, placeSeedLabels } from "./viewport-seeds.ts";
+import { type SeedLabel, buildAdviceGhosts, buildSeedMarks, placeSeedLabels } from "./viewport-seeds.ts";
 import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { mouseHostOf } from "./viewport-host.ts";
 
@@ -153,6 +153,16 @@ export class Viewport {
     const r = buildSeedMarks(this.seedGroup, this.seedEl, p);
     this.seedLabels = r.labels;
     this.el.dataset.seeds = p ? String(r.nodes) : "";
+  }
+
+  private adviceGroup = new THREE.Group();
+
+  /** Fantasmas da sugestão em pré-visualização (arestas e planos); null apaga. */
+  setAdvicePreview(preview: Parameters<typeof buildAdviceGhosts>[1], seeds: SeedPreview | null) {
+    this.disposeGroup(this.adviceGroup);
+    if (!this.adviceGroup.parent) this.scene.add(this.adviceGroup);
+    const n = buildAdviceGhosts(this.adviceGroup, preview, seeds);
+    this.el.dataset.advice = preview ? String(n) : "";
   }
 
   // --- PMI 3D ------------------------------------------------------------------------

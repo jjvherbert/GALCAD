@@ -10,6 +10,7 @@ import { agentStatus, exportStudyCase, resultView } from "./sim-client.ts";
 import { colourField, isMeshPreview, layerShown, toggleLayer } from "../sim/result.ts";
 import { AssemblyBodies, CfdEditor, FemEditor } from "./SimEditors.tsx";
 import { CheckPanel } from "./SimCheck.tsx";
+import { MeshAdvicePanel } from "./MeshAdvice.tsx";
 import { type StepState, STUDY_TYPES, sectionStep, typeOf, validate } from "./workflow.ts";
 import { activeStepStates, chooseStudyType, completeAndNext } from "./workflow-actions.ts";
 import { BEHAVIOUR, ConvergencePlot, JobProgress, num, pct, QualityReport, ResultExports, ResultProbe, SimLegend, SweepPlot, TimePlot } from "./SimResults.tsx";
@@ -109,6 +110,7 @@ function MeshPreviewBox({ s, doc }: { s: Study; doc: string }) {
           <table class="info-table"><tbody>{res.summary.map(([k, x]) => <tr key={k}><td>{k}</td><td>{x}</td></tr>)}</tbody></table>
           {res.warnings.map((w) => <p key={w} class="error-text">{w}</p>)}
           <QualityReport q={res.quality} />
+          {s.physics === "fem" && <MeshAdvicePanel s={s} quality={res.quality} />}
           {res.view && isMeshPreview(res.view) && (
             <>
               <Check label="Colorir pela qualidade" value={!!v.quality} onChange={(on) => store.set({ simView: { ...v, quality: on } })} />

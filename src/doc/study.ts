@@ -292,6 +292,8 @@ export interface FemStudy {
   /** Modos próprios (modal) ou de encurvadura. */
   modes?: number;
   mesh: SimMesh;
+  /** Avaliador de malha: ids das sugestões ignoradas neste estudo. */
+  adviceIgnored?: string[];
   /**
    * Montagens: material de cada corpo pelo caminho da instância ("c1", "c2/c1"); os restantes usam
    * `material`. Nas montagens as faces das condições são "caminho/face".

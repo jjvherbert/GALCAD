@@ -23,15 +23,16 @@ export function activeStudy(physics?: "fem" | "cfd"): Study | undefined {
   return list.find((x) => x.id === store.state.simStudy) ?? list[0];
 }
 
-export function saveStudies(next: Study[], label = "Estudos") {
+export function saveStudies(next: Study[], label = "Estudos", merge = true) {
   const asm = store.activeAssembly();
-  if (asm) store.commitAssembly({ ...asm, studies: next as FemStudy[] }, label, true);
-  else store.commitDoc("part", { ...store.state.doc, studies: next }, label, true);
+  if (asm) store.commitAssembly({ ...asm, studies: next as FemStudy[] }, label, merge);
+  else store.commitDoc("part", { ...store.state.doc, studies: next }, label, merge);
 }
 
-export function updateStudy(id: string, patch: Partial<Study>) {
+/** `label` dá à alteração um passo de desfazer próprio (sem se fundir com as edições contínuas dos campos). */
+export function updateStudy(id: string, patch: Partial<Study>, label?: string) {
   // no FEM, mexer num campo de um passo ainda sem carimbo põe-no «em curso» (fluxo guiado)
-  saveStudies(activeStudies().map((x) => (x.id === id ? ({ ...x, ...patch, ...(x.physics === "fem" ? touchUser(x, patch as Partial<FemStudy>) : undefined) } as Study) : x)));
+  saveStudies(activeStudies().map((x) => (x.id === id ? ({ ...x, ...patch, ...(x.physics === "fem" ? touchUser(x, patch as Partial<FemStudy>) : undefined) } as Study) : x)), label, !label);
 }
 
 /** Geometria do documento ativo para os carimbos dos passos: a peça, ou a montagem com a revisão de cada peça. */

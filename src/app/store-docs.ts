@@ -39,7 +39,7 @@ export function setActive(s: Store, ref: DocRef) {
     // o espaço de trabalho segue o documento: desenhos no Desenho; peças e montagens fora dele (CFD só em peças)
     workspace: ref.kind === "drawing" ? "drawing" : s.state.workspace === "drawing" || (ref.kind === "assembly" && s.state.workspace === "cfd") ? "design" : s.state.workspace,
     asmResult: ref.kind === "assembly" ? s.state.asmResult : null, contextToolbar: null,
-    mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null,
+    mateEdit: null, componentEdit: null, interference: null, drawingTool: null, drawingSel: null, advicePreview: null,
     // os resultados do documento novo voltam (A3); o rebuild a seguir atualiza o desenho se o modelo mudou
     simResult: s.simResults.get(ref.id) ?? null,
     drawingResult: ref.kind === "drawing" ? s.drawingResults.get(ref.id) ?? null : null,
