@@ -61,6 +61,7 @@ Cada linha corresponde a um ou mais testes em `tests/`:
 | Painel encastrado sob pressão ISO 12215 | Roark | CalculiX |
 | Consola sob degrau (pico ≈ 2× estático em T₁/2) | Dinâmica de 1 GL | OpenRadioss |
 | Encurvadura de placas (k → 4, Johnson) | Teoria de placas | analítico interno |
+| Avaliador de malha: placa fina (≥ 4 elementos lineares / 2 quadráticos na espessura), furo (≤ 15–20° por elemento), aresta minúscula (seed com bias), L em hexaedros (partição em blocos), Jacobiano negativo (refino local); aceitar cada sugestão melhora a métrica e faz a sugestão desaparecer | Limites e fontes em `src/sim/quality.ts` (`ADVISOR_LIMITS`) | plano de malha (sem solver) |
 
 ## Robustez do núcleo em peças reais
 

@@ -1,6 +1,6 @@
 // Serviço do núcleo: reconstrução, malhas e exportação. Usado pelo worker (e em testes).
 import { cast } from "replicad";
-import type { AssemblyInstance, AssemblyResponse, NormalsResponse, PanelsResponse, SnapshotResponse, StudyCaseResponse, MeshSeedsResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
+import type { AssemblyInstance, AssemblyResponse, NormalsResponse, PanelsResponse, SnapshotResponse, StudyCaseResponse, MeshSeedsResponse, MeshAdviceResponse, CombsResponse, ContinuityResponse, CurvatureKind, CurvatureResponse, DeviationResponse, DrawingResponse, ExportFormat, InterferenceResponse, SignatureResponse, ExportResponse, MassProps, RebuildResponse, SheetInfo, SketchView } from "./protocol.ts";
 import type { Ctx } from "./context.ts";
 import type { NamedBody } from "./naming.ts";
 import { combs, continuity, curvature, deviation, exactNormals } from "./analysis.ts";
@@ -16,6 +16,8 @@ import type { BuildEnv } from "./context.ts";
 import { freezeGeom, publish } from "./features/external.ts";
 import { type AsmBody, assemblyStudyCase, singleSolid, studyCase } from "./sim.ts";
 import { seedPreview } from "./sim-fem.ts";
+import { adviseMesh } from "./mesh-advisor.ts";
+import type { MeshQuality } from "../sim/quality.ts";
 import { pmiStates } from "./pmi.ts";
 import { panelGeometry } from "./panels.ts";
 
@@ -314,6 +316,18 @@ export class KernelService {
     setArena(arena);
     try {
       return seedPreview(r.ctx, study);
+    } finally { arena.free(); setArena(this.asmArena); }
+  }
+
+  /** Avaliador de malha (C9a): sugestões para a malha do estudo, com limite e fonte. `worst`: piores elementos da última malha. */
+  async meshAdvice(input: PartDoc, parts: PartDoc[], studyId: string, worst?: MeshQuality["worst"]): Promise<MeshAdviceResponse> {
+    const doc = configuredDoc(input);
+    const study = doc.studies?.find((s) => s.id === studyId);
+    if (!study || study.physics !== "fem") throw new Error("Estudo FEM inexistente");
+    const r = await this.engineFor(doc.id).rebuild(doc, this.envFor({ parts: [...parts.filter((p) => p.id !== doc.id), doc] }, [doc.id]));
+    const arena = new Arena(); setArena(arena);
+    try {
+      return adviseMesh(r.ctx, study, worst);
     } finally {
       arena.free();
       setArena(this.asmArena);

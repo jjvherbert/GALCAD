@@ -68,6 +68,33 @@ export const QUALITY_LIMITS: Record<QualityMetric["key"], QualityLimit[] | { hex
   shape: [{ min: 1e-4, level: "warning" }],
 };
 
+/** Um limite do avaliador de malha, com a fonte (a citar na sugestão). */
+export interface AdvisorLimit { value: number; source: string }
+
+/**
+ * Limites do avaliador de malha (C9a). Cada um diz de onde vem; onde não há norma, diz-se que é
+ * regra prática do GALCAD (configurável), em vez de a apresentar como limite de uma fonte.
+ */
+export const ADVISOR_LIMITS = {
+  /** Ângulo máximo de arco por elemento (graus) antes de sugerir refinar. */
+  arcMaxDeg: { value: 20, source: "regra prática do GALCAD (15–20° por elemento num arco); o Gmsh por omissão usa 12 elementos por volta, 30°" },
+  /** Ângulo-alvo por elemento ao refinar um arco (graus). */
+  arcTargetDeg: { value: 15, source: "regra prática do GALCAD (15–20° por elemento num arco)" },
+  /** Elementos na espessura de zonas finas, por ordem do elemento. */
+  thickness: {
+    1: { value: 4, source: "Getting Started with Abaqus: elementos lineares de integração reduzida precisam de pelo menos 4 elementos na espessura em flexão (hourglass)" },
+    2: { value: 2, source: "regra prática do GALCAD para elementos quadráticos em flexão (configurável)" },
+  } as Record<1 | 2, AdvisorLimit>,
+  /** Aresta minúscula: comprimento abaixo desta fração do tamanho de elemento. */
+  tinyEdgeRatio: { value: 0.1, source: "regra prática do GALCAD (aresta < 10 % do tamanho de elemento força elementos distorcidos à volta)" },
+  /** Curvatura (elementos por volta) a sugerir para arcos grosseiros: 360°/24 = 15°. */
+  curvatureSuggest: { value: 24, source: "360° / 15° por elemento" },
+  /** Jacobiano escalado a partir do qual o elemento está invertido (erro). */
+  invertedSj: { value: 0, source: "Femap/NX e Verify Mesh do Abaqus/CAE: jacobiano escalado ≤ 0 = elemento invertido (QUALITY_LIMITS.sj)" },
+  /** Primeiro elemento junto a uma aresta minúscula: até este múltiplo do comprimento dela. */
+  tinyGrade: { value: 5, source: "regra prática do GALCAD (transição gradual até à aresta minúscula, razão de crescimento ≤ 1,5 por elemento como alvo)" },
+} as const;
+
 /** Medidas de um elemento pelos cantos. */
 export function elementQuality(kind: "hex" | "tet", P: P3[]): { sj: number; ar: number; minAngle: number; maxAngle: number; warp?: number; shape?: number; volume: number } {
   const hex = kind === "hex";
