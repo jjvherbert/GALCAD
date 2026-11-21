@@ -452,12 +452,22 @@ function pointsAlong(edge: TopoDS_Shape, fr: number[]): number[] {
   return out;
 }
 
-/**
- * Pré-visualização das seeds de um estudo FEM: n.º e posição dos nós em todas as arestas do corpo,
- * calculados pelo mesmo plano da malha que vai para o Gmsh (seeds, propagação pelas arestas opostas
- * das faces mapeadas e tamanho global/local nas restantes). Tolerante: entradas inválidas viram avisos.
- */
-export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
+/** Plano da malha de um estudo, tolerante (entradas inválidas viram avisos): partilhado pela pré-visualização das seeds e pelo avaliador. */
+export interface StudyPlan {
+  topo: FemTopo;
+  input: PlanInput;
+  plan: ReturnType<typeof meshPlan> | null;
+  size: number;
+  /** Tamanho efetivo das arestas sem curva no plano: o menor entre o global e os locais das faces vizinhas. */
+  near: Map<number, number>;
+  curves: Map<number, MeshPlanCurve>;
+  /** N.º de elementos numa aresta (tag 1-based) segundo o plano. */
+  nOf: (tag: number) => { n: number; kind: SeedEdge["kind"] };
+  warnings: string[];
+}
+type MeshPlanCurve = NonNullable<ReturnType<typeof meshPlan>["curves"]>[number];
+
+export function studyPlan(ctx: Ctx, s: FemStudy): StudyPlan {
   const report: StepReport = { warnings: [] };
   const warnings: string[] = [];
   const tryDo = <T,>(f: () => T, fallback: T): T => { try { return f(); } catch (e) { warnings.push((e as Error).message); return fallback; } };
@@ -494,20 +504,33 @@ export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
   }
   warnings.push(...(plan?.warnings ?? []), ...report.warnings);
   const curves = new Map((plan?.curves ?? []).map((c) => [c.tag, c]));
-  // tamanho efetivo das arestas sem curva: o menor entre o global e os locais das faces vizinhas
   const near = new Map<number, number>();
   allFaces.forEach((f, i) => {
     const ls = localSize.get(i + 1);
     if (ls !== undefined) for (const e of explore(f, "edge")) { const t = allEdges.findIndex((x) => x.IsSame(e)) + 1; if (t) near.set(t, Math.min(ls, near.get(t) ?? Infinity)); }
   });
-  const edges = allEdges.map((e, i): SeedEdge => {
-    const tag = i + 1, c = curves.get(tag);
+  const nOf = (tag: number) => {
+    const c = curves.get(tag);
+    if (c) return { n: c.n, kind: (c.user ? "user" : "propagated") as SeedEdge["kind"] };
+    return { n: Math.max(1, Math.ceil(edgeProps(allEdges[tag - 1]).length / Math.min(size, near.get(tag) ?? Infinity) - 1e-9)), kind: "auto" as const };
+  };
+  return { topo, input, plan, size, near, curves, nOf, warnings };
+}
+
+/**
+ * Pré-visualização das seeds de um estudo FEM: n.º e posição dos nós em todas as arestas do corpo,
+ * calculados pelo mesmo plano da malha que vai para o Gmsh (seeds, propagação pelas arestas opostas
+ * das faces mapeadas e tamanho global/local nas restantes). Tolerante: entradas inválidas viram avisos.
+ */
+export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
+  const sp = studyPlan(ctx, s);
+  const edges = sp.topo.allEdges.map((e, i): SeedEdge => {
+    const tag = i + 1, c = sp.curves.get(tag), { n, kind } = sp.nOf(tag);
     if (c) {
       const d = { progression: c.progression, bump: c.bump };
-      return { tag, n: c.n, kind: c.user ? "user" : "propagated", ...(c.progression ? { progression: c.progression } : {}), ...(c.bump ? { bump: c.bump } : {}), points: pointsAlong(e, seedFractions(c.n, d)) };
+      return { tag, n, kind, ...(c.progression ? { progression: c.progression } : {}), ...(c.bump ? { bump: c.bump } : {}), points: pointsAlong(e, seedFractions(n, d)) };
     }
-    const n = Math.max(1, Math.ceil(edgeProps(e).length / Math.min(size, near.get(tag) ?? Infinity) - 1e-9));
-    return { tag, n, kind: "auto", points: pointsAlong(e, seedFractions(n)) };
+    return { tag, n, kind, points: pointsAlong(e, seedFractions(n)) };
   });
-  return { edges, warnings: [...new Set(warnings)], notes: plan?.notes ?? [] };
+  return { edges, warnings: [...new Set(sp.warnings)], notes: sp.plan?.notes ?? [] };
 }

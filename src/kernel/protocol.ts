@@ -16,6 +16,7 @@ export type Request =
   /** Ficheiros do caso de simulação de um estudo da peça (pré-processador). */
   | { type: "studyCase"; doc: PartDoc; parts: PartDoc[]; study: string }
   | { type: "meshSeeds"; doc: PartDoc; parts: PartDoc[]; study: string }
+  | { type: "meshAdvice"; doc: PartDoc; parts: PartDoc[]; study: string; worst?: import("../sim/quality.ts").MeshQuality["worst"] }
   | { type: "assemblyStudyCase"; project: CadProject; assembly: string; study: string }
   | { type: "panels"; doc: PartDoc; parts: PartDoc[]; faces: string[] }
   | { type: "export"; format: ExportFormat; name: string }
@@ -137,6 +138,8 @@ export interface PanelsResponse { panels: import("./panels.ts").PanelGeom[] }
 
 /** Pré-visualização das seeds da malha (nós por aresta, sem Gmsh). */
 export type MeshSeedsResponse = import("./sim-fem.ts").SeedPreview;
+/** Sugestões do avaliador de malha (C9a). */
+export type MeshAdviceResponse = import("../sim/mesh-advice.ts").MeshAdvice;
 
 export interface StudyCaseResponse { case: import("../sim/case.ts").SimCase; files: Record<string, string>; warnings: string[] }
 
@@ -242,6 +245,7 @@ export interface ResponseMap {
   snapshot: SnapshotResponse;
   studyCase: StudyCaseResponse;
   meshSeeds: MeshSeedsResponse;
+  meshAdvice: MeshAdviceResponse;
   assemblyStudyCase: StudyCaseResponse;
   panels: PanelsResponse;
   export: ExportResponse;

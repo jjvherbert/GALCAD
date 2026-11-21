@@ -29,16 +29,16 @@ export interface PlanInput {
   names?: string[];
 }
 
-export type MeshPlan = Pick<FemCaseMesh, "hexMethod" | "volumes" | "surfaces" | "curves"> & { warnings: string[]; notes: string[] };
+export type MeshPlan = Pick<FemCaseMesh, "hexMethod" | "volumes" | "surfaces" | "curves"> & { warnings: string[]; notes: string[]; /** Por sólido: é um bloco hexaédrico (6 faces de 4 arestas, 12 arestas). */ blocks: boolean[] };
+
+/** Fração da maior dimensão do volume abaixo da qual uma aresta conta como espessura. */
+export const THIN = 0.15;
 
 /**
  * Plano da malha. Hexaedros estruturados exigem volumes topologicamente hexaédricos (6 faces de 4
  * arestas, 12 arestas): os restantes têm de ser divididos em blocos (como no Femap) ou ir para a
  * subdivisão.
  */
-/** Fração da maior dimensão do volume abaixo da qual uma aresta conta como espessura. */
-const THIN = 0.15;
-
 export function meshPlan(p: PlanInput): MeshPlan {
   const warnings: string[] = [], notes: string[] = [];
   const tagOf = (list: TopoDS_Shape[], s: TopoDS_Shape) => list.findIndex((x) => x.IsSame(s)) + 1;
@@ -180,5 +180,5 @@ export function meshPlan(p: PlanInput): MeshPlan {
   if (thinCount) notes.push(`${thinCount} aresta(s) na espessura com ≥ ${layers} elementos${p.element === "tet" ? " (em tetraedros só nas arestas; o interior das faces segue o tamanho global — para camadas reais usar hexaedros ou tamanho ≤ espessura / camadas)" : ""}`);
   const user = curves.filter((c) => c.user).length;
   if (user) notes.push(`${user} aresta(s) com seed`);
-  return { hexMethod: method, volumes: volumes.length ? volumes : undefined, surfaces: surfaces.size ? [...surfaces].sort((a, b) => a - b) : undefined, curves: curves.length ? curves : undefined, warnings, notes };
+  return { hexMethod: method, volumes: volumes.length ? volumes : undefined, surfaces: surfaces.size ? [...surfaces].sort((a, b) => a - b) : undefined, curves: curves.length ? curves : undefined, warnings, notes, blocks: hexable };
 }

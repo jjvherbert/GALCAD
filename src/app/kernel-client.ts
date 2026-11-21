@@ -6,7 +6,7 @@ import type { PluginFlags } from "../plugins/registry.ts";
 import type { CadDocument } from "../doc/types.ts";
 import type { CadProject, PartDoc } from "../doc/project.ts";
 import type {
-  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, NormalsResponse, PanelsResponse, SnapshotResponse, StudyCaseResponse, MeshSeedsResponse, DrawingResponse, ExportFormat, ExportResponse,
+  AssemblyResponse, CurvatureKind, CurvatureResponse, ContinuityResponse, CombsResponse, DeviationResponse, NormalsResponse, PanelsResponse, SnapshotResponse, StudyCaseResponse, MeshSeedsResponse, MeshAdviceResponse, DrawingResponse, ExportFormat, ExportResponse,
   InterferenceResponse, RebuildResponse, Request, Response, SignatureResponse,
 } from "../kernel/protocol.ts";
 
@@ -201,6 +201,11 @@ export class KernelClient {
 
   meshSeeds(doc: PartDoc, parts: PartDoc[], study: string): Promise<MeshSeedsResponse> {
     return this.call<MeshSeedsResponse>({ type: "meshSeeds", doc, parts, study });
+  }
+
+  /** Sugestões do avaliador de malha para o estudo `study`; `worst` = piores elementos da última malha. */
+  meshAdvice(doc: PartDoc, parts: PartDoc[], study: string, worst?: import("../sim/quality.ts").MeshQuality["worst"]): Promise<MeshAdviceResponse> {
+    return this.call<MeshAdviceResponse>({ type: "meshAdvice", doc, parts, study, worst });
   }
 
   assemblyStudyCase(project: CadProject, assembly: string, study: string): Promise<StudyCaseResponse> {
