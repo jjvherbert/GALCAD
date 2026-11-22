@@ -61,7 +61,7 @@ export function femGeo(c: FemCase, o: GeoOpts = {}): string {
     `Mesh.Optimize = 1;`,
     `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`,
     `Mesh.MshFileVersion = 4.1;`,
-    `Mesh.Binary = 0;`,
+    `Mesh.Binary = ${o.preview ? 1 : 0};`,
     `Mesh.SaveAll = 0;`,
   );
   for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);

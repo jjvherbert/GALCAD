@@ -67,6 +67,32 @@ test("MSH 4.1: nós, elementos e grupos físicos", () => {
   assert.throws(() => parseMsh("$MeshFormat\n2.2 0 8\n$EndMeshFormat\n"), /não suportado/);
 });
 
+// o mesmo tetraedro em MSH 4.1 binário (formato que a malha ao vivo pede ao Gmsh: lê-se ~5× mais depressa)
+function mshBinary(): Uint8Array {
+  const parts: Buffer[] = [];
+  const t = (s: string) => parts.push(Buffer.from(s, "latin1"));
+  const i = (...v: number[]) => { const b = Buffer.alloc(4 * v.length); v.forEach((x, k) => b.writeInt32LE(x, 4 * k)); parts.push(b); };
+  const z = (...v: number[]) => { const b = Buffer.alloc(8 * v.length); v.forEach((x, k) => b.writeBigUInt64LE(BigInt(x), 8 * k)); parts.push(b); };
+  const d = (...v: number[]) => { const b = Buffer.alloc(8 * v.length); v.forEach((x, k) => b.writeDoubleLE(x, 8 * k)); parts.push(b); };
+  t("$MeshFormat\n4.1 1 8\n"); i(1); t("\n$EndMeshFormat\n");
+  t('$PhysicalNames\n2\n2 1 "TOP"\n3 2 "SOLID"\n$EndPhysicalNames\n');
+  t("$Entities\n"); z(0, 0, 1, 1);
+  i(5); d(0, 0, 1, 1, 1, 1); z(1); i(1); z(0);
+  i(1); d(0, 0, 0, 1, 1, 1); z(1); i(2); z(0);
+  t("\n$EndEntities\n$Nodes\n"); z(1, 4, 1, 4);
+  i(3, 1, 0); z(4); z(1, 2, 3, 4); d(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1);
+  t("\n$EndNodes\n$Elements\n"); z(2, 2, 1, 4);
+  i(2, 5, 2); z(1); z(1, 2, 3, 4);
+  i(3, 1, 4); z(1); z(2, 1, 2, 3, 4);
+  t("\n$EndElements\n");
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+test("MSH 4.1 binário: lê o mesmo que o ASCII", () => {
+  assert.deepEqual(parseMsh(mshBinary()), parseMsh(MSH));
+  assert.deepEqual(parseMsh(new TextEncoder().encode(MSH)), parseMsh(MSH));
+});
+
 test("FRD/DAT: blocos de resultados e valores próprios", () => {
   const frd = [
     "    2C                             2                                     1",

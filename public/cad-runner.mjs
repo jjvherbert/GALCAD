@@ -1042,8 +1042,18 @@ const NODES_PER = {
 	18: 15,
 	19: 13
 };
-function parseMsh(text) {
-	const lines = text.split(/\r?\n/);
+/**
+* Lê uma malha MSH 4.1. Texto: ASCII. Bytes: ASCII ou binário (a malha ao vivo pede binário ao
+* Gmsh — escreve-se e lê-se em metade do tempo).
+*/
+function parseMsh(src) {
+	if (typeof src !== "string") {
+		const head = new TextDecoder().decode(src.subarray(0, 64));
+		const fmt = /\$MeshFormat\r?\n(\S+)\s+(\S+)/.exec(head);
+		if (fmt && fmt[1].startsWith("4") && fmt[2] === "1") return parseMshBinary(src);
+		src = new TextDecoder().decode(src);
+	}
+	const lines = src.split(/\r?\n/);
 	let i = 0;
 	const next = () => lines[i++]?.trim() ?? "";
 	const nodes = /* @__PURE__ */ new Map();
@@ -1117,6 +1127,140 @@ function parseMsh(text) {
 					tags
 				});
 			}
+		}
+	}
+	if (!nodes.size) throw new Error("A malha não tem nós");
+	return {
+		nodes,
+		blocks,
+		physicals,
+		entityPhysicals,
+		entityBox
+	};
+}
+/** MSH 4.1 binário (Gmsh, little-endian, size_t de 8 bytes); `$PhysicalNames` vem em texto. */
+function parseMshBinary(buf) {
+	const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+	let p = 0;
+	const line = () => {
+		let e = p;
+		while (e < buf.length && buf[e] !== 10) e++;
+		const s = new TextDecoder().decode(buf.subarray(p, e)).trim();
+		p = e + 1;
+		return s;
+	};
+	const i32 = () => {
+		const v = dv.getInt32(p, true);
+		p += 4;
+		return v;
+	};
+	const sz = () => {
+		const v = dv.getUint32(p, true) + dv.getUint32(p + 4, true) * 4294967296;
+		p += 8;
+		return v;
+	};
+	const f64 = () => {
+		const v = dv.getFloat64(p, true);
+		p += 8;
+		return v;
+	};
+	const nodes = /* @__PURE__ */ new Map();
+	const blocks = [];
+	const physicals = /* @__PURE__ */ new Map();
+	const entityPhysicals = /* @__PURE__ */ new Map();
+	const entityBox = /* @__PURE__ */ new Map();
+	while (p < buf.length) {
+		const l = line();
+		if (l === "$MeshFormat") {
+			const [, , size] = line().split(/\s+/);
+			if (size !== "8") throw new Error(`Malha MSH binária com size_t de ${size} bytes não suportada`);
+			if (i32() !== 1) throw new Error("Malha MSH binária big-endian não suportada");
+		} else if (l === "$PhysicalNames") {
+			const n = Number(line());
+			for (let k = 0; k < n; k++) {
+				const m = /^(\d+)\s+(\d+)\s+"(.*)"$/.exec(line());
+				if (m) physicals.set(m[3], {
+					dim: Number(m[1]),
+					tag: Number(m[2])
+				});
+			}
+		} else if (l === "$Entities") {
+			const counts = [
+				sz(),
+				sz(),
+				sz(),
+				sz()
+			];
+			for (let dim = 0; dim < 4; dim++) for (let k = 0; k < counts[dim]; k++) {
+				const tag = i32();
+				const box = dim === 0 ? [
+					f64(),
+					f64(),
+					f64()
+				] : [
+					f64(),
+					f64(),
+					f64(),
+					f64(),
+					f64(),
+					f64()
+				];
+				const phys = [];
+				for (let n = sz(); n > 0; n--) phys.push(i32());
+				entityPhysicals.set(`${dim}:${tag}`, phys);
+				if (dim) {
+					entityBox.set(`${dim}:${tag}`, box);
+					const nb = sz();
+					p += nb * 4;
+				}
+			}
+		} else if (l === "$Nodes") {
+			const nb = sz();
+			p += 24;
+			for (let b = 0; b < nb; b++) {
+				i32();
+				i32();
+				const param = i32(), count = sz();
+				if (param) throw new Error("Nós paramétricos não suportados");
+				const t0 = p;
+				p += count * 8;
+				for (let k = 0; k < count; k++) {
+					const tag = dv.getUint32(t0 + k * 8, true) + dv.getUint32(t0 + k * 8 + 4, true) * 4294967296;
+					nodes.set(tag, [
+						f64(),
+						f64(),
+						f64()
+					]);
+				}
+			}
+		} else if (l === "$Elements") {
+			const nb = sz();
+			p += 24;
+			for (let b = 0; b < nb; b++) {
+				const dim = i32(), entity = i32(), type = i32(), count = sz();
+				const per = NODES_PER[type];
+				if (!per) throw new Error(`Tipo de elemento Gmsh ${type} não suportado`);
+				const conn = new Array(count * per), tags = new Array(count);
+				for (let k = 0, c = 0; k < count; k++) {
+					tags[k] = sz();
+					for (let j = 0; j < per; j++) conn[c++] = sz();
+				}
+				blocks.push({
+					dim,
+					entity,
+					type,
+					conn,
+					tags
+				});
+			}
+		} else if (l.startsWith("$") && !l.startsWith("$End")) {
+			const end = new TextEncoder().encode(`$End${l.slice(1)}`);
+			let q = p;
+			outer: for (; q <= buf.length - end.length; q++) {
+				for (let j = 0; j < end.length; j++) if (buf[q + j] !== end[j]) continue outer;
+				break;
+			}
+			p = q;
 		}
 	}
 	if (!nodes.size) throw new Error("A malha não tem nós");
@@ -4298,7 +4442,7 @@ function femGeo(c, o = {}) {
 	else out.push(`Physical Volume("SOLID") = Volume{:};`);
 	for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
 	for (const [name, tags] of Object.entries(c.edgeGroups ?? {})) out.push(`Physical Curve("${name}") = ${list(tags)};`);
-	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${minSizeFloor(c)};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${order};`, `Mesh.HighOrderOptimize = ${order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = 0;`, `Mesh.SaveAll = 0;`);
+	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${minSizeFloor(c)};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${order};`, `Mesh.HighOrderOptimize = ${order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = ${o.preview ? 1 : 0};`, `Mesh.SaveAll = 0;`);
 	for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
 	out.push(...meshControls(c, order));
 	return out.join("\n") + "\n";
@@ -5644,7 +5788,7 @@ async function gmshMeshRaw(c, dir, log, o) {
 		...g,
 		preview: o.preview
 	}) : su2Geo(c, g));
-	const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : void 0;
+	const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"))) : void 0;
 	const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
 	if (!o.regenerate && existsSync(geo)) {
 		const hxt = /^\s*Mesh\.Algorithm3D\s*=\s*10\s*;/m.test(readFileSync(geo, "utf8"));

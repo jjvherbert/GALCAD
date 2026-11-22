@@ -1,4 +1,4 @@
-// Leitor de malhas Gmsh MSH 4.1 (ASCII): nós, elementos por tipo e grupos físicos por nome.
+// Leitor de malhas Gmsh MSH 4.1 (ASCII ou binário): nós, elementos por tipo e grupos físicos por nome.
 // Puro (sem OCC): é usado na aplicação e no agente local (cad-runner).
 import { SOLIDS, isFaceType, isLineType, isSolidType } from "./elements.ts";
 
@@ -30,7 +30,18 @@ export interface Msh {
 // 6/18 e 7/19 (prismas e pirâmides) só aparecem em malhas mistas e são lidos para dar um erro claro
 export const NODES_PER: Record<number, number> = { 1: 2, 2: 3, 3: 4, 4: 4, 5: 8, 6: 6, 7: 5, 8: 3, 9: 6, 11: 10, 15: 1, 16: 8, 17: 20, 18: 15, 19: 13 };
 
-export function parseMsh(text: string): Msh {
+/**
+ * Lê uma malha MSH 4.1. Texto: ASCII. Bytes: ASCII ou binário (a malha ao vivo pede binário ao
+ * Gmsh — escreve-se e lê-se em metade do tempo).
+ */
+export function parseMsh(src: string | Uint8Array): Msh {
+  if (typeof src !== "string") {
+    const head = new TextDecoder().decode(src.subarray(0, 64));
+    const fmt = /\$MeshFormat\r?\n(\S+)\s+(\S+)/.exec(head);
+    if (fmt && fmt[1].startsWith("4") && fmt[2] === "1") return parseMshBinary(src);
+    src = new TextDecoder().decode(src);
+  }
+  const text = src;
   const lines = text.split(/\r?\n/);
   let i = 0;
   const next = () => lines[i++]?.trim() ?? "";
@@ -90,6 +101,91 @@ export function parseMsh(text: string): Msh {
         }
         blocks.push({ dim, entity, type, conn, tags });
       }
+    }
+  }
+  if (!nodes.size) throw new Error("A malha não tem nós");
+  return { nodes, blocks, physicals, entityPhysicals, entityBox };
+}
+
+/** MSH 4.1 binário (Gmsh, little-endian, size_t de 8 bytes); `$PhysicalNames` vem em texto. */
+function parseMshBinary(buf: Uint8Array): Msh {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let p = 0;
+  const line = () => {
+    let e = p;
+    while (e < buf.length && buf[e] !== 10) e++;
+    const s = new TextDecoder().decode(buf.subarray(p, e)).trim();
+    p = e + 1;
+    return s;
+  };
+  const i32 = () => { const v = dv.getInt32(p, true); p += 4; return v; };
+  // size_t: os valores cabem em 2^53 (tags e contagens)
+  const sz = () => { const v = dv.getUint32(p, true) + dv.getUint32(p + 4, true) * 4294967296; p += 8; return v; };
+  const f64 = () => { const v = dv.getFloat64(p, true); p += 8; return v; };
+  const nodes = new Map<number, [number, number, number]>();
+  const blocks: MshElementBlock[] = [];
+  const physicals = new Map<string, { dim: number; tag: number }>();
+  const entityPhysicals = new Map<string, number[]>();
+  const entityBox = new Map<string, number[]>();
+  while (p < buf.length) {
+    const l = line();
+    if (l === "$MeshFormat") {
+      const [, , size] = line().split(/\s+/);
+      if (size !== "8") throw new Error(`Malha MSH binária com size_t de ${size} bytes não suportada`);
+      if (i32() !== 1) throw new Error("Malha MSH binária big-endian não suportada");
+    } else if (l === "$PhysicalNames") {
+      const n = Number(line());
+      for (let k = 0; k < n; k++) {
+        const m = /^(\d+)\s+(\d+)\s+"(.*)"$/.exec(line());
+        if (m) physicals.set(m[3], { dim: Number(m[1]), tag: Number(m[2]) });
+      }
+    } else if (l === "$Entities") {
+      const counts = [sz(), sz(), sz(), sz()];
+      for (let dim = 0; dim < 4; dim++) {
+        for (let k = 0; k < counts[dim]; k++) {
+          const tag = i32();
+          const box = dim === 0 ? [f64(), f64(), f64()] : [f64(), f64(), f64(), f64(), f64(), f64()];
+          const phys: number[] = [];
+          for (let n = sz(); n > 0; n--) phys.push(i32());
+          entityPhysicals.set(`${dim}:${tag}`, phys);
+          if (dim) { entityBox.set(`${dim}:${tag}`, box); const nb = sz(); p += nb * 4; }
+        }
+      }
+    } else if (l === "$Nodes") {
+      const nb = sz(); p += 24;
+      for (let b = 0; b < nb; b++) {
+        i32(); i32();
+        const param = i32(), count = sz();
+        if (param) throw new Error("Nós paramétricos não suportados");
+        const t0 = p;
+        p += count * 8;
+        for (let k = 0; k < count; k++) {
+          const tag = dv.getUint32(t0 + k * 8, true) + dv.getUint32(t0 + k * 8 + 4, true) * 4294967296;
+          nodes.set(tag, [f64(), f64(), f64()]);
+        }
+      }
+    } else if (l === "$Elements") {
+      const nb = sz(); p += 24;
+      for (let b = 0; b < nb; b++) {
+        const dim = i32(), entity = i32(), type = i32(), count = sz();
+        const per = NODES_PER[type];
+        if (!per) throw new Error(`Tipo de elemento Gmsh ${type} não suportado`);
+        const conn: number[] = new Array(count * per), tags: number[] = new Array(count);
+        for (let k = 0, c = 0; k < count; k++) {
+          tags[k] = sz();
+          for (let j = 0; j < per; j++) conn[c++] = sz();
+        }
+        blocks.push({ dim, entity, type, conn, tags });
+      }
+    } else if (l.startsWith("$") && !l.startsWith("$End")) {
+      // secção desconhecida: salta até ao seu fim
+      const end = new TextEncoder().encode(`$End${l.slice(1)}`);
+      let q = p;
+      outer: for (; q <= buf.length - end.length; q++) {
+        for (let j = 0; j < end.length; j++) if (buf[q + j] !== end[j]) continue outer;
+        break;
+      }
+      p = q;
     }
   }
   if (!nodes.size) throw new Error("A malha não tem nós");
