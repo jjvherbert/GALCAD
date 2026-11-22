@@ -75,7 +75,7 @@ test("malhas rápidas não são canceladas: a intermédia aparece e depois corre
 });
 
 test("malhas lentas continuam a ser canceladas", async () => {
-  const h = harness({ keepUnder: 1 });
+  const h = harness({ keepUnder: 0 }); // 0: nunca «rápida» — com 1 ms, uma pausa do event loop media 0 ms e não cancelava
   h.update("a"); await wait(30);
   await h.finish("ok");
   h.update("b"); await wait(30);
