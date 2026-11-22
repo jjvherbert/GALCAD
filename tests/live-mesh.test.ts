@@ -28,11 +28,11 @@ test("a chave muda com a malha, a geometria, os materiais e o documento", () => 
 });
 
 /** Corrida controlada pelo teste: cada chamada fica pendente até `finish`. */
-function harness(o: { blocked?: () => boolean } = {}) {
+function harness(o: { blocked?: () => boolean; keepUnder?: number } = {}) {
   const calls: string[] = [], pending: ((r: LiveRun) => void)[] = [];
   let cancels = 0;
   const update = liveMeshScheduler((k) => { calls.push(k); return new Promise<LiveRun>((r) => pending.push(r)); },
-    { delay: 10, blocked: o.blocked, cancel: () => { cancels++; } });
+    { delay: 10, blocked: o.blocked, keepUnder: o.keepUnder, cancel: () => { cancels++; } });
   const finish = async (r: LiveRun) => { pending.shift()!(r); await wait(0); };
   return { calls, update, finish, cancels: () => cancels };
 }
@@ -59,6 +59,28 @@ test("uma alteração durante a malha cancela-a e corre a mais recente no fim", 
   await h.finish("ok");
   await wait(50);
   assert.equal(h.calls.length, 2);
+});
+
+test("malhas rápidas não são canceladas: a intermédia aparece e depois corre a mais recente", async () => {
+  const h = harness({ keepUnder: 5000 });
+  h.update("a"); await wait(30);
+  await h.finish("ok");
+  h.update("b"); await wait(30);
+  h.update("c"); await wait(30);
+  h.update("d"); await wait(30);
+  assert.deepEqual(h.calls, ["a", "b"]);
+  assert.equal(h.cancels(), 0, "a malha rápida em curso acaba");
+  await h.finish("ok");
+  assert.deepEqual(h.calls, ["a", "b", "d"], "depois corre só a mais recente");
+});
+
+test("malhas lentas continuam a ser canceladas", async () => {
+  const h = harness({ keepUnder: 1 });
+  h.update("a"); await wait(30);
+  await h.finish("ok");
+  h.update("b"); await wait(30);
+  h.update("c"); await wait(30);
+  assert.equal(h.cancels(), 1);
 });
 
 test("um erro não entra em ciclo; uma chave nova volta a tentar", async () => {
