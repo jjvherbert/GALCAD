@@ -128,7 +128,7 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
   const nt = String(Math.max(1, cpus().length));
   const args = (n: string) => o.kind === "fem" ? ["mesh.geo", (c as FemCase).shell ? "-2" : "-3", "-o", "mesh.msh", "-nt", n] : ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", n];
   const write = (g: GeoOpts) => writeFileSync(geo, o.kind === "fem" ? femGeo(c as FemCase, { ...g, preview: o.preview }) : su2Geo(c as CfdCase, g));
-  const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : undefined;
+  const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"))) : undefined;
   const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
   // geo já existente e sem regenerar: corre-o tal como está (pode ter sido editado à mão)
   if (!o.regenerate && existsSync(geo)) {
