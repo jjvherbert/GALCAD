@@ -42,24 +42,29 @@ export type LiveRun = "ok" | "error" | "cancelled";
  * (`last`) ou falhou (`failed`) não volta a correr sozinha — falhar não entra em ciclo. `blocked()`
  * (p. ex. um cálculo completo em curso) adia: o próximo `update` com a mesma chave retoma.
  * `null` (opção desligada, fora do FEM…) cancela a malha em curso.
+ * Malhas rápidas (as últimas acabaram em menos de `keepUnder` ms) não são canceladas: acabam, aparecem
+ * e só então corre a mais recente — passos seguidos (Shift+roda numa seed) mostram as malhas intermédias.
  */
 export function liveMeshScheduler(run: (key: string) => Promise<LiveRun>, o: {
-  delay?: number; blocked?: () => boolean; cancel?: () => void;
+  delay?: number; blocked?: () => boolean; cancel?: () => void; keepUnder?: number;
 } = {}) {
-  const delay = o.delay ?? 120;
+  const delay = o.delay ?? 120, keepUnder = o.keepUnder ?? 1000;
   let want: string | null = null, last: string | null = null, failed: string | null = null, running: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // durações das últimas malhas acabadas (a maior conta: um acerto da cache não esconde uma malha lenta)
+  const durs: number[] = [];
+  const fast = () => durs.length > 0 && Math.max(...durs) < keepUnder;
   const arm = () => { clearTimeout(timer); timer = setTimeout(fire, delay); };
   const pending = () => want !== null && want !== last && want !== failed;
   function fire() {
     timer = undefined;
     if (!pending()) return;
-    if (running) { if (running !== want) o.cancel?.(); return; }
+    if (running) { if (running !== want && !fast()) o.cancel?.(); return; }
     if (o.blocked?.()) return;
-    const key = want!;
+    const key = want!, t0 = Date.now();
     running = key;
     void run(key).then((r) => r, () => "error" as const).then((r) => {
-      if (r === "ok") last = key;
+      if (r === "ok") { last = key; durs.push(Date.now() - t0); if (durs.length > 3) durs.shift(); }
       else if (r === "error") failed = key;
       running = null;
       if (pending() && timer === undefined) fire();
