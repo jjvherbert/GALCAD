@@ -26,7 +26,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const edit = st.sketch!;
   const draft = edit.draft;
   const wrap = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState<[number, number]>([800, 600]);
+  const [size, setSize] = useState<[number, number]>([0, 0]); // 0 até medir: ajustar à vista com 800×600 fixos deixava a origem fora do ecrã estreito
   const [view, setView] = useState<{ k: number; tx: number; ty: number } | null>(null);
   const [tool, setTool] = useState<Tool>("select");
   const [dimMode, setDimMode] = useState<DimMode>("auto");
@@ -104,9 +104,11 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   }
 
   // --- vista --------------------------------------------------------------------
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = wrap.current!;
-    const ro = new ResizeObserver(() => setSize([el.clientWidth, el.clientHeight]));
+    const measure = () => setSize([el.clientWidth, el.clientHeight]);
+    measure(); // antes da primeira pintura: o ajuste à vista usa já o tamanho real
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
