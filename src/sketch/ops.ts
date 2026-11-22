@@ -1,7 +1,7 @@
 // Operações de edição de esboços (puras: devolvem um esboço novo). Usadas pelo editor e testáveis em Node.
 import type { ConstraintType, Expr, SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
-import { type P2, allEntities, entityPoints, isImplicit, measure } from "./geometry.ts";
+import { type P2, allEntities, entityPoints, isImplicit, measure, pt } from "./geometry.ts";
 
 export type SketchData = Pick<SketchFeature, "entities" | "constraints">;
 
@@ -225,9 +225,30 @@ export function applyConstraint(s: SketchData, type: ConstraintType, sel: string
 }
 
 /** Cota inteligente: escolhe o tipo de cota pelos elementos selecionados. Valor = medida atual. */
-export function smartDimension(s: SketchData, sel: string[], mode: "auto" | "horizontal" | "vertical" = "auto"): { type: ConstraintType; refs: string[] } | null {
+/**
+ * Orientação de uma cota entre dois pontos pela posição onde se larga (como no SolidWorks):
+ * acima/abaixo do vão em X → horizontal; ao lado do vão em Y → vertical; de resto, alinhada.
+ * Segmentos já horizontais/verticais ficam sempre alinhados (a cota é a mesma).
+ */
+export function placementMode(a: P2, b: P2, at: P2): "auto" | "horizontal" | "vertical" {
+  const dx = Math.abs(b[0] - a[0]), dy = Math.abs(b[1] - a[1]), tol = 1e-9 * Math.max(1, dx, dy);
+  if (dx < tol || dy < tol) return "auto";
+  const inX = at[0] > Math.min(a[0], b[0]) && at[0] < Math.max(a[0], b[0]);
+  const inY = at[1] > Math.min(a[1], b[1]) && at[1] < Math.max(a[1], b[1]);
+  if (inX && !inY) return "horizontal";
+  if (inY && !inX) return "vertical";
+  return "auto";
+}
+
+export function smartDimension(s: SketchData, sel: string[], mode: "auto" | "horizontal" | "vertical" = "auto", at?: P2): { type: ConstraintType; refs: string[] } | null {
   const k = kinds(s, sel);
   const ents = allEntities(s);
+  if (mode === "auto" && at) {
+    const ends = sel.length === 1 && k[0] === "line"
+      ? [(ents[sel[0]] as Extract<SketchEntity, { type: "line" }>).p1, (ents[sel[0]] as Extract<SketchEntity, { type: "line" }>).p2]
+      : sel.length === 2 && k.every((x) => x === "point") ? sel : null;
+    if (ends) mode = placementMode(pt(ents, ends[0]), pt(ents, ends[1]), at);
+  }
   // só eixos/origem: nada para cotar (são fixos)
   if (sel.every((id) => isImplicit(id))) return null;
   if (sel.length === 1 && k[0] === "line") {

@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ConstraintType, SketchEntity } from "../doc/types.ts";
 import { projTolOf, refEdgesOf, refGroupsOf } from "./sketch-ref.ts";
-import { type HitOpts, hitAtIn, hitRefIn, snapIn } from "./sketch-hit.ts";
+import { type HitOpts, dimHitIn, hitAtIn, hitRefIn, snapIn } from "./sketch-hit.ts";
 import { finishSplineIn, handleClick } from "./sketch-click.ts";
 import { convertEdges } from "./sketch-convert.ts";
 import { type ChamferMode, type LastValues, type Prompt, LAST_DEFAULTS, applyPromptIn, saveDimIn } from "./sketch-cmd.ts";
@@ -17,7 +17,7 @@ import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { commandViewport } from "./commands.ts";
 import { type Draw, type DimMode, type Snap, type Tool, GEOM_CONSTRAINTS, TOOLS, fmt } from "./sketch-types.ts";
-import { Constraints, Dimensions, Grid, labelPos } from "./SketchOverlays.tsx";
+import { Constraints, DimGhost, Dimensions, Grid, labelPos } from "./SketchOverlays.tsx";
 
 
 export function SketchEditor({ result }: { result: RebuildResponse | null }) {
@@ -145,6 +145,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
 
   // --- acerto e seleção -------------------------------------------------------------
   function hitAt(sx: number, sy: number, opts: HitOpts = {}): string | null { return hitAtIn({ ents, S, W }, sx, sy, opts); }
+  const dimHit = (sx: number, sy: number) => dimHitIn({ ents, S, W }, sx, sy);
 
   function snap(sx: number, sy: number, exclude?: Set<string>): Snap { return snapIn({ ents, S, W }, sx, sy, exclude); }
 
@@ -194,7 +195,8 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       if (r.ok) store.updateSketch({ ...draft, entities: r.entities });
       return;
     }
-    if (tool === "select" || tool === "dim" || tool === "trim" || tool === "extend" || tool === "offset" || tool === "skmirror" || tool === "skpattern") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "dim" || tool === "skmirror" || tool === "skpattern" ? hitAt(sx, sy) : null));
+    if (tool === "dim") setHover(dimHit(sx, sy));
+    else if (tool === "select" || tool === "trim" || tool === "extend" || tool === "offset" || tool === "skmirror" || tool === "skpattern") setHover(hitAt(sx, sy, { points: false }) ?? (tool === "select" || tool === "skmirror" || tool === "skpattern" ? hitAt(sx, sy) : null));
     else if (tool === "convert") { const i = hitRef(sx, sy); setHover(i >= 0 ? `ref:${i}` : null); }
     else if (tool === "skfillet" || tool === "skchamfer") { const h = hitAt(sx, sy, { curves: false }); setHover(h && isLineCorner(data(), h) ? h : null); }
     else setHover(snap(sx, sy).id ?? null);
@@ -238,7 +240,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   }
 
   // --- cliques por ferramenta ---------------------------------------------------------
-  const clickCtx = () => ({ tool, sel, drawing, dimMode, draft, ents, hitAt, snap, hitRef, refGroups, convert, commit, data, W, lastValue, mirrorKeep, chamferMode, setSel, setMsg, setPrompt, setDrawing, setDimEdit });
+  const clickCtx = () => ({ tool, sel, drawing, dimMode, draft, ents, hitAt, dimHit, snap, hitRef, refGroups, convert, commit, data, W, lastValue, mirrorKeep, chamferMode, setSel, setMsg, setPrompt, setDrawing, setDimEdit });
   const click = (sx: number, sy: number, additive: boolean, dbl: boolean) => handleClick(clickCtx(), sx, sy, additive, dbl);
   const finishSpline = (pts: string[]) => finishSplineIn(clickCtx(), pts);
 
@@ -340,7 +342,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
               </button>
             ))}
             {!applicable.length && <span class="muted">nenhuma para esta seleção</span>}
-            {entitySel.length && (() => { const d = smartDimension(data(), entitySel, "auto"); return d ? <button onClick={() => { setTool("dim"); setDrawing({ kind: "dim", picks: entitySel }); setMsg("Clique no vazio para colocar a cota"); }}>↔ Cotar</button> : null; })()}
+            {entitySel.length && (() => { const d = smartDimension(data(), entitySel, "auto"); return d ? <button onClick={() => { setTool("dim"); setDrawing({ kind: "dim", picks: entitySel }); setMsg("Clique onde quer a cota"); }}>↔ Cotar</button> : null; })()}
           </div>
         )}
         <svg width={size[0]} height={size[1]} onPointerDown={onDown as never} onPointerMove={onMove as never} onPointerUp={onUp as never} class={`tool-${tool}`}>
@@ -362,6 +364,10 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
             onEdit={(c) => setDimEdit({ id: c.id, text: String(c.value ?? roundDim(measure(ents, c))) })}
             onSelect={(id, add) => setSel(add ? [...sel, id] : [id])}
             onMoveLabel={(id, pos) => store.updateSketch({ ...draft, constraints: draft.constraints.map((c) => (c.id === id ? { ...c, pos } : c)) })} />
+          {tool === "dim" && drawing?.kind === "dim" && drawing.picks.length > 0 && mouse && !hover && (() => {
+            const g = smartDimension(data(), drawing.picks, dimMode, mouse);
+            return g ? <DimGhost c={g} ents={ents} S={S} pos={mouse} /> : null;
+          })()}
           {points.map(([id, e]) => {
             const [x, y] = S([(e as { x: number }).x, (e as { y: number }).y]);
             return <rect key={id} x={x - 3} y={y - 3} width={6} height={6} class={`pt ${cls(id, e)}`} />;

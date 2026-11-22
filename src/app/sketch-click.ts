@@ -19,6 +19,8 @@ export type ClickCtx = {
   draft: SketchData;
   ents: ReturnType<typeof allEntities>;
   hitAt: (sx: number, sy: number, opts?: HitOpts) => string | null;
+  /** acerto da ferramenta de cota (linha primeiro; ponto só mesmo em cima) */
+  dimHit: (sx: number, sy: number) => string | null;
   snap: (sx: number, sy: number, exclude?: Set<string>) => Snap;
   hitRef: (sx: number, sy: number) => number;
   refGroups: RefGroup[];
@@ -199,22 +201,24 @@ export function finishSplineIn(c: ClickCtx, pts: string[]) {
 }
 
 export function dimClickAt(c: ClickCtx, sx: number, sy: number) {
-  const { dimMode, drawing, ents, hitAt, commit, data, W, setSel, setMsg, setDrawing, setDimEdit } = c;
-  const id = hitAt(sx, sy);
+  const { dimMode, drawing, ents, dimHit, commit, data, W, setSel, setMsg, setDrawing, setDimEdit } = c;
+  const id = dimHit(sx, sy);
   const picks = drawing?.kind === "dim" ? drawing.picks : [];
   if (id) {
     const next = picks.includes(id) ? picks.filter((x) => x !== id) : [...picks, id].slice(-2);
     setDrawing({ kind: "dim", picks: next });
     setSel(next);
+    setMsg(next.length ? "Clique onde quer a cota (ou noutra entidade para cotar entre as duas)" : "Clique numa linha, arco ou círculo");
     return;
   }
   // clique no vazio: colocar a cota
   if (!picks.length) return;
-  const dim = smartDimension(data(), picks, dimMode);
+  const dim = smartDimension(data(), picks, dimMode, W(sx, sy));
   if (!dim) { setMsg("Não sei cotar esta seleção"); return; }
   const value = roundDim(measure(ents, dim));
   const r = addConstraint(data(), dim.type, dim.refs, value, { pos: W(sx, sy) });
   if (commit(r.s, "Cota", { drivenOnConflict: r.id })) setDimEdit({ id: r.id, text: String(value) });
   setDrawing(null);
   setSel([]);
+  setMsg("Cota colocada — clique noutra linha para a próxima");
 }
