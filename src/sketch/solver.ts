@@ -145,7 +145,12 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
       need(false); break;
     case "angle":
       need(ka === "line" && kb === "line");
-      return [P({ id, type: "l2l_angle_ll", l1_id: a, l2_id: b, angle: (v() * Math.PI) / 180 })];
+      if (!c.flip) return [P({ id, type: "l2l_angle_ll", l1_id: a, l2_id: b, angle: (v() * Math.PI) / 180 })];
+      {
+        // setor guardado: ângulo com sinal entre os sentidos invertidos (nunca salta para o suplementar)
+        const la = line(a), lb = line(b), [a1, a2] = c.flip & 1 ? [la.p2, la.p1] : [la.p1, la.p2], [b1, b2] = c.flip & 2 ? [lb.p2, lb.p1] : [lb.p1, lb.p2];
+        return [P({ id, type: "l2l_angle_pppp", l1p1_id: a1, l1p2_id: a2, l2p1_id: b1, l2p2_id: b2, angle: (v() * Math.PI) / 180 })];
+      }
   }
   return [];
 }

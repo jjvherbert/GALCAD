@@ -216,7 +216,7 @@ export function dimClickAt(c: ClickCtx, sx: number, sy: number) {
   const dim = smartDimension(data(), picks, dimMode, W(sx, sy));
   if (!dim) { setMsg("Não sei cotar esta seleção"); return; }
   const value = roundDim(measure(ents, dim));
-  const r = addConstraint(data(), dim.type, dim.refs, value, { pos: W(sx, sy) });
+  const r = addConstraint(data(), dim.type, dim.refs, value, { pos: W(sx, sy), ...(dim.flip ? { flip: dim.flip } : {}) });
   // a cota de referência não se edita (como no SolidWorks): só se abre a caixa se comandar
   if (commit(r.s, "Cota", { drivenOnConflict: r.id }) === "ok") setDimEdit({ id: r.id, text: String(value) });
   setDrawing(null);

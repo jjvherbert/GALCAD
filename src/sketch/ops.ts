@@ -1,7 +1,7 @@
 // Operações de edição de esboços (puras: devolvem um esboço novo). Usadas pelo editor e testáveis em Node.
 import type { ConstraintType, Expr, SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
-import { type P2, allEntities, entityPoints, isImplicit, measure, pt } from "./geometry.ts";
+import { type P2, allEntities, angleSector, entityPoints, isImplicit, measure, pt } from "./geometry.ts";
 
 export type SketchData = Pick<SketchFeature, "entities" | "constraints">;
 
@@ -240,7 +240,7 @@ export function placementMode(a: P2, b: P2, at: P2): "auto" | "horizontal" | "ve
   return "auto";
 }
 
-export function smartDimension(s: SketchData, sel: string[], mode: "auto" | "horizontal" | "vertical" = "auto", at?: P2): { type: ConstraintType; refs: string[] } | null {
+export function smartDimension(s: SketchData, sel: string[], mode: "auto" | "horizontal" | "vertical" = "auto", at?: P2): { type: ConstraintType; refs: string[]; flip?: number } | null {
   const k = kinds(s, sel);
   const ents = allEntities(s);
   if (mode === "auto" && at) {
@@ -275,6 +275,9 @@ export function smartDimension(s: SketchData, sel: string[], mode: "auto" | "hor
       const l2 = ents[sel[1]] as Extract<SketchEntity, { type: "line" }>;
       return { type: "distance", refs: [l2.p1, sel[0]] };
     }
+    // com o rato: o setor onde fica o rótulo (θ ou 180−θ, como no SolidWorks)
+    const sec = at ? angleSector(ents, sel[0], sel[1], at) : null;
+    if (sec) return sec.flip ? { type: "angle", refs: sec.refs, flip: sec.flip } : { type: "angle", refs: sec.refs };
     return ang >= 0 ? { type: "angle", refs: sel } : { type: "angle", refs: [sel[1], sel[0]] };
   }
   return null;
@@ -287,6 +290,21 @@ function signed(s: SketchData, type: "distanceX" | "distanceY", refs: string[]) 
 }
 
 export const roundDim = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * Arrastar o rótulo de uma cota. Numa cota de ângulo, largar noutro setor mede esse setor (como no
+ * SolidWorks): o valor passa a ser o ângulo atual desse setor, por isso a geometria não mexe. Uma
+ * cota com expressão mantém o setor (só o rótulo se move).
+ */
+export function moveDimLabel(c: SketchConstraint, ents: Record<string, SketchEntity>, pos: P2): SketchConstraint {
+  const moved = { ...c, pos };
+  if (c.type !== "angle" || (!c.driven && typeof c.value === "string" && !/^[-+]?[\d.]+$/.test(c.value))) return moved;
+  const sec = angleSector(ents, c.refs[0], c.refs[1], pos);
+  if (!sec || (sec.refs[0] === c.refs[0] && sec.refs[1] === c.refs[1] && sec.flip === (c.flip || 0))) return moved;
+  const { flip: _f, ...rest } = moved;
+  const next: SketchConstraint = { ...rest, refs: sec.refs, ...(sec.flip ? { flip: sec.flip } : {}) };
+  return c.driven ? next : { ...next, value: roundDim(measure(ents, next)) };
+}
 
 /** Rótulos curtos das restrições geométricas (glifos no esboço). */
 export const CONSTRAINT_GLYPH: Partial<Record<ConstraintType, string>> = {

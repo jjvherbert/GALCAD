@@ -53,6 +53,11 @@ export interface SketchConstraint {
   driven?: boolean;
   /** Posição da etiqueta da cota no esboço (só apresentação). */
   pos?: [number, number];
+  /**
+   * Cota de ângulo: setor medido entre as duas retas (dos quatro que formam). Bit 0 inverte o sentido
+   * da 1.ª linha, bit 1 o da 2.ª; sem o campo, os sentidos p1→p2 de cada linha.
+   */
+  flip?: number;
 }
 
 export const DIMENSION_TYPES: ReadonlySet<ConstraintType> = new Set([

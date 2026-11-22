@@ -115,7 +115,7 @@ export function Dimensions({ constraints, ents, S, W, sel, conflicts, scope, onE
 
 /** Linhas de chamada, linha de cota e setas (sem rótulo); sem desenho próprio cai em linhas de chamada até ao rótulo. */
 export function DimShape({ c, ents, S, pos }: {
-  c: Pick<SketchConstraint, "type" | "refs">; ents: Record<string, SketchEntity>; S: (p: P2) => [number, number]; pos: P2;
+  c: Pick<SketchConstraint, "type" | "refs" | "flip">; ents: Record<string, SketchEntity>; S: (p: P2) => [number, number]; pos: P2;
 }) {
   const g = dimGeometry(c, ents, pos);
   if (!g) {
@@ -139,7 +139,7 @@ export function DimShape({ c, ents, S, pos }: {
 
 /** Pré-visualização da cota que o próximo clique coloca (segue o rato). */
 export function DimGhost({ c, ents, S, pos }: {
-  c: Pick<SketchConstraint, "type" | "refs">; ents: Record<string, SketchEntity>; S: (p: P2) => [number, number]; pos: P2;
+  c: Pick<SketchConstraint, "type" | "refs" | "flip">; ents: Record<string, SketchEntity>; S: (p: P2) => [number, number]; pos: P2;
 }) {
   let value: number;
   try { value = measure(ents, c as SketchConstraint); } catch { return null; }
