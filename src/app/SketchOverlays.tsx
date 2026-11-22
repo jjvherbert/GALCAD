@@ -3,6 +3,7 @@ import { useRef } from "preact/hooks";
 import { type SketchConstraint, type SketchEntity, DIMENSION_TYPES } from "../doc/types.ts";
 import { evalExpr } from "../doc/expr.ts";
 import { type P2, measure, pt } from "../sketch/geometry.ts";
+import { dimGeometry } from "../sketch/dimgeom.ts";
 import { CONSTRAINT_GLYPH, CONSTRAINT_LABEL } from "../sketch/ops.ts";
 import { fmt } from "./sketch-types.ts";
 
@@ -88,12 +89,10 @@ export function Dimensions({ constraints, ents, S, W, sel, conflicts, scope, onE
         try { value = c.driven || c.value === undefined ? measure(ents, c) : evalExpr(c.value, scope); } catch { value = NaN; }
         const shown = c.type === "radius" ? `R${fmt(value)}` : c.type === "diameter" ? `⌀${fmt(value)}` : c.type === "angle" ? `${fmt(value)}°` : fmt(Math.abs(value));
         const text = c.driven ? `(${shown})` : typeof c.value === "string" && !/^[-+]?[\d.]+$/.test(c.value) ? `${c.value} = ${shown}` : shown;
-        const lp = S(c.pos ?? labelPos(c, ents));
-        const anchors = anchorPoints(c, ents).map(S);
+        const pos = c.pos ?? labelPos(c, ents), lp = S(pos);
         return (
           <g key={c.id} class={`dim ${c.driven ? "driven" : ""} ${sel.includes(c.id) ? "sel" : ""} ${conflicts.has(c.id) ? "conflict" : ""}`}>
-            {anchors.length === 2 && <line class="dimline" x1={anchors[0][0]} y1={anchors[0][1]} x2={anchors[1][0]} y2={anchors[1][1]} />}
-            {anchors.map((a, i) => <line key={i} class="leader" x1={a[0]} y1={a[1]} x2={lp[0]} y2={lp[1]} />)}
+            <DimShape c={c} ents={ents} S={S} pos={pos} />
             <text x={lp[0]} y={lp[1]} class="dimtext"
               onPointerDown={(e) => { e.stopPropagation(); (e.currentTarget as Element).setPointerCapture(e.pointerId); dragging.current = { id: c.id, moved: false }; }}
               onPointerMove={(e) => {
@@ -110,6 +109,46 @@ export function Dimensions({ constraints, ents, S, W, sel, conflicts, scope, onE
           </g>
         );
       })}
+    </g>
+  );
+}
+
+/** Linhas de chamada, linha de cota e setas (sem rótulo); sem desenho próprio cai em linhas de chamada até ao rótulo. */
+export function DimShape({ c, ents, S, pos }: {
+  c: Pick<SketchConstraint, "type" | "refs">; ents: Record<string, SketchEntity>; S: (p: P2) => [number, number]; pos: P2;
+}) {
+  const g = dimGeometry(c, ents, pos);
+  if (!g) {
+    const lp = S(pos);
+    return <>{anchorPoints(c as SketchConstraint, ents).map(S).map((a, i) => <line key={i} class="leader" x1={a[0]} y1={a[1]} x2={lp[0]} y2={lp[1]} />)}</>;
+  }
+  const poly = (ps: P2[]) => ps.map((p) => S(p).map((v) => v.toFixed(1)).join(",")).join(" ");
+  return (
+    <>
+      {g.ext.map(([a, b], i) => { const [x1, y1] = S(a), [x2, y2] = S(b); return <line key={`e${i}`} class="extline" x1={x1} y1={y1} x2={x2} y2={y2} />; })}
+      {g.lines.map((l, i) => <polyline key={`l${i}`} class="dimline" points={poly(l)} />)}
+      {g.arrows.map(([tip, d], i) => {
+        // seta de 9 px no ecrã (y do ecrã ao contrário do mundo)
+        const [x, y] = S(tip), ux = d[0], uy = -d[1], L = 9, W2 = 3;
+        const bx = x - ux * L, by = y - uy * L;
+        return <polygon key={`a${i}`} class="dimarrow" points={`${x},${y} ${bx - uy * W2},${by + ux * W2} ${bx + uy * W2},${by - ux * W2}`} />;
+      })}
+    </>
+  );
+}
+
+/** Pré-visualização da cota que o próximo clique coloca (segue o rato). */
+export function DimGhost({ c, ents, S, pos }: {
+  c: Pick<SketchConstraint, "type" | "refs">; ents: Record<string, SketchEntity>; S: (p: P2) => [number, number]; pos: P2;
+}) {
+  let value: number;
+  try { value = measure(ents, c as SketchConstraint); } catch { return null; }
+  const shown = c.type === "radius" ? `R${fmt(value)}` : c.type === "diameter" ? `⌀${fmt(value)}` : c.type === "angle" ? `${fmt(value)}°` : fmt(Math.abs(value));
+  const [x, y] = S(pos);
+  return (
+    <g class="dim ghost">
+      <DimShape c={c} ents={ents} S={S} pos={pos} />
+      <text x={x} y={y} class="dimtext">{shown}</text>
     </g>
   );
 }

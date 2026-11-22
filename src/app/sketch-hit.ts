@@ -74,3 +74,13 @@ export function hitRefIn(refGroups: RefGroup[], S: Scr, sx: number, sy: number):
   });
   return best;
 }
+
+/**
+ * Acerto da ferramenta de cota: a linha/curva ganha (cota-se com um clique na linha), salvo se o
+ * cursor estiver mesmo em cima de um ponto (≤ 4 px) — então é o ponto (cotas ponto–ponto/ponto–linha).
+ */
+export function dimHitIn(h: Hit, sx: number, sy: number): string | null {
+  const p = hitAtIn(h, sx, sy, { curves: false });
+  if (p) { const [x, y] = h.S(pt(h.ents, p)); if (Math.hypot(x - sx, y - sy) <= 4) return p; }
+  return hitAtIn(h, sx, sy, { points: false }) ?? p;
+}
