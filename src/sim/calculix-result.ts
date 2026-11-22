@@ -1,7 +1,7 @@
 // Resultados do CalculiX: leitura do `.frd` e do `.dat` e montagem do resultado para o visualizador.
 import { type FemCase, amplitudeAt, csysAxes, csysToLocal, shellLayerCount } from "./case.ts";
-import { type Msh, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
-import { FACES, SOLIDS, faceIntegrals, faceKey, outwardTriangles } from "./elements.ts";
+import { type Msh, NODES_PER, elementsOf, faceBlocks, shellBlocks, solidBlocks } from "./msh.ts";
+import { FACES, SOLIDS, faceIntegrals } from "./elements.ts";
 import { FAILURE_MODES, plyDirections, plyStressFailure, splitPlies } from "./laminate.ts";
 import type { Metric } from "./convergence.ts";
 
@@ -136,30 +136,67 @@ export interface FemResult {
  */
 export function exteriorSurface(m: Msh, bodies?: { group: string }[], shell = false): { positions: number[]; triangles: number[]; index: Map<number, number>; edges: number[]; faces: { corners: number[]; element: number }[] } {
   if (shell) return shellSurface(m);
-  const count = new Map<string, { n: number[]; k: number; element: number }>();
-  let el = 0;
-  for (const e of elementsOf(solidBlocks(m, bodies))) {
-    for (const f of SOLIDS[e.type].faces) {
-      const n = f.map((q) => e.nodes[q]);
-      const key = faceKey(n);
-      const x = count.get(key);
-      if (x) x.k++; else count.set(key, { n, k: 1, element: el });
+  // faces pelos cantos ordenados numa tabela de dispersão aberta (sem chaves de texto: a malha ao vivo
+  // tem centenas de milhares de faces); a ordem de primeira ocorrência mantém-se
+  const blocks = solidBlocks(m, bodies);
+  let total = 0;
+  for (const b of blocks) total += (b.conn.length / NODES_PER[b.type]) * SOLIDS[b.type].faces.length;
+  let size = 1;
+  while (size < 2 * total) size <<= 1;
+  const mask = size - 1, table = new Int32Array(size).fill(-1);
+  const key = new Float64Array(4 * total), corner = new Float64Array(4 * total);
+  const arity = new Uint8Array(total), count = new Uint32Array(total), owner = new Int32Array(total);
+  const s = [0, 0, 0, 0];
+  let nf = 0, el = 0;
+  for (const b of blocks) {
+    const per = NODES_PER[b.type], fs = SOLIDS[b.type].faces, conn = b.conn;
+    for (let o = 0; o < conn.length; o += per, el++) {
+      for (const f of fs) {
+        const n = f.length;
+        for (let i = 0; i < n; i++) s[i] = conn[o + f[i]];
+        // ordenação por inserção de 3 ou 4 valores
+        for (let i = 1; i < n; i++) { const v = s[i]; let j = i - 1; while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; } s[j + 1] = v; }
+        const d = n === 4 ? s[3] : -1;
+        let h = (Math.imul(s[0], 0x9e3779b1) ^ Math.imul(s[1], 0x85ebca77) ^ Math.imul(s[2], 0xc2b2ae3d) ^ Math.imul(d, 0x27d4eb2f)) & mask;
+        for (;;) {
+          const t = table[h];
+          if (t < 0) {
+            table[h] = nf; arity[nf] = n; owner[nf] = el; count[nf] = 1;
+            const q = 4 * nf;
+            key[q] = s[0]; key[q + 1] = s[1]; key[q + 2] = s[2]; key[q + 3] = d;
+            for (let i = 0; i < n; i++) corner[q + i] = conn[o + f[i]];
+            nf++;
+            break;
+          }
+          const q = 4 * t;
+          if (arity[t] === n && key[q] === s[0] && key[q + 1] === s[1] && key[q + 2] === s[2] && key[q + 3] === d) { count[t]++; break; }
+          h = (h + 1) & mask;
+        }
+      }
     }
-    el++;
   }
   const index = new Map<number, number>();
   const positions: number[] = [], triangles: number[] = [], edges: number[] = [];
   const faces: { corners: number[]; element: number }[] = [];
-  const seen = new Set<string>();
-  const id = (t: number) => { if (!index.has(t)) { index.set(t, index.size); positions.push(...m.nodes.get(t)!); } return index.get(t)!; };
-  for (const { n, k, element } of count.values()) {
-    if (k !== 1) continue;
-    faces.push({ corners: n, element });
-    for (const tri of outwardTriangles(n)) for (const t of tri) triangles.push(id(t));
-    n.forEach((a, i) => {
-      const b = n[(i + 1) % n.length], key = a < b ? `${a},${b}` : `${b},${a}`;
-      if (!seen.has(key)) { seen.add(key); edges.push(id(a), id(b)); }
-    });
+  const seen = new Set<number>();
+  const N = maxKey(m.nodes) + 1;
+  const id = (t: number) => {
+    let i = index.get(t);
+    if (i === undefined) { i = index.size; index.set(t, i); const x = m.nodes.get(t)!; positions.push(x[0], x[1], x[2]); }
+    return i;
+  };
+  for (let t = 0; t < nf; t++) {
+    if (count[t] !== 1) continue;
+    const q = 4 * t, n = arity[t];
+    const c = n === 3 ? [corner[q], corner[q + 1], corner[q + 2]] : [corner[q], corner[q + 1], corner[q + 2], corner[q + 3]];
+    faces.push({ corners: c, element: owner[t] });
+    // triângulos com a normal para fora (ordem inversa da face, como outwardTriangles)
+    if (n === 3) triangles.push(id(c[0]), id(c[2]), id(c[1]));
+    else triangles.push(id(c[0]), id(c[3]), id(c[2]), id(c[0]), id(c[2]), id(c[1]));
+    for (let i = 0; i < n; i++) {
+      const a = c[i], b = c[(i + 1) % n], k = a < b ? a * N + b : b * N + a;
+      if (!seen.has(k)) { seen.add(k); edges.push(id(a), id(b)); }
+    }
   }
   return { positions, triangles, index, edges, faces };
 }

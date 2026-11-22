@@ -46,7 +46,7 @@ export type LiveRun = "ok" | "error" | "cancelled";
 export function liveMeshScheduler(run: (key: string) => Promise<LiveRun>, o: {
   delay?: number; blocked?: () => boolean; cancel?: () => void;
 } = {}) {
-  const delay = o.delay ?? 800;
+  const delay = o.delay ?? 300;
   let want: string | null = null, last: string | null = null, failed: string | null = null, running: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const arm = () => { clearTimeout(timer); timer = setTimeout(fire, delay); };

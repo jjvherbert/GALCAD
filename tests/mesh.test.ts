@@ -260,7 +260,8 @@ test("pré-visualização da malha: qualidade, volume, arestas dos elementos e t
   const h = await previewMesh((await solve(doc, fem({ mesh: { size: 5, order: 2, curvature: 0, element: "hex" }, loads }))).dir);
   const q = h.quality!;
   assert.equal(q.elements, 80);
-  assert.deepEqual(q.types, { hex20: 80 });
+  // a pré-visualização corre em ordem 1 (os mesmos cantos); a análise usa os hex20 pedidos
+  assert.deepEqual(q.types, { hex8: 80 });
   near(q.volume, 10000, 1e-9);
   assert.ok(q.ok);
   const sj = q.metrics.find((x) => x.key === "sj")!;

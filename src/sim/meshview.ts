@@ -4,29 +4,25 @@
 import type { FemCase } from "./case.ts";
 import type { Msh } from "./msh.ts";
 import { exteriorSurface } from "./calculix.ts";
-import { type MeshQuality, elementQuality, meshQuality, triangleQuality } from "./quality.ts";
-import { SOLIDS } from "./elements.ts";
-import { elementsOf, shellBlocks, solidBlocks } from "./msh.ts";
+import { type MeshReport, meshQuality } from "./quality.ts";
 import type { ResultView } from "./result.ts";
 
-export interface MeshPreview { quality: MeshQuality; view: ResultView; summary: [string, string][] }
+export interface MeshPreview { quality: MeshReport; view: ResultView; summary: [string, string][] }
 
 export function meshPreview(c: FemCase, m: Msh): MeshPreview {
   const shell = !!c.shell;
   const quality = meshQuality(m, c.bodies, shell);
-  // razão de aspeto por elemento (o jacobiano já vem em quality.perElement)
-  const ar: number[] = [];
-  if (shell) for (const e of elementsOf(shellBlocks(m))) ar.push(triangleQuality(e.nodes.slice(0, 3).map((n) => m.nodes.get(n)!)).ar);
-  else for (const e of elementsOf(solidBlocks(m, c.bodies))) {
-    const st = SOLIDS[e.type];
-    ar.push(elementQuality(st.kind, e.nodes.slice(0, st.corners).map((n) => m.nodes.get(n)!)).ar);
-  }
   // vértices próprios por face: cor uniforme por elemento (como os mapas de qualidade do Femap/Abaqus)
   const ext = exteriorSurface(m, c.bodies, shell);
+  const { perElement, perElementAr, ...report } = quality;
+  // números curtos no JSON (a resposta da malha ao vivo tem dezenas de MB por extenso):
+  // posições a 0,1 µm e medidas a 3 casas chegam para desenhar e colorir
+  const mm = (x: number) => Math.round(x * 1e4) / 1e4, q3 = (x: number) => Math.round(x * 1e3) / 1e3;
   const positions: number[] = [], triangles: number[] = [], edges: number[] = [], sj: number[] = [], aspect: number[] = [];
   for (const f of ext.faces) {
     const base = positions.length / 3;
-    for (const n of f.corners) { positions.push(...m.nodes.get(n)!); sj.push(quality.perElement[f.element]); aspect.push(ar[f.element]); }
+    const q = q3(perElement[f.element]), a = q3(perElementAr[f.element]);
+    for (const n of f.corners) { const p = m.nodes.get(n)!; positions.push(mm(p[0]), mm(p[1]), mm(p[2])); sj.push(q); aspect.push(a); }
     // triângulos com a normal para fora (os cantos vêm com a normal para dentro; na casca, pela ordem do elemento)
     const k = f.corners.length;
     if (shell) triangles.push(base, base + 1, base + 2);
@@ -43,5 +39,5 @@ export function meshPreview(c: FemCase, m: Msh): MeshPreview {
   const summary: [string, string][] = [["Malha", `${quality.nodes} nós · ${types}`], shell ? ["Área da malha", `${quality.volume.toPrecision(6)} mm² · espessura ${c.shell!.thickness} mm`] : ["Volume da malha", `${quality.volume.toPrecision(6)} mm³`]];
   const flagged = quality.metrics.reduce((s, q) => s + q.fail.reduce((a, b) => a + b, 0), 0);
   summary.push(["Verificação", quality.ok ? (flagged ? `${flagged} assinalamento(s) — ver a qualidade` : "todos os elementos dentro dos limites") : "elementos inválidos (jacobiano ≤ 0)"]);
-  return { quality, view, summary };
+  return { quality: report, view, summary };
 }

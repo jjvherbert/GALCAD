@@ -7,7 +7,7 @@ import type { FemStudy } from "../doc/study.ts";
 import { evalExpr } from "../doc/expr.ts";
 import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { applyPatch, groupByBlock, type MeshAdvice, mergePatches, sizeMap, type Suggestion } from "../sim/mesh-advice.ts";
-import type { MeshQuality } from "../sim/quality.ts";
+import type { MeshReport } from "../sim/quality.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { externalParts } from "./store-features.ts";
 import { updateStudy } from "./sim-actions.ts";
@@ -43,7 +43,7 @@ function Card({ sug, s, ignored, previewing }: { sug: Suggestion; s: FemStudy; i
 }
 
 /** Painel de sugestões e mapa de tamanhos, depois da pré-visualização da malha (só peças). */
-export function MeshAdvicePanel({ s, quality }: { s: FemStudy; quality: MeshQuality }) {
+export function MeshAdvicePanel({ s, quality }: { s: FemStudy; quality: MeshReport }) {
   const st = useStoreKeys("active", "advicePreview");
   const [advice, setAdvice] = useState<MeshAdvice | null>(null);
   const [seeds, setSeeds] = useState<SeedPreview | null>(null);
