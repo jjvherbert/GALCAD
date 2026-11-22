@@ -4,6 +4,8 @@ import type { P2 } from "../sketch/geometry.ts";
 
 export type Tool = "select" | "line" | "rect" | "circle" | "arc" | "spline" | "point" | "dim" | "trim" | "extend" | "skfillet" | "skchamfer" | "offset" | "convert" | "skmirror" | "skpattern";
 export type DimMode = "auto" | "horizontal" | "vertical";
+/** Resultado de aplicar uma alteração ao esboço: anulada, aplicada, ou aplicada com a cota nova como referência. */
+export type CommitResult = false | "ok" | "driven";
 
 export type Draw =
   | { kind: "line"; start: string; first: string; created: boolean }

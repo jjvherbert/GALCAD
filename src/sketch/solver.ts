@@ -240,3 +240,44 @@ export function freeEntities(sketch: Pick<SketchFeature, "entities" | "constrain
   for (const id of [...free]) if (isImplicit(id)) free.delete(id);
   return free;
 }
+
+/**
+ * Estado do esboço, como as cores do SolidWorks:
+ * `under` azul (sub-definido), `defined` preto (totalmente definido),
+ * `over` vermelho (sobredefinido: há restrições a mais, mesmo que coerentes),
+ * `unsolved` amarelo (não resolve: restrições contraditórias ou o solver não converge).
+ */
+export type SketchState = "under" | "defined" | "over" | "unsolved";
+
+export function sketchState(r: SolveResult | null): SketchState {
+  if (!r) return "under";
+  if (!r.ok) return "unsolved";
+  if (r.redundant.length) return "over";
+  return r.dof === 0 ? "defined" : "under";
+}
+
+/** Restrições a mostrar no painel de conflitos: as contraditórias, senão as redundantes. */
+export function problemConstraints(r: SolveResult | null): string[] {
+  if (!r) return [];
+  return r.conflicting.length ? r.conflicting : r.redundant;
+}
+
+/**
+ * Resolve uma alteração que acabou de criar/editar a cota `dimId`. Como o SolidWorks, se a cota
+ * sobredefinir o esboço (contradiz as outras, ou é redundante com elas), passa a cota de referência
+ * (conduzida: mostra o valor entre parênteses e não comanda). `prevRedundant` são as redundâncias
+ * que já existiam antes, para não culpar a cota nova por problemas antigos.
+ */
+export function solveWithDrivenFallback(
+  next: Pick<SketchFeature, "entities" | "constraints">, dimId: string, scope: Scope = () => undefined, prevRedundant: readonly string[] = [],
+): { r: SolveResult; next: Pick<SketchFeature, "entities" | "constraints">; driven: boolean } {
+  const r = solveSketch(next, scope);
+  const c = next.constraints.find((k) => k.id === dimId);
+  const overDefines = !r.ok || r.redundant.includes(dimId) || r.redundant.some((id) => !prevRedundant.includes(id));
+  if (!c || c.driven || !DIMENSION_TYPES.has(c.type) || !overDefines) return { r, next, driven: false };
+  const alt = { ...next, constraints: next.constraints.map((k) => (k.id === dimId ? { ...k, driven: true } : k)) };
+  const r2 = solveSketch(alt, scope);
+  // só fica conduzida se isso resolver de facto (senão devolve o resultado original, para ser recusado/mostrado)
+  const better = r2.ok && (!r.ok || r2.redundant.length < r.redundant.length);
+  return better ? { r: r2, next: alt, driven: true } : { r, next, driven: false };
+}

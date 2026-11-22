@@ -2,6 +2,7 @@
 import { type SketchEntity } from "../doc/types.ts";
 import { type P2 } from "../sketch/geometry.ts";
 import { type SketchData, addEntity, addPoint } from "../sketch/ops.ts";
+import type { CommitResult } from "./sketch-types.ts";
 import { circleThrough } from "./sketch-geom.ts";
 import { type RefGroup } from "./sketch-ref.ts";
 
@@ -9,7 +10,7 @@ import { type RefGroup } from "./sketch-ref.ts";
 export type ConvertCtx = {
   draft: Pick<SketchData, "entities" | "constraints">;
   converted: Set<string>;
-  commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => boolean;
+  commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => CommitResult;
   setMsg: (m: string | null) => void;
 };
 

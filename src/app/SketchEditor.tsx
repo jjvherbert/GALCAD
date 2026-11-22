@@ -1,6 +1,6 @@
 // Editor de esboço 2D (SVG): desenho, seleção, arrasto com o solver, restrições e cotas.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { ConstraintType, SketchEntity } from "../doc/types.ts";
+import { type ConstraintType, type SketchEntity, DIMENSION_TYPES } from "../doc/types.ts";
 import { projTolOf, refEdgesOf, refGroupsOf } from "./sketch-ref.ts";
 import { type HitOpts, dimHitIn, hitAtIn, hitRefIn, snapIn } from "./sketch-hit.ts";
 import { finishSplineIn, handleClick } from "./sketch-click.ts";
@@ -10,13 +10,13 @@ import { ChamferModeSelect, ChamferPreview, PromptBox, withChamferMode } from ".
 import { pathOf, previewOf } from "./sketch-draw.tsx";
 import { History } from "../doc/history.ts";
 import { type P2, allEntities, entityPoints, isImplicit, measure, pt } from "../sketch/geometry.ts";
-import { solveSketch, freeEntities, type DragTarget, type SolveResult } from "../sketch/solver.ts";
+import { solveSketch, freeEntities, problemConstraints, sketchState, solveWithDrivenFallback, type DragTarget, type SolveResult } from "../sketch/solver.ts";
 import { isLineCorner } from "../sketch/modify.ts";
 import { type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, applicableConstraints, applyConstraint, deleteItems, roundDim, smartDimension, toggleConstruction } from "../sketch/ops.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { commandViewport } from "./commands.ts";
-import { type Draw, type DimMode, type Snap, type Tool, GEOM_CONSTRAINTS, TOOLS, fmt } from "./sketch-types.ts";
+import { type CommitResult, type Draw, type DimMode, type Snap, type Tool, GEOM_CONSTRAINTS, TOOLS, fmt } from "./sketch-types.ts";
 import { Constraints, DimGhost, Dimensions, Grid, labelPos } from "./SketchOverlays.tsx";
 
 
@@ -76,15 +76,19 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     scheduleFree(draft);
   }, []);
 
-  /** Resolve e aplica; devolve false se a alteração for rejeitada (conflito). */
-  function commit(next: SketchData, label: string, opts: { drivenOnConflict?: string } = {}): boolean {
-    let r = solveSketch(next, scope);
+  /** Resolve e aplica; devolve false se a alteração for rejeitada (conflito), "driven" se a cota
+   *  indicada em `drivenOnConflict` ficou como cota de referência, "ok" nos outros casos. */
+  function commit(next: SketchData, label: string, opts: { drivenOnConflict?: string } = {}): CommitResult {
+    let r: SolveResult;
     let note: string | null = null;
-    if (!r.ok && opts.drivenOnConflict) {
-      next = { ...next, constraints: next.constraints.map((c) => (c.id === opts.drivenOnConflict ? { ...c, driven: true } : c)) };
-      r = solveSketch(next, scope);
-      note = "A cota sobre-definia o esboço: foi criada como cota de referência (não comanda).";
-    }
+    if (opts.drivenOnConflict) {
+      // como a Smart Dimension do SolidWorks: uma cota que sobre-define (contradiz ou repete o que
+      // já está definido) é criada como cota de referência em vez de comandar
+      const f = solveWithDrivenFallback(next, opts.drivenOnConflict, scope, info?.redundant ?? []);
+      r = f.r;
+      next = f.next;
+      if (f.driven) note = "A cota sobre-definia o esboço: foi criada como cota de referência (não comanda).";
+    } else r = solveSketch(next, scope);
     if (!r.ok) {
       const names = r.conflicting.map((id) => CONSTRAINT_LABEL[next.constraints.find((c) => c.id === id)?.type ?? "coincident"]).join(", ");
       setMsg(`${r.message ?? "Erro"}${names ? `: ${names}` : ""}. Alteração anulada.`);
@@ -96,7 +100,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     setInfo(r);
     setMsg(note);
     scheduleFree(solved);
-    return true;
+    return note ? "driven" : "ok";
   }
 
   // --- vista --------------------------------------------------------------------
@@ -284,10 +288,15 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   });
 
   // --- desenho ----------------------------------------------------------------------
-  const conflicts = new Set(info?.conflicting ?? []);
+  // cores de estado como no SolidWorks: azul = sub-definido, preto = definido,
+  // vermelho = sobredefinido (restrição a mais), amarelo = não resolve
+  const state = sketchState(info);
+  const problems = problemConstraints(info);
+  const conflicts = new Set(problems);
   const conflictEnts = new Set(draft.constraints.filter((c) => conflicts.has(c.id)).flatMap((c) => c.refs));
+  const stateCls = state === "unsolved" ? "conflict unsolved" : "conflict";
   const cls = (id: string, e: SketchEntity) =>
-    ["ent", e.construction ? "constr" : "", "ext" in e && e.ext ? "ext" : "", sel.includes(id) ? "sel" : hover === id ? "hover" : "", conflictEnts.has(id) ? "conflict" : free.has(id) ? "free" : "defined"].join(" ");
+    ["ent", e.construction ? "constr" : "", "ext" in e && e.ext ? "ext" : "", sel.includes(id) ? "sel" : hover === id ? "hover" : "", conflictEnts.has(id) ? stateCls : free.has(id) ? "free" : "defined"].join(" ");
 
   const curves = Object.entries(draft.entities).filter(([, e]) => e.type !== "point");
   const points = Object.entries(draft.entities).filter(([, e]) => e.type === "point");
@@ -295,7 +304,18 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
 
   const preview = previewOf(ents, S, mouse, drawing);
 
-  const status = !info ? "" : !info.ok ? `⚠ ${info.message}` : info.dof === 0 ? "Totalmente definido" : info.dof > 0 ? `Sub-definido · ${info.dof} grau(s) de liberdade` : "";
+  const status = !info ? "" : {
+    under: `Sub-definido · ${info.dof} grau(s) de liberdade`,
+    defined: "Totalmente definido",
+    over: "Sobredefinido · há restrições a mais",
+    unsolved: `Não resolve · ${info.message ?? "erro do solver"}`,
+  }[state];
+
+  /** Painel de conflitos: apagar a restrição ou (cotas) passá-la a cota de referência. */
+  const fixProblem = (id: string, how: "delete" | "driven") => {
+    const next = how === "delete" ? deleteItems(data(), [id]) : { ...data(), constraints: draft.constraints.map((c) => (c.id === id ? { ...c, driven: true } : c)) };
+    if (commit(next, how === "delete" ? "Apagar" : "Cota de referência")) setSel([]);
+  };
 
   return (
     <div class="sketch-editor">
@@ -374,6 +394,25 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           })}
           <circle cx={v.tx} cy={v.ty} r={4} class={`origin ${hover === "O" || sel.includes("O") ? "hover" : ""}`} />
         </svg>
+        {problems.length > 0 && (
+          <div class={`sk-problems ${state}`} role="region" aria-label="Restrições em conflito">
+            <div class="hd">{state === "over" ? "Sobredefinido: escolha a restrição a tirar" : "Não resolve: restrições em conflito"}</div>
+            {problems.map((id) => {
+              const c = draft.constraints.find((k) => k.id === id);
+              if (!c) return null;
+              const isDim = DIMENSION_TYPES.has(c.type);
+              return (
+                <div key={id} class={`row ${sel.includes(id) ? "sel" : ""}`}>
+                  <button class="name" onClick={() => setSel([id])} title="Selecionar no esboço">
+                    <span class="glyph">{CONSTRAINT_GLYPH[c.type]}</span> {CONSTRAINT_LABEL[c.type]}{isDim && c.value !== undefined ? ` ${c.value}` : ""}
+                  </button>
+                  {isDim && !c.driven && <button onClick={() => fixProblem(id, "driven")} title="Deixa de comandar: passa a cota de referência">Referência</button>}
+                  <button onClick={() => fixProblem(id, "delete")} title="Apagar esta restrição">Apagar</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {prompt && <PromptBox prompt={prompt} setPrompt={setPrompt} apply={applyPrompt} lv={lastValue.current} />}
         {dimEdit && (() => {
           const c = draft.constraints.find((x) => x.id === dimEdit.id);
@@ -391,7 +430,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
         })()}
       </div>
       <div class="sk-status">
-        <span class={info && !info.ok ? "bad" : info?.dof === 0 ? "good" : "warn"}>{status}</span>
+        <span class={`state ${state}`}>{status}</span>
         {constraintSel.length > 0 && <span>{constraintSel.length} restrição(ões) selecionada(s)</span>}
         {mouse && <span class="muted">x {fmt(mouse[0])} · y {fmt(mouse[1])} mm</span>}
         {msg && <span class="msg">{msg}</span>}
