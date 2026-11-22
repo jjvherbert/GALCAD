@@ -51,19 +51,50 @@ export function pointLineDistance(p: P2, a: P2, b: P2): number {
   return L < 1e-12 ? dist(p, a) : Math.abs(cross(d, sub(p, a))) / L;
 }
 
-/** Ângulo com sinal de l1 para l2, em graus, em (-180, 180]. */
-export function lineAngle(ents: Record<string, SketchEntity>, l1: string, l2: string): number {
-  const dir = (id: string) => {
+/** Direções de duas linhas (p1→p2), com os sentidos invertidos por `flip` (bit 0: l1, bit 1: l2). */
+export function angleDirs(ents: Record<string, SketchEntity>, l1: string, l2: string, flip = 0): [P2, P2] {
+  const dir = (id: string, rev: boolean): P2 => {
     const l = ents[id];
     if (l?.type !== "line") throw new Error("Ângulo: as referências têm de ser linhas");
-    return sub(pt(ents, l.p2), pt(ents, l.p1));
+    const d = sub(pt(ents, l.p2), pt(ents, l.p1));
+    return rev ? [-d[0], -d[1]] : d;
   };
-  const a = dir(l1), b = dir(l2);
+  return [dir(l1, (flip & 1) !== 0), dir(l2, (flip & 2) !== 0)];
+}
+
+/** Ângulo com sinal de l1 para l2 (sentidos por `flip`), em graus, em (-180, 180]. */
+export function lineAngle(ents: Record<string, SketchEntity>, l1: string, l2: string, flip = 0): number {
+  const [a, b] = angleDirs(ents, l1, l2, flip);
   return Math.atan2(cross(a, b), dot(a, b)) * DEG;
 }
 
+/** Interseção das retas de duas linhas (null se paralelas). */
+export function lineIntersection(ents: Record<string, SketchEntity>, l1: string, l2: string): P2 | null {
+  const e1 = ents[l1], e2 = ents[l2];
+  if (e1?.type !== "line" || e2?.type !== "line") return null;
+  const a1 = pt(ents, e1.p1), a2 = pt(ents, e2.p1);
+  const d1 = sub(pt(ents, e1.p2), a1), d2 = sub(pt(ents, e2.p2), a2), den = cross(d1, d2);
+  if (Math.abs(den) < 1e-12 * Math.max(1e-300, dot(d1, d1) * dot(d2, d2)) ** 0.5) return null;
+  return add(a1, mul(d1, cross(sub(a2, a1), d2) / den));
+}
+
+/**
+ * Setor de uma cota de ângulo onde cai `at` (como no SolidWorks: dos quatro ângulos entre duas
+ * retas, mede-se aquele onde se larga o rótulo). Devolve as referências pela ordem anti-horária
+ * (valor em [0, 180)) e o `flip` dos sentidos. null se as retas forem paralelas.
+ */
+export function angleSector(ents: Record<string, SketchEntity>, l1: string, l2: string, at: P2): { refs: [string, string]; flip: number } | null {
+  const X = lineIntersection(ents, l1, l2);
+  if (!X) return null;
+  const [d1, d2] = angleDirs(ents, l1, l2), den = cross(d1, d2), w = sub(at, X);
+  // at − X = α·d1 + β·d2: o sinal de cada coeficiente diz o sentido de cada reta que limita o setor
+  const f1 = cross(w, d2) / den < 0 ? 1 : 0, f2 = cross(d1, w) / den < 0 ? 1 : 0;
+  const [u1, u2] = angleDirs(ents, l1, l2, f1 | (f2 << 1));
+  return cross(u1, u2) >= 0 ? { refs: [l1, l2], flip: f1 | (f2 << 1) } : { refs: [l2, l1], flip: f2 | (f1 << 1) };
+}
+
 /** Valor atual de uma cota, medido na geometria. */
-export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstraint, "type" | "refs">): number {
+export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstraint, "type" | "refs" | "flip">): number {
   const [a, b] = c.refs;
   const ea = ents[a], eb = ents[b];
   switch (c.type) {
@@ -80,7 +111,7 @@ export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstr
       if (ea?.type !== "circle" && ea?.type !== "arc") throw new Error("Raio: a referência tem de ser um círculo ou arco");
       return c.type === "radius" ? ea.r : 2 * ea.r;
     }
-    case "angle": return lineAngle(ents, a, b);
+    case "angle": return lineAngle(ents, a, b, c.flip);
     default: throw new Error(`"${c.type}" não é uma cota`);
   }
 }

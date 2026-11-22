@@ -31,7 +31,7 @@ function linearEnds(c: Pick<SketchConstraint, "type" | "refs">, ents: Record<str
 }
 
 /** Geometria da cota com o rótulo em `pos`; `null` quando não há desenho próprio (fica o rótulo). */
-export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs">, ents: Record<string, SketchEntity>, pos: P2): DimGeom | null {
+export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip">, ents: Record<string, SketchEntity>, pos: P2): DimGeom | null {
   if (c.type === "distance" || c.type === "distanceX" || c.type === "distanceY") {
     const ends = linearEnds(c, ents);
     if (!ends) return null;
@@ -69,9 +69,13 @@ export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs">, ents: Re
     const l1 = ents[c.refs[0]], l2 = ents[c.refs[1]];
     if (l1?.type !== "line" || l2?.type !== "line") return null;
     const a1 = pt(ents, l1.p1), b1 = pt(ents, l1.p2), a2 = pt(ents, l2.p1), b2 = pt(ents, l2.p2);
-    const d1 = sub(b1, a1), d2 = sub(b2, a2), den = d1[0] * d2[1] - d1[1] * d2[0];
+    let d1 = sub(b1, a1), d2 = sub(b2, a2);
+    const den = d1[0] * d2[1] - d1[1] * d2[0];
     if (Math.abs(den) < 1e-12) return null;
     const w = sub(a2, a1), s = (w[0] * d2[1] - w[1] * d2[0]) / den, X = add(a1, mul(d1, s));
+    // setor medido: sentidos invertidos por `flip`
+    if (c.flip && c.flip & 1) d1 = mul(d1, -1);
+    if (c.flip && c.flip & 2) d2 = mul(d2, -1);
     const r = len(sub(pos, X));
     if (r < 1e-9) return null;
     const t1 = Math.atan2(d1[1], d1[0]);

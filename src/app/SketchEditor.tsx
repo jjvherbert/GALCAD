@@ -12,7 +12,7 @@ import { History } from "../doc/history.ts";
 import { type P2, allEntities, entityPoints, isImplicit, measure, pt } from "../sketch/geometry.ts";
 import { solveSketch, freeEntities, problemConstraints, sketchState, solveWithDrivenFallback, type DragTarget, type SolveResult } from "../sketch/solver.ts";
 import { isLineCorner } from "../sketch/modify.ts";
-import { type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, applicableConstraints, applyConstraint, deleteItems, roundDim, smartDimension, toggleConstruction } from "../sketch/ops.ts";
+import { type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, applicableConstraints, applyConstraint, deleteItems, moveDimLabel, roundDim, smartDimension, toggleConstruction } from "../sketch/ops.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { commandViewport } from "./commands.ts";
@@ -385,7 +385,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           <Dimensions constraints={draft.constraints} ents={ents} S={S} W={W} sel={sel} conflicts={conflicts} scope={scope}
             onEdit={(c) => setDimEdit({ id: c.id, text: String(c.value ?? roundDim(measure(ents, c))) })}
             onSelect={(id, add) => setSel(add ? [...sel, id] : [id])}
-            onMoveLabel={(id, pos) => store.updateSketch({ ...draft, constraints: draft.constraints.map((c) => (c.id === id ? { ...c, pos } : c)) })} />
+            onMoveLabel={(id, pos) => store.updateSketch({ ...draft, constraints: draft.constraints.map((c) => (c.id === id ? moveDimLabel(c, ents, pos) : c)) })} />
           {tool === "dim" && drawing?.kind === "dim" && drawing.picks.length > 0 && mouse && !hover && (() => {
             const g = smartDimension(data(), drawing.picks, dimMode, mouse);
             return g ? <DimGhost c={g} ents={ents} S={S} pos={mouse} /> : null;
