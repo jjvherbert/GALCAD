@@ -393,7 +393,7 @@ const cross$2 = (p, q) => [
 	p[2] * q[0] - p[0] * q[2],
 	p[0] * q[1] - p[1] * q[0]
 ];
-const dot$1 = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
+const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2];
 const unit = (p) => {
 	const n = Math.hypot(...p);
 	return n > 1e-12 ? [
@@ -432,7 +432,7 @@ function csysAxes(c, p = [
 	}
 	const ez = unit(sub$2(c.b, c.a));
 	if (!ez) throw new Error("Referencial local cilíndrico: os pontos a e b do eixo têm de ser diferentes");
-	const d = sub$2(p, c.a), along = dot$1(d, ez);
+	const d = sub$2(p, c.a), along = dot(d, ez);
 	const er = unit([
 		d[0] - along * ez[0],
 		d[1] - along * ez[1],
@@ -444,7 +444,7 @@ function csysAxes(c, p = [
 		ez
 	] : null;
 }
-const csysToLocal = (ax, v) => ax.map((e) => dot$1(e, v));
+const csysToLocal = (ax, v) => ax.map((e) => dot(e, v));
 /** Fator da amplitude no instante t (interpolação linear; constante fora da tabela). Sem dinâmica: 1. */
 function amplitudeAt(c, t) {
 	const a = c.dynamic?.amplitude;
@@ -737,22 +737,6 @@ const cross$1 = (u, v) => [
 ];
 /** Chave de uma face pelos nós de canto (independente da ordem). */
 const faceKey = (nodes) => [...nodes].sort((x, y) => x - y).join(",");
-/** Triângulos (cantos) de uma face com a normal para FORA, a partir da ordem de normal para dentro. */
-function outwardTriangles(c) {
-	return c.length === 3 ? [[
-		c[0],
-		c[2],
-		c[1]
-	]] : [[
-		c[0],
-		c[3],
-		c[2]
-	], [
-		c[0],
-		c[2],
-		c[1]
-	]];
-}
 /** Funções de forma das faces (numeração Gmsh) em coordenadas naturais (ξ, η). */
 function shape(type, x, y) {
 	switch (type) {
@@ -1188,14 +1172,12 @@ const sub = (a, b) => [
 	a[1] - b[1],
 	a[2] - b[2]
 ];
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (u, v) => [
 	u[1] * v[2] - u[2] * v[1],
 	u[2] * v[0] - u[0] * v[2],
 	u[0] * v[1] - u[1] * v[0]
 ];
 const len = (a) => Math.hypot(a[0], a[1], a[2]);
-const angle = (u, v) => Math.acos(Math.max(-1, Math.min(1, dot(u, v) / (len(u) * len(v) || 1)))) * 180 / Math.PI;
 /** Vizinhos de cada canto (3 arestas em sentido direto): hexaedro e tetraedro (numeração Gmsh = Abaqus). */
 const HEX_CORNERS = [
 	[
@@ -1325,118 +1307,194 @@ const QUALITY_LIMITS = {
 		level: "warning"
 	}]
 };
-/** Medidas de um elemento pelos cantos. */
-function elementQuality(kind, P) {
-	const hex = kind === "hex";
-	const sjs = (hex ? HEX_CORNERS : TET_CORNERS).map((nb, i) => {
-		const e = nb.map((j) => sub(P[j], P[i]));
-		const d = dot(cross(e[0], e[1]), e[2]) / (len(e[0]) * len(e[1]) * len(e[2]) || 1);
-		return hex ? d : Math.min(1, d * Math.SQRT2);
-	});
-	const sj = Math.min(...sjs);
-	const el = (hex ? HEX_EDGES : TET_EDGES).map(([a, b]) => len(sub(P[a], P[b])));
+const X = /* @__PURE__ */ new Float64Array(24);
+let cx = 0;
+let cy = 0;
+let cz = 0;
+const Q = {
+	sj: 0,
+	ar: 0,
+	minAngle: 0,
+	maxAngle: 0,
+	warp: 0,
+	shape: 0,
+	volume: 0
+};
+const norm = (x, y, z) => Math.sqrt(x * x + y * y + z * z);
+/** (Pb − Pa) × (Pc − Pa) → cx, cy, cz. */
+function crossAt(a, b, c) {
+	const a3 = 3 * a, b3 = 3 * b, c3 = 3 * c;
+	const ux = X[b3] - X[a3], uy = X[b3 + 1] - X[a3 + 1], uz = X[b3 + 2] - X[a3 + 2];
+	const vx = X[c3] - X[a3], vy = X[c3 + 1] - X[a3 + 1], vz = X[c3 + 2] - X[a3 + 2];
+	cx = uy * vz - uz * vy;
+	cy = uz * vx - ux * vz;
+	cz = ux * vy - uy * vx;
+}
+const dist$1 = (a, b) => norm(X[3 * b] - X[3 * a], X[3 * b + 1] - X[3 * a + 1], X[3 * b + 2] - X[3 * a + 2]);
+/** (Pb − Pa) × (Pc − Pa) · (Pd − Pa). */
+function triple(a, b, c, d) {
+	crossAt(a, b, c);
+	const a3 = 3 * a, d3 = 3 * d;
+	return cx * (X[d3] - X[a3]) + cy * (X[d3 + 1] - X[a3 + 1]) + cz * (X[d3 + 2] - X[a3 + 2]);
+}
+const vecAngle = (ux, uy, uz, vx, vy, vz) => Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy + uz * vz) / (norm(ux, uy, uz) * norm(vx, vy, vz) || 1)))) * 180 / Math.PI;
+/** Ângulo no canto i entre Pp − Pi e Pn − Pi. */
+function cornerAngle(i, p, n) {
+	const i3 = 3 * i, p3 = 3 * p, n3 = 3 * n;
+	return vecAngle(X[p3] - X[i3], X[p3 + 1] - X[i3 + 1], X[p3 + 2] - X[i3 + 2], X[n3] - X[i3], X[n3 + 1] - X[i3 + 1], X[n3 + 2] - X[i3 + 2]);
+}
+const HEX_TETS = [
+	[
+		0,
+		1,
+		2,
+		6
+	],
+	[
+		0,
+		2,
+		3,
+		6
+	],
+	[
+		0,
+		3,
+		7,
+		6
+	],
+	[
+		0,
+		7,
+		4,
+		6
+	],
+	[
+		0,
+		4,
+		5,
+		6
+	],
+	[
+		0,
+		5,
+		1,
+		6
+	]
+];
+/** Medidas do sólido em X (hexaedro: 8 cantos; tetraedro: 4) para Q (empeno só no hexaedro, forma só no tetraedro). */
+function measureSolid(hex) {
+	const C = hex ? HEX_CORNERS : TET_CORNERS;
+	let sj = Infinity;
+	for (let i = 0; i < C.length; i++) {
+		const [j, k, l] = C[i];
+		const d = triple(i, j, k, l) / (dist$1(i, j) * dist$1(i, k) * dist$1(i, l) || 1);
+		const s = hex ? d : Math.min(1, d * Math.SQRT2);
+		if (s < sj) sj = s;
+	}
+	let minE = Infinity, maxE = -Infinity;
+	for (const [a, b] of hex ? HEX_EDGES : TET_EDGES) {
+		const e = dist$1(a, b);
+		if (e < minE) minE = e;
+		if (e > maxE) maxE = e;
+	}
 	const faces = SOLIDS[hex ? 5 : 4].faces;
-	let minAngle = 180, maxAngle = 0, warp = 0;
+	let minAngle = 180, maxAngle = 0, warp = 0, maxArea = -Infinity;
 	for (const f of faces) {
 		const n = f.length;
 		for (let i = 0; i < n; i++) {
-			const a = angle(sub(P[f[(i + n - 1) % n]], P[f[i]]), sub(P[f[(i + 1) % n]], P[f[i]]));
-			minAngle = Math.min(minAngle, a);
-			maxAngle = Math.max(maxAngle, a);
+			const a = cornerAngle(f[i], f[(i + n - 1) % n], f[(i + 1) % n]);
+			if (a < minAngle) minAngle = a;
+			if (a > maxAngle) maxAngle = a;
 		}
 		if (n === 4) {
-			const w1 = angle(cross(sub(P[f[1]], P[f[0]]), sub(P[f[2]], P[f[0]])), cross(sub(P[f[2]], P[f[0]]), sub(P[f[3]], P[f[0]])));
-			const w2 = angle(cross(sub(P[f[2]], P[f[1]]), sub(P[f[3]], P[f[1]])), cross(sub(P[f[3]], P[f[1]]), sub(P[f[0]], P[f[1]])));
-			warp = Math.max(warp, w1, w2);
+			crossAt(f[0], f[1], f[2]);
+			let ux = cx, uy = cy, uz = cz;
+			crossAt(f[0], f[2], f[3]);
+			const w1 = vecAngle(ux, uy, uz, cx, cy, cz);
+			crossAt(f[1], f[2], f[3]);
+			ux = cx;
+			uy = cy;
+			uz = cz;
+			crossAt(f[1], f[3], f[0]);
+			const w2 = vecAngle(ux, uy, uz, cx, cy, cz);
+			if (w1 > warp) warp = w1;
+			if (w2 > warp) warp = w2;
+		} else if (!hex) {
+			crossAt(f[0], f[1], f[2]);
+			const area = norm(cx, cy, cz) / 2;
+			if (area > maxArea) maxArea = area;
 		}
 	}
+	Q.sj = sj;
+	Q.minAngle = minAngle;
+	Q.maxAngle = maxAngle;
 	if (hex) {
-		const volume = [
-			[
-				0,
-				1,
-				2,
-				6
-			],
-			[
-				0,
-				2,
-				3,
-				6
-			],
-			[
-				0,
-				3,
-				7,
-				6
-			],
-			[
-				0,
-				7,
-				4,
-				6
-			],
-			[
-				0,
-				4,
-				5,
-				6
-			],
-			[
-				0,
-				5,
-				1,
-				6
-			]
-		].reduce((s, [a, b, c, d]) => s + dot(cross(sub(P[b], P[a]), sub(P[c], P[a])), sub(P[d], P[a])) / 6, 0);
-		return {
-			sj,
-			ar: Math.max(...el) / Math.min(...el),
-			minAngle,
-			maxAngle,
-			warp,
-			volume
-		};
+		let volume = 0;
+		for (const [a, b, c, d] of HEX_TETS) volume += triple(a, b, c, d) / 6;
+		Q.ar = maxE / minE;
+		Q.warp = warp;
+		Q.volume = volume;
+		return;
 	}
-	const volume = dot(cross(sub(P[1], P[0]), sub(P[2], P[0])), sub(P[3], P[0])) / 6;
-	const areas = faces.map((f) => len(cross(sub(P[f[1]], P[f[0]]), sub(P[f[2]], P[f[0]]))) / 2);
-	const hmin = 3 * Math.abs(volume) / Math.max(...areas);
-	const ar = Math.max(...el) / (hmin || 1e-300) * Math.sqrt(2 / 3);
-	const a = sub(P[1], P[0]), b = sub(P[2], P[0]), c = sub(P[3], P[0]);
-	const num = [
-		cross(b, c),
-		cross(c, a),
-		cross(a, b)
-	].reduce((s, v, k) => [
-		s[0] + v[0] * [
-			dot(a, a),
-			dot(b, b),
-			dot(c, c)
-		][k],
-		s[1] + v[1] * [
-			dot(a, a),
-			dot(b, b),
-			dot(c, c)
-		][k],
-		s[2] + v[2] * [
-			dot(a, a),
-			dot(b, b),
-			dot(c, c)
-		][k]
-	], [
-		0,
-		0,
-		0
-	]);
-	const R = len(num) / (12 * Math.abs(volume) || 1e-300);
-	const shape = Math.abs(volume) / (8 * Math.sqrt(3) * R ** 3 / 27);
-	return {
-		sj,
-		ar,
-		minAngle,
-		maxAngle,
-		shape,
-		volume
+	const volume = triple(0, 1, 2, 3) / 6, V = Math.abs(volume);
+	const hmin = 3 * V / maxArea;
+	Q.ar = maxE / (hmin || 1e-300) * Math.sqrt(2 / 3);
+	const ax = X[3] - X[0], ay = X[4] - X[1], az = X[5] - X[2];
+	const bx = X[6] - X[0], by = X[7] - X[1], bz = X[8] - X[2];
+	const ex = X[9] - X[0], ey = X[10] - X[1], ez = X[11] - X[2];
+	const aa = ax * ax + ay * ay + az * az, bb = bx * bx + by * by + bz * bz, ee = ex * ex + ey * ey + ez * ez;
+	const nx = (by * ez - bz * ey) * aa + (ey * az - ez * ay) * bb + (ay * bz - az * by) * ee;
+	const ny = (bz * ex - bx * ez) * aa + (ez * ax - ex * az) * bb + (az * bx - ax * bz) * ee;
+	const nz = (bx * ey - by * ex) * aa + (ex * ay - ey * ax) * bb + (ax * by - ay * bx) * ee;
+	const R = norm(nx, ny, nz) / (12 * V || 1e-300);
+	Q.shape = V / (8 * Math.sqrt(3) * R ** 3 / 27);
+	Q.volume = volume;
+}
+/** Medidas do triângulo em X para Q (a área fica em Q.volume). */
+function measureTri() {
+	crossAt(0, 1, 2);
+	const a2 = norm(cx, cy, cz);
+	const L0 = dist$1(0, 1), L1 = dist$1(1, 2), L2 = dist$1(2, 0);
+	const s = Math.min(a2 / (L0 * L2 || 1), a2 / (L0 * L1 || 1), a2 / (L1 * L2 || 1));
+	let minAngle = Infinity, maxAngle = -Infinity;
+	for (let i = 0; i < 3; i++) {
+		const a = cornerAngle(i, (i + 1) % 3, (i + 2) % 3);
+		if (a < minAngle) minAngle = a;
+		if (a > maxAngle) maxAngle = a;
+	}
+	const maxL = Math.max(L0, L1, L2), hmin = a2 / maxL;
+	Q.sj = s / (Math.sqrt(3) / 2);
+	Q.ar = hmin > 0 ? maxL / hmin * (Math.sqrt(3) / 2) : 1e6;
+	Q.minAngle = minAngle;
+	Q.maxAngle = maxAngle;
+	Q.volume = a2 / 2;
+}
+function loadPoints(P, n) {
+	for (let k = 0; k < n; k++) {
+		X[3 * k] = P[k][0];
+		X[3 * k + 1] = P[k][1];
+		X[3 * k + 2] = P[k][2];
+	}
+}
+/** Medidas de um elemento pelos cantos. */
+function elementQuality(kind, P) {
+	const hex = kind === "hex";
+	loadPoints(P, hex ? 8 : 4);
+	measureSolid(hex);
+	return hex ? {
+		sj: Q.sj,
+		ar: Q.ar,
+		minAngle: Q.minAngle,
+		maxAngle: Q.maxAngle,
+		warp: Q.warp,
+		volume: Q.volume
+	} : {
+		sj: Q.sj,
+		ar: Q.ar,
+		minAngle: Q.minAngle,
+		maxAngle: Q.maxAngle,
+		shape: Q.shape,
+		volume: Q.volume
 	};
 }
 const LABELS = {
@@ -1477,29 +1535,14 @@ const LABELS = {
 * altura · √3/2 (1 no equilátero), ângulos e área.
 */
 function triangleQuality(P) {
-	const a2 = len(cross(sub(P[1], P[0]), sub(P[2], P[0])));
-	const L = [
-		len(sub(P[1], P[0])),
-		len(sub(P[2], P[1])),
-		len(sub(P[0], P[2]))
-	];
-	const sines = [
-		a2 / (L[0] * L[2] || 1),
-		a2 / (L[0] * L[1] || 1),
-		a2 / (L[1] * L[2] || 1)
-	];
-	const ang = [
-		0,
-		1,
-		2
-	].map((i) => angle(sub(P[(i + 1) % 3], P[i]), sub(P[(i + 2) % 3], P[i])));
-	const hmin = a2 / Math.max(...L);
+	loadPoints(P, 3);
+	measureTri();
 	return {
-		sj: Math.min(...sines) / (Math.sqrt(3) / 2),
-		ar: hmin > 0 ? Math.max(...L) / hmin * (Math.sqrt(3) / 2) : 1e6,
-		minAngle: Math.min(...ang),
-		maxAngle: Math.max(...ang),
-		area: a2 / 2
+		sj: Q.sj,
+		ar: Q.ar,
+		minAngle: Q.minAngle,
+		maxAngle: Q.maxAngle,
+		area: Q.volume
 	};
 }
 /**
@@ -1507,107 +1550,146 @@ function triangleQuality(P) {
 * do grupo SHELL (limites dos tetraedros nos ângulos; `volume` passa a ser a área, mm²).
 */
 function meshQuality(m, bodies, shell = false) {
-	const types = {};
-	const vals = {
-		sj: [],
-		ar: [],
-		minAngle: [],
-		maxAngle: [],
-		warp: [],
-		shape: []
-	};
-	const perElement = [];
-	const info = [];
-	const used = /* @__PURE__ */ new Set();
-	let volume = 0;
-	if (shell) for (const e of elementsOf(shellBlocks(m))) {
-		const key = e.type === 9 ? "tri6" : "tri3";
-		types[key] = (types[key] ?? 0) + 1;
-		e.nodes.forEach((n) => used.add(n));
-		const P = e.nodes.slice(0, 3).map((n) => m.nodes.get(n));
-		const q = triangleQuality(P);
-		volume += q.area;
-		for (const k of [
-			"sj",
-			"ar",
-			"minAngle",
-			"maxAngle"
-		]) vals[k].push({
-			v: q[k],
-			kind: "tet"
-		});
-		perElement.push(q.sj);
-		info.push({
-			sj: q.sj,
-			ar: q.ar,
-			center: [
-				0,
-				1,
-				2
-			].map((k) => P.reduce((s, p) => s + p[k], 0) / 3)
-		});
+	const blocks = shell ? shellBlocks(m) : solidBlocks(m, bodies);
+	let total = 0;
+	for (const b of blocks) total += b.conn.length / NODES_PER[b.type];
+	let maxTag = 0;
+	for (const t of m.nodes.keys()) if (t > maxTag) maxTag = t;
+	const XYZ = new Float64Array(3 * (maxTag + 1));
+	for (const [t, p] of m.nodes) {
+		XYZ[3 * t] = p[0];
+		XYZ[3 * t + 1] = p[1];
+		XYZ[3 * t + 2] = p[2];
 	}
-	else for (const e of elementsOf(solidBlocks(m, bodies))) {
-		const st = SOLIDS[e.type];
-		types[`${st.kind}${st.nodes}`] = (types[`${st.kind}${st.nodes}`] ?? 0) + 1;
-		e.nodes.forEach((n) => used.add(n));
-		const P = e.nodes.slice(0, st.corners).map((n) => m.nodes.get(n));
-		const q = elementQuality(st.kind, P);
-		volume += q.volume;
-		for (const k of Object.keys(vals)) {
-			const v = q[k];
-			if (v !== void 0) vals[k].push({
-				v,
-				kind: st.kind
-			});
+	const used = new Uint8Array(maxTag + 1);
+	let nUsed = 0;
+	const KEYS = [
+		"sj",
+		"ar",
+		"minAngle",
+		"maxAngle",
+		"warp",
+		"shape"
+	];
+	const val = KEYS.map(() => new Float64Array(total)), kindOf = KEYS.map(() => new Uint8Array(total)), cnt = KEYS.map(() => 0);
+	const push = (k, v, kind) => {
+		val[k][cnt[k]] = v;
+		kindOf[k][cnt[k]++] = kind;
+	};
+	const types = {};
+	const perElement = new Array(total), perElementAr = new Array(total);
+	const worst = [];
+	let volume = 0, i = 0;
+	for (const b of blocks) {
+		const per = NODES_PER[b.type], n = b.conn.length / per;
+		let key, nc, kind;
+		if (shell) {
+			key = b.type === 9 ? "tri6" : "tri3";
+			nc = 3;
+			kind = 1;
+		} else {
+			const st = SOLIDS[b.type];
+			key = `${st.kind}${st.nodes}`;
+			nc = st.corners;
+			kind = st.kind === "hex" ? 0 : 1;
 		}
-		perElement.push(q.sj);
-		info.push({
-			sj: q.sj,
-			ar: q.ar,
-			center: [
-				0,
-				1,
-				2
-			].map((k) => P.reduce((s, p) => s + p[k], 0) / P.length)
-		});
+		if (n === 0) continue;
+		types[key] = (types[key] ?? 0) + n;
+		const conn = b.conn;
+		for (let base = 0; base < conn.length; base += per, i++) {
+			for (let k = 0; k < per; k++) {
+				const t = conn[base + k];
+				if (!used[t]) {
+					used[t] = 1;
+					nUsed++;
+				}
+			}
+			for (let k = 0; k < nc; k++) {
+				const t3 = 3 * conn[base + k];
+				X[3 * k] = XYZ[t3];
+				X[3 * k + 1] = XYZ[t3 + 1];
+				X[3 * k + 2] = XYZ[t3 + 2];
+			}
+			if (shell) measureTri();
+			else measureSolid(kind === 0);
+			volume += Q.volume;
+			push(0, Q.sj, kind);
+			push(1, Q.ar, kind);
+			push(2, Q.minAngle, kind);
+			push(3, Q.maxAngle, kind);
+			if (!shell) {
+				if (kind === 0) push(4, Q.warp, kind);
+				else push(5, Q.shape, kind);
+			}
+			perElement[i] = Q.sj;
+			perElementAr[i] = Q.ar;
+			let pos = worst.length;
+			while (pos > 0 && worst[pos - 1].sj > Q.sj) pos--;
+			if (pos < 10) {
+				let sx = 0, sy = 0, sz = 0;
+				for (let k = 0; k < nc; k++) {
+					sx += X[3 * k];
+					sy += X[3 * k + 1];
+					sz += X[3 * k + 2];
+				}
+				worst.splice(pos, 0, {
+					element: i + 1,
+					sj: Q.sj,
+					ar: Q.ar,
+					center: [
+						sx / nc,
+						sy / nc,
+						sz / nc
+					]
+				});
+				if (worst.length > 10) worst.pop();
+			}
+		}
 	}
 	const metrics = [];
 	let errors = 0;
-	for (const key of Object.keys(vals)) {
-		const list = vals[key];
-		if (!list.length) continue;
+	KEYS.forEach((key, ki) => {
+		const count = cnt[ki];
+		if (!count) return;
+		const v = val[ki], kd = kindOf[ki];
 		const [label, unit, applies] = LABELS[key];
 		const L = QUALITY_LIMITS[key];
 		const limitsOf = (kind) => Array.isArray(L) ? L : L[kind];
-		const kinds = [...new Set(list.map((x) => x.kind))];
-		const limits = kinds.length === 1 ? limitsOf(kinds[0]) : limitsOf("hex");
-		const fail = limits.map((_, i) => list.filter((x) => {
-			const l = limitsOf(x.kind)[i];
-			return l && (l.min !== void 0 && x.v < l.min || l.max !== void 0 && x.v > l.max);
-		}).length);
-		limits.forEach((l, i) => {
-			if (l.level === "error") errors += fail[i];
-		});
-		const v = list.map((x) => x.v);
-		let min = Infinity, max = -Infinity;
-		for (const x of v) {
+		let hasHex = false, hasTet = false;
+		for (let j = 0; j < count; j++) if (kd[j]) hasTet = true;
+		else hasHex = true;
+		const limits = hasHex !== hasTet ? limitsOf(hasTet ? "tet" : "hex") : limitsOf("hex");
+		const LH = limitsOf("hex"), LT = limitsOf("tet");
+		const fail = limits.map(() => 0);
+		let min = Infinity, max = -Infinity, sum = 0;
+		for (let j = 0; j < count; j++) {
+			const x = v[j];
 			if (x < min) min = x;
 			if (x > max) max = x;
+			sum += x;
+			const LK = kd[j] ? LT : LH;
+			for (let li = 0; li < limits.length; li++) {
+				const l = LK[li];
+				if (l && (l.min !== void 0 && x < l.min || l.max !== void 0 && x > l.max)) fail[li]++;
+			}
 		}
+		limits.forEach((l, li) => {
+			if (l.level === "error") errors += fail[li];
+		});
 		const range = key === "sj" ? [Math.min(0, min), 1] : key === "minAngle" || key === "maxAngle" ? [0, 180] : key === "shape" ? [0, 1] : [Math.min(min, 1), Math.max(max, 1 + 1e-9)];
-		const edges = Array.from({ length: 11 }, (_, i) => range[0] + (range[1] - range[0]) * i / 10);
+		const r0 = range[0], span = range[1] - range[0];
+		const edges = Array.from({ length: 11 }, (_, e) => r0 + span * e / 10);
 		const counts = new Array(10).fill(0);
-		for (const x of v) counts[Math.min(9, Math.max(0, Math.floor((x - range[0]) / (range[1] - range[0] || 1) * 10)))]++;
+		for (let j = 0; j < count; j++) counts[Math.min(9, Math.max(0, Math.floor((v[j] - r0) / (span || 1) * 10)))]++;
 		metrics.push({
 			key,
 			label,
 			unit,
 			applies,
-			count: v.length,
+			count,
 			min,
 			max,
-			mean: v.reduce((a, b) => a + b, 0) / v.length,
+			mean: sum / count,
 			limits,
 			fail,
 			hist: {
@@ -1615,22 +1697,19 @@ function meshQuality(m, bodies, shell = false) {
 				counts
 			}
 		});
-	}
-	const worst = info.map((x, i) => ({
-		element: i + 1,
-		...x
-	})).sort((a, b) => a.sj - b.sj).slice(0, 10);
+	});
 	const notes = [];
 	if (errors) notes.push(`${errors} elemento(s) invertido(s) ou degenerado(s) (jacobiano ≤ 0): o cálculo não é fiável — refaça a malha`);
-	const warn = metrics.reduce((s, x) => s + x.limits.reduce((t, l, i) => t + (l.level === "warning" ? x.fail[i] : 0), 0), 0);
+	const warn = metrics.reduce((s, x) => s + x.limits.reduce((t, l, li) => t + (l.level === "warning" ? x.fail[li] : 0), 0), 0);
 	if (warn) notes.push(`${warn} assinalamento(s) de qualidade (elementos distorcidos): confirme se estão em zonas que importam para o resultado`);
 	return {
-		elements: perElement.length,
-		nodes: used.size,
+		elements: total,
+		nodes: nUsed,
 		types,
 		volume,
 		metrics,
 		perElement,
+		perElementAr,
 		worst,
 		ok: errors === 0,
 		notes
@@ -1966,47 +2045,103 @@ function parseDat(text) {
 */
 function exteriorSurface(m, bodies, shell = false) {
 	if (shell) return shellSurface(m);
-	const count = /* @__PURE__ */ new Map();
-	let el = 0;
-	for (const e of elementsOf(solidBlocks(m, bodies))) {
-		for (const f of SOLIDS[e.type].faces) {
-			const n = f.map((q) => e.nodes[q]);
-			const key = faceKey(n);
-			const x = count.get(key);
-			if (x) x.k++;
-			else count.set(key, {
-				n,
-				k: 1,
-				element: el
-			});
+	const blocks = solidBlocks(m, bodies);
+	let total = 0;
+	for (const b of blocks) total += b.conn.length / NODES_PER[b.type] * SOLIDS[b.type].faces.length;
+	let size = 1;
+	while (size < 2 * total) size <<= 1;
+	const mask = size - 1, table = new Int32Array(size).fill(-1);
+	const key = new Float64Array(4 * total), corner = new Float64Array(4 * total);
+	const arity = new Uint8Array(total), count = new Uint32Array(total), owner = new Int32Array(total);
+	const s = [
+		0,
+		0,
+		0,
+		0
+	];
+	let nf = 0, el = 0;
+	for (const b of blocks) {
+		const per = NODES_PER[b.type], fs = SOLIDS[b.type].faces, conn = b.conn;
+		for (let o = 0; o < conn.length; o += per, el++) for (const f of fs) {
+			const n = f.length;
+			for (let i = 0; i < n; i++) s[i] = conn[o + f[i]];
+			for (let i = 1; i < n; i++) {
+				const v = s[i];
+				let j = i - 1;
+				while (j >= 0 && s[j] > v) {
+					s[j + 1] = s[j];
+					j--;
+				}
+				s[j + 1] = v;
+			}
+			const d = n === 4 ? s[3] : -1;
+			let h = (Math.imul(s[0], 2654435761) ^ Math.imul(s[1], 2246822519) ^ Math.imul(s[2], 3266489917) ^ Math.imul(d, 668265263)) & mask;
+			for (;;) {
+				const t = table[h];
+				if (t < 0) {
+					table[h] = nf;
+					arity[nf] = n;
+					owner[nf] = el;
+					count[nf] = 1;
+					const q = 4 * nf;
+					key[q] = s[0];
+					key[q + 1] = s[1];
+					key[q + 2] = s[2];
+					key[q + 3] = d;
+					for (let i = 0; i < n; i++) corner[q + i] = conn[o + f[i]];
+					nf++;
+					break;
+				}
+				const q = 4 * t;
+				if (arity[t] === n && key[q] === s[0] && key[q + 1] === s[1] && key[q + 2] === s[2] && key[q + 3] === d) {
+					count[t]++;
+					break;
+				}
+				h = h + 1 & mask;
+			}
 		}
-		el++;
 	}
 	const index = /* @__PURE__ */ new Map();
 	const positions = [], triangles = [], edges = [];
 	const faces = [];
 	const seen = /* @__PURE__ */ new Set();
+	const N = maxKey(m.nodes) + 1;
 	const id = (t) => {
-		if (!index.has(t)) {
-			index.set(t, index.size);
-			positions.push(...m.nodes.get(t));
+		let i = index.get(t);
+		if (i === void 0) {
+			i = index.size;
+			index.set(t, i);
+			const x = m.nodes.get(t);
+			positions.push(x[0], x[1], x[2]);
 		}
-		return index.get(t);
+		return i;
 	};
-	for (const { n, k, element } of count.values()) {
-		if (k !== 1) continue;
+	for (let t = 0; t < nf; t++) {
+		if (count[t] !== 1) continue;
+		const q = 4 * t, n = arity[t];
+		const c = n === 3 ? [
+			corner[q],
+			corner[q + 1],
+			corner[q + 2]
+		] : [
+			corner[q],
+			corner[q + 1],
+			corner[q + 2],
+			corner[q + 3]
+		];
 		faces.push({
-			corners: n,
-			element
+			corners: c,
+			element: owner[t]
 		});
-		for (const tri of outwardTriangles(n)) for (const t of tri) triangles.push(id(t));
-		n.forEach((a, i) => {
-			const b = n[(i + 1) % n.length], key = a < b ? `${a},${b}` : `${b},${a}`;
-			if (!seen.has(key)) {
-				seen.add(key);
+		if (n === 3) triangles.push(id(c[0]), id(c[2]), id(c[1]));
+		else triangles.push(id(c[0]), id(c[3]), id(c[2]), id(c[0]), id(c[2]), id(c[1]));
+		for (let i = 0; i < n; i++) {
+			const a = c[i], b = c[(i + 1) % n], k = a < b ? a * N + b : b * N + a;
+			if (!seen.has(k)) {
+				seen.add(k);
 				edges.push(id(a), id(b));
 			}
-		});
+		}
 	}
 	return {
 		positions,
@@ -3522,20 +3657,18 @@ function calculixDeck(c, m) {
 function meshPreview(c, m) {
 	const shell = !!c.shell;
 	const quality = meshQuality(m, c.bodies, shell);
-	const ar = [];
-	if (shell) for (const e of elementsOf(shellBlocks(m))) ar.push(triangleQuality(e.nodes.slice(0, 3).map((n) => m.nodes.get(n))).ar);
-	else for (const e of elementsOf(solidBlocks(m, c.bodies))) {
-		const st = SOLIDS[e.type];
-		ar.push(elementQuality(st.kind, e.nodes.slice(0, st.corners).map((n) => m.nodes.get(n))).ar);
-	}
 	const ext = exteriorSurface(m, c.bodies, shell);
+	const { perElement, perElementAr, ...report } = quality;
+	const mm = (x) => Math.round(x * 1e4) / 1e4, q3 = (x) => Math.round(x * 1e3) / 1e3;
 	const positions = [], triangles = [], edges = [], sj = [], aspect = [];
 	for (const f of ext.faces) {
 		const base = positions.length / 3;
+		const q = q3(perElement[f.element]), a = q3(perElementAr[f.element]);
 		for (const n of f.corners) {
-			positions.push(...m.nodes.get(n));
-			sj.push(quality.perElement[f.element]);
-			aspect.push(ar[f.element]);
+			const p = m.nodes.get(n);
+			positions.push(mm(p[0]), mm(p[1]), mm(p[2]));
+			sj.push(q);
+			aspect.push(a);
 		}
 		const k = f.corners.length;
 		if (shell) triangles.push(base, base + 1, base + 2);
@@ -3573,7 +3706,7 @@ function meshPreview(c, m) {
 	const flagged = quality.metrics.reduce((s, q) => s + q.fail.reduce((a, b) => a + b, 0), 0);
 	summary.push(["Verificação", quality.ok ? flagged ? `${flagged} assinalamento(s) — ver a qualidade` : "todos os elementos dentro dos limites" : "elementos inválidos (jacobiano ≤ 0)"]);
 	return {
-		quality,
+		quality: report,
 		view,
 		summary
 	};
@@ -3922,7 +4055,16 @@ const FOAM_RC = [
 	"/opt/openfoam2606/etc/bashrc",
 	"/usr/share/openfoam/etc/bashrc"
 ];
-function tools() {
+/**
+* Solvers instalados. A procura (where/which + `--version` de cada um) demora ~0,5 s, e a malha ao
+* vivo pede-a em cada alteração: fica em cache, refeita por `tools(true)` (`/status`, `--status`).
+*/
+let cached = null;
+function tools(refresh = false) {
+	if (refresh || !cached) cached = probeTools();
+	return cached;
+}
+function probeTools() {
 	const gmsh = process.env.CAD_GMSH ?? which("gmsh");
 	const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
 	const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");
@@ -4143,9 +4285,10 @@ const healLines = [
 ];
 function femGeo(c, o = {}) {
 	const hex = c.mesh.element === "hex";
+	const order = o.preview ? 1 : c.mesh.order;
 	const out = [
 		`// Gerado pelo CAD protótipo — ${c.title}`,
-		`// Unidades: mm. Elementos ${c.shell ? `de casca (triângulos, espessura ${c.shell.thickness} mm)` : hex ? c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados" : "tetraédricos"} de ordem ${c.mesh.order}.`,
+		`// Unidades: mm. Elementos ${c.shell ? `de casca (triângulos, espessura ${c.shell.thickness} mm)` : hex ? c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados" : "tetraédricos"} de ordem ${order}${o.preview ? " (pré-visualização)" : ""}.`,
 		`SetFactory("OpenCASCADE");`,
 		...o.heal ? healLines : [],
 		`Merge "model.brep";`
@@ -4155,16 +4298,16 @@ function femGeo(c, o = {}) {
 	else out.push(`Physical Volume("SOLID") = Volume{:};`);
 	for (const [name, tags] of Object.entries(c.groups)) out.push(`Physical Surface("${name}") = ${list(tags)};`);
 	for (const [name, tags] of Object.entries(c.edgeGroups ?? {})) out.push(`Physical Curve("${name}") = ${list(tags)};`);
-	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${minSizeFloor(c)};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${c.mesh.order};`, `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = 0;`, `Mesh.SaveAll = 0;`);
+	out.push(`Mesh.MeshSizeMax = ${c.mesh.size};`, `Mesh.MeshSizeMin = ${minSizeFloor(c)};`, `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`, `Mesh.ElementOrder = ${order};`, `Mesh.HighOrderOptimize = ${order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`, `Mesh.Optimize = 1;`, `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`, `Mesh.MshFileVersion = 4.1;`, `Mesh.Binary = 0;`, `Mesh.SaveAll = 0;`);
 	for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
-	out.push(...meshControls(c));
+	out.push(...meshControls(c, order));
 	return out.join("\n") + "\n";
 }
 /**
 * Controlos manuais da malha (ao estilo do pré-processador do Femap): seeds nas arestas (n.º de
 * elementos e distribuição), superfícies e volumes mapeados (transfinitos) e o tipo de elemento.
 */
-function meshControls(c) {
+function meshControls(c, order = c.mesh.order) {
 	const m = c.mesh, out = [];
 	const hex = m.element === "hex";
 	for (const cv of m.curves ?? []) {
@@ -4177,7 +4320,7 @@ function meshControls(c) {
 	}
 	if (m.volumes?.length) out.push(`Transfinite Volume${list(m.volumes)};`);
 	if (hex) {
-		if (m.order === 2) out.push(`Mesh.SecondOrderIncomplete = 1;`);
+		if (order === 2) out.push(`Mesh.SecondOrderIncomplete = 1;`);
 		if (m.hexMethod === "subdivision") out.push(`Mesh.SubdivisionAlgorithm = 2;`);
 	}
 	return out;
@@ -5497,7 +5640,10 @@ async function gmshMeshRaw(c, dir, log, o) {
 		"-nt",
 		n
 	];
-	const write = (g) => writeFileSync(geo, o.kind === "fem" ? femGeo(c, g) : su2Geo(c, g));
+	const write = (g) => writeFileSync(geo, o.kind === "fem" ? femGeo(c, {
+		...g,
+		preview: o.preview
+	}) : su2Geo(c, g));
 	const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : void 0;
 	const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
 	if (!o.regenerate && existsSync(geo)) {
@@ -5512,7 +5658,7 @@ async function gmshMeshRaw(c, dir, log, o) {
 		return m;
 	}
 	const shell = o.kind === "fem" && !!c.shell;
-	const attempts = shell ? [{ algorithm3D: 1 }, {
+	let attempts = shell ? [{ algorithm3D: 1 }, {
 		algorithm3D: 1,
 		optimizeHO: false
 	}] : [
@@ -5532,6 +5678,8 @@ async function gmshMeshRaw(c, dir, log, o) {
 		optimizeHO: false,
 		heal: true
 	});
+	if (o.preview && !shell) attempts = [{ algorithm3D: 10 }, ...attempts.filter((g) => g.algorithm3D !== 10)];
+	if (o.preview) attempts = attempts.filter((g, i) => !attempts.slice(0, i).some((h) => h.algorithm3D === g.algorithm3D && !!h.heal === !!g.heal));
 	const start = Date.now();
 	const errors = new MeshErrors();
 	let last;
@@ -6955,6 +7103,7 @@ async function previewMesh(dir, log = () => {}) {
 	const warnings = checkGroups(c, msh);
 	const p = meshPreview(c, msh);
 	warnings.push(...p.quality.notes);
+	if (c.mesh.order === 2) p.summary.push(["Ordem", "pré-visualização em elementos de ordem 1 (mais rápida, os mesmos cantos); a análise usa ordem 2"]);
 	return {
 		ok: true,
 		physics: "fem",
@@ -7343,7 +7492,7 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 		if (req.method === "GET" && req.url === "/status") {
 			send(200, {
 				ok: true,
-				tools: tools(),
+				tools: tools(true),
 				busy
 			});
 			return;
@@ -7458,7 +7607,7 @@ function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 }
 if (process.argv[1] && /cad-runner\.(m?js|ts)$/.test(process.argv[1])) {
 	const args = process.argv.slice(2);
-	if (args[0] === "--status") console.log(JSON.stringify(tools(), null, 2));
+	if (args[0] === "--status") console.log(JSON.stringify(tools(true), null, 2));
 	else if (args[0] === "--serve") {
 		const port = Number(args[args.indexOf("--port") + 1]) || 8765;
 		const { token } = serve(port, process.env.CAD_TOKEN);
