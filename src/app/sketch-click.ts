@@ -6,7 +6,7 @@ import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, 
 import { sketchMirror } from "../sketch/mirror.ts";
 import { type HitOpts, placePoint } from "./sketch-hit.ts";
 import { type RefGroup } from "./sketch-ref.ts";
-import { type Draw, type DimMode, type Snap, type Tool } from "./sketch-types.ts";
+import { type CommitResult, type Draw, type DimMode, type Snap, type Tool } from "./sketch-types.ts";
 import { type ChamferMode, type LastValues, type Prompt, patternPrompt } from "./sketch-cmd.ts";
 import type { allEntities } from "../sketch/geometry.ts";
 
@@ -25,7 +25,7 @@ export type ClickCtx = {
   hitRef: (sx: number, sy: number) => number;
   refGroups: RefGroup[];
   convert: (groups: RefGroup[]) => void;
-  commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => boolean;
+  commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => CommitResult;
   data: () => SketchData;
   W: (sx: number, sy: number) => P2;
   lastValue: { current: LastValues };
@@ -217,7 +217,8 @@ export function dimClickAt(c: ClickCtx, sx: number, sy: number) {
   if (!dim) { setMsg("Não sei cotar esta seleção"); return; }
   const value = roundDim(measure(ents, dim));
   const r = addConstraint(data(), dim.type, dim.refs, value, { pos: W(sx, sy) });
-  if (commit(r.s, "Cota", { drivenOnConflict: r.id })) setDimEdit({ id: r.id, text: String(value) });
+  // a cota de referência não se edita (como no SolidWorks): só se abre a caixa se comandar
+  if (commit(r.s, "Cota", { drivenOnConflict: r.id }) === "ok") setDimEdit({ id: r.id, text: String(value) });
   setDrawing(null);
   setSel([]);
   setMsg("Cota colocada — clique noutra linha para a próxima");

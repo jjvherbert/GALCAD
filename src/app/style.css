@@ -1,7 +1,7 @@
 :root {
   --bg: #f3f4f6; --panel: #ffffff; --panel2: #f8fafc; --text: #111827; --muted: #6b7280; --line: #e5e7eb;
   --accent: #2563eb; --accent-soft: #dbeafe; --good: #15803d; --warn: #b45309; --bad: #dc2626;
-  --sk-free: #2563eb; --sk-def: #111827; --sk-constr: #64748b; --grid: #e5e7eb; --grid5: #d1d5db; --ref: #9ca3af;
+  --sk-free: #2563eb; --sk-def: #111827; --sk-unsolved: #ca8a04; --sk-constr: #64748b; --grid: #e5e7eb; --grid5: #d1d5db; --ref: #9ca3af;
   --pmi: #0f766e; --sel: #f97316; --sel-soft: #ffedd5;
   font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light dark;
@@ -13,14 +13,14 @@
   color-scheme: dark;
   --bg: #14181f; --panel: #1b2029; --panel2: #202632; --text: #e5e7eb; --muted: #9aa3b2; --line: #2d3443;
   --accent: #60a5fa; --accent-soft: #1e3a5f; --good: #4ade80; --warn: #fbbf24; --bad: #f87171;
-  --sk-free: #60a5fa; --sk-def: #f3f4f6; --sk-constr: #94a3b8; --grid: #222833; --grid5: #2d3443; --ref: #64748b;
+  --sk-free: #60a5fa; --sk-def: #f3f4f6; --sk-unsolved: #facc15; --sk-constr: #94a3b8; --grid: #222833; --grid5: #2d3443; --ref: #64748b;
   --pmi: #2dd4bf; --sel-soft: #4a2a12;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) {
     --bg: #14181f; --panel: #1b2029; --panel2: #202632; --text: #e5e7eb; --muted: #9aa3b2; --line: #2d3443;
     --accent: #60a5fa; --accent-soft: #1e3a5f; --good: #4ade80; --warn: #fbbf24; --bad: #f87171;
-    --sk-free: #60a5fa; --sk-def: #f3f4f6; --sk-constr: #94a3b8; --grid: #222833; --grid5: #2d3443; --ref: #64748b;
+    --sk-free: #60a5fa; --sk-def: #f3f4f6; --sk-unsolved: #facc15; --sk-constr: #94a3b8; --grid: #222833; --grid5: #2d3443; --ref: #64748b;
     --pmi: #2dd4bf; --sel-soft: #4a2a12;
   }
 }
@@ -166,6 +166,21 @@ table.plies tr.invalid td.ply-label { color: var(--bad); }
 .sk-canvas svg:not(.tool-select) { cursor: crosshair; }
 .sk-status { display: flex; gap: 12px; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden; }
 .sk-status .msg { color: var(--warn); white-space: normal; }
+/* estado do esboço, com as cores do SolidWorks */
+.sk-status .state { font-weight: 600; }
+.sk-status .state.under { color: var(--sk-free); }
+.sk-status .state.defined { color: var(--sk-def); }
+.sk-status .state.over { color: var(--bad); }
+.sk-status .state.unsolved { color: var(--sk-unsolved); }
+/* painel de conflitos: o que tirar quando o esboço está sobredefinido */
+.sk-problems { position: absolute; z-index: 5; left: 8px; bottom: 8px; max-width: min(360px, calc(100% - 16px)); max-height: 40%; overflow: auto; padding: 6px; background: var(--panel); border: 1px solid var(--bad); border-radius: 8px; box-shadow: 0 4px 12px rgb(0 0 0 / 0.15); font-size: 12px; animation: sk-bar-in-up .25s var(--ease) both; }
+.sk-problems.unsolved { border-color: var(--sk-unsolved); }
+.sk-problems .hd { font-weight: 600; color: var(--bad); padding: 0 2px 4px; }
+.sk-problems.unsolved .hd { color: var(--sk-unsolved); }
+.sk-problems .row { display: flex; gap: 4px; align-items: center; padding: 2px; border-radius: 6px; }
+.sk-problems .row.sel { background: var(--sel-soft); }
+.sk-problems .row .name { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; }
+.sk-problems .row .glyph { font-weight: 700; color: var(--bad); }
 .grid line.g { stroke: var(--grid); stroke-width: 1; }
 .grid line.g5 { stroke: var(--grid5); stroke-width: 1; }
 .axis { stroke: var(--ref); stroke-dasharray: 6 4; stroke-width: 1; }
@@ -183,6 +198,7 @@ table.plies tr.invalid td.ply-label { color: var(--bad); }
 .ent.hover { stroke: #f59e0b; stroke-width: 3; }
 .ent.sel { stroke: #f97316; stroke-width: 3; }
 .ent.conflict { stroke: var(--bad); }
+.ent.conflict.unsolved { stroke: var(--sk-unsolved); }
 .ent.ext:not(.sel):not(.hover):not(.conflict) { stroke: #9333ea; }
 .ref-hover { fill: none; stroke: #9333ea; stroke-width: 4; opacity: 0.6; }
 .pt { stroke-width: 1; }
@@ -737,6 +753,8 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .sk-confirm .ok { background: var(--panel); border-color: #16a34a; } .sk-confirm .ok .ic { background: #16a34a; }
 .sk-confirm .no { background: var(--panel); border-color: #dc2626; } .sk-confirm .no .ic { background: #dc2626; }
 .sk-confirm button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(10, 36, 100, .26); }
+/* ecrã estreito: a barra de relações não cabe ao lado do ✓/✕ — desce para baixo deles */
+@media (max-width: 720px) { .sk-relations { top: 56px; } }
 
 /* convergência da malha: gráficos, tabelas e exportações */
 .conv-plan { margin: 4px 0; padding: 4px 8px; border-radius: 8px; background: var(--accent-soft); font-size: 12px; }

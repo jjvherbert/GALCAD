@@ -4,6 +4,7 @@ import { type ChamferSpec, sketchChamfer } from "../sketch/chamfer.ts";
 import { offset, sketchFillet } from "../sketch/modify.ts";
 import { type CircularPattern, type LinearPattern, type PatternSpec, sketchPattern } from "../sketch/pattern.ts";
 import type { SketchData } from "../sketch/ops.ts";
+import type { CommitResult } from "./sketch-types.ts";
 
 export type ChamferMode = ChamferSpec["mode"];
 export type LinearMode = LinearPattern["mode"];
@@ -64,7 +65,7 @@ export type CmdCtx = {
   draft: SketchData;
   scope: (n: string) => number | undefined;
   data: () => SketchData;
-  commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => boolean;
+  commit: (next: SketchData, label: string, opts?: { drivenOnConflict?: string }) => CommitResult;
   lastValue: { current: LastValues };
   setMsg: (m: string | null) => void;
   setPrompt: (p: Prompt | null) => void;
