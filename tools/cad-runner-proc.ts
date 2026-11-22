@@ -15,7 +15,17 @@ const which = (cmd: string) => {
 };
 const FOAM_RC = ["/usr/lib/openfoam/openfoam2606/etc/bashrc", "/usr/lib/openfoam/openfoam2512/etc/bashrc", "/usr/lib/openfoam/openfoam2506/etc/bashrc", "/opt/openfoam2606/etc/bashrc", "/usr/share/openfoam/etc/bashrc"];
 
-export function tools() {
+/**
+ * Solvers instalados. A procura (where/which + `--version` de cada um) demora ~0,5 s, e a malha ao
+ * vivo pede-a em cada alteração: fica em cache, refeita por `tools(true)` (`/status`, `--status`).
+ */
+let cached: ReturnType<typeof probeTools> | null = null;
+export function tools(refresh = false): ReturnType<typeof probeTools> {
+  if (refresh || !cached) cached = probeTools();
+  return cached;
+}
+
+function probeTools() {
   const gmsh = process.env.CAD_GMSH ?? which("gmsh");
   const ccx = process.env.CAD_CCX ?? which("ccx") ?? which("ccx_2.23") ?? which("ccx_2.22");
   const su2 = process.env.CAD_SU2 ?? which("SU2_CFD");

@@ -13,7 +13,11 @@ export type Algo3D = 1 | 4 | 10;
  * (a causa habitual de o Gmsh não terminar); `heal` liga a reparação OCC (arestas/faces minúsculas,
  * costura) — pode renumerar faces, por isso só como último recurso e conferido por `checkGroups`.
  */
-export interface GeoOpts { algorithm3D?: Algo3D; optimizeHO?: boolean; heal?: boolean }
+export interface GeoOpts {
+  algorithm3D?: Algo3D; optimizeHO?: boolean; heal?: boolean;
+  /** Pré-visualização ao vivo: elementos de ordem 1 (os mesmos cantos, ~5× mais rápido; a análise usa a ordem pedida). */
+  preview?: boolean;
+}
 
 /**
  * Piso do tamanho mínimo: 1e-4 da diagonal (com MeshSizeMin ≈ 0 a curvatura refina sem limite em
@@ -29,9 +33,10 @@ const healLines = [`Geometry.Tolerance = 1e-6;`, `Geometry.OCCFixDegenerated = 1
 
 export function femGeo(c: FemCase, o: GeoOpts = {}): string {
   const hex = c.mesh.element === "hex";
+  const order = o.preview ? 1 : c.mesh.order;
   const out = [
     `// Gerado pelo CAD protótipo — ${c.title}`,
-    `// Unidades: mm. Elementos ${c.shell ? `de casca (triângulos, espessura ${c.shell.thickness} mm)` : hex ? (c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados") : "tetraédricos"} de ordem ${c.mesh.order}.`,
+    `// Unidades: mm. Elementos ${c.shell ? `de casca (triângulos, espessura ${c.shell.thickness} mm)` : hex ? (c.mesh.hexMethod === "subdivision" ? "hexaédricos (subdivisão)" : "hexaédricos estruturados") : "tetraédricos"} de ordem ${order}${o.preview ? " (pré-visualização)" : ""}.`,
     `SetFactory("OpenCASCADE");`,
     // a reparação OCC tem de estar ligada antes de importar o BREP
     ...(o.heal ? healLines : []),
@@ -49,10 +54,10 @@ export function femGeo(c: FemCase, o: GeoOpts = {}): string {
     `Mesh.MeshSizeMax = ${c.mesh.size};`,
     `Mesh.MeshSizeMin = ${minSizeFloor(c)};`,
     `Mesh.MeshSizeFromCurvature = ${c.mesh.curvature};`,
-    `Mesh.ElementOrder = ${c.mesh.order};`,
+    `Mesh.ElementOrder = ${order};`,
     // elementos quadráticos com os nós intermédios na geometria; otimização leve da qualidade (só nos
     // tetraedros: nos hexaedros de 20 nós a otimização do Gmsh pode não terminar)
-    `Mesh.HighOrderOptimize = ${c.mesh.order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`,
+    `Mesh.HighOrderOptimize = ${order === 2 && !hex && o.optimizeHO !== false ? 1 : 0};`,
     `Mesh.Optimize = 1;`,
     `Mesh.Algorithm3D = ${o.algorithm3D ?? 1};`,
     `Mesh.MshFileVersion = 4.1;`,
@@ -60,7 +65,7 @@ export function femGeo(c: FemCase, o: GeoOpts = {}): string {
     `Mesh.SaveAll = 0;`,
   );
   for (const l of c.mesh.local) out.push(`MeshSize{ PointsOf{ Surface${list(c.groups[l.group])}; } } = ${l.size};`);
-  out.push(...meshControls(c));
+  out.push(...meshControls(c, order));
   return out.join("\n") + "\n";
 }
 
@@ -68,7 +73,7 @@ export function femGeo(c: FemCase, o: GeoOpts = {}): string {
  * Controlos manuais da malha (ao estilo do pré-processador do Femap): seeds nas arestas (n.º de
  * elementos e distribuição), superfícies e volumes mapeados (transfinitos) e o tipo de elemento.
  */
-export function meshControls(c: FemCase): string[] {
+export function meshControls(c: FemCase, order = c.mesh.order): string[] {
   const m = c.mesh, out: string[] = [];
   const hex = m.element === "hex";
   for (const cv of m.curves ?? []) {
@@ -83,7 +88,7 @@ export function meshControls(c: FemCase): string[] {
   if (m.volumes?.length) out.push(`Transfinite Volume${list(m.volumes)};`);
   if (hex) {
     // hexaedros de 20 nós (serendipity), como o C3D20R do Abaqus/CalculiX
-    if (m.order === 2) out.push(`Mesh.SecondOrderIncomplete = 1;`);
+    if (order === 2) out.push(`Mesh.SecondOrderIncomplete = 1;`);
     // subdivisão: cada tetraedro em 4 hexaedros (e cada triângulo em 3 quadriláteros)
     if (m.hexMethod === "subdivision") out.push(`Mesh.SubdivisionAlgorithm = 2;`);
   }

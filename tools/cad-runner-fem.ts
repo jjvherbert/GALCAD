@@ -127,7 +127,7 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
   const geo = join(dir, "mesh.geo");
   const nt = String(Math.max(1, cpus().length));
   const args = (n: string) => o.kind === "fem" ? ["mesh.geo", (c as FemCase).shell ? "-2" : "-3", "-o", "mesh.msh", "-nt", n] : ["mesh.geo", "-3", "-format", "su2", "-o", "mesh.su2", "-nt", n];
-  const write = (g: GeoOpts) => writeFileSync(geo, o.kind === "fem" ? femGeo(c as FemCase, g) : su2Geo(c as CfdCase, g));
+  const write = (g: GeoOpts) => writeFileSync(geo, o.kind === "fem" ? femGeo(c as FemCase, { ...g, preview: o.preview }) : su2Geo(c as CfdCase, g));
   const read = () => o.kind === "fem" ? parseMsh(readFileSync(join(dir, "mesh.msh"), "utf8")) : undefined;
   const timeoutSec = jobState.current?.meshTimeout || Number(process.env.CAD_MESH_TIMEOUT) || (o.preview ? 120 : 600);
   // geo já existente e sem regenerar: corre-o tal como está (pode ter sido editado à mão)
@@ -142,9 +142,14 @@ async function gmshMeshRaw(c: SimCase, dir: string, log: Log, o: { kind: "fem" |
   }
   // casca (malha 2D): o algoritmo 3D não conta, só se tenta sem otimização de ordem 2 e com reparação
   const shell = o.kind === "fem" && !!(c as FemCase).shell;
-  const attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 1, optimizeHO: false }, { algorithm3D: 4, optimizeHO: false }];
+  let attempts: GeoOpts[] = shell ? [{ algorithm3D: 1 }, { algorithm3D: 1, optimizeHO: false }] : [{ algorithm3D: 1 }, { algorithm3D: 10 }, { algorithm3D: 1, optimizeHO: false }, { algorithm3D: 4, optimizeHO: false }];
   // o Frontal 3D precisa do Netgen, que nem todas as compilações do Gmsh trazem: a reparação usa o Delaunay
   if (o.kind === "fem") attempts.push({ algorithm3D: 1, optimizeHO: false, heal: true });
+  // pré-visualização de sólidos: o HXT em paralelo primeiro (~30 % mais rápido que o Delaunay de série;
+  // não é reprodutível entre corridas, o que não importa numa pré-visualização). O cálculo mantém a ordem.
+  if (o.preview && !shell) attempts = [{ algorithm3D: 10 }, ...attempts.filter((g) => g.algorithm3D !== 10)];
+  // pré-visualização em ordem 1: sem otimização de ordem 2, as tentativas que só a desligam repetem as anteriores
+  if (o.preview) attempts = attempts.filter((g, i) => !attempts.slice(0, i).some((h) => h.algorithm3D === g.algorithm3D && !!h.heal === !!g.heal));
   const start = Date.now();
   const errors = new MeshErrors();
   let last: Error | undefined;

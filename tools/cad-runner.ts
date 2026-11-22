@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { SimCase } from "../src/sim/case.ts";
 import { meshPreview } from "../src/sim/meshview.ts";
-import type { MeshQuality } from "../src/sim/quality.ts";
+import type { MeshReport } from "../src/sim/quality.ts";
 import { type FemResult } from "../src/sim/calculix.ts";
 import { type ResultView } from "../src/sim/result.ts";
 import { type ConvergenceLevel, type ConvergenceReport, type GciResult, type Metric, convergenceReport, gci, isMonotonic } from "../src/sim/convergence.ts";
@@ -50,7 +50,7 @@ export interface RunResult {
   log: string;
   seconds: number;
   /** Pré-visualização da malha: relatório de qualidade. */
-  quality?: MeshQuality;
+  quality?: MeshReport;
   /** Ficheiros de resultados nativos do solver (code_aster: MED; CalculiX: FRD), em base64, para o ParaView/Salome. */
   files?: { name: string; mime: string; base64: string }[];
 }
@@ -101,6 +101,7 @@ export async function previewMesh(dir: string, log: Log = () => {}): Promise<Run
   const warnings = checkGroups(c, msh);
   const p = meshPreview(c, msh);
   warnings.push(...p.quality.notes);
+  if (c.mesh.order === 2) p.summary.push(["Ordem", "pré-visualização em elementos de ordem 1 (mais rápida, os mesmos cantos); a análise usa ordem 2"]);
   return { ok: true, physics: "fem", solver: `Gmsh ${t.gmsh.version ?? ""} — pré-visualização da malha`.trim(), summary: p.summary, warnings, view: p.view, quality: p.quality, metrics: [], cells: p.quality.elements, hypotheses: c.hypotheses, log: tail(join(dir, "log.gmsh")), seconds: (Date.now() - t0) / 1000 };
 }
 
@@ -314,7 +315,7 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
     if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
     const send = (code: number, body: unknown) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
     if (req.headers["x-cad-token"] !== token) { send(401, { error: "Token do agente em falta ou errado" }); return; }
-    if (req.method === "GET" && req.url === "/status") { send(200, { ok: true, tools: tools(), busy }); return; }
+    if (req.method === "GET" && req.url === "/status") { send(200, { ok: true, tools: tools(true), busy }); return; }
     // progresso ao vivo do job em curso (tempo decorrido e cauda da saída do solver)
     if (req.method === "GET" && req.url === "/job") { send(200, jobState.current ? { busy: true, elapsed: (Date.now() - jobState.current.start) / 1000, tail: jobState.current.tail.slice(-4000), cancelled: jobState.current.cancelled } : { busy: false }); return; }
     if (req.method === "POST" && req.url === "/cancel") { send(200, { ok: true, cancelled: cancelJob("Parado pelo utilizador") }); return; }
@@ -376,7 +377,7 @@ export function serve(port = 8765, token = randomBytes(12).toString("hex")) {
 const isMain = process.argv[1] && /cad-runner\.(m?js|ts)$/.test(process.argv[1]);
 if (isMain) {
   const args = process.argv.slice(2);
-  if (args[0] === "--status") console.log(JSON.stringify(tools(), null, 2));
+  if (args[0] === "--status") console.log(JSON.stringify(tools(true), null, 2));
   else if (args[0] === "--serve") {
     const port = Number(args[args.indexOf("--port") + 1]) || 8765;
     const { token } = serve(port, process.env.CAD_TOKEN);

@@ -2,15 +2,13 @@
 // Quality" do Femap): jacobiano escalado, razão de aspeto, ângulos das faces, empeno das faces
 // quadriláteras e fator de forma dos tetraedros, com estatísticas, histogramas, elementos fora dos
 // limites e os piores elementos. Puro: corre no agente e na aplicação. Usa só os nós de canto.
-import { type Msh, elementsOf, shellBlocks, solidBlocks } from "./msh.ts";
+import { type Msh, elementsOf, NODES_PER, shellBlocks, solidBlocks } from "./msh.ts";
 import { SOLIDS } from "./elements.ts";
 
 type P3 = [number, number, number];
 const sub = (a: P3, b: P3): P3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const dot = (a: P3, b: P3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (u: P3, v: P3): P3 => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
 const len = (a: P3) => Math.hypot(a[0], a[1], a[2]);
-const angle = (u: P3, v: P3) => (Math.acos(Math.max(-1, Math.min(1, dot(u, v) / (len(u) * len(v) || 1)))) * 180) / Math.PI;
 
 /** Vizinhos de cada canto (3 arestas em sentido direto): hexaedro e tetraedro (numeração Gmsh = Abaqus). */
 const HEX_CORNERS = [[1, 3, 4], [2, 0, 5], [3, 1, 6], [0, 2, 7], [7, 5, 0], [4, 6, 1], [5, 7, 2], [6, 4, 3]];
@@ -52,11 +50,16 @@ export interface MeshQuality {
   metrics: QualityMetric[];
   /** Jacobiano escalado por elemento (pela ordem de `elementsOf(solidBlocks)`), para colorir. */
   perElement: number[];
+  /** Razão de aspeto por elemento (mesma ordem de perElement). */
+  perElementAr: number[];
   /** Piores elementos pelo jacobiano escalado: n.º (1…), valor e centro (mm). */
   worst: { element: number; sj: number; ar: number; center: P3 }[];
   ok: boolean;
   notes: string[];
 }
+
+/** O que segue para o browser: sem os valores por elemento (já vão, por vértice, na vista da malha). */
+export type MeshReport = Omit<MeshQuality, "perElement" | "perElementAr">;
 
 /** Limites por omissão: os do Verify Mesh do Abaqus/CAE para ângulos, razão de aspeto e fator de forma; jacobiano e empeno como no Femap/NX. */
 export const QUALITY_LIMITS: Record<QualityMetric["key"], QualityLimit[] | { hex: QualityLimit[]; tet: QualityLimit[] }> = {
@@ -95,49 +98,123 @@ export const ADVISOR_LIMITS = {
   tinyGrade: { value: 5, source: "regra prática do GALCAD (transição gradual até à aresta minúscula, razão de crescimento ≤ 1,5 por elemento como alvo)" },
 } as const;
 
-/** Medidas de um elemento pelos cantos. */
-export function elementQuality(kind: "hex" | "tet", P: P3[]): { sj: number; ar: number; minAngle: number; maxAngle: number; warp?: number; shape?: number; volume: number } {
-  const hex = kind === "hex";
+// Núcleo escalar, sem alocações por elemento: a malha ao vivo mede centenas de milhares de elementos
+// em cada alteração. Os cantos do elemento em curso ficam em X (x0 y0 z0 x1 …) e o resultado em Q.
+const X = new Float64Array(24);
+let cx = 0, cy = 0, cz = 0;
+const Q = { sj: 0, ar: 0, minAngle: 0, maxAngle: 0, warp: 0, shape: 0, volume: 0 };
+const norm = (x: number, y: number, z: number) => Math.sqrt(x * x + y * y + z * z);
+/** (Pb − Pa) × (Pc − Pa) → cx, cy, cz. */
+function crossAt(a: number, b: number, c: number): void {
+  const a3 = 3 * a, b3 = 3 * b, c3 = 3 * c;
+  const ux = X[b3] - X[a3], uy = X[b3 + 1] - X[a3 + 1], uz = X[b3 + 2] - X[a3 + 2];
+  const vx = X[c3] - X[a3], vy = X[c3 + 1] - X[a3 + 1], vz = X[c3 + 2] - X[a3 + 2];
+  cx = uy * vz - uz * vy; cy = uz * vx - ux * vz; cz = ux * vy - uy * vx;
+}
+const dist = (a: number, b: number) => norm(X[3 * b] - X[3 * a], X[3 * b + 1] - X[3 * a + 1], X[3 * b + 2] - X[3 * a + 2]);
+/** (Pb − Pa) × (Pc − Pa) · (Pd − Pa). */
+function triple(a: number, b: number, c: number, d: number): number {
+  crossAt(a, b, c);
+  const a3 = 3 * a, d3 = 3 * d;
+  return cx * (X[d3] - X[a3]) + cy * (X[d3 + 1] - X[a3 + 1]) + cz * (X[d3 + 2] - X[a3 + 2]);
+}
+const vecAngle = (ux: number, uy: number, uz: number, vx: number, vy: number, vz: number) =>
+  (Math.acos(Math.max(-1, Math.min(1, (ux * vx + uy * vy + uz * vz) / (norm(ux, uy, uz) * norm(vx, vy, vz) || 1)))) * 180) / Math.PI;
+/** Ângulo no canto i entre Pp − Pi e Pn − Pi. */
+function cornerAngle(i: number, p: number, n: number): number {
+  const i3 = 3 * i, p3 = 3 * p, n3 = 3 * n;
+  return vecAngle(X[p3] - X[i3], X[p3 + 1] - X[i3 + 1], X[p3 + 2] - X[i3 + 2], X[n3] - X[i3], X[n3 + 1] - X[i3 + 1], X[n3 + 2] - X[i3 + 2]);
+}
+const HEX_TETS = [[0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6], [0, 5, 1, 6]];
+
+/** Medidas do sólido em X (hexaedro: 8 cantos; tetraedro: 4) para Q (empeno só no hexaedro, forma só no tetraedro). */
+function measureSolid(hex: boolean): void {
   // jacobiano escalado: det das 3 arestas de cada canto / produto dos comprimentos (cubo/tetraedro regular = 1)
-  const sjs = (hex ? HEX_CORNERS : TET_CORNERS).map((nb, i) => {
-    const e = nb.map((j) => sub(P[j], P[i]));
-    const d = dot(cross(e[0], e[1]), e[2]) / (len(e[0]) * len(e[1]) * len(e[2]) || 1);
-    return hex ? d : Math.min(1, d * Math.SQRT2);
-  });
-  const sj = Math.min(...sjs);
-  const el = (hex ? HEX_EDGES : TET_EDGES).map(([a, b]) => len(sub(P[a], P[b])));
+  const C = hex ? HEX_CORNERS : TET_CORNERS;
+  let sj = Infinity;
+  for (let i = 0; i < C.length; i++) {
+    const [j, k, l] = C[i];
+    const d = triple(i, j, k, l) / (dist(i, j) * dist(i, k) * dist(i, l) || 1);
+    const s = hex ? d : Math.min(1, d * Math.SQRT2);
+    if (s < sj) sj = s;
+  }
+  let minE = Infinity, maxE = -Infinity;
+  for (const [a, b] of hex ? HEX_EDGES : TET_EDGES) { const e = dist(a, b); if (e < minE) minE = e; if (e > maxE) maxE = e; }
   const faces = SOLIDS[hex ? 5 : 4].faces;
-  let minAngle = 180, maxAngle = 0, warp = 0;
+  let minAngle = 180, maxAngle = 0, warp = 0, maxArea = -Infinity;
   for (const f of faces) {
     const n = f.length;
     for (let i = 0; i < n; i++) {
-      const a = angle(sub(P[f[(i + n - 1) % n]], P[f[i]]), sub(P[f[(i + 1) % n]], P[f[i]]));
-      minAngle = Math.min(minAngle, a); maxAngle = Math.max(maxAngle, a);
+      const a = cornerAngle(f[i], f[(i + n - 1) % n], f[(i + 1) % n]);
+      if (a < minAngle) minAngle = a;
+      if (a > maxAngle) maxAngle = a;
     }
     if (n === 4) {
       // empeno: ângulo entre as normais dos dois triângulos, pelas duas diagonais (o maior)
-      const w1 = angle(cross(sub(P[f[1]], P[f[0]]), sub(P[f[2]], P[f[0]])), cross(sub(P[f[2]], P[f[0]]), sub(P[f[3]], P[f[0]])));
-      const w2 = angle(cross(sub(P[f[2]], P[f[1]]), sub(P[f[3]], P[f[1]])), cross(sub(P[f[3]], P[f[1]]), sub(P[f[0]], P[f[1]])));
-      warp = Math.max(warp, w1, w2);
+      crossAt(f[0], f[1], f[2]); let ux = cx, uy = cy, uz = cz;
+      crossAt(f[0], f[2], f[3]);
+      const w1 = vecAngle(ux, uy, uz, cx, cy, cz);
+      crossAt(f[1], f[2], f[3]); ux = cx; uy = cy; uz = cz;
+      crossAt(f[1], f[3], f[0]);
+      const w2 = vecAngle(ux, uy, uz, cx, cy, cz);
+      if (w1 > warp) warp = w1;
+      if (w2 > warp) warp = w2;
+    } else if (!hex) {
+      crossAt(f[0], f[1], f[2]);
+      const area = norm(cx, cy, cz) / 2;
+      if (area > maxArea) maxArea = area;
     }
   }
+  Q.sj = sj; Q.minAngle = minAngle; Q.maxAngle = maxAngle;
   if (hex) {
     // volume do hexaedro: 6 tetraedros pela diagonal 0-6
-    const tets = [[0, 1, 2, 6], [0, 2, 3, 6], [0, 3, 7, 6], [0, 7, 4, 6], [0, 4, 5, 6], [0, 5, 1, 6]];
-    const volume = tets.reduce((s, [a, b, c, d]) => s + dot(cross(sub(P[b], P[a]), sub(P[c], P[a])), sub(P[d], P[a])) / 6, 0);
-    return { sj, ar: Math.max(...el) / Math.min(...el), minAngle, maxAngle, warp, volume };
+    let volume = 0;
+    for (const [a, b, c, d] of HEX_TETS) volume += triple(a, b, c, d) / 6;
+    Q.ar = maxE / minE; Q.warp = warp; Q.volume = volume;
+    return;
   }
-  const volume = dot(cross(sub(P[1], P[0]), sub(P[2], P[0])), sub(P[3], P[0])) / 6;
+  const volume = triple(0, 1, 2, 3) / 6, V = Math.abs(volume);
   // razão de aspeto do tetraedro: maior aresta / menor altura, normalizada (regular = 1)
-  const areas = faces.map((f) => len(cross(sub(P[f[1]], P[f[0]]), sub(P[f[2]], P[f[0]]))) / 2);
-  const hmin = (3 * Math.abs(volume)) / Math.max(...areas);
-  const ar = (Math.max(...el) / (hmin || 1e-300)) * Math.sqrt(2 / 3);
+  const hmin = (3 * V) / maxArea;
+  Q.ar = (maxE / (hmin || 1e-300)) * Math.sqrt(2 / 3);
   // fator de forma (Abaqus): volume / volume do tetraedro regular com o mesmo raio da esfera circunscrita
-  const a = sub(P[1], P[0]), b = sub(P[2], P[0]), c = sub(P[3], P[0]);
-  const num = [cross(b, c), cross(c, a), cross(a, b)].reduce((s, v, k) => [s[0] + v[0] * [dot(a, a), dot(b, b), dot(c, c)][k], s[1] + v[1] * [dot(a, a), dot(b, b), dot(c, c)][k], s[2] + v[2] * [dot(a, a), dot(b, b), dot(c, c)][k]] as P3, [0, 0, 0] as P3);
-  const R = len(num) / (12 * Math.abs(volume) || 1e-300);
-  const shape = Math.abs(volume) / ((8 * Math.sqrt(3) * R ** 3) / 27);
-  return { sj, ar, minAngle, maxAngle, shape, volume };
+  const ax = X[3] - X[0], ay = X[4] - X[1], az = X[5] - X[2];
+  const bx = X[6] - X[0], by = X[7] - X[1], bz = X[8] - X[2];
+  const ex = X[9] - X[0], ey = X[10] - X[1], ez = X[11] - X[2];
+  const aa = ax * ax + ay * ay + az * az, bb = bx * bx + by * by + bz * bz, ee = ex * ex + ey * ey + ez * ez;
+  const nx = (by * ez - bz * ey) * aa + (ey * az - ez * ay) * bb + (ay * bz - az * by) * ee;
+  const ny = (bz * ex - bx * ez) * aa + (ez * ax - ex * az) * bb + (az * bx - ax * bz) * ee;
+  const nz = (bx * ey - by * ex) * aa + (ex * ay - ey * ax) * bb + (ax * by - ay * bx) * ee;
+  const R = norm(nx, ny, nz) / (12 * V || 1e-300);
+  Q.shape = V / ((8 * Math.sqrt(3) * R ** 3) / 27);
+  Q.volume = volume;
+}
+
+/** Medidas do triângulo em X para Q (a área fica em Q.volume). */
+function measureTri(): void {
+  crossAt(0, 1, 2);
+  const a2 = norm(cx, cy, cz);
+  const L0 = dist(0, 1), L1 = dist(1, 2), L2 = dist(2, 0);
+  const s = Math.min(a2 / (L0 * L2 || 1), a2 / (L0 * L1 || 1), a2 / (L1 * L2 || 1));
+  let minAngle = Infinity, maxAngle = -Infinity;
+  for (let i = 0; i < 3; i++) { const a = cornerAngle(i, (i + 1) % 3, (i + 2) % 3); if (a < minAngle) minAngle = a; if (a > maxAngle) maxAngle = a; }
+  const maxL = Math.max(L0, L1, L2), hmin = a2 / maxL;
+  Q.sj = s / (Math.sqrt(3) / 2); Q.ar = hmin > 0 ? (maxL / hmin) * (Math.sqrt(3) / 2) : 1e6;
+  Q.minAngle = minAngle; Q.maxAngle = maxAngle; Q.volume = a2 / 2;
+}
+
+function loadPoints(P: P3[], n: number): void {
+  for (let k = 0; k < n; k++) { X[3 * k] = P[k][0]; X[3 * k + 1] = P[k][1]; X[3 * k + 2] = P[k][2]; }
+}
+
+/** Medidas de um elemento pelos cantos. */
+export function elementQuality(kind: "hex" | "tet", P: P3[]): { sj: number; ar: number; minAngle: number; maxAngle: number; warp?: number; shape?: number; volume: number } {
+  const hex = kind === "hex";
+  loadPoints(P, hex ? 8 : 4);
+  measureSolid(hex);
+  return hex
+    ? { sj: Q.sj, ar: Q.ar, minAngle: Q.minAngle, maxAngle: Q.maxAngle, warp: Q.warp, volume: Q.volume }
+    : { sj: Q.sj, ar: Q.ar, minAngle: Q.minAngle, maxAngle: Q.maxAngle, shape: Q.shape, volume: Q.volume };
 }
 
 const LABELS: Record<QualityMetric["key"], [string, string, QualityMetric["applies"]]> = {
@@ -155,12 +232,8 @@ const LABELS: Record<QualityMetric["key"], [string, string, QualityMetric["appli
  * altura · √3/2 (1 no equilátero), ângulos e área.
  */
 export function triangleQuality(P: P3[]): { sj: number; ar: number; minAngle: number; maxAngle: number; area: number } {
-  const a2 = len(cross(sub(P[1], P[0]), sub(P[2], P[0])));
-  const L = [len(sub(P[1], P[0])), len(sub(P[2], P[1])), len(sub(P[0], P[2]))];
-  const sines = [a2 / (L[0] * L[2] || 1), a2 / (L[0] * L[1] || 1), a2 / (L[1] * L[2] || 1)];
-  const ang = [0, 1, 2].map((i) => angle(sub(P[(i + 1) % 3], P[i]), sub(P[(i + 2) % 3], P[i])));
-  const hmin = a2 / Math.max(...L);
-  return { sj: Math.min(...sines) / (Math.sqrt(3) / 2), ar: hmin > 0 ? (Math.max(...L) / hmin) * (Math.sqrt(3) / 2) : 1e6, minAngle: Math.min(...ang), maxAngle: Math.max(...ang), area: a2 / 2 };
+  loadPoints(P, 3); measureTri();
+  return { sj: Q.sj, ar: Q.ar, minAngle: Q.minAngle, maxAngle: Q.maxAngle, area: Q.volume };
 }
 
 /**
@@ -168,63 +241,91 @@ export function triangleQuality(P: P3[]): { sj: number; ar: number; minAngle: nu
  * do grupo SHELL (limites dos tetraedros nos ângulos; `volume` passa a ser a área, mm²).
  */
 export function meshQuality(m: Msh, bodies?: { group: string }[], shell = false): MeshQuality {
+  // sem alocações por elemento: coordenadas num Float64Array indexado pela etiqueta do nó, valores das
+  // medidas em Float64Array e o tipo (0 = hexaedro, 1 = tetraedro) em Uint8Array
+  const blocks = shell ? shellBlocks(m) : solidBlocks(m, bodies);
+  let total = 0;
+  for (const b of blocks) total += b.conn.length / NODES_PER[b.type];
+  let maxTag = 0;
+  for (const t of m.nodes.keys()) if (t > maxTag) maxTag = t;
+  const XYZ = new Float64Array(3 * (maxTag + 1));
+  for (const [t, p] of m.nodes) { XYZ[3 * t] = p[0]; XYZ[3 * t + 1] = p[1]; XYZ[3 * t + 2] = p[2]; }
+  const used = new Uint8Array(maxTag + 1);
+  let nUsed = 0;
+  const KEYS = ["sj", "ar", "minAngle", "maxAngle", "warp", "shape"] as const;
+  const val = KEYS.map(() => new Float64Array(total)), kindOf = KEYS.map(() => new Uint8Array(total)), cnt = KEYS.map(() => 0);
+  const push = (k: number, v: number, kind: number) => { val[k][cnt[k]] = v; kindOf[k][cnt[k]++] = kind; };
   const types: Record<string, number> = {};
-  const vals: Record<QualityMetric["key"], { v: number; kind: "hex" | "tet" }[]> = { sj: [], ar: [], minAngle: [], maxAngle: [], warp: [], shape: [] };
-  const perElement: number[] = [];
-  const info: { sj: number; ar: number; center: P3 }[] = [];
-  const used = new Set<number>();
-  let volume = 0;
-  if (shell) for (const e of elementsOf(shellBlocks(m))) {
-    const key = e.type === 9 ? "tri6" : "tri3";
-    types[key] = (types[key] ?? 0) + 1;
-    e.nodes.forEach((n) => used.add(n));
-    const P = e.nodes.slice(0, 3).map((n) => m.nodes.get(n)!) as P3[];
-    const q = triangleQuality(P);
-    volume += q.area;
-    for (const k of ["sj", "ar", "minAngle", "maxAngle"] as const) vals[k].push({ v: q[k], kind: "tet" });
-    perElement.push(q.sj);
-    info.push({ sj: q.sj, ar: q.ar, center: [0, 1, 2].map((k) => P.reduce((s, p) => s + p[k], 0) / 3) as P3 });
-  }
-  else for (const e of elementsOf(solidBlocks(m, bodies))) {
-    const st = SOLIDS[e.type];
-    types[`${st.kind}${st.nodes}`] = (types[`${st.kind}${st.nodes}`] ?? 0) + 1;
-    e.nodes.forEach((n) => used.add(n));
-    const P = e.nodes.slice(0, st.corners).map((n) => m.nodes.get(n)!) as P3[];
-    const q = elementQuality(st.kind, P);
-    volume += q.volume;
-    for (const k of Object.keys(vals) as QualityMetric["key"][]) { const v = q[k]; if (v !== undefined) vals[k].push({ v, kind: st.kind }); }
-    perElement.push(q.sj);
-    info.push({ sj: q.sj, ar: q.ar, center: [0, 1, 2].map((k) => P.reduce((s, p) => s + p[k], 0) / P.length) as P3 });
+  const perElement: number[] = new Array(total), perElementAr: number[] = new Array(total);
+  const worst: MeshQuality["worst"] = [];
+  let volume = 0, i = 0;
+  for (const b of blocks) {
+    const per = NODES_PER[b.type], n = b.conn.length / per;
+    let key: string, nc: number, kind: number;
+    if (shell) { key = b.type === 9 ? "tri6" : "tri3"; nc = 3; kind = 1; }
+    else { const st = SOLIDS[b.type]; key = `${st.kind}${st.nodes}`; nc = st.corners; kind = st.kind === "hex" ? 0 : 1; }
+    if (n === 0) continue;
+    types[key] = (types[key] ?? 0) + n;
+    const conn = b.conn;
+    for (let base = 0; base < conn.length; base += per, i++) {
+      for (let k = 0; k < per; k++) { const t = conn[base + k]; if (!used[t]) { used[t] = 1; nUsed++; } }
+      for (let k = 0; k < nc; k++) { const t3 = 3 * conn[base + k]; X[3 * k] = XYZ[t3]; X[3 * k + 1] = XYZ[t3 + 1]; X[3 * k + 2] = XYZ[t3 + 2]; }
+      if (shell) measureTri(); else measureSolid(kind === 0);
+      volume += Q.volume;
+      push(0, Q.sj, kind); push(1, Q.ar, kind); push(2, Q.minAngle, kind); push(3, Q.maxAngle, kind);
+      if (!shell) { if (kind === 0) push(4, Q.warp, kind); else push(5, Q.shape, kind); }
+      perElement[i] = Q.sj; perElementAr[i] = Q.ar;
+      // 10 piores pelo jacobiano (ordenação estável: empates ficam pela ordem dos elementos)
+      let pos = worst.length;
+      while (pos > 0 && worst[pos - 1].sj > Q.sj) pos--;
+      if (pos < 10) {
+        let sx = 0, sy = 0, sz = 0;
+        for (let k = 0; k < nc; k++) { sx += X[3 * k]; sy += X[3 * k + 1]; sz += X[3 * k + 2]; }
+        worst.splice(pos, 0, { element: i + 1, sj: Q.sj, ar: Q.ar, center: [sx / nc, sy / nc, sz / nc] });
+        if (worst.length > 10) worst.pop();
+      }
+    }
   }
   const metrics: QualityMetric[] = [];
   let errors = 0;
-  for (const key of Object.keys(vals) as QualityMetric["key"][]) {
-    const list = vals[key];
-    if (!list.length) continue;
+  KEYS.forEach((key, ki) => {
+    const count = cnt[ki];
+    if (!count) return;
+    const v = val[ki], kd = kindOf[ki];
     const [label, unit, applies] = LABELS[key];
     const L = QUALITY_LIMITS[key];
     const limitsOf = (kind: "hex" | "tet") => (Array.isArray(L) ? L : L[kind]);
-    const kinds = [...new Set(list.map((x) => x.kind))];
-    const limits = kinds.length === 1 ? limitsOf(kinds[0]) : limitsOf("hex");
-    const fail = limits.map((_, i) => list.filter((x) => { const l = limitsOf(x.kind)[i]; return l && ((l.min !== undefined && x.v < l.min) || (l.max !== undefined && x.v > l.max)); }).length);
-    limits.forEach((l, i) => { if (l.level === "error") errors += fail[i]; });
-    const v = list.map((x) => x.v);
-    // ciclo em vez de Math.min(...v): com centenas de milhares de elementos o spread rebenta a pilha
-    let min = Infinity, max = -Infinity;
-    for (const x of v) { if (x < min) min = x; if (x > max) max = x; }
+    let hasHex = false, hasTet = false;
+    for (let j = 0; j < count; j++) if (kd[j]) hasTet = true; else hasHex = true;
+    const limits = hasHex !== hasTet ? limitsOf(hasTet ? "tet" : "hex") : limitsOf("hex");
+    const LH = limitsOf("hex"), LT = limitsOf("tet");
+    const fail = limits.map(() => 0);
+    let min = Infinity, max = -Infinity, sum = 0;
+    for (let j = 0; j < count; j++) {
+      const x = v[j];
+      if (x < min) min = x;
+      if (x > max) max = x;
+      sum += x;
+      const LK = kd[j] ? LT : LH;
+      for (let li = 0; li < limits.length; li++) {
+        const l = LK[li];
+        if (l && ((l.min !== undefined && x < l.min) || (l.max !== undefined && x > l.max))) fail[li]++;
+      }
+    }
+    limits.forEach((l, li) => { if (l.level === "error") errors += fail[li]; });
     // histograma de 10 classes (jacobiano e ângulos em gamas fixas, para comparar malhas)
     const range: [number, number] = key === "sj" ? [Math.min(0, min), 1] : key === "minAngle" || key === "maxAngle" ? [0, 180] : key === "shape" ? [0, 1] : [Math.min(min, 1), Math.max(max, 1 + 1e-9)];
-    const edges = Array.from({ length: 11 }, (_, i) => range[0] + ((range[1] - range[0]) * i) / 10);
+    const r0 = range[0], span = range[1] - range[0];
+    const edges = Array.from({ length: 11 }, (_, e) => r0 + (span * e) / 10);
     const counts = new Array(10).fill(0);
-    for (const x of v) counts[Math.min(9, Math.max(0, Math.floor(((x - range[0]) / (range[1] - range[0] || 1)) * 10)))]++;
-    metrics.push({ key, label, unit, applies, count: v.length, min, max, mean: v.reduce((a, b) => a + b, 0) / v.length, limits, fail, hist: { edges, counts } });
-  }
-  const worst = info.map((x, i) => ({ element: i + 1, ...x })).sort((a, b) => a.sj - b.sj).slice(0, 10);
+    for (let j = 0; j < count; j++) counts[Math.min(9, Math.max(0, Math.floor(((v[j] - r0) / (span || 1)) * 10)))]++;
+    metrics.push({ key, label, unit, applies, count, min, max, mean: sum / count, limits, fail, hist: { edges, counts } });
+  });
   const notes: string[] = [];
   if (errors) notes.push(`${errors} elemento(s) invertido(s) ou degenerado(s) (jacobiano ≤ 0): o cálculo não é fiável — refaça a malha`);
-  const warn = metrics.reduce((s, x) => s + x.limits.reduce((t, l, i) => t + (l.level === "warning" ? x.fail[i] : 0), 0), 0);
+  const warn = metrics.reduce((s, x) => s + x.limits.reduce((t, l, li) => t + (l.level === "warning" ? x.fail[li] : 0), 0), 0);
   if (warn) notes.push(`${warn} assinalamento(s) de qualidade (elementos distorcidos): confirme se estão em zonas que importam para o resultado`);
-  return { elements: perElement.length, nodes: used.size, types, volume, metrics, perElement, worst, ok: errors === 0, notes };
+  return { elements: total, nodes: nUsed, types, volume, metrics, perElement, perElementAr, worst, ok: errors === 0, notes };
 }
 
 /**
