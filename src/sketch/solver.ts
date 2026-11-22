@@ -45,6 +45,30 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
   const v = () => { if (value === undefined) throw new Error("Cota sem valor"); return value; };
   const P = (o: object) => o as SketchPrimitive;
 
+  /**
+   * Distância ponto–reta com sinal: o ponto fica do lado da reta em que está agora (o `p2l_distance`
+   * do PlaneGCS não tem sinal e, com valores pequenos, a geometria salta para o outro lado). Um ponto
+   * auxiliar F (o pé da perpendicular) fica na reta, F→P faz ±90° com a reta e |FP| é a cota.
+   * Mesmas equações livres que o `p2l_distance` (F traz 2 parâmetros e 2 equações).
+   */
+  const signedPointLine = (pid: string, lid: string): SketchPrimitive[] => {
+    const d = v();
+    const l = line(lid), q = ents[pid] as Extract<SketchEntity, { type: "point" }>;
+    const p1 = ents[l.p1] as Extract<SketchEntity, { type: "point" }>, p2 = ents[l.p2] as Extract<SketchEntity, { type: "point" }>;
+    if (Math.abs(d) < 1e-9) return [P({ id, type: "point_on_line_pl", p_id: pid, l_id: lid })];
+    const dx = p2.x - p1.x, dy = p2.y - p1.y, len2 = dx * dx + dy * dy || 1;
+    const t = ((q.x - p1.x) * dx + (q.y - p1.y) * dy) / len2;
+    const cross = dx * (q.y - p1.y) - dy * (q.x - p1.x);
+    const side = Math.abs(cross) > 1e-9 * Math.max(1, len2) ? Math.sign(cross) : 1;
+    const f = `${id}#f`;
+    return [
+      P({ id: f, type: "point", x: p1.x + t * dx, y: p1.y + t * dy, fixed: false }),
+      P({ id: `${id}#on`, type: "point_on_line_pl", p_id: f, l_id: lid }),
+      P({ id: `${id}#side`, type: "l2l_angle_pppp", l1p1_id: l.p1, l1p2_id: l.p2, l2p1_id: f, l2p2_id: pid, angle: (side * Math.PI) / 2 }),
+      P({ id, type: "p2p_distance", p1_id: f, p2_id: pid, distance: Math.abs(d) }),
+    ];
+  };
+
   switch (c.type) {
     case "coincident": need(ka === "point" && kb === "point"); return [P({ id, type: "p2p_coincident", p1_id: a, p2_id: b })];
     case "pointOn":
@@ -102,8 +126,8 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
     case "distance":
       if (ka === "line" && !b) return [P({ id, type: "p2p_distance", p1_id: line(a).p1, p2_id: line(a).p2, distance: v() })];
       if (ka === "point" && kb === "point") return [P({ id, type: "p2p_distance", p1_id: a, p2_id: b, distance: v() })];
-      if (ka === "point" && kb === "line") return [P({ id, type: "p2l_distance", p_id: a, l_id: b, distance: v() })];
-      if (ka === "line" && kb === "point") return [P({ id, type: "p2l_distance", p_id: b, l_id: a, distance: v() })];
+      if (ka === "point" && kb === "line") return signedPointLine(a, b);
+      if (ka === "line" && kb === "point") return signedPointLine(b, a);
       need(false); break;
     case "distanceX":
     case "distanceY": {
