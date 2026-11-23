@@ -4,6 +4,7 @@ import { useState } from "preact/hooks";
 import type { Feature } from "../doc/types.ts";
 import { FEATURE_ICONS as ICONS, dependents, featureLabel } from "../doc/features.ts";
 import { store, useStoreKeys } from "./store.ts";
+import { focusSelect } from "./forms-base.tsx";
 import { type Anchor, FloatingMenu, anchorOf } from "./FloatingMenu.tsx";
 import { inactivePluginFeature } from "./plugin-gate.ts";
 
@@ -34,7 +35,7 @@ export function FeatureTree() {
         title={s?.error ?? s?.warnings.join("\n") ?? ""}>
         <span class="ic" aria-hidden="true">{ICONS[f.type]}</span>
         {renaming === f.id ? (
-          <input class="rename" autoFocus value={f.name}
+          <input class="rename" ref={focusSelect} value={f.name}
             onKeyDown={(e) => { if (e.key === "Enter") { store.rename(f.id, (e.target as HTMLInputElement).value); setRenaming(null); } if (e.key === "Escape") setRenaming(null); }}
             onBlur={(e) => { store.rename(f.id, (e.target as HTMLInputElement).value); setRenaming(null); }} />
         ) : (

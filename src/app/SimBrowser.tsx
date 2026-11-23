@@ -5,6 +5,7 @@
 import type { CfdStudy, FemLoad, FemStudy, Study } from "../doc/study.ts";
 import { useState } from "preact/hooks";
 import { type SimSection, store, useStoreKeys } from "./store.ts";
+import { focusSelect } from "./forms-base.tsx";
 import { CONDITION_COLORS, activeStudies, activeStudy, addStudy, deleteStudy, updateStudy } from "./sim-actions.ts";
 import { runCommand } from "./commands.ts";
 import { checkStudy, checkSummary } from "../sim/modelcheck.ts";
@@ -103,7 +104,7 @@ export function SimBrowser() {
             <div class="sim-study-head" onClick={() => store.set({ simStudy: s.id, simSection: on ? st.simSection : "study", simResult: on ? st.simResult : null })}>
               <span class="caret">{on ? "▾" : "▸"}</span>
               {renaming === s.id
-                ? <input class="rename" autoFocus value={s.name} aria-label="Nome do estudo" onClick={(e) => e.stopPropagation()}
+                ? <input class="rename" ref={focusSelect} value={s.name} aria-label="Nome do estudo" onClick={(e) => e.stopPropagation()}
                     onInput={(e) => updateStudy(s.id, { name: (e.target as HTMLInputElement).value })}
                     onBlur={() => setRenaming(null)} onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") setRenaming(null); }} />
                 : <b title="Duplo clique para renomear" onDblClick={(e) => { e.stopPropagation(); setRenaming(s.id); }}>{s.name}</b>}

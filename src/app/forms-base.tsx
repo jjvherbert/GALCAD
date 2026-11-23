@@ -10,6 +10,11 @@ export const OPS: [BodyOp, string][] = [["add", "Adicionar material"], ["cut", "
 
 export const fmt = (v: number) => v.toLocaleString("pt-PT", { maximumFractionDigits: 4 });
 
+/** `ref` de uma caixa que abre para editar: foca e seleciona o texto ao montar (como o Modify do SolidWorks).
+ *  O atributo `autoFocus` não serve — o browser só o honra uma vez por página, e as caixas seguintes ficavam sem foco.
+ *  Tem de ser uma função estável (módulo) para o Preact só a chamar quando o elemento monta, não a cada tecla. */
+export const focusSelect = (el: HTMLInputElement | null) => { if (el) { el.focus(); el.select(); } };
+
 export function Field({ label, children, hint }: { label: string; children: ComponentChildren; hint?: string }) {
   return (
     <label class="field">
