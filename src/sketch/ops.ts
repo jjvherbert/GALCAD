@@ -243,6 +243,12 @@ export function placementMode(a: P2, b: P2, at: P2): "auto" | "horizontal" | "ve
 export function smartDimension(s: SketchData, sel: string[], mode: "auto" | "horizontal" | "vertical" = "auto", at?: P2): { type: ConstraintType; refs: string[]; flip?: number } | null {
   const k = kinds(s, sel);
   const ents = allEntities(s);
+  // círculo/arco com outra entidade: cota ao centro (o comportamento por defeito do SolidWorks)
+  if (sel.length === 2 && k.some(isCurve)) {
+    const c = sel.map((id, i) => (isCurve(k[i]) ? (ents[id] as Extract<SketchEntity, { type: "circle" | "arc" }>).c : id));
+    if (c[0] === c[1]) return null;
+    return smartDimension(s, c, mode, at);
+  }
   if (mode === "auto" && at) {
     const ends = sel.length === 1 && k[0] === "line"
       ? [(ents[sel[0]] as Extract<SketchEntity, { type: "line" }>).p1, (ents[sel[0]] as Extract<SketchEntity, { type: "line" }>).p2]
