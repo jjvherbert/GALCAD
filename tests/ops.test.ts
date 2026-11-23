@@ -81,3 +81,29 @@ test("cota inteligente recusa eixos implícitos", () => {
   assert.equal(smartDimension({ entities: {}, constraints: [] }, ["H"]), null);
   assert.equal(smartDimension({ entities: {}, constraints: [] }, ["O", "H"]), null);
 });
+
+test("linha da origem ao longo de um eixo: só Horizontal/Vertical, sem 'ponto em' redundante", () => {
+  // como o clique o faz: ponto final com "ponto em" no eixo, depois a linha infere H/V
+  for (const [axis, end, dir] of [["H", [50, 0], "horizontal"], ["V", [0, -40], "vertical"]] as const) {
+    let s = empty();
+    const b = addPoint(s, [...end]); s = addConstraint(b.s, "pointOn", [b.id, axis]).s;
+    const l = addLine(s, "O", b.id); s = l.s;
+    assert.ok(s.constraints.some((c) => c.type === dir && c.refs[0] === l.id));
+    assert.ok(!s.constraints.some((c) => c.type === "pointOn"), "o 'ponto em' devia ter caído");
+    const r = solveSketch(s);
+    assert.ok(r.ok, "não pode ficar sobredefinido");
+    assert.equal(r.dof, 1);
+  }
+  // ao contrário: começa no eixo e acaba na origem
+  let s = empty();
+  const a = addPoint(s, [30, 0]); s = addConstraint(a.s, "pointOn", [a.id, "H"]).s;
+  s = addLine(s, a.id, "O").s;
+  assert.ok(!s.constraints.some((c) => c.type === "pointOn"));
+  assert.ok(solveSketch(s).ok);
+  // linha horizontal que acaba no eixo vertical: esse "ponto em" não é redundante e fica
+  s = empty();
+  const p = addPoint(s, [10, 5]); s = p.s;
+  const q = addPoint(s, [0, 5]); s = addConstraint(q.s, "pointOn", [q.id, "V"]).s;
+  s = addLine(s, p.id, q.id).s;
+  assert.ok(s.constraints.some((c) => c.type === "pointOn"), "ponto em V numa linha horizontal não é redundante");
+});

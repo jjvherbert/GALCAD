@@ -52,8 +52,34 @@ export function addLine(s: SketchData, a: string, b: string, opts: { constructio
     const ang = Math.abs((Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180) / Math.PI);
     if (ang < 2 || ang > 178) r = addConstraint(r.s, "horizontal", [id]);
     else if (Math.abs(ang - 90) < 2) r = addConstraint(r.s, "vertical", [id]);
+    r = { s: dropImpliedPointOn(r.s, id), id };
   }
   return { s: r.s, id };
+}
+
+/**
+ * Uma linha horizontal (vertical) com um extremo preso a uma reta horizontal (vertical) já tem o outro
+ * extremo nessa reta: o "ponto em" desse outro extremo é redundante e deixaria o esboço sobredefinido
+ * (ex.: linha da origem ao longo do eixo X). Como o SolidWorks, fica o Horizontal/Vertical e cai o "ponto em".
+ */
+function dropImpliedPointOn(s: SketchData, lineId: string): SketchData {
+  const ln = s.entities[lineId];
+  if (ln?.type !== "line") return s;
+  const dir = s.constraints.find((c) => (c.type === "horizontal" || c.type === "vertical") && c.refs.length === 1 && c.refs[0] === lineId)?.type;
+  if (!dir) return s;
+  const ents = allEntities(s);
+  const parallel = (l: string) =>
+    l === (dir === "horizontal" ? "H" : "V") || s.constraints.some((c) => c.type === dir && c.refs.length === 1 && c.refs[0] === l);
+  const onLine = (p: string, l: string) => {
+    const e = ents[l];
+    return (e?.type === "line" && (e.p1 === p || e.p2 === p)) || s.constraints.some((c) => c.type === "pointOn" && c.refs[0] === p && c.refs[1] === l);
+  };
+  // o extremo final (p2, o último clicado) é o primeiro candidato a perder a relação
+  for (const [p, other] of [[ln.p2, ln.p1], [ln.p1, ln.p2]]) {
+    const k = s.constraints.find((c) => c.type === "pointOn" && c.refs[0] === p && ents[c.refs[1]]?.type === "line" && parallel(c.refs[1]) && onLine(other, c.refs[1]));
+    if (k) return { ...s, constraints: s.constraints.filter((c) => c !== k) };
+  }
+  return s;
 }
 
 /** Retângulo por dois cantos: 4 linhas que partilham os cantos, 2 horizontais e 2 verticais. */
