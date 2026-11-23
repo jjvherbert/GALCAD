@@ -2,6 +2,7 @@
 import { useState } from "preact/hooks";
 import type { DocKind, DocRef } from "../doc/project.ts";
 import { store, useStoreKeys } from "./store.ts";
+import { focusSelect } from "./forms-base.tsx";
 
 const ICON: Record<DocKind, string> = { part: "▮", assembly: "⧉", drawing: "▭" };
 const KIND: Record<DocKind, string> = { part: "Peça", assembly: "Montagem", drawing: "Desenho" };
@@ -25,7 +26,7 @@ export function DocTabs() {
             onClick={() => !on && store.setActive({ kind: d.kind, id: d.id })} onDblClick={() => setRenaming(d.id)}>
             <span class="ic" aria-hidden="true">{ICON[d.kind]}</span>
             {renaming === d.id ? (
-              <input class="rename" autoFocus value={d.name}
+              <input class="rename" ref={focusSelect} value={d.name}
                 onBlur={(e) => { store.renameDocument(d, (e.target as HTMLInputElement).value); setRenaming(null); }}
                 onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); if (e.key === "Escape") setRenaming(null); e.stopPropagation(); }} />
             ) : <span>{d.name}</span>}

@@ -15,6 +15,7 @@ import { isLineCorner } from "../sketch/modify.ts";
 import { type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, applicableConstraints, applyConstraint, deleteItems, moveDimLabel, roundDim, smartDimension, toggleConstruction } from "../sketch/ops.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStoreKeys } from "./store.ts";
+import { focusSelect } from "./forms-base.tsx";
 import { commandViewport } from "./commands.ts";
 import { type CommitResult, type Draw, type DimMode, type Snap, type Tool, GEOM_CONSTRAINTS, TOOLS, fmt } from "./sketch-types.ts";
 import { Constraints, DimGhost, Dimensions, Grid, labelPos } from "./SketchOverlays.tsx";
@@ -421,8 +422,8 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
           if (!c) return null;
           const [x, y] = S(c.pos ?? labelPos(c, ents));
           return (
-            <div class="dim-input" style={{ left: `${x}px`, top: `${y}px` }}>
-              <input autoFocus value={dimEdit.text} aria-label="Valor da cota (número ou expressão)"
+            <div key={dimEdit.id} class="dim-input" style={{ left: `${x}px`, top: `${y}px` }}>
+              <input ref={focusSelect} value={dimEdit.text} aria-label="Valor da cota (número ou expressão)"
                 onInput={(e) => setDimEdit({ ...dimEdit, text: (e.target as HTMLInputElement).value })}
                 onKeyDown={(e) => { if (e.key === "Enter") saveDim(); if (e.key === "Escape") setDimEdit(null); }} />
               <button onClick={saveDim} title="Aplicar">✓</button>
