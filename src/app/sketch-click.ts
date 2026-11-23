@@ -40,9 +40,9 @@ export type ClickCtx = {
   setDimEdit: (d: { id: string; text: string } | null) => void;
 };
 
-export function handleClick(c: ClickCtx, sx: number, sy: number, additive: boolean, dbl: boolean) {
+export function handleClick(c: ClickCtx, sx: number, sy: number, additive: boolean, dbl: boolean, shift = false) {
   const { tool, sel, drawing, draft, ents, hitAt, snap, hitRef, refGroups, convert, commit, data, W, lastValue, setSel, setMsg, setPrompt, setDrawing } = c;
-  const dimClick = (a: number, b: number) => dimClickAt(c, a, b);
+  const dimClick = (a: number, b: number) => dimClickAt(c, a, b, shift);
   const finishSpline = (p: string[]) => finishSplineIn(c, p);
   if (tool === "select") {
     const id = hitAt(sx, sy);
@@ -200,23 +200,35 @@ export function finishSplineIn(c: ClickCtx, pts: string[]) {
   setDrawing(null);
 }
 
-export function dimClickAt(c: ClickCtx, sx: number, sy: number) {
+/** `shift`: num círculo/arco, cotar ao ponto mais perto/longe da curva (do lado clicado), como o SolidWorks. */
+export function dimClickAt(c: ClickCtx, sx: number, sy: number, shift = false) {
   const { dimMode, drawing, ents, dimHit, commit, data, W, setSel, setMsg, setDrawing, setDimEdit } = c;
   const id = dimHit(sx, sy);
   const picks = drawing?.kind === "dim" ? drawing.picks : [];
+  const onCurve = drawing?.kind === "dim" ? drawing.onCurve ?? picks.map(() => null) : [];
   if (id) {
-    const next = picks.includes(id) ? picks.filter((x) => x !== id) : [...picks, id].slice(-2);
-    setDrawing({ kind: "dim", picks: next });
+    const t = ents[id]?.type, at = shift && (t === "circle" || t === "arc") ? W(sx, sy) : null;
+    const i = picks.indexOf(id);
+    if (i >= 0 && at) {
+      // Shift numa curva já escolhida: passa a cotar à curva, do lado agora clicado (não a larga)
+      setDrawing({ kind: "dim", picks, onCurve: onCurve.map((p, j) => (j === i ? at : p)) });
+      return;
+    }
+    const keep = i >= 0 ? picks.map((_, j) => j !== i) : picks.map(() => true);
+    let next = picks.filter((_, j) => keep[j]), nextOn = onCurve.filter((_, j) => keep[j]);
+    if (i < 0) { next = [...next, id].slice(-2); nextOn = [...nextOn, at].slice(-2); }
+    setDrawing({ kind: "dim", picks: next, ...(nextOn.some(Boolean) ? { onCurve: nextOn } : {}) });
     setSel(next);
-    setMsg(next.length ? "Clique onde quer a cota (ou noutra entidade para cotar entre as duas)" : "Clique numa linha, arco ou círculo");
+    const curve = next.some((x) => ents[x]?.type === "circle" || ents[x]?.type === "arc");
+    setMsg(next.length ? `Clique onde quer a cota (ou noutra entidade para cotar entre as duas)${curve ? " · Shift+clique no círculo cota à curva" : ""}` : "Clique numa linha, arco ou círculo");
     return;
   }
   // clique no vazio: colocar a cota
   if (!picks.length) return;
-  const dim = smartDimension(data(), picks, dimMode, W(sx, sy));
+  const dim = smartDimension(data(), picks, dimMode, W(sx, sy), onCurve);
   if (!dim) { setMsg("Não sei cotar esta seleção"); return; }
   const value = roundDim(measure(ents, dim));
-  const r = addConstraint(data(), dim.type, dim.refs, value, { pos: W(sx, sy), ...(dim.flip ? { flip: dim.flip } : {}) });
+  const r = addConstraint(data(), dim.type, dim.refs, value, { pos: W(sx, sy), ...(dim.flip ? { flip: dim.flip } : {}), ...(dim.arc ? { arc: dim.arc } : {}) });
   // a cota de referência não se edita (como no SolidWorks): só se abre a caixa se comandar
   if (commit(r.s, "Cota", { drivenOnConflict: r.id }) === "ok") setDimEdit({ id: r.id, text: String(value) });
   setDrawing(null);

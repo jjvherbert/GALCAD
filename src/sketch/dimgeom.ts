@@ -1,7 +1,7 @@
 // Desenho de uma cota no esboço (em coordenadas do mundo): linhas de chamada, linha de cota e setas,
 // a partir do tipo, das referências e do ponto onde o rótulo foi largado. Puro (testes em node).
 import type { SketchConstraint, SketchEntity } from "../doc/types.ts";
-import { type P2, add, dot, len, mul, pt, sub } from "./geometry.ts";
+import { type P2, add, arcSign, curveRef, dot, len, mul, pt, sub } from "./geometry.ts";
 
 export interface DimGeom {
   /** linhas de chamada (da geometria até à linha de cota) */
@@ -16,7 +16,18 @@ const unit = (v: P2): P2 => { const L = len(v); return L < 1e-12 ? [1, 0] : [v[0
 const perp = (v: P2): P2 => [-v[1], v[0]];
 
 /** Extremos medidos de uma cota linear (ponto–ponto, linha, ponto–linha pelo pé da perpendicular). */
-function linearEnds(c: Pick<SketchConstraint, "type" | "refs">, ents: Record<string, SketchEntity>): [P2, P2] | null {
+function linearEnds(c: Pick<SketchConstraint, "type" | "refs" | "arc">, ents: Record<string, SketchEntity>): [P2, P2] | null {
+  if (c.arc) {
+    // condição de arco: as pontas saem do centro, ±raio ao longo da cota (min do lado de lá, max de cá)
+    const A = curveRef(ents, c.refs[0]), B = curveRef(ents, c.refs[1]);
+    const swap = ents[A.id]?.type === "line";
+    const ends = linearEnds({ type: c.type, refs: swap ? [B.id, A.id] : [A.id, B.id] }, ents);
+    if (!ends) return null;
+    const [p, q] = swap ? [ends[1], ends[0]] : ends, u = unit(sub(q, p));
+    if (len(sub(q, p)) < 1e-12) return ends;
+    const sa = A.curve ? arcSign(c.arc[0]) * A.r : 0, sb = B.curve ? arcSign(c.arc[1]) * B.r : 0;
+    return [add(p, mul(u, -sa)), add(q, mul(u, sb))];
+  }
   const [ra, rb] = c.refs;
   const ea = ents[ra], eb = rb ? ents[rb] : undefined;
   if (!ea) return null;
@@ -31,7 +42,7 @@ function linearEnds(c: Pick<SketchConstraint, "type" | "refs">, ents: Record<str
 }
 
 /** Geometria da cota com o rótulo em `pos`; `null` quando não há desenho próprio (fica o rótulo). */
-export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip">, ents: Record<string, SketchEntity>, pos: P2): DimGeom | null {
+export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip" | "arc">, ents: Record<string, SketchEntity>, pos: P2): DimGeom | null {
   if (c.type === "distance" || c.type === "distanceX" || c.type === "distanceY") {
     const ends = linearEnds(c, ents);
     if (!ends) return null;

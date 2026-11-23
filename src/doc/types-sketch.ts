@@ -37,7 +37,7 @@ export type ConstraintType =
   | "symmetric" // [ponto, ponto, linha]
   | "fix" // [ponto]
   // cotas
-  | "distance" // [ponto, ponto] | [ponto, linha] | [linha] (comprimento)
+  | "distance" // [ponto, ponto] | [ponto, linha] | [linha] (comprimento); com `arc`, ponto/linha podem ser círculo/arco
   | "distanceX" // [ponto, ponto] (horizontal, com sinal: x2 - x1)
   | "distanceY" // [ponto, ponto] (vertical, com sinal: y2 - y1)
   | "radius" // [círculo|arco]
@@ -58,7 +58,15 @@ export interface SketchConstraint {
    * da 1.ª linha, bit 1 o da 2.ª; sem o campo, os sentidos p1→p2 de cada linha.
    */
   flip?: number;
+  /**
+   * Cota de distância com círculos/arcos (como a condição de arco do SolidWorks): por referência,
+   * "center" mede ao centro, "min"/"max" ao ponto mais perto/longe da curva (centro ∓/± raio).
+   * Sem o campo, as referências são pontos/linhas e a cota vai ao centro.
+   */
+  arc?: [ArcCond, ArcCond];
 }
+
+export type ArcCond = "center" | "min" | "max";
 
 export const DIMENSION_TYPES: ReadonlySet<ConstraintType> = new Set([
   "distance", "distanceX", "distanceY", "radius", "diameter", "angle",

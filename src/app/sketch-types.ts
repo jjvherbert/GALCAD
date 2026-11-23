@@ -13,7 +13,8 @@ export type Draw =
   | { kind: "circle"; center: string }
   | { kind: "arc"; center: string; start?: P2; startId?: string; acc: number; last?: number }
   | { kind: "spline"; pts: string[] }
-  | { kind: "dim"; picks: string[] };
+  /** cota: entidades escolhidas; `onCurve[i]`: ponto do clique com Shift (cotar à curva, não ao centro) */
+  | { kind: "dim"; picks: string[]; onCurve?: (P2 | null)[] };
 
 export interface Snap { p: P2; id?: string; on?: string }
 

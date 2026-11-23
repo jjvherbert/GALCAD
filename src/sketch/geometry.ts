@@ -1,5 +1,5 @@
 // Geometria 2D do esboço: entidades implícitas, medições e amostragem de curvas.
-import type { SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
+import type { ArcCond, SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 
 export type P2 = [number, number];
 
@@ -94,8 +94,14 @@ export function angleSector(ents: Record<string, SketchEntity>, l1: string, l2: 
 }
 
 /** Valor atual de uma cota, medido na geometria. */
-export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstraint, "type" | "refs" | "flip">): number {
+export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstraint, "type" | "refs" | "flip" | "arc">): number {
   const [a, b] = c.refs;
+  if (c.type === "distance" && c.arc) {
+    // condição de arco: ao centro e depois ∓/± o raio de cada curva
+    const ra = curveRef(ents, a), rb = curveRef(ents, b);
+    const base = measure(ents, { type: "distance", refs: [ra.id, rb.id] });
+    return base + arcSign(c.arc[0]) * ra.r + arcSign(c.arc[1]) * rb.r;
+  }
   const ea = ents[a], eb = ents[b];
   switch (c.type) {
     case "distance":
@@ -114,6 +120,15 @@ export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstr
     case "angle": return lineAngle(ents, a, b, c.flip);
     default: throw new Error(`"${c.type}" não é uma cota`);
   }
+}
+
+/** Sinal do raio numa condição de arco: min −1, max +1, centro 0. */
+export const arcSign = (k: ArcCond) => (k === "min" ? -1 : k === "max" ? 1 : 0);
+
+/** Um círculo/arco vale pelo seu centro (com o raio); um ponto/linha vale por si (raio 0). */
+export function curveRef(ents: Record<string, SketchEntity>, id: string): { id: string; r: number; curve: boolean } {
+  const e = ents[id];
+  return e?.type === "circle" || e?.type === "arc" ? { id: e.c, r: e.r, curve: true } : { id, r: 0, curve: false };
 }
 
 // ---------------------------------------------------------------------------

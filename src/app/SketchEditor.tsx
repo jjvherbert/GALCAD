@@ -233,7 +233,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
       return;
     }
     if (d?.mode === "pan" && e.button !== 0) return;
-    click(sx, sy, e.shiftKey || e.ctrlKey || e.metaKey, e.detail >= 2);
+    click(sx, sy, e.shiftKey || e.ctrlKey || e.metaKey, e.detail >= 2, e.shiftKey);
   }
 
   function onWheel(e: WheelEvent) {
@@ -247,7 +247,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
 
   // --- cliques por ferramenta ---------------------------------------------------------
   const clickCtx = () => ({ tool, sel, drawing, dimMode, draft, ents, hitAt, dimHit, snap, hitRef, refGroups, convert, commit, data, W, lastValue, mirrorKeep, chamferMode, setSel, setMsg, setPrompt, setDrawing, setDimEdit });
-  const click = (sx: number, sy: number, additive: boolean, dbl: boolean) => handleClick(clickCtx(), sx, sy, additive, dbl);
+  const click = (sx: number, sy: number, additive: boolean, dbl: boolean, shift = false) => handleClick(clickCtx(), sx, sy, additive, dbl, shift);
   const finishSpline = (pts: string[]) => finishSplineIn(clickCtx(), pts);
 
   // --- comandos ---------------------------------------------------------------------
@@ -387,7 +387,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
             onSelect={(id, add) => setSel(add ? [...sel, id] : [id])}
             onMoveLabel={(id, pos) => store.updateSketch({ ...draft, constraints: draft.constraints.map((c) => (c.id === id ? moveDimLabel(c, ents, pos) : c)) })} />
           {tool === "dim" && drawing?.kind === "dim" && drawing.picks.length > 0 && mouse && !hover && (() => {
-            const g = smartDimension(data(), drawing.picks, dimMode, mouse);
+            const g = smartDimension(data(), drawing.picks, dimMode, mouse, drawing.onCurve);
             return g ? <DimGhost c={g} ents={ents} S={S} pos={mouse} /> : null;
           })()}
           {points.map(([id, e]) => {
