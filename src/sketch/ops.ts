@@ -1,5 +1,5 @@
 // Operações de edição de esboços (puras: devolvem um esboço novo). Usadas pelo editor e testáveis em Node.
-import type { ConstraintType, Expr, SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
+import type { ArcCond, ConstraintType, Expr, SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
 import { type P2, allEntities, angleSector, entityPoints, isImplicit, measure, pt } from "./geometry.ts";
 
@@ -240,13 +240,39 @@ export function placementMode(a: P2, b: P2, at: P2): "auto" | "horizontal" | "ve
   return "auto";
 }
 
-export function smartDimension(s: SketchData, sel: string[], mode: "auto" | "horizontal" | "vertical" = "auto", at?: P2): { type: ConstraintType; refs: string[]; flip?: number } | null {
+export function smartDimension(
+  s: SketchData, sel: string[], mode: "auto" | "horizontal" | "vertical" = "auto", at?: P2,
+  /** por seleção: onde foi clicada com Shift (condição de arco, como no SolidWorks); sem isso, ao centro */
+  onCurve?: (P2 | null | undefined)[],
+): { type: ConstraintType; refs: string[]; flip?: number; arc?: [ArcCond, ArcCond] } | null {
   const k = kinds(s, sel);
   const ents = allEntities(s);
   // círculo/arco com outra entidade: cota ao centro (o comportamento por defeito do SolidWorks)
   if (sel.length === 2 && k.some(isCurve)) {
     const c = sel.map((id, i) => (isCurve(k[i]) ? (ents[id] as Extract<SketchEntity, { type: "circle" | "arc" }>).c : id));
     if (c[0] === c[1]) return null;
+    // Shift: a cota fica na curva, no lado clicado (min do lado da outra entidade, max do lado oposto)
+    const keep = sel.map((_, i) => isCurve(k[i]) && !!onCurve?.[i]);
+    if (keep.some(Boolean)) {
+      const anchor = (i: number): P2 | null => {
+        const o = 1 - i, e = ents[c[o]];
+        if (e?.type !== "line") return pt(ents, c[o]);
+        const p = pt(ents, c[i]), a = pt(ents, e.p1), b = pt(ents, e.p2), d: P2 = [b[0] - a[0], b[1] - a[1]], L2 = d[0] ** 2 + d[1] ** 2;
+        if (L2 < 1e-24) return null;
+        const t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / L2;
+        return [a[0] + t * d[0], a[1] + t * d[1]];
+      };
+      const arc = sel.map((_, i): ArcCond => {
+        if (!keep[i]) return "center";
+        const ctr = pt(ents, c[i]), q = anchor(i), click = onCurve![i]!;
+        if (!q) return "min";
+        return (click[0] - ctr[0]) * (q[0] - ctr[0]) + (click[1] - ctr[1]) * (q[1] - ctr[1]) >= 0 ? "min" : "max";
+      }) as [ArcCond, ArcCond];
+      const refs = sel.map((id, i) => (keep[i] ? id : c[i]));
+      // a reta vai sempre em segundo (como ponto–reta)
+      if (ents[refs[0]]?.type === "line") return { type: "distance", refs: [refs[1], refs[0]], arc: [arc[1], arc[0]] };
+      return { type: "distance", refs, arc };
+    }
     return smartDimension(s, c, mode, at);
   }
   if (mode === "auto" && at) {

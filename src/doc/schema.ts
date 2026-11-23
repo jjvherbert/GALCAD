@@ -94,6 +94,7 @@ const sketchConstraint = z.object({
   driven: z.boolean().optional(),
   pos: z.tuple([z.number(), z.number()]).optional(),
   flip: z.number().int().min(0).max(3).optional(),
+  arc: z.tuple([z.enum(["center", "min", "max"]), z.enum(["center", "min", "max"])]).optional(),
 });
 
 const curveDef = z.discriminatedUnion("kind", [

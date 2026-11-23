@@ -3,7 +3,7 @@ import { GcsWrapper, SolveStatus, Algorithm, DebugMode, init_planegcs_module, ty
 import type { SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
 import { evalExpr, type Scope } from "../doc/expr.ts";
-import { allEntities, isImplicit, measure } from "./geometry.ts";
+import { allEntities, arcSign, curveRef, isImplicit, measure } from "./geometry.ts";
 
 let wrapper: GcsWrapper | null = null;
 
@@ -51,8 +51,8 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
    * auxiliar F (o pé da perpendicular) fica na reta, F→P faz ±90° com a reta e |FP| é a cota.
    * Mesmas equações livres que o `p2l_distance` (F traz 2 parâmetros e 2 equações).
    */
-  const signedPointLine = (pid: string, lid: string): SketchPrimitive[] => {
-    const d = v();
+  const signedPointLine = (pid: string, lid: string, dist?: object): SketchPrimitive[] => {
+    const d = dist ? 1 : v();
     const l = line(lid), q = ents[pid] as Extract<SketchEntity, { type: "point" }>;
     const p1 = ents[l.p1] as Extract<SketchEntity, { type: "point" }>, p2 = ents[l.p2] as Extract<SketchEntity, { type: "point" }>;
     if (Math.abs(d) < 1e-9) return [P({ id, type: "point_on_line_pl", p_id: pid, l_id: lid })];
@@ -65,7 +65,39 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
       P({ id: f, type: "point", x: p1.x + t * dx, y: p1.y + t * dy, fixed: false }),
       P({ id: `${id}#on`, type: "point_on_line_pl", p_id: f, l_id: lid }),
       P({ id: `${id}#side`, type: "l2l_angle_pppp", l1p1_id: l.p1, l1p2_id: l.p2, l2p1_id: f, l2p2_id: pid, angle: (side * Math.PI) / 2 }),
-      P({ id, type: "p2p_distance", p1_id: f, p2_id: pid, distance: Math.abs(d) }),
+      P({ id, type: "p2p_distance", p1_id: f, p2_id: pid, distance: dist ?? Math.abs(d) }),
+    ];
+  };
+
+  /**
+   * Distância com condição de arco (mín./máx. a círculos e arcos): valor = D + s1·r1 + s2·r2, com D a
+   * distância entre centros (ou centro–ponto/reta). Um ponto auxiliar #d guarda D em x e D + s1·r1
+   * em y; duas diferenças ligam-nos aos raios e ao valor (2 parâmetros, 2 equações: os graus de
+   * liberdade são os de uma cota normal) e a cota de base usa D como parâmetro.
+   */
+  const arcDistance = (): SketchPrimitive[] => {
+    const ra = curveRef(ents, a), rb = curveRef(ents, b), arc = c.arc!;
+    const kA = kindOf(ents, ra.id), kB = kindOf(ents, rb.id);
+    need((kA === "point" || kA === "line") && (kB === "point" || kB === "line") && !(kA === "line" && kB === "line"));
+    const s1 = ra.curve ? arcSign(arc[0]) : 0, s2 = rb.curve ? arcSign(arc[1]) : 0;
+    const val = v();
+    const D0 = measure(ents, { type: "distance", refs: [ra.id, rb.id] });
+    const d = `${id}#d`, X = { o_id: d, prop: "x" }, Y = { o_id: d, prop: "y" };
+    // A + s·r = B
+    const rel = (rid: string, A: object | number, s: number, curve: string, B: object | number) => {
+      const r = { o_id: curve, prop: "radius" };
+      if (s > 0) return P({ id: rid, type: "difference", param1: A, param2: B, difference: r });
+      if (s < 0) return P({ id: rid, type: "difference", param1: B, param2: A, difference: r });
+      return P({ id: rid, type: "difference", param1: A, param2: B, difference: 0 });
+    };
+    const base = kA === "point" && kB === "point"
+      ? [P({ id, type: "p2p_distance", p1_id: ra.id, p2_id: rb.id, distance: X })]
+      : kA === "point" ? signedPointLine(ra.id, rb.id, X) : signedPointLine(rb.id, ra.id, X);
+    return [
+      P({ id: d, type: "point", x: D0, y: D0 + s1 * ra.r, fixed: false }),
+      rel(`${id}#d1`, X, s1, a, Y),
+      rel(`${id}#d2`, Y, s2, b, val),
+      ...base,
     ];
   };
 
@@ -124,6 +156,7 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
       return [P({ id: `${id}#x`, type: "coordinate_x", p_id: a, x: p.x }), P({ id: `${id}#y`, type: "coordinate_y", p_id: a, y: p.y })];
     }
     case "distance":
+      if (c.arc) return arcDistance();
       if (ka === "line" && !b) return [P({ id, type: "p2p_distance", p1_id: line(a).p1, p2_id: line(a).p2, distance: v() })];
       if (ka === "point" && kb === "point") return [P({ id, type: "p2p_distance", p1_id: a, p2_id: b, distance: v() })];
       if (ka === "point" && kb === "line") return signedPointLine(a, b);
@@ -198,6 +231,18 @@ export function solveSketch(sketch: Pick<SketchFeature, "entities" | "constraint
     } catch (e) {
       valueErrors[c.id] = (e as Error).message;
     }
+  }
+  // Cota mín./máx.: o raio entra na equação; sem outra restrição o solver crescia o círculo em vez de
+  // o mover. Uma restrição temporária (só usa os graus de liberdade que sobram) prefere manter o raio.
+  const held = new Set<string>();
+  for (const c of sketch.constraints) {
+    if (c.driven || !c.arc || valueErrors[c.id]) continue;
+    c.refs.forEach((rid, i) => { if (arcSign(c.arc![i]) !== 0 && (ents[rid]?.type === "circle" || ents[rid]?.type === "arc")) held.add(rid); });
+  }
+  for (const d of drags) if (d.kind !== "point") held.delete(d.id);
+  for (const rid of held) {
+    const e = ents[rid] as Extract<SketchEntity, { type: "circle" | "arc" }>, t = e.type;
+    prims.push({ id: `#holdr:${rid}`, type: t === "arc" ? "arc_radius" : "circle_radius", [t === "arc" ? "a_id" : "c_id"]: rid, radius: e.r, temporary: true } as unknown as SketchPrimitive);
   }
   drags.forEach((drag, k) => {
     if (drag.kind === "point") {
