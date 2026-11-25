@@ -438,7 +438,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
         {mouse && <span class="muted">x {fmt(mouse[0])} · y {fmt(mouse[1])} mm</span>}
         {msg && <span class="msg">{msg}</span>}
         <span class="grow" />
-        <span class="muted">Roda: zoom · arrastar no vazio: deslocar · Shift: seleção múltipla</span>
+        <span class="muted hint">Roda: zoom · arrastar no vazio: deslocar · Shift: seleção múltipla</span>
       </div>
     </div>
   );

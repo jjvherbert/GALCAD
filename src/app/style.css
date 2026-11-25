@@ -166,6 +166,8 @@ table.plies tr.invalid td.ply-label { color: var(--bad); }
 .sk-canvas svg:not(.tool-select) { cursor: crosshair; }
 .sk-status { display: flex; gap: 12px; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden; }
 .sk-status .msg { color: var(--warn); white-space: normal; }
+/* ecrã estreito: sem a dica de rato, e a mensagem ocupa a sua própria linha em vez de ficar espremida */
+@media (max-width: 600px) { .sk-status { flex-wrap: wrap; row-gap: 2px; } .sk-status .hint { display: none; } .sk-status .msg { flex-basis: 100%; } }
 /* estado do esboço, com as cores do SolidWorks */
 .sk-status .state { font-weight: 600; }
 .sk-status .state.under { color: var(--sk-free); }
