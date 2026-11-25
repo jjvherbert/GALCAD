@@ -1,7 +1,7 @@
 // Desenho de uma cota no esboço (em coordenadas do mundo): linhas de chamada, linha de cota e setas,
 // a partir do tipo, das referências e do ponto onde o rótulo foi largado. Puro (testes em node).
 import type { SketchConstraint, SketchEntity } from "../doc/types.ts";
-import { type P2, add, arcSign, arcSweep, curveRef, dot, len, mul, pt, sub } from "./geometry.ts";
+import { type P2, add, arcSign, arcSweep, armDir, curveRef, dot, len, mul, otherEnd, pt, sub } from "./geometry.ts";
 
 export interface DimGeom {
   /** linhas de chamada (da geometria até à linha de cota) */
@@ -85,6 +85,22 @@ export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip" |
     return { ext: [], lines, arrows };
   }
   if (c.type === "angle" && ents[c.refs[0]]?.type === "arc") return arcDimGeom(ents[c.refs[0]] as Extract<SketchEntity, { type: "arc" }>, ents, pos);
+  if (c.type === "angle" && ents[c.refs[0]]?.type === "line" && ents[c.refs[1]]?.type === "point") {
+    // linha–horizontal/vertical imaginária no extremo: arco entre o braço da cruz e a linha
+    const o = otherEnd(ents, c.refs[0], c.refs[1]);
+    if (!o) return null;
+    const X = pt(ents, c.refs[1]), Q = pt(ents, o), r = len(sub(pos, X)), L = len(sub(Q, X));
+    if (r < 1e-9 || L < 1e-12) return null;
+    const u = armDir((c.flip || 0) & 3), tk = Math.atan2(u[1], u[0]), td = Math.atan2(Q[1] - X[1], Q[0] - X[0]);
+    let sg = td - tk;
+    while (sg > Math.PI) sg -= 2 * Math.PI;
+    while (sg <= -Math.PI) sg += 2 * Math.PI;
+    const { pts, arrows } = arcDim(X, r, sg >= 0 ? tk : td, Math.abs(sg));
+    const armEnd = add(X, mul(u, r)), lineEnd = add(X, mul(sub(Q, X), r / L));
+    const ext: [P2, P2][] = [[X, armEnd]];
+    if (L < r) ext.push([Q, lineEnd]);
+    return { ext, lines: [pts], arrows };
+  }
   if (c.type === "angle") {
     const l1 = ents[c.refs[0]], l2 = ents[c.refs[1]];
     if (l1?.type !== "line" || l2?.type !== "line") return null;

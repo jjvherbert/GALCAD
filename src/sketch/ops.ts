@@ -1,7 +1,7 @@
 // Operações de edição de esboços (puras: devolvem um esboço novo). Usadas pelo editor e testáveis em Node.
 import type { ArcCond, ConstraintType, Expr, SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
-import { type P2, allEntities, angleSector, entityPoints, isImplicit, measure, pt } from "./geometry.ts";
+import { type P2, allEntities, angleSector, axisArm, entityPoints, isImplicit, measure, otherEnd, pt } from "./geometry.ts";
 
 export type SketchData = Pick<SketchFeature, "entities" | "constraints">;
 
@@ -328,6 +328,13 @@ export function smartDimension(
     if (mode === "vertical") return signed(s, "distanceY", sel);
     return { type: "distance", refs: sel };
   }
+  // linha + um dos seus extremos: ângulo com a horizontal/vertical imaginária nesse extremo (SolidWorks);
+  // com o rato, o braço da cruz cujo setor contém o rótulo
+  const le = lineEndPick(ents, sel);
+  if (le) {
+    const arm = axisArm(ents, le.line, le.vertex, at);
+    return arm ? { type: "angle", refs: [le.line, le.vertex], flip: arm } : { type: "angle", refs: [le.line, le.vertex] };
+  }
   if (sel.length === 2 && k.includes("point") && k.includes("line")) {
     const i = k.indexOf("point");
     return { type: "distance", refs: [sel[i], sel[1 - i]] };
@@ -365,6 +372,14 @@ export function arcAnglePick(ents: Record<string, SketchEntity>, sel: string[]):
   return null;
 }
 
+/** Uma linha e um dos seus extremos (qualquer ordem): o ângulo com a horizontal/vertical; senão `null`. */
+export function lineEndPick(ents: Record<string, SketchEntity>, sel: string[]): { line: string; vertex: string } | null {
+  if (sel.length !== 2) return null;
+  const i = sel.findIndex((id) => ents[id]?.type === "line");
+  if (i < 0 || ents[sel[1 - i]]?.type !== "point") return null;
+  return otherEnd(ents, sel[i], sel[1 - i]) ? { line: sel[i], vertex: sel[1 - i] } : null;
+}
+
 /** Cotas X/Y com sinal: ordenar as referências para que o valor seja positivo. */
 function signed(s: SketchData, type: "distanceX" | "distanceY", refs: string[]) {
   const v = measure(allEntities(s), { type, refs });
@@ -381,6 +396,14 @@ export const roundDim = (v: number) => Math.round(v * 1000) / 1000;
 export function moveDimLabel(c: SketchConstraint, ents: Record<string, SketchEntity>, pos: P2): SketchConstraint {
   const moved = { ...c, pos };
   if (c.type !== "angle" || ents[c.refs[0]]?.type === "arc" || (!c.driven && typeof c.value === "string" && !/^[-+]?[\d.]+$/.test(c.value))) return moved;
+  if (ents[c.refs[1]]?.type === "point") {
+    // linha–horizontal/vertical: largar noutro quadrante mede com esse braço da cruz
+    const arm = axisArm(ents, c.refs[0], c.refs[1], pos);
+    if (arm === (c.flip || 0)) return moved;
+    const { flip: _f, ...rest } = moved;
+    const next: SketchConstraint = { ...rest, ...(arm ? { flip: arm } : {}) };
+    return c.driven ? next : { ...next, value: roundDim(measure(ents, next)) };
+  }
   const sec = angleSector(ents, c.refs[0], c.refs[1], pos);
   if (!sec || (sec.refs[0] === c.refs[0] && sec.refs[1] === c.refs[1] && sec.flip === (c.flip || 0))) return moved;
   const { flip: _f, ...rest } = moved;

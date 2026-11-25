@@ -3,7 +3,7 @@ import { GcsWrapper, SolveStatus, Algorithm, DebugMode, init_planegcs_module, ty
 import type { SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
 import { evalExpr, type Scope } from "../doc/expr.ts";
-import { allEntities, arcSign, arcSweep, curveRef, isImplicit, measure } from "./geometry.ts";
+import { ORIGIN, allEntities, arcSign, arcSweep, armDir, curveRef, isImplicit, measure, otherEnd } from "./geometry.ts";
 
 let wrapper: GcsWrapper | null = null;
 
@@ -182,6 +182,16 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
         // os ângulos guardados podem diferir do varrimento por voltas inteiras, que se mantêm
         const e = ents[a] as Extract<SketchEntity, { type: "arc" }>, turns = e.a1 - e.a0 - arcSweep(e.a0, e.a1);
         return [P({ id, type: "difference", param1: { o_id: a, prop: "start_angle" }, param2: { o_id: a, prop: "end_angle" }, difference: (v() * Math.PI) / 180 + turns })];
+      }
+      if (ka === "line" && kb === "point") {
+        // linha e um extremo: ângulo com sinal entre o braço `flip` da cruz (eixos implícitos, fixos) e
+        // vértice→outro extremo; o sinal é o lado em que a linha está agora (não salta para o espelho)
+        const o = otherEnd(ents, a, b);
+        need(o !== null);
+        const k = (c.flip || 0) & 3, [u1, u2] = [[ORIGIN, "_hx"], [ORIGIN, "_vy"], ["_hx", ORIGIN], ["_vy", ORIGIN]][k];
+        const X = ents[b] as Extract<SketchEntity, { type: "point" }>, Q = ents[o!] as Extract<SketchEntity, { type: "point" }>;
+        const u = armDir(k), cr = u[0] * (Q.y - X.y) - u[1] * (Q.x - X.x), s = cr < 0 ? -1 : 1;
+        return [P({ id, type: "l2l_angle_pppp", l1p1_id: u1, l1p2_id: u2, l2p1_id: b, l2p2_id: o, angle: (s * v() * Math.PI) / 180 })];
       }
       need(ka === "line" && kb === "line");
       if (!c.flip) return [P({ id, type: "l2l_angle_ll", l1_id: a, l2_id: b, angle: (v() * Math.PI) / 180 })];
