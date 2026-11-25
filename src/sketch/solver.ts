@@ -3,7 +3,7 @@ import { GcsWrapper, SolveStatus, Algorithm, DebugMode, init_planegcs_module, ty
 import type { SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
 import { evalExpr, type Scope } from "../doc/expr.ts";
-import { allEntities, arcSign, curveRef, isImplicit, measure } from "./geometry.ts";
+import { allEntities, arcSign, arcSweep, curveRef, isImplicit, measure } from "./geometry.ts";
 
 let wrapper: GcsWrapper | null = null;
 
@@ -177,6 +177,12 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
       if (ka === "arc") return [P({ id, type: "arc_diameter", a_id: a, diameter: v() })];
       need(false); break;
     case "angle":
+      if (ka === "arc" && !b) {
+        // ângulo do arco: end_angle − start_angle (vale acima de 180°, ao contrário de um ângulo entre retas);
+        // os ângulos guardados podem diferir do varrimento por voltas inteiras, que se mantêm
+        const e = ents[a] as Extract<SketchEntity, { type: "arc" }>, turns = e.a1 - e.a0 - arcSweep(e.a0, e.a1);
+        return [P({ id, type: "difference", param1: { o_id: a, prop: "start_angle" }, param2: { o_id: a, prop: "end_angle" }, difference: (v() * Math.PI) / 180 + turns })];
+      }
       need(ka === "line" && kb === "line");
       if (!c.flip) return [P({ id, type: "l2l_angle_ll", l1_id: a, l2_id: b, angle: (v() * Math.PI) / 180 })];
       {
