@@ -2,7 +2,7 @@
 import { type SketchEntity } from "../doc/types.ts";
 import { type P2, measure, pt } from "../sketch/geometry.ts";
 import { connectedCurves, extend, isLineCorner, trim } from "../sketch/modify.ts";
-import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, addRectangle, arcAnglePick, arcLengthPick, lineEndPick, mergePoints, roundDim, smartDimension } from "../sketch/ops.ts";
+import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, addRectangle, arcAnglePick, arcLengthPick, lineEndPick, mergePoints, roundDim, smartDimension, threePointAnglePick } from "../sketch/ops.ts";
 import { sketchMirror } from "../sketch/mirror.ts";
 import { type HitOpts, placePoint } from "./sketch-hit.ts";
 import { type RefGroup } from "./sketch-ref.ts";
@@ -217,8 +217,9 @@ export function dimClickAt(c: ClickCtx, sx: number, sy: number, shift = false) {
     const keep = i >= 0 ? picks.map((_, j) => j !== i) : picks.map(() => true);
     let next = picks.filter((_, j) => keep[j]), nextOn = onCurve.filter((_, j) => keep[j]);
     if (i < 0) {
-      // arco + os dois extremos (comprimento) ou centro + extremos (ângulo) fica com três escolhas; de resto, as duas últimas
-      const three = [...next, id].slice(-3), n = arcLengthPick(ents, three) || arcAnglePick(ents, three) ? 3 : 2;
+      // arco + os dois extremos (comprimento), centro + extremos (ângulo do arco) ou três pontos (ângulo,
+      // o primeiro é o vértice) ficam com três escolhas; de resto, as duas últimas
+      const three = [...next, id].slice(-3), n = arcLengthPick(ents, three) || arcAnglePick(ents, three) || threePointAnglePick(ents, three) ? 3 : 2;
       next = [...next, id].slice(-n); nextOn = [...nextOn, at].slice(-n);
     }
     setDrawing({ kind: "dim", picks: next, ...(nextOn.some(Boolean) ? { onCurve: nextOn } : {}) });
@@ -227,6 +228,7 @@ export function dimClickAt(c: ClickCtx, sx: number, sy: number, shift = false) {
     const arcPicked = next.some((x) => ents[x]?.type === "arc");
     const hint = arcLengthPick(ents, next) ? "Clique onde quer a cota do comprimento de arco"
       : arcAnglePick(ents, next) ? "Clique onde quer a cota do ângulo do arco"
+      : threePointAnglePick(ents, next) ? "Clique onde quer a cota do ângulo entre os três pontos (o 1.º é o vértice; o setor segue o rato)"
       : lineEndPick(ents, next) ? "Clique onde quer a cota do ângulo com a horizontal/vertical (o quadrante escolhe o braço)"
       : `Clique onde quer a cota (ou noutra entidade para cotar entre as duas)${curve ? " · Shift+clique no círculo cota à curva" : ""}${arcPicked ? " · clique nos dois extremos do arco para o comprimento" : ""}`;
     setMsg(next.length ? hint : "Clique numa linha, arco ou círculo");

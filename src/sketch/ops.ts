@@ -1,7 +1,7 @@
 // Operações de edição de esboços (puras: devolvem um esboço novo). Usadas pelo editor e testáveis em Node.
 import type { ArcCond, ConstraintType, Expr, SketchConstraint, SketchEntity, SketchFeature } from "../doc/types.ts";
 import { DIMENSION_TYPES } from "../doc/types.ts";
-import { type P2, allEntities, angleSector, axisArm, entityPoints, isImplicit, measure, otherEnd, pt } from "./geometry.ts";
+import { type P2, allEntities, angleSector, axisArm, entityPoints, isImplicit, measure, otherEnd, pointAngleSector, pt } from "./geometry.ts";
 
 export type SketchData = Pick<SketchFeature, "entities" | "constraints">;
 
@@ -279,6 +279,11 @@ export function smartDimension(
   // centro do arco + os seus dois extremos (qualquer ordem): ângulo do arco, como no SolidWorks
   const arcAng = arcAnglePick(ents, sel);
   if (arcAng) return { type: "angle", refs: [arcAng] };
+  // três pontos (o primeiro é o vértice): ângulo entre vértice→2.º e vértice→3.º, no setor do rótulo
+  if (threePointAnglePick(ents, sel)) {
+    const sec = pointAngleSector(ents, sel[0], sel[1], sel[2], at)!;
+    return sec.flip ? { type: "angle", refs: sec.refs, flip: sec.flip } : { type: "angle", refs: sec.refs };
+  }
   // círculo/arco com outra entidade: cota ao centro (o comportamento por defeito do SolidWorks)
   if (sel.length === 2 && k.some(isCurve)) {
     const c = sel.map((id, i) => (isCurve(k[i]) ? (ents[id] as Extract<SketchEntity, { type: "circle" | "arc" }>).c : id));
@@ -372,6 +377,16 @@ export function arcAnglePick(ents: Record<string, SketchEntity>, sel: string[]):
   return null;
 }
 
+/**
+ * Três pontos distintos (o primeiro é o vértice) que não são o centro e os extremos de um arco, não
+ * são todos implícitos e não estão alinhados: dá uma cota de ângulo por três pontos.
+ */
+export function threePointAnglePick(ents: Record<string, SketchEntity>, sel: string[]): boolean {
+  if (sel.length !== 3 || new Set(sel).size !== 3 || sel.some((id) => ents[id]?.type !== "point")) return false;
+  if (sel.every((id) => isImplicit(id)) || arcAnglePick(ents, sel)) return false;
+  return pointAngleSector(ents, sel[0], sel[1], sel[2]) !== null;
+}
+
 /** Uma linha e um dos seus extremos (qualquer ordem): o ângulo com a horizontal/vertical; senão `null`. */
 export function lineEndPick(ents: Record<string, SketchEntity>, sel: string[]): { line: string; vertex: string } | null {
   if (sel.length !== 2) return null;
@@ -396,6 +411,14 @@ export const roundDim = (v: number) => Math.round(v * 1000) / 1000;
 export function moveDimLabel(c: SketchConstraint, ents: Record<string, SketchEntity>, pos: P2): SketchConstraint {
   const moved = { ...c, pos };
   if (c.type !== "angle" || ents[c.refs[0]]?.type === "arc" || (!c.driven && typeof c.value === "string" && !/^[-+]?[\d.]+$/.test(c.value))) return moved;
+  if (c.refs.length === 3 && ents[c.refs[0]]?.type === "point") {
+    // três pontos: largar noutro setor mede esse setor (o vértice mantém-se em refs[0])
+    const sec = pointAngleSector(ents, c.refs[0], c.refs[1], c.refs[2], pos);
+    if (!sec || (sec.refs[1] === c.refs[1] && sec.refs[2] === c.refs[2] && sec.flip === (c.flip || 0))) return moved;
+    const { flip: _f, ...rest } = moved;
+    const next: SketchConstraint = { ...rest, refs: sec.refs, ...(sec.flip ? { flip: sec.flip } : {}) };
+    return c.driven ? next : { ...next, value: roundDim(measure(ents, next)) };
+  }
   if (ents[c.refs[1]]?.type === "point") {
     // linha–horizontal/vertical: largar noutro quadrante mede com esse braço da cruz
     const arm = axisArm(ents, c.refs[0], c.refs[1], pos);
