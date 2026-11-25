@@ -12,7 +12,7 @@ import { History } from "../doc/history.ts";
 import { type P2, allEntities, entityPoints, isImplicit, measure, pt } from "../sketch/geometry.ts";
 import { solveSketch, freeEntities, problemConstraints, sketchState, solveWithDrivenFallback, type DragTarget, type SolveResult } from "../sketch/solver.ts";
 import { isLineCorner } from "../sketch/modify.ts";
-import { type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, applicableConstraints, applyConstraint, deleteItems, moveDimLabel, roundDim, smartDimension, toggleConstruction } from "../sketch/ops.ts";
+import { type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, applicableConstraints, applyConstraint, convertRadiusValue, deleteItems, moveDimLabel, roundDim, smartDimension, toggleConstruction, toggleRadiusDiameter } from "../sketch/ops.ts";
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { focusSelect } from "./forms-base.tsx";
@@ -426,6 +426,15 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
               <input ref={focusSelect} value={dimEdit.text} aria-label="Valor da cota (número ou expressão)"
                 onInput={(e) => setDimEdit({ ...dimEdit, text: (e.target as HTMLInputElement).value })}
                 onKeyDown={(e) => { if (e.key === "Enter") saveDim(); if (e.key === "Escape") setDimEdit(null); }} />
+              {(c.type === "radius" || c.type === "diameter") && (
+                // o foco fica no campo: o Enter a seguir confirma a cota em vez de voltar a alternar
+                <button class="dim-rd" onMouseDown={(e) => e.preventDefault()} onClick={() => {
+                  const next = { ...data(), constraints: draft.constraints.map((x) => (x.id === c.id ? toggleRadiusDiameter(x) : x)) };
+                  if (commit(next, c.type === "radius" ? "Cota em diâmetro" : "Cota em raio"))
+                    setDimEdit({ ...dimEdit, text: String(convertRadiusValue(dimEdit.text, c.type === "radius")) });
+                }} title={c.type === "radius" ? "Passar a diâmetro (⌀)" : "Passar a raio (R)"}
+                  aria-label={c.type === "radius" ? "Passar a diâmetro" : "Passar a raio"}>{c.type === "radius" ? "⌀" : "R"}</button>
+              )}
               <button onClick={saveDim} title="Aplicar">✓</button>
               <button onClick={() => { setDimEdit(null); }} title="Fechar">✕</button>
             </div>

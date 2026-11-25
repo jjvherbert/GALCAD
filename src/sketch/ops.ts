@@ -403,6 +403,29 @@ function signed(s: SketchData, type: "distanceX" | "distanceY", refs: string[]) 
 
 export const roundDim = (v: number) => Math.round(v * 1000) / 1000;
 
+/** Valor (número ou expressão) convertido entre raio e diâmetro: `toDiameter` multiplica por 2, senão divide. */
+export function convertRadiusValue(v: Expr, toDiameter: boolean): Expr {
+  const t = typeof v === "string" ? v.trim().replace(/^([-+]?\d*),(\d+)$/, "$1.$2") : v;
+  if (t === "") return v;
+  if (typeof t === "number" || /^[-+]?(\d+\.?\d*|\.\d+)$/.test(t)) {
+    const n = Number(t), r = roundDim(toDiameter ? n * 2 : n / 2);
+    return typeof v === "number" ? r : String(r);
+  }
+  return toDiameter ? `2*(${t})` : `(${t})/2`;
+}
+
+/**
+ * Alternar uma cota de raio ↔ diâmetro (no SolidWorks, no PropertyManager da cota). O tamanho físico
+ * mantém-se: o valor (número ou expressão) é convertido; uma cota de referência só muda de tipo.
+ */
+export function toggleRadiusDiameter(c: SketchConstraint): SketchConstraint {
+  if (c.type !== "radius" && c.type !== "diameter") return c;
+  const toD = c.type === "radius";
+  const next: SketchConstraint = { ...c, type: toD ? "diameter" : "radius" };
+  if (!c.driven && c.value !== undefined) next.value = convertRadiusValue(c.value, toD);
+  return next;
+}
+
 /**
  * Arrastar o rótulo de uma cota. Numa cota de ângulo, largar noutro setor mede esse setor (como no
  * SolidWorks): o valor passa a ser o ângulo atual desse setor, por isso a geometria não mexe. Uma
