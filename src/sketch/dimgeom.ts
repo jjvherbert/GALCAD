@@ -84,6 +84,7 @@ export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip" |
     if (c.type === "diameter") arrows.push([from, mul(d, -1)]);
     return { ext: [], lines, arrows };
   }
+  if (c.type === "angle" && ents[c.refs[0]]?.type === "arc") return arcDimGeom(ents[c.refs[0]] as Extract<SketchEntity, { type: "arc" }>, ents, pos);
   if (c.type === "angle") {
     const l1 = ents[c.refs[0]], l2 = ents[c.refs[1]];
     if (l1?.type !== "line" || l2?.type !== "line") return null;
@@ -113,18 +114,24 @@ export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip" |
     return { ext, lines: [arc], arrows };
   }
   if (c.type === "arcLength") {
-    // arco de cota concêntrico, no raio do rótulo; linhas de chamada radiais desde os extremos do arco
     const e = ents[c.refs[0]];
-    if (e?.type !== "arc") return null;
-    const X = pt(ents, e.c), rd = len(sub(pos, X)), sweep = arcSweep(e.a0, e.a1);
-    if (rd < 1e-9 || sweep < 1e-12) return null;
-    const { pts, arrows } = arcDim(X, rd, e.a0, sweep);
-    const ext: [P2, P2][] = [];
-    for (const [t, end] of [[e.a0, pts[0]], [e.a0 + sweep, pts[pts.length - 1]]] as [number, P2][]) {
-      const from = add(X, [e.r * Math.cos(t), e.r * Math.sin(t)]);
-      if (len(sub(end, from)) > 1e-9) ext.push([from, end]);
-    }
-    return { ext, lines: [pts], arrows };
+    return e?.type === "arc" ? arcDimGeom(e, ents, pos) : null;
   }
   return null;
+}
+
+/**
+ * Comprimento ou ângulo de um arco: arco de cota concêntrico, no raio do rótulo, com linhas de chamada
+ * radiais desde os extremos do arco (ou desde o centro, quando a cota fica por dentro).
+ */
+function arcDimGeom(e: Extract<SketchEntity, { type: "arc" }>, ents: Record<string, SketchEntity>, pos: P2): DimGeom | null {
+  const X = pt(ents, e.c), rd = len(sub(pos, X)), sweep = arcSweep(e.a0, e.a1);
+  if (rd < 1e-9 || sweep < 1e-12) return null;
+  const { pts, arrows } = arcDim(X, rd, e.a0, sweep);
+  const ext: [P2, P2][] = [];
+  for (const [t, end] of [[e.a0, pts[0]], [e.a0 + sweep, pts[pts.length - 1]]] as [number, P2][]) {
+    const from = add(X, [e.r * Math.cos(t), e.r * Math.sin(t)]);
+    if (len(sub(end, from)) > 1e-9) ext.push([from, end]);
+  }
+  return { ext, lines: [pts], arrows };
 }

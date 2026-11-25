@@ -276,6 +276,9 @@ export function smartDimension(
   // arco + os seus dois extremos (qualquer ordem): comprimento ao longo do arco, como no SolidWorks
   const arcLen = arcLengthPick(ents, sel);
   if (arcLen) return { type: "arcLength", refs: [arcLen] };
+  // centro do arco + os seus dois extremos (qualquer ordem): ângulo do arco, como no SolidWorks
+  const arcAng = arcAnglePick(ents, sel);
+  if (arcAng) return { type: "angle", refs: [arcAng] };
   // círculo/arco com outra entidade: cota ao centro (o comportamento por defeito do SolidWorks)
   if (sel.length === 2 && k.some(isCurve)) {
     const c = sel.map((id, i) => (isCurve(k[i]) ? (ents[id] as Extract<SketchEntity, { type: "circle" | "arc" }>).c : id));
@@ -354,6 +357,14 @@ export function arcLengthPick(ents: Record<string, SketchEntity>, sel: string[])
   return rest.length === 2 && rest.includes(a.s) && rest.includes(a.e) && a.s !== a.e ? arc : null;
 }
 
+/** O arco quando a seleção são três pontos: o centro e os dois extremos de um arco (qualquer ordem); senão `null`. */
+export function arcAnglePick(ents: Record<string, SketchEntity>, sel: string[]): string | null {
+  if (sel.length !== 3 || new Set(sel).size !== 3 || sel.some((id) => ents[id]?.type !== "point")) return null;
+  for (const [id, e] of Object.entries(ents))
+    if (e.type === "arc" && sel.includes(e.c) && sel.includes(e.s) && sel.includes(e.e)) return id;
+  return null;
+}
+
 /** Cotas X/Y com sinal: ordenar as referências para que o valor seja positivo. */
 function signed(s: SketchData, type: "distanceX" | "distanceY", refs: string[]) {
   const v = measure(allEntities(s), { type, refs });
@@ -369,7 +380,7 @@ export const roundDim = (v: number) => Math.round(v * 1000) / 1000;
  */
 export function moveDimLabel(c: SketchConstraint, ents: Record<string, SketchEntity>, pos: P2): SketchConstraint {
   const moved = { ...c, pos };
-  if (c.type !== "angle" || (!c.driven && typeof c.value === "string" && !/^[-+]?[\d.]+$/.test(c.value))) return moved;
+  if (c.type !== "angle" || ents[c.refs[0]]?.type === "arc" || (!c.driven && typeof c.value === "string" && !/^[-+]?[\d.]+$/.test(c.value))) return moved;
   const sec = angleSector(ents, c.refs[0], c.refs[1], pos);
   if (!sec || (sec.refs[0] === c.refs[0] && sec.refs[1] === c.refs[1] && sec.flip === (c.flip || 0))) return moved;
   const { flip: _f, ...rest } = moved;

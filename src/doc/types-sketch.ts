@@ -42,7 +42,7 @@ export type ConstraintType =
   | "distanceY" // [ponto, ponto] (vertical, com sinal: y2 - y1)
   | "radius" // [círculo|arco]
   | "diameter" // [círculo|arco]
-  | "angle" // [linha, linha] (graus, com sinal pelo sentido das linhas)
+  | "angle" // [linha, linha] (graus, com sinal pelo sentido das linhas) | [arco] (ângulo incluído do arco)
   | "arcLength"; // [arco] (comprimento ao longo do arco)
 
 export interface SketchConstraint {
