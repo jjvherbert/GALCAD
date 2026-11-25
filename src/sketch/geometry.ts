@@ -118,6 +118,9 @@ export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstr
       return c.type === "radius" ? ea.r : 2 * ea.r;
     }
     case "angle": return lineAngle(ents, a, b, c.flip);
+    case "arcLength":
+      if (ea?.type !== "arc") throw new Error("Comprimento de arco: a referência tem de ser um arco");
+      return ea.r * arcSweep(ea.a0, ea.a1);
     default: throw new Error(`"${c.type}" não é uma cota`);
   }
 }

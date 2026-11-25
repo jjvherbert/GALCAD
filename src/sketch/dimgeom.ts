@@ -1,7 +1,7 @@
 // Desenho de uma cota no esboço (em coordenadas do mundo): linhas de chamada, linha de cota e setas,
 // a partir do tipo, das referências e do ponto onde o rótulo foi largado. Puro (testes em node).
 import type { SketchConstraint, SketchEntity } from "../doc/types.ts";
-import { type P2, add, arcSign, curveRef, dot, len, mul, pt, sub } from "./geometry.ts";
+import { type P2, add, arcSign, arcSweep, curveRef, dot, len, mul, pt, sub } from "./geometry.ts";
 
 export interface DimGeom {
   /** linhas de chamada (da geometria até à linha de cota) */
@@ -14,6 +14,14 @@ export interface DimGeom {
 
 const unit = (v: P2): P2 => { const L = len(v); return L < 1e-12 ? [1, 0] : [v[0] / L, v[1] / L]; };
 const perp = (v: P2): P2 => [-v[1], v[0]];
+
+/** Arco de cota de centro X e raio r, de t1 a t1+sweep (CCW), com as setas nas pontas. */
+function arcDim(X: P2, r: number, t1: number, sweep: number): { pts: P2[]; arrows: [P2, P2][] } {
+  const n = Math.max(8, Math.ceil(sweep / 0.08)), pts: P2[] = [];
+  for (let i = 0; i <= n; i++) { const t = t1 + (sweep * i) / n; pts.push(add(X, [r * Math.cos(t), r * Math.sin(t)])); }
+  const t2 = t1 + sweep;
+  return { pts, arrows: [[pts[0], [Math.sin(t1), -Math.cos(t1)]], [pts[n], [-Math.sin(t2), Math.cos(t2)]]] };
+}
 
 /** Extremos medidos de uma cota linear (ponto–ponto, linha, ponto–linha pelo pé da perpendicular). */
 function linearEnds(c: Pick<SketchConstraint, "type" | "refs" | "arc">, ents: Record<string, SketchEntity>): [P2, P2] | null {
@@ -93,9 +101,7 @@ export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip" |
     let sweep = Math.atan2(d2[1], d2[0]) - t1;
     while (sweep < 0) sweep += 2 * Math.PI;
     while (sweep >= 2 * Math.PI) sweep -= 2 * Math.PI;
-    const n = Math.max(8, Math.ceil(sweep / 0.08));
-    const arc: P2[] = [];
-    for (let i = 0; i <= n; i++) { const t = t1 + (sweep * i) / n; arc.push(add(X, [r * Math.cos(t), r * Math.sin(t)])); }
+    const { pts: arc, arrows } = arcDim(X, r, t1, sweep);
     const t2 = t1 + sweep;
     // linhas de chamada: das linhas até ao arco, quando o arco passa para lá da linha
     const ext: [P2, P2][] = [];
@@ -104,10 +110,21 @@ export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip" |
       const far = Math.max(dot(sub(p, X), dir), dot(sub(q, X), dir));
       if (far < r) ext.push([add(X, mul(dir, Math.max(0, far))), end]);
     }
-    return {
-      ext, lines: [arc],
-      arrows: [[arc[0], [Math.sin(t1), -Math.cos(t1)]], [arc[arc.length - 1], [-Math.sin(t2), Math.cos(t2)]]],
-    };
+    return { ext, lines: [arc], arrows };
+  }
+  if (c.type === "arcLength") {
+    // arco de cota concêntrico, no raio do rótulo; linhas de chamada radiais desde os extremos do arco
+    const e = ents[c.refs[0]];
+    if (e?.type !== "arc") return null;
+    const X = pt(ents, e.c), rd = len(sub(pos, X)), sweep = arcSweep(e.a0, e.a1);
+    if (rd < 1e-9 || sweep < 1e-12) return null;
+    const { pts, arrows } = arcDim(X, rd, e.a0, sweep);
+    const ext: [P2, P2][] = [];
+    for (const [t, end] of [[e.a0, pts[0]], [e.a0 + sweep, pts[pts.length - 1]]] as [number, P2][]) {
+      const from = add(X, [e.r * Math.cos(t), e.r * Math.sin(t)]);
+      if (len(sub(end, from)) > 1e-9) ext.push([from, end]);
+    }
+    return { ext, lines: [pts], arrows };
   }
   return null;
 }

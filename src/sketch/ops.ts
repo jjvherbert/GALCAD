@@ -273,6 +273,9 @@ export function smartDimension(
 ): { type: ConstraintType; refs: string[]; flip?: number; arc?: [ArcCond, ArcCond] } | null {
   const k = kinds(s, sel);
   const ents = allEntities(s);
+  // arco + os seus dois extremos (qualquer ordem): comprimento ao longo do arco, como no SolidWorks
+  const arcLen = arcLengthPick(ents, sel);
+  if (arcLen) return { type: "arcLength", refs: [arcLen] };
   // círculo/arco com outra entidade: cota ao centro (o comportamento por defeito do SolidWorks)
   if (sel.length === 2 && k.some(isCurve)) {
     const c = sel.map((id, i) => (isCurve(k[i]) ? (ents[id] as Extract<SketchEntity, { type: "circle" | "arc" }>).c : id));
@@ -341,6 +344,16 @@ export function smartDimension(
   return null;
 }
 
+/** O arco quando a seleção é um arco e os seus dois extremos (por qualquer ordem); senão `null`. */
+export function arcLengthPick(ents: Record<string, SketchEntity>, sel: string[]): string | null {
+  if (sel.length !== 3) return null;
+  const arc = sel.find((id) => ents[id]?.type === "arc");
+  if (!arc) return null;
+  const a = ents[arc] as Extract<SketchEntity, { type: "arc" }>;
+  const rest = sel.filter((id) => id !== arc);
+  return rest.length === 2 && rest.includes(a.s) && rest.includes(a.e) && a.s !== a.e ? arc : null;
+}
+
 /** Cotas X/Y com sinal: ordenar as referências para que o valor seja positivo. */
 function signed(s: SketchData, type: "distanceX" | "distanceY", refs: string[]) {
   const v = measure(allEntities(s), { type, refs });
@@ -374,5 +387,5 @@ export const CONSTRAINT_LABEL: Record<ConstraintType, string> = {
   coincident: "Coincidente", pointOn: "Ponto em", midpoint: "Ponto médio", horizontal: "Horizontal", vertical: "Vertical",
   parallel: "Paralela", perpendicular: "Perpendicular", collinear: "Colinear", tangent: "Tangente", equal: "Igual",
   concentric: "Concêntrica", symmetric: "Simétrica", fix: "Fixar", distance: "Distância", distanceX: "Distância horizontal",
-  distanceY: "Distância vertical", radius: "Raio", diameter: "Diâmetro", angle: "Ângulo",
+  distanceY: "Distância vertical", radius: "Raio", diameter: "Diâmetro", angle: "Ângulo", arcLength: "Comprimento de arco",
 };

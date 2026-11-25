@@ -2,7 +2,7 @@
 import { type SketchEntity } from "../doc/types.ts";
 import { type P2, measure, pt } from "../sketch/geometry.ts";
 import { connectedCurves, extend, isLineCorner, trim } from "../sketch/modify.ts";
-import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, addRectangle, mergePoints, roundDim, smartDimension } from "../sketch/ops.ts";
+import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, addRectangle, arcLengthPick, mergePoints, roundDim, smartDimension } from "../sketch/ops.ts";
 import { sketchMirror } from "../sketch/mirror.ts";
 import { type HitOpts, placePoint } from "./sketch-hit.ts";
 import { type RefGroup } from "./sketch-ref.ts";
@@ -216,11 +216,18 @@ export function dimClickAt(c: ClickCtx, sx: number, sy: number, shift = false) {
     }
     const keep = i >= 0 ? picks.map((_, j) => j !== i) : picks.map(() => true);
     let next = picks.filter((_, j) => keep[j]), nextOn = onCurve.filter((_, j) => keep[j]);
-    if (i < 0) { next = [...next, id].slice(-2); nextOn = [...nextOn, at].slice(-2); }
+    if (i < 0) {
+      // arco + os dois extremos fica com três escolhas (comprimento de arco); de resto, as duas últimas
+      const n = arcLengthPick(ents, [...next, id].slice(-3)) ? 3 : 2;
+      next = [...next, id].slice(-n); nextOn = [...nextOn, at].slice(-n);
+    }
     setDrawing({ kind: "dim", picks: next, ...(nextOn.some(Boolean) ? { onCurve: nextOn } : {}) });
     setSel(next);
     const curve = next.some((x) => ents[x]?.type === "circle" || ents[x]?.type === "arc");
-    setMsg(next.length ? `Clique onde quer a cota (ou noutra entidade para cotar entre as duas)${curve ? " · Shift+clique no círculo cota à curva" : ""}` : "Clique numa linha, arco ou círculo");
+    const arcPicked = next.some((x) => ents[x]?.type === "arc");
+    const hint = arcLengthPick(ents, next) ? "Clique onde quer a cota do comprimento de arco"
+      : `Clique onde quer a cota (ou noutra entidade para cotar entre as duas)${curve ? " · Shift+clique no círculo cota à curva" : ""}${arcPicked ? " · clique nos dois extremos do arco para o comprimento" : ""}`;
+    setMsg(next.length ? hint : "Clique numa linha, arco ou círculo");
     return;
   }
   // clique no vazio: colocar a cota

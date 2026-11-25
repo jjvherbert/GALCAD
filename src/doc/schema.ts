@@ -84,7 +84,7 @@ const sketchEntity = z.discriminatedUnion("type", [
 const constraintType = z.enum([
   "coincident", "pointOn", "midpoint", "horizontal", "vertical", "parallel", "perpendicular",
   "collinear", "tangent", "equal", "concentric", "symmetric", "fix",
-  "distance", "distanceX", "distanceY", "radius", "diameter", "angle",
+  "distance", "distanceX", "distanceY", "radius", "diameter", "angle", "arcLength",
 ]);
 const sketchConstraint = z.object({
   id: z.string(),

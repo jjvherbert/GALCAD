@@ -87,7 +87,7 @@ export function Dimensions({ constraints, ents, S, W, sel, conflicts, scope, onE
       {constraints.filter((c) => DIMENSION_TYPES.has(c.type)).map((c) => {
         let value: number;
         try { value = c.driven || c.value === undefined ? measure(ents, c) : evalExpr(c.value, scope); } catch { value = NaN; }
-        const shown = c.type === "radius" ? `R${fmt(value)}` : c.type === "diameter" ? `⌀${fmt(value)}` : c.type === "angle" ? `${fmt(value)}°` : fmt(Math.abs(value));
+        const shown = c.type === "radius" ? `R${fmt(value)}` : c.type === "diameter" ? `⌀${fmt(value)}` : c.type === "angle" ? `${fmt(value)}°` : c.type === "arcLength" ? `⌒${fmt(value)}` : fmt(Math.abs(value));
         const text = c.driven ? `(${shown})` : typeof c.value === "string" && !/^[-+]?[\d.]+$/.test(c.value) ? `${c.value} = ${shown}` : shown;
         const pos = c.pos ?? labelPos(c, ents), lp = S(pos);
         return (
@@ -143,7 +143,7 @@ export function DimGhost({ c, ents, S, pos }: {
 }) {
   let value: number;
   try { value = measure(ents, c as SketchConstraint); } catch { return null; }
-  const shown = c.type === "radius" ? `R${fmt(value)}` : c.type === "diameter" ? `⌀${fmt(value)}` : c.type === "angle" ? `${fmt(value)}°` : fmt(Math.abs(value));
+  const shown = c.type === "radius" ? `R${fmt(value)}` : c.type === "diameter" ? `⌀${fmt(value)}` : c.type === "angle" ? `${fmt(value)}°` : c.type === "arcLength" ? `⌒${fmt(value)}` : fmt(Math.abs(value));
   const [x, y] = S(pos);
   return (
     <g class="dim ghost">
