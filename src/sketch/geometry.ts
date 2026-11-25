@@ -93,6 +93,35 @@ export function angleSector(ents: Record<string, SketchEntity>, l1: string, l2: 
   return cross(u1, u2) >= 0 ? { refs: [l1, l2], flip: f1 | (f2 << 1) } : { refs: [l2, l1], flip: f2 | (f1 << 1) };
 }
 
+/**
+ * Raios de uma cota de ângulo por três pontos (vértice, p1, p2): V→p1 e V→p2, com os sentidos
+ * invertidos por `flip` (bit 0: o primeiro, bit 1: o segundo). null se um raio for nulo.
+ */
+export function pointRays(ents: Record<string, SketchEntity>, v: string, p1: string, p2: string, flip = 0): [P2, P2] | null {
+  const V = pt(ents, v), d1 = sub(pt(ents, p1), V), d2 = sub(pt(ents, p2), V);
+  if (len(d1) < 1e-12 || len(d2) < 1e-12) return null;
+  return [flip & 1 ? mul(d1, -1) : d1, flip & 2 ? mul(d2, -1) : d2];
+}
+
+/**
+ * Setor de uma cota de ângulo por três pontos onde cai `at` (como `angleSector`, com as retas
+ * vértice→p1 e vértice→p2). Sem `at`, o ângulo interior. Devolve as referências [vértice, a, b]
+ * pela ordem anti-horária e o `flip`. null se os pontos coincidirem ou estiverem alinhados.
+ */
+export function pointAngleSector(ents: Record<string, SketchEntity>, v: string, p1: string, p2: string, at?: P2): { refs: [string, string, string]; flip: number } | null {
+  const r = pointRays(ents, v, p1, p2);
+  if (!r) return null;
+  const [d1, d2] = r, den = cross(d1, d2);
+  if (Math.abs(den) < 1e-9 * len(d1) * len(d2)) return null;
+  let f1 = 0, f2 = 0;
+  if (at) {
+    const w = sub(at, pt(ents, v));
+    f1 = cross(w, d2) / den < 0 ? 1 : 0; f2 = cross(d1, w) / den < 0 ? 1 : 0;
+  }
+  const [u1, u2] = pointRays(ents, v, p1, p2, f1 | (f2 << 1))!;
+  return cross(u1, u2) >= 0 ? { refs: [v, p1, p2], flip: f1 | (f2 << 1) } : { refs: [v, p2, p1], flip: f2 | (f1 << 1) };
+}
+
 /** Ângulo em (−π, π]. */
 const wrapPi = (t: number) => { const w = t - 2 * Math.PI * Math.round(t / (2 * Math.PI)); return w <= -Math.PI ? w + 2 * Math.PI : w; };
 
@@ -161,6 +190,12 @@ export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstr
         if (!o) throw new Error("Ângulo: o ponto tem de ser um extremo da linha");
         const u = armDir(c.flip || 0), v = sub(pt(ents, o), pt(ents, b));
         return Math.abs(Math.atan2(cross(u, v), dot(u, v))) * DEG;
+      }
+      if (ea?.type === "point" && eb?.type === "point" && c.refs[2]) {
+        // três pontos: ângulo no vértice `a` entre os raios a→b e a→c3
+        const r = pointRays(ents, a, b, c.refs[2], c.flip || 0);
+        if (!r) throw new Error("Ângulo: os pontos não podem coincidir com o vértice");
+        return Math.atan2(cross(r[0], r[1]), dot(r[0], r[1])) * DEG;
       }
       return lineAngle(ents, a, b, c.flip);
     }

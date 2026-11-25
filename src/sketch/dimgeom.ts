@@ -1,7 +1,7 @@
 // Desenho de uma cota no esboço (em coordenadas do mundo): linhas de chamada, linha de cota e setas,
 // a partir do tipo, das referências e do ponto onde o rótulo foi largado. Puro (testes em node).
 import type { SketchConstraint, SketchEntity } from "../doc/types.ts";
-import { type P2, add, arcSign, arcSweep, armDir, curveRef, dot, len, mul, otherEnd, pt, sub } from "./geometry.ts";
+import { type P2, add, arcSign, arcSweep, armDir, curveRef, dot, len, mul, otherEnd, pointRays, pt, sub } from "./geometry.ts";
 
 export interface DimGeom {
   /** linhas de chamada (da geometria até à linha de cota) */
@@ -102,16 +102,26 @@ export function dimGeometry(c: Pick<SketchConstraint, "type" | "refs" | "flip" |
     return { ext, lines: [pts], arrows };
   }
   if (c.type === "angle") {
-    const l1 = ents[c.refs[0]], l2 = ents[c.refs[1]];
-    if (l1?.type !== "line" || l2?.type !== "line") return null;
-    const a1 = pt(ents, l1.p1), b1 = pt(ents, l1.p2), a2 = pt(ents, l2.p1), b2 = pt(ents, l2.p2);
-    let d1 = sub(b1, a1), d2 = sub(b2, a2);
-    const den = d1[0] * d2[1] - d1[1] * d2[0];
-    if (Math.abs(den) < 1e-12) return null;
-    const w = sub(a2, a1), s = (w[0] * d2[1] - w[1] * d2[0]) / den, X = add(a1, mul(d1, s));
-    // setor medido: sentidos invertidos por `flip`
-    if (c.flip && c.flip & 1) d1 = mul(d1, -1);
-    if (c.flip && c.flip & 2) d2 = mul(d2, -1);
+    let a1: P2, b1: P2, a2: P2, b2: P2, d1: P2, d2: P2, X: P2;
+    if (c.refs.length === 3 && ents[c.refs[0]]?.type === "point") {
+      // três pontos: vértice e os dois raios (já com o `flip`); as "linhas" são vértice→ponto
+      const r = pointRays(ents, c.refs[0], c.refs[1], c.refs[2], c.flip || 0);
+      if (!r) return null;
+      X = pt(ents, c.refs[0]); a1 = a2 = X; b1 = pt(ents, c.refs[1]); b2 = pt(ents, c.refs[2]);
+      [d1, d2] = r;
+    } else {
+      const l1 = ents[c.refs[0]], l2 = ents[c.refs[1]];
+      if (l1?.type !== "line" || l2?.type !== "line") return null;
+      a1 = pt(ents, l1.p1); b1 = pt(ents, l1.p2); a2 = pt(ents, l2.p1); b2 = pt(ents, l2.p2);
+      d1 = sub(b1, a1); d2 = sub(b2, a2);
+      const den = d1[0] * d2[1] - d1[1] * d2[0];
+      if (Math.abs(den) < 1e-12) return null;
+      const w = sub(a2, a1), s = (w[0] * d2[1] - w[1] * d2[0]) / den;
+      X = add(a1, mul(d1, s));
+      // setor medido: sentidos invertidos por `flip`
+      if (c.flip && c.flip & 1) d1 = mul(d1, -1);
+      if (c.flip && c.flip & 2) d2 = mul(d2, -1);
+    }
     const r = len(sub(pos, X));
     if (r < 1e-9) return null;
     const t1 = Math.atan2(d1[1], d1[0]);

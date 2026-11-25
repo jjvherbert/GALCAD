@@ -193,6 +193,12 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
         const u = armDir(k), cr = u[0] * (Q.y - X.y) - u[1] * (Q.x - X.x), s = cr < 0 ? -1 : 1;
         return [P({ id, type: "l2l_angle_pppp", l1p1_id: u1, l1p2_id: u2, l2p1_id: b, l2p2_id: o, angle: (s * v() * Math.PI) / 180 })];
       }
+      if (ka === "point" && kb === "point" && c3) {
+        // três pontos: ângulo com sinal no vértice `a` entre os raios a→b e a→c3 (sentidos por `flip`)
+        need(kindOf(ents, c3) === "point");
+        const [r1a, r1b] = c.flip && c.flip & 1 ? [b, a] : [a, b], [r2a, r2b] = c.flip && c.flip & 2 ? [c3, a] : [a, c3];
+        return [P({ id, type: "l2l_angle_pppp", l1p1_id: r1a, l1p2_id: r1b, l2p1_id: r2a, l2p2_id: r2b, angle: (v() * Math.PI) / 180 })];
+      }
       need(ka === "line" && kb === "line");
       if (!c.flip) return [P({ id, type: "l2l_angle_ll", l1_id: a, l2_id: b, angle: (v() * Math.PI) / 180 })];
       {
