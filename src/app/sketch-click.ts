@@ -2,7 +2,7 @@
 import { type SketchEntity } from "../doc/types.ts";
 import { type P2, measure, pt } from "../sketch/geometry.ts";
 import { connectedCurves, extend, isLineCorner, trim } from "../sketch/modify.ts";
-import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, addRectangle, arcAnglePick, arcLengthPick, mergePoints, roundDim, smartDimension } from "../sketch/ops.ts";
+import { type SketchData, addArc, addCircle, addConstraint, addEntity, addLine, addRectangle, arcAnglePick, arcLengthPick, lineEndPick, mergePoints, roundDim, smartDimension } from "../sketch/ops.ts";
 import { sketchMirror } from "../sketch/mirror.ts";
 import { type HitOpts, placePoint } from "./sketch-hit.ts";
 import { type RefGroup } from "./sketch-ref.ts";
@@ -227,6 +227,7 @@ export function dimClickAt(c: ClickCtx, sx: number, sy: number, shift = false) {
     const arcPicked = next.some((x) => ents[x]?.type === "arc");
     const hint = arcLengthPick(ents, next) ? "Clique onde quer a cota do comprimento de arco"
       : arcAnglePick(ents, next) ? "Clique onde quer a cota do ângulo do arco"
+      : lineEndPick(ents, next) ? "Clique onde quer a cota do ângulo com a horizontal/vertical (o quadrante escolhe o braço)"
       : `Clique onde quer a cota (ou noutra entidade para cotar entre as duas)${curve ? " · Shift+clique no círculo cota à curva" : ""}${arcPicked ? " · clique nos dois extremos do arco para o comprimento" : ""}`;
     setMsg(next.length ? hint : "Clique numa linha, arco ou círculo");
     return;

@@ -42,7 +42,7 @@ export type ConstraintType =
   | "distanceY" // [ponto, ponto] (vertical, com sinal: y2 - y1)
   | "radius" // [círculo|arco]
   | "diameter" // [círculo|arco]
-  | "angle" // [linha, linha] (graus, com sinal pelo sentido das linhas) | [arco] (ângulo incluído do arco)
+  | "angle" // [linha, linha] (graus, com sinal pelo sentido das linhas) | [arco] (ângulo incluído do arco) | [linha, extremo] (com a horizontal/vertical nesse extremo)
   | "arcLength"; // [arco] (comprimento ao longo do arco)
 
 export interface SketchConstraint {
@@ -57,6 +57,7 @@ export interface SketchConstraint {
   /**
    * Cota de ângulo: setor medido entre as duas retas (dos quatro que formam). Bit 0 inverte o sentido
    * da 1.ª linha, bit 1 o da 2.ª; sem o campo, os sentidos p1→p2 de cada linha.
+   * Em [linha, extremo] é o braço da cruz no extremo: 0 +X, 1 +Y, 2 −X, 3 −Y.
    */
   flip?: number;
   /**

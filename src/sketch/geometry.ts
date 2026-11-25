@@ -93,6 +93,42 @@ export function angleSector(ents: Record<string, SketchEntity>, l1: string, l2: 
   return cross(u1, u2) >= 0 ? { refs: [l1, l2], flip: f1 | (f2 << 1) } : { refs: [l2, l1], flip: f2 | (f1 << 1) };
 }
 
+/** Ângulo em (−π, π]. */
+const wrapPi = (t: number) => { const w = t - 2 * Math.PI * Math.round(t / (2 * Math.PI)); return w <= -Math.PI ? w + 2 * Math.PI : w; };
+
+/** O outro extremo de uma linha, quando `vertex` é um dos seus extremos; senão `null`. */
+export function otherEnd(ents: Record<string, SketchEntity>, lineId: string, vertexId: string): string | null {
+  const l = ents[lineId];
+  if (l?.type !== "line" || l.p1 === l.p2) return null;
+  return l.p1 === vertexId ? l.p2 : l.p2 === vertexId ? l.p1 : null;
+}
+
+/**
+ * Braço da cruz imaginária no extremo `vertex` de uma linha (0: +X, 1: +Y, 2: −X, 3: −Y) com que se
+ * mede o ângulo da linha à horizontal/vertical (como no SolidWorks). Com `at`, o braço cujo setor
+ * até à linha contém o rato (o mais estreito, se houver vários); sem ele, o braço mais próximo da linha.
+ */
+export function axisArm(ents: Record<string, SketchEntity>, lineId: string, vertexId: string, at?: P2): number {
+  const o = otherEnd(ents, lineId, vertexId);
+  if (!o) throw new Error("Ângulo: o ponto tem de ser um extremo da linha");
+  const X = pt(ents, vertexId), d = sub(pt(ents, o), X), td = Math.atan2(d[1], d[0]);
+  const sig = [0, 1, 2, 3].map((k) => wrapPi(td - (k * Math.PI) / 2));
+  const best = (ks: number[]) => ks.reduce((b, k) => (Math.abs(sig[k]) < Math.abs(sig[b]) - 1e-12 ? k : b));
+  if (at) {
+    const w = sub(at, X);
+    if (len(w) > 1e-12) {
+      const ph = Math.atan2(w[1], w[0]), phk = [0, 1, 2, 3].map((k) => wrapPi(ph - (k * Math.PI) / 2));
+      const inside = [0, 1, 2, 3].filter((k) => Math.sign(phk[k]) === Math.sign(sig[k]) && Math.abs(phk[k]) <= Math.abs(sig[k]) + 1e-12);
+      if (inside.length) return best(inside);
+      return [0, 1, 2, 3].reduce((b, k) => (Math.abs(phk[k]) < Math.abs(phk[b]) ? k : b));
+    }
+  }
+  return best([0, 1, 2, 3]);
+}
+
+/** Direção unitária do braço `k` da cruz (0: +X, 1: +Y, 2: −X, 3: −Y). */
+export const armDir = (k: number): P2 => [[1, 0], [0, 1], [-1, 0], [0, -1]][k & 3] as P2;
+
 /** Valor atual de uma cota, medido na geometria. */
 export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstraint, "type" | "refs" | "flip" | "arc">): number {
   const [a, b] = c.refs;
@@ -117,7 +153,17 @@ export function measure(ents: Record<string, SketchEntity>, c: Pick<SketchConstr
       if (ea?.type !== "circle" && ea?.type !== "arc") throw new Error("Raio: a referência tem de ser um círculo ou arco");
       return c.type === "radius" ? ea.r : 2 * ea.r;
     }
-    case "angle": return ea?.type === "arc" ? (arcSweep(ea.a0, ea.a1) * 180) / Math.PI : lineAngle(ents, a, b, c.flip);
+    case "angle": {
+      if (ea?.type === "arc") return (arcSweep(ea.a0, ea.a1) * 180) / Math.PI;
+      if (ea?.type === "line" && eb?.type === "point") {
+        // linha e um extremo: ângulo com o braço `flip` da cruz horizontal/vertical nesse extremo
+        const o = otherEnd(ents, a, b);
+        if (!o) throw new Error("Ângulo: o ponto tem de ser um extremo da linha");
+        const u = armDir(c.flip || 0), v = sub(pt(ents, o), pt(ents, b));
+        return Math.abs(Math.atan2(cross(u, v), dot(u, v))) * DEG;
+      }
+      return lineAngle(ents, a, b, c.flip);
+    }
     case "arcLength":
       if (ea?.type !== "arc") throw new Error("Comprimento de arco: a referência tem de ser um arco");
       return ea.r * arcSweep(ea.a0, ea.a1);
