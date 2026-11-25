@@ -184,6 +184,9 @@ function toPrimitives(c: SketchConstraint, ents: Record<string, SketchEntity>, v
         const la = line(a), lb = line(b), [a1, a2] = c.flip & 1 ? [la.p2, la.p1] : [la.p1, la.p2], [b1, b2] = c.flip & 2 ? [lb.p2, lb.p1] : [lb.p1, lb.p2];
         return [P({ id, type: "l2l_angle_pppp", l1p1_id: a1, l1p2_id: a2, l2p1_id: b1, l2p2_id: b2, angle: (v() * Math.PI) / 180 })];
       }
+    case "arcLength":
+      need(ka === "arc");
+      return [P({ id, type: "arc_length", a_id: a, dist: v() })];
   }
   return [];
 }

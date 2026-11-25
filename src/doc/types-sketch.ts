@@ -42,7 +42,8 @@ export type ConstraintType =
   | "distanceY" // [ponto, ponto] (vertical, com sinal: y2 - y1)
   | "radius" // [círculo|arco]
   | "diameter" // [círculo|arco]
-  | "angle"; // [linha, linha] (graus, com sinal pelo sentido das linhas)
+  | "angle" // [linha, linha] (graus, com sinal pelo sentido das linhas)
+  | "arcLength"; // [arco] (comprimento ao longo do arco)
 
 export interface SketchConstraint {
   id: string;
@@ -69,7 +70,7 @@ export interface SketchConstraint {
 export type ArcCond = "center" | "min" | "max";
 
 export const DIMENSION_TYPES: ReadonlySet<ConstraintType> = new Set([
-  "distance", "distanceX", "distanceY", "radius", "diameter", "angle",
+  "distance", "distanceX", "distanceY", "radius", "diameter", "angle", "arcLength",
 ]);
 
 export interface SketchFeature {
