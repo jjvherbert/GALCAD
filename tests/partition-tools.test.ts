@@ -74,3 +74,41 @@ test("diagnóstico por ferramenta: 1 má + 2 boas → as 2 cortam e 1 aviso", as
     assert.match(r.case.hypotheses.join("\n"), /2 ferramenta\(s\)/);
   }
 });
+
+test("cilindro: um cilindro em Y por (50; 0; 5) de raio 3 separa um núcleo da barra", async () => {
+  const m = await model();
+  const cyl = m.run([{ axis: "cyl", at: 3, origin: [50, 0, 5], normal: [0, 1, 0] }]);
+  assert.equal(blocks(cyl.case), 2, JSON.stringify(cyl.case.hypotheses));
+  assert.deepEqual(cyl.warnings, []);
+  const zero = m.run([{ axis: "cyl", at: 0 }]);
+  assert.ok(zero.warnings.some((w) => /Partição 1.*raio.*ignorada/.test(w)), JSON.stringify(zero.warnings));
+  const flat = m.run([{ axis: "cyl", at: 3, face: m.face(2, 10) }]);
+  assert.ok(flat.warnings.some((w) => /Partição 1.*não é cilíndrica.*ignorada/.test(w)), JSON.stringify(flat.warnings));
+  assert.equal(blocks(flat.case), 1);
+});
+
+test("cilindro coaxial com um furo: R = 10 à volta de um furo de raio 5 separa o anel da chapa", async () => {
+  const s = new SketchBuilder();
+  s.rect(0, 0, 40, 40, 40, 40);
+  let doc: CadDocument = newDocument();
+  doc = addFeature(doc, s.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f1", op: "add", end: { type: "blind", depth: 5 } }).doc;
+  const plate = await new Engine().rebuild(doc);
+  const lid = plate.ctx.body!.faces.find((x) => { const p = faceProps(x.face); return p.normal && Math.abs(p.normal[2] - 1) < 1e-9; })!;
+  const h = new SketchBuilder({ kind: "face", ref: { kind: "face", name: lid.name } });
+  h.circle(20, 20, 5);
+  doc = addFeature(doc, h.build()).doc;
+  doc = addFeature(doc, { type: "extrude", sketch: "f3", op: "cut", end: { type: "throughAll" } }).doc;
+  const r = await new Engine().rebuild(doc);
+  const hole = r.ctx.body!.faces.find((x) => faceProps(x.face).axis)!;
+  const side = r.ctx.body!.faces.find((x) => { const p = faceProps(x.face); return p.normal && Math.abs(p.normal[0] + 1) < 1e-9; })!;
+  const st: FemStudy = {
+    ...newFemStudy("s1", 1), material: { ...SIM_MATERIALS[0] },
+    mesh: { size: 2.5, order: 1, curvature: 0, partitions: [{ axis: "cyl", at: 10, face: { kind: "face", name: hole.name } }] },
+    loads: [{ kind: "fixed", faces: [{ kind: "face", name: side.name }] }, { kind: "pressure", faces: [{ kind: "face", name: hole.name }], p: 1 }],
+  };
+  const c = studyCase(r.ctx, st);
+  assert.ok(hole, "o corte devia ter aberto um furo cilíndrico");
+  assert.deepEqual(c.warnings, []);
+  assert.equal(blocks(c.case as FemCase), 2, JSON.stringify((c.case as FemCase).hypotheses));
+});

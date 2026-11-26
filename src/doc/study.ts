@@ -161,10 +161,13 @@ export interface SimMesh {
    * Axis "sketch": as curvas de um esboço extrudidas pelo sólido nos dois sentidos da normal do esboço
    * (Abaqus: Partition Cell > Extrude/Sweep Edges). Cada ferramenta é diagnosticada à parte: a que falha
    * fica de fora com aviso e as outras aplicam-se.
+   * Axis "cyl": uma superfície cilíndrica de raio `at`, infinita ao longo do eixo (Abaqus: anel à volta
+   * de um furo). O eixo é o de `face` (cilíndrica: fica coaxial) ou, sem face, passa em `origin` com a
+   * direção `normal` (por omissão a origem e Z).
    */
   partitions?: {
-    axis: "x" | "y" | "z" | "n" | "f" | "plane" | "sketch"; at: Expr; normal?: [Expr, Expr, Expr];
-    face?: TopoRef; onFace?: TopoRef; plane?: PlaneRef; sketch?: string;
+    axis: "x" | "y" | "z" | "n" | "f" | "plane" | "sketch" | "cyl"; at: Expr; normal?: [Expr, Expr, Expr];
+    face?: TopoRef; onFace?: TopoRef; plane?: PlaneRef; sketch?: string; origin?: [Expr, Expr, Expr];
   }[];
   /**
    * Edição de nós e elementos individuais depois da malha (Abaqus: Edit Mesh; Femap: Modify):
@@ -435,7 +438,7 @@ export function bodyMaterial(s: FemStudy, path: string): SimMaterial {
 
 /** Todas as referências a faces de um estudo (para dependências e validação). */
 export function studyFaces(s: Study): TopoRef[] {
-  if (s.physics === "fem") return [...s.loads.flatMap((l) => loadFaces(s, l)), ...(s.mesh.local ?? []).flatMap((l) => l.faces), ...(s.mesh.partitions ?? []).flatMap((c) => [...(c.axis === "f" && c.face ? [c.face] : []), ...(c.axis === "plane" && c.plane?.kind === "face" ? [c.plane.ref] : []), ...(c.onFace ? [c.onFace] : [])])];
+  if (s.physics === "fem") return [...s.loads.flatMap((l) => loadFaces(s, l)), ...(s.mesh.local ?? []).flatMap((l) => l.faces), ...(s.mesh.partitions ?? []).flatMap((c) => [...((c.axis === "f" || c.axis === "cyl") && c.face ? [c.face] : []), ...(c.axis === "plane" && c.plane?.kind === "face" ? [c.plane.ref] : []), ...(c.onFace ? [c.onFace] : [])])];
   return [...(s.inlet?.faces ?? []), ...(s.outlet?.faces ?? [])];
 }
 
