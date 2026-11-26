@@ -4,10 +4,12 @@ import { evalParam } from "../doc/variables.ts";
 import { exprIdentifiers } from "../doc/expr.ts";
 import type { MeshEdit } from "../sim/mshedit.ts";
 import { type Expr, type TopoRef } from "../doc/types.ts";
-import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces } from "./context.ts";
-import { type CutPlane, partitionSolid } from "./partition.ts";
+import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces, featureName, modelSize, planeFrame } from "./context.ts";
+import { type CutPlane, type PartitionTool, partitionSolid } from "./partition.ts";
+import { chainWire } from "./sketch3d.ts";
+import { chainsOf, one, shiftFrame } from "./features/surface-common.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
-import { type TopoDS_Shape, bbox, explore, sampleEdge } from "./occ.ts";
+import { T, type TopoDS_Shape, bbox, explore, gpVec, oc, sampleEdge, v3 } from "./occ.ts";
 import { edgeProps, faceProps } from "./occ-props.ts";
 import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup, thermalFieldAt } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, shellOf, tagsOf, n3 } from "./sim-common.ts";
@@ -65,21 +67,49 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
     if (!q.normal) throw new Error(`Partição ${i + 1}: a face "${nf.name}" onde fica o corte não é plana`);
     return { face: nf.face, sweep: q.normal, label: `Partição ${i + 1} na face "${nf.name}"` };
   };
-  const p = partitionSolid(solid, cuts.map((c, i): CutPlane => {
+  const tool = (c: (typeof cuts)[number], i: number): PartitionTool => {
     if (c.axis === "f") {
       // o plano da face prolongado para lá dos seus limites (Abaqus: Partition Cell > Extend Face)
       if (!c.face) throw new Error(`Partição ${i + 1}: escolha a face plana cujo plano corta o sólido`);
       const nf = resolveFaces(ctx, [c.face], report)[0];
       const q = faceProps(nf.face);
       if (!q.normal || !q.planeOrigin) throw new Error(`Partição ${i + 1}: a face "${nf.name}" não é plana`);
-      return { axis: "n" as const, normal: q.normal, at: q.normal.reduce((a, v, k) => a + v * q.planeOrigin![k], 0), label: `Partição pela face "${nf.name}"`, ...onFace(c, i) };
+      return { axis: "n" as const, normal: q.normal, at: q.normal.reduce((a, v, k) => a + v * q.planeOrigin![k], 0), label: `Partição ${i + 1} pela face "${nf.name}"`, ...onFace(c, i) };
     }
+    if (c.axis === "plane") {
+      // um plano de referência: padrão, de referência, de um sistema de eixos ou uma face plana
+      if (!c.plane) throw new Error(`Partição ${i + 1}: escolha o plano de referência`);
+      const fr = planeFrame(ctx, c.plane, report);
+      return { axis: "n" as const, normal: fr.z, at: v3.dot(fr.z, fr.o), label: `Partição ${i + 1} pelo plano de referência`, ...onFace(c, i) };
+    }
+    if (c.axis === "sketch") {
+      // as curvas do esboço extrudidas nos dois sentidos para lá do modelo (Abaqus: Extrude/Sweep Edges)
+      if (!c.sketch) throw new Error(`Partição ${i + 1}: escolha o esboço`);
+      const far = modelSize(ctx);
+      const { s: sk, chains } = chainsOf(ctx, c.sketch, report);
+      if (!chains.length) throw new Error(`Partição ${i + 1}: o esboço não tem curvas`);
+      const shape = one(chains.map((ch) => {
+        const wire = chainWire(ch, shiftFrame(sk.frame, v3.mul(sk.frame.z, -far))).wrapped;
+        return T(T(new (oc().BRepPrimAPI_MakePrism)(wire, gpVec(v3.mul(sk.frame.z, 2 * far)), false, true)).Shape());
+      }));
+      return { kind: "shape", shape, label: `Partição ${i + 1} pelo esboço "${featureName(ctx, c.sketch)}"` };
+    }
+    const at = evalParam(c.at, ctx.scope, `Partição ${i + 1}`);
     return {
-      axis: c.axis, at: evalParam(c.at, ctx.scope, `Partição ${i + 1}`),
+      axis: c.axis, at, label: `Partição ${i + 1} (${c.axis === "n" ? "n·x" : c.axis.toUpperCase()} = ${at})`,
       normal: c.axis === "n" ? (c.normal ?? [0, 0, 1]).map((v, k) => evalParam(v, ctx.scope, `Partição ${i + 1} normal ${"xyz"[k]}`)) as [number, number, number] : undefined,
       ...onFace(c, i),
     };
-  }));
+  };
+  // cada ferramenta é diagnosticada à parte: a que não se consegue construir fica de fora com aviso
+  const tools = cuts.flatMap((c, i): PartitionTool[] => {
+    try { return [tool(c, i)]; } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      report.warnings.push(`${m.startsWith("Partição") ? m : `Partição ${i + 1}: ${m}`} — ignorada`);
+      return [];
+    }
+  });
+  const p = partitionSolid(solid, tools);
   report.warnings.push(...p.skipped);
   // nomes: a face de origem (com ~k se foi dividida) ou «corte k» nas faces novas
   const base = p.faces.map((f) => { const o = p.origin(f); return o ? ctx.body!.faces.find((n) => n.face.IsSame(o))?.name ?? "?" : undefined; });
@@ -116,7 +146,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       if (!out.size) throw new Error(`${what}: nenhuma partição corta a face "${nf.name}"`);
       return [...out].sort((a, b) => a - b);
     },
-    note: p.used ? `Partições: ${cuts.length - p.skipped.length} plano(s) dividem o sólido em ${p.solids.length} blocos com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas` : undefined,
+    note: p.used ? `Partições: ${p.used} ferramenta(s) dividem o sólido em ${p.solids.length} blocos com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas` : undefined,
   };
 }
 

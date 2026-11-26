@@ -385,7 +385,7 @@ test("partições: perfil em L dividido em 3 blocos dá hexaedros estruturados, 
   assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")));
   // plano fora do sólido: ignorado com aviso (os outros continuam a cortar)
   const out = studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "x", at: 200 }] }, loads }));
-  assert.ok(out.warnings.some((w) => /X = 200: o plano não atravessa o sólido .* ignorada/.test(w)), JSON.stringify(out.warnings));
+  assert.ok(out.warnings.some((w) => /Partição 1 \(X = 200\): o plano não atravessa o sólido .* ignorada/.test(w)), JSON.stringify(out.warnings));
   const mix = studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "x", at: 20 }, { axis: "y", at: 20 }, { axis: "x", at: 200 }] }, loads }));
   assert.ok(mix.case.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(mix.case.hypotheses));
   if (!T.gmsh) return;
@@ -413,7 +413,7 @@ test("partições: plano inclinado x + y = 50 corta o perfil em L em 3 blocos", 
   assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
   // as cargas continuam numa só face cada (o corte não lhes toca)
   assert.equal(Object.values(cut.c.groups).filter((t) => t.length === 1).length, 2, JSON.stringify(cut.c.groups));
-  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [0, 0, 0], at: 1 }] }, loads })), /normal do plano não pode ser nula/);
+  assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [0, 0, 0], at: 1 }] }, loads })).warnings.some((w) => /normal do plano não pode ser nula — ignorada/.test(w)));
   assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [1, 1, 0], at: 200 }] }, loads })).warnings.some((w) => /não atravessa o sólido/.test(w)));
   // `cut@<face>`: as arestas que o corte abre numa face (a base y = 0 é cortada em x = 50; a ponta x = 100 não)
   const part = { size: 5, order: 1 as const, partitions: [{ axis: "n" as const, normal: [1, 1, 0] as [number, number, number], at: "50 / sqrt(2)" }] };
@@ -463,8 +463,8 @@ test("partições: pelo plano de uma face (Extend Face) — as faces interiores 
   assert.equal(cut.c.faces.filter((f) => f.name.startsWith("corte ")).length, 2);
   assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
   // uma face exterior não atravessa o sólido: ignorada com aviso; sem face escolhida, erro claro
-  assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0, face: face(1, 0) }] }, loads })).warnings.some((w) => /Partição pela face .*não atravessa o sólido .* ignorada/.test(w)));
-  assert.throws(() => studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0 }] }, loads })), /escolha a face plana/);
+  assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0, face: face(1, 0) }] }, loads })).warnings.some((w) => /Partição 1 pela face .*não atravessa o sólido .* ignorada/.test(w)));
+  assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0 }] }, loads })).warnings.some((w) => /Partição 1: escolha a face plana.* ignorada/.test(w)));
   if (!T.gmsh) return;
   const h = await previewMesh(cut.dir);
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
