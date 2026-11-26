@@ -9,7 +9,7 @@ import { type CutPlane, type PartitionTool, partitionSolid } from "./partition.t
 import { chainWire } from "./sketch3d.ts";
 import { chainsOf, one, shiftFrame } from "./features/surface-common.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
-import { T, type TopoDS_Shape, bbox, explore, gpVec, oc, sampleEdge, v3 } from "./occ.ts";
+import { T, type TopoDS_Shape, bbox, explore, gpAx2, gpVec, oc, sampleEdge, v3 } from "./occ.ts";
 import { edgeProps, faceProps } from "./occ-props.ts";
 import { type CaseCsys, type CaseFace, type FemCase, type FemCaseLoad, type V3, amplitudeTable, csysAxes, csysToGlobal, loadGroup, thermalFieldAt } from "../sim/case.ts";
 import { type MeshGeo, bodyOf, caseFaces, shellOf, tagsOf, n3 } from "./sim-common.ts";
@@ -93,6 +93,33 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
         return T(T(new (oc().BRepPrimAPI_MakePrism)(wire, gpVec(v3.mul(sk.frame.z, 2 * far)), false, true)).Shape());
       }));
       return { kind: "shape", shape, label: `Partição ${i + 1} pelo esboço "${featureName(ctx, c.sketch)}"` };
+    }
+    if (c.axis === "cyl") {
+      // uma superfície cilíndrica de raio R, infinita no eixo (Abaqus: Partition Cell > Extrude a circle)
+      const r = evalParam(c.at, ctx.scope, `Partição ${i + 1} raio`);
+      if (!(r > 0)) throw new Error(`Partição ${i + 1}: o raio do cilindro tem de ser maior que zero`);
+      let o: V3, d: V3, why: string;
+      if (c.face) {
+        // eixo de uma face cilíndrica (um furo, um veio): o cilindro fica coaxial
+        const nf = resolveFaces(ctx, [c.face], report)[0];
+        const ax = faceProps(nf.face).axis;
+        if (!ax) throw new Error(`Partição ${i + 1}: a face "${nf.name}" não é cilíndrica`);
+        o = ax.o; d = ax.d; why = `coaxial com "${nf.name}"`;
+      } else {
+        const ev = (v: Expr | undefined, k: string, dflt: number) => (v === undefined ? dflt : evalParam(v, ctx.scope, `Partição ${i + 1} ${k}`));
+        o = [0, 1, 2].map((k) => ev(c.origin?.[k], `origem ${"xyz"[k]}`, 0)) as V3;
+        d = [0, 1, 2].map((k) => ev(c.normal?.[k], `eixo ${"xyz"[k]}`, k === 2 ? 1 : 0)) as V3;
+        why = `eixo por (${o.join("; ")})`;
+      }
+      const len = Math.hypot(...d);
+      if (!(len > 1e-12)) throw new Error(`Partição ${i + 1}: a direção do eixo do cilindro é nula`);
+      d = v3.mul(d, 1 / len);
+      const x = v3.norm(v3.cross(d, Math.abs(d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0]));
+      const far = modelSize(ctx), o_ = oc();
+      const circ = T(new o_.gp_Circ(gpAx2(v3.sub(o, v3.mul(d, far)), d, x), r));
+      const wire = T(T(new o_.BRepBuilderAPI_MakeWire(T(T(new o_.BRepBuilderAPI_MakeEdge(circ)).Edge()))).Wire());
+      const shape = T(T(new o_.BRepPrimAPI_MakePrism(wire, gpVec(v3.mul(d, 2 * far)), false, true)).Shape());
+      return { kind: "shape", shape, label: `Partição ${i + 1} (cilindro R = ${r}, ${why})` };
     }
     const at = evalParam(c.at, ctx.scope, `Partição ${i + 1}`);
     return {
