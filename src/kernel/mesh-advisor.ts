@@ -4,12 +4,13 @@ import type { Ctx } from "./context.ts";
 import type { FemStudy } from "../doc/study.ts";
 import type { TopoRef } from "../doc/types.ts";
 import { pl } from "../doc/plural.ts";
-import { type TopoDS_Shape, bbox, explore, edgeProps, faceProps, distance, vertexAt } from "./occ.ts";
+import { type TopoDS_Shape, bbox, explore, edgeProps, distance, vertexAt } from "./occ.ts";
 import { namedEdges, hintFor } from "./naming.ts";
 import { THIN } from "./meshplan.ts";
-import { studyPlan, type StudyPlan } from "./sim-fem.ts";
+import { studyPlan } from "./sim-fem.ts";
+import { suggestSweepCuts } from "./sweep-cuts.ts";
 import { ADVISOR_LIMITS as A, type MeshQuality } from "../sim/quality.ts";
-import { applyPatch, type MeshAdvice, type MeshPatch, type Suggestion } from "../sim/mesh-advice.ts";
+import { type MeshAdvice, type MeshPatch, type Suggestion } from "../sim/mesh-advice.ts";
 import type { V3 } from "../sim/case.ts";
 
 const fmt = (x: number) => +x.toPrecision(3);
@@ -137,60 +138,31 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
     });
   }
 
-  // hexaedros: sólidos que não são blocos → partição pelos planos das faces do corpo (escolha gulosa, até 4)
+  // hexaedros: sólidos que não são blocos → cortes para varrer (planos das faces do corpo e pelos eixos dos furos)
   const hm = s.mesh.hexMethod ?? "auto";
   if (element === "hex" && hm !== "subdivision" && sp.plan?.blocks.some((b) => !b)) {
-    const blocks = sp.plan.blocks, N = blocks.length, bad = (p: StudyPlan) => (p.plan ? p.plan.blocks.filter((b) => !b).length : Infinity);
-    const cand: { ref: TopoRef; origin: V3; normal: V3 }[] = [];
-    for (const nf of body.faces) {
-      const fp = faceProps(nf.face);
-      if (fp.type !== "plane" || !fp.normal || !fp.planeOrigin) continue;
-      const n = fp.normal as V3, o = fp.planeOrigin as V3, off = n[0] * o[0] + n[1] * o[1] + n[2] * o[2];
-      if (cand.some((c) => Math.abs(Math.abs(c.normal[0] * n[0] + c.normal[1] * n[1] + c.normal[2] * n[2]) - 1) < 1e-6 && Math.abs(Math.abs(c.normal[0] * c.origin[0] + c.normal[1] * c.origin[1] + c.normal[2] * c.origin[2]) - Math.abs(off)) < 1e-6)) continue;
-      const cuts = solids.some((so, i) => {
-        if (blocks[i]) return false;
-        const b = bbox(so), ds: number[] = [];
-        for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) ds.push(n[0] * x + n[1] * y + n[2] * z - off);
-        return Math.max(...ds) > 1e-3 && Math.min(...ds) < -1e-3;
-      });
-      if (cuts) cand.push({ ref: { kind: "face", name: nf.name, hint: hintFor("face", nf.face) }, origin: o, normal: n });
-    }
-    const chosen: typeof cand = [];
-    // um só corte pode não reduzir os maus (ex.: L → o sólido que fica tem uma face partida pelo vizinho) mas
-    // aumentar os bons: também conta como progresso (o seguinte fecha-o)
-    const good = (p: StudyPlan) => (p.plan ? p.plan.blocks.filter((b) => b).length : 0);
-    let cur = bad(sp), curGood = good(sp), curPlan = sp;
-    const pool = cand.slice(0, 12);
-    for (let k = 0; k < 4 && cur > 0; k++) {
-      let best: { c: (typeof cand)[number]; p: StudyPlan; b: number; g: number } | null = null;
-      for (const c of pool) {
-        if (chosen.includes(c)) continue;
-        const parts = [...chosen, c].map((x) => ({ axis: "f" as const, at: 0, face: x.ref }));
-        const p = studyPlan(ctx, { ...s, mesh: applyPatch(s.mesh, { addPartitions: parts }) });
-        if (p.warnings.some((w) => /parti/i.test(w) && !sp.warnings.includes(w))) continue;
-        const b = bad(p), g = good(p);
-        if ((b < cur || (b === cur && g > curGood)) && (!best || b < best.b || (b === best.b && g > best.g))) best = { c, p, b, g };
-      }
-      if (!best) break;
-      chosen.push(best.c); cur = best.b; curGood = best.g; curPlan = best.p;
-    }
-    const k0 = N - bad(sp);
-    if (chosen.length && cur < bad(sp)) {
-      const N1 = curPlan.plan!.blocks.length;
+    const N = sp.plan.blocks.length, k0 = sp.plan.blocks.filter((b) => b).length;
+    const sc = suggestSweepCuts(ctx, s, sp);
+    const notBlocks = `${N - k0} de ${pl(N, "sólido", "sólidos")} não ${N - k0 === 1 ? "é bloco hexaédrico" : "são blocos hexaédricos"}`;
+    if (sc) {
+      const parts = sc.cuts.flatMap((c) => c.parts), planes = sc.cuts.flatMap((c) => c.planes);
+      const faces = [...new Map(sc.cuts.flatMap((c) => c.faces).map((f) => [f.name, f])).values()];
+      const left = sc.after.solids - sc.after.blocks;
+      const src = [sc.cuts.some((c) => c.kind === "face") && "faces do corpo", sc.cuts.some((c) => c.kind === "axis") && "eixos dos furos"].filter(Boolean).join(" e ");
       out.push({
-        id: `hex:${chosen.map((c) => c.ref.name).sort().join(",")}`, rule: "hex",
-        region: { block: "Corpo", faces: chosen.map((c) => c.ref), label: pl(chosen.length, "partição", "partições") },
-        patch: { addPartitions: chosen.map((c) => ({ axis: "f" as const, at: 0, face: c.ref })) },
-        preview: { tags: [], planes: chosen.map((c) => ({ origin: c.origin, normal: c.normal })) },
-        why: `Hexaedros: ${N - k0} de ${pl(N, "sólido", "sólidos")} não ${N - k0 === 1 ? "é bloco hexaédrico" : "são blocos hexaédricos"} (6 faces de 4 arestas) e caem na subdivisão, de qualidade inferior. Partir pelos planos de ${pl(chosen.length, "face", "faces")} deixa ${N1 - cur} de ${N1} em blocos.${cur ? " Os restantes continuam por subdivisão." : ""}`,
-        metric: { name: "blocos hexaédricos", before: k0, after: N1 - cur, unit: `/${N}→${N1}` },
+        id: `hex:${sc.cuts.map((c) => c.key).sort().join(",")}`, rule: "hex",
+        region: { block: "Corpo", faces, label: pl(parts.length, "partição", "partições") },
+        patch: { addPartitions: parts },
+        preview: { tags: [], planes },
+        why: `Hexaedros: ${notBlocks} (6 faces de 4 arestas) e caem na subdivisão, de qualidade inferior. Partir por ${pl(planes.length, "plano", "planos")} (${src}) deixa ${sc.after.blocks} de ${sc.after.solids} em blocos.${left ? " Os restantes continuam por subdivisão." : ""}`,
+        metric: { name: "blocos hexaédricos", before: k0, after: sc.after.blocks, unit: `/${N}→${sc.after.solids}` },
       });
     } else {
       out.push({
         id: "hex:subdivision", rule: "hex",
         region: { block: "Corpo", label: "método dos hexaedros" },
         patch: { set: { hexMethod: "subdivision" } }, preview: { tags: [] },
-        why: `Hexaedros: ${N - k0} de ${pl(N, "sólido", "sólidos")} não ${N - k0 === 1 ? "é bloco hexaédrico" : "são blocos hexaédricos"} e nenhuma partição pelos planos das faces do corpo ajuda. Assumir a subdivisão (qualidade inferior) ou partir à mão.`,
+        why: `Hexaedros: ${notBlocks} e nenhuma partição pelos planos das faces do corpo ou pelos eixos dos furos ajuda. Assumir a subdivisão (qualidade inferior) ou partir à mão.`,
         metric: { name: "blocos hexaédricos", before: k0, unit: `/${N}` },
       });
     }

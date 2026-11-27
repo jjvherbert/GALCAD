@@ -62,6 +62,7 @@ Cada linha corresponde a um ou mais testes em `tests/`:
 | Consola sob degrau (pico ≈ 2× estático em T₁/2) | Dinâmica de 1 GL | OpenRadioss |
 | Encurvadura de placas (k → 4, Johnson) | Teoria de placas | analítico interno |
 | Avaliador de malha: placa fina (≥ 4 elementos lineares / 2 quadráticos na espessura), furo (≤ 15–20° por elemento), aresta minúscula (seed com bias), L em hexaedros (partição em blocos), Jacobiano negativo (refino local); aceitar cada sugestão melhora a métrica e faz a sugestão desaparecer | Limites e fontes em `src/sim/quality.ts` (`ADVISOR_LIMITS`) | plano de malha (sem solver) |
+| Cortes para varrer (`suggestSweepCuts`): placa 100×100×10 com furo Ø20 central fica em 6 de 6 blocos com os planos pelo eixo do furo (diagonais + o plano que atravessa a costura); caixa simples não recebe cortes | Critério de bloco do plano de malha (6 faces de 4 arestas) | plano de malha (sem solver) |
 
 ## Robustez do núcleo em peças reais
 
