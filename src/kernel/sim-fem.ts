@@ -2,6 +2,7 @@
 import { type FemStudy, type LoadCsys, loadEdges, loadFaces, plasticCurveErrors } from "../doc/study.ts";
 import { evalParam } from "../doc/variables.ts";
 import { exprIdentifiers } from "../doc/expr.ts";
+import { pl } from "../doc/plural.ts";
 import type { MeshEdit } from "../sim/mshedit.ts";
 import { type Expr, type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces, featureName, modelSize, planeFrame } from "./context.ts";
@@ -189,7 +190,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       if (!out.size) throw new Error(`${what}: nenhuma partição corta a face "${nf.name}"`);
       return [...out].sort((a, b) => a - b);
     },
-    note: p.used ? `Partições: ${p.used} ferramenta(s) dividem o sólido em ${p.solids.length} blocos com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas` : undefined,
+    note: p.used ? `Partições: ${pl(p.used, "ferramenta divide", "ferramentas dividem")} o sólido em ${pl(p.solids.length, "bloco", "blocos")} com faces de corte partilhadas (malha conforme); cargas, apoios e seeds passam às sub-faces e sub-arestas` : undefined,
   };
 }
 
@@ -463,7 +464,7 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
       ...(solidLaminate ? [`Laminado sólido: ${solidLaminate.plies.length} camadas ortotrópicas em z a partir de z = ${solidLaminate.z0} mm (${solidLaminate.plies.map((p) => `${p.theta}°/${p.t}`).join(", ")}); cada elemento fica na camada do seu centroide`] : []),
       `Material: ${m.name} (E = ${m.E} MPa, ν = ${m.nu}${thermal ? `, k = ${m.k} W/(m·K)` : `, ρ = ${m.density} g/cm³`}${nl?.plasticity ? `, σy = ${m.yield} MPa, ${curve?.length ? `curva σ–εp com ${curve.length} pontos até ${curve[curve.length - 1][0]} MPa (plástico perfeito depois)` : `Et = ${m.tangent} MPa`}` : ""})${m.source ? ` — ${m.source}` : ""}`,
       meshHyp,
-      ...(edits.length ? [`Malha editada à mão: ${edits.filter((e) => e.kind === "move").length} nó(s) movido(s), ${edits.filter((e) => e.kind === "delete").length} apagamento(s) de elementos — as faces e arestas das cargas/apoios que deixam de ser fronteira saem dos grupos; confirmar na pré-visualização`] : []),
+      ...(edits.length ? [`Malha editada à mão: ${pl(edits.filter((e) => e.kind === "move").length, "nó movido", "nós movidos")}, ${pl(edits.filter((e) => e.kind === "delete").length, "apagamento", "apagamentos")} de elementos — as faces e arestas das cargas/apoios que deixam de ser fronteira saem dos grupos; confirmar na pré-visualização`] : []),
       ...(geo.note ? [geo.note] : []),
       ...(shell ? [shell.plies
         ? `Casca laminada (Mindlin, S6, *SHELL SECTION COMPOSITE) na superfície média da chapa: ${shell.plies.length} camadas [${shell.plies.map((p) => `${p.theta}°`).join("/")}] da base para o topo, espessura total ${shell.thickness} mm; ângulos medidos a partir do eixo x projetado na superfície; camadas ortotrópicas (E3 = E2, G13 = G12); tensões da camada e da altura com maior von Mises; a pressão atua segundo a normal da superfície`

@@ -58,9 +58,9 @@ async function main() {
     await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
     const panel = await p.textContent(P);
     check("separador abre a secção (cargas no painel)", /Encastramento/.test(panel) && /Força total/.test(panel) && /Encastrar/.test(await p.textContent(".tb-row.commands")), panel.slice(0, 200));
-    const before = (await p.textContent(".sim-node:has-text('Cargas e apoios')")).match(/(\d+) condição/)?.[1];
+    const before = (await p.textContent(".sim-node:has-text('Cargas e apoios')")).match(/(\d+) condi(?:ção|ções)/)?.[1];
     await p.click(".cmd:has-text('Pressão')");
-    check("barra: + pressão com seleção de faces ativa", /Modo de seleção: faces/.test(await p.textContent("body")) && Number((await p.textContent(".sim-node:has-text('Cargas e apoios')")).match(/(\d+) condição/)?.[1]) === Number(before) + 1);
+    check("barra: + pressão com seleção de faces ativa", /Modo de seleção: faces/.test(await p.textContent("body")) && Number((await p.textContent(".sim-node:has-text('Cargas e apoios')")).match(/(\d+) condi(?:ção|ções)/)?.[1]) === Number(before) + 1);
     await p.keyboard.press("Escape");
     await p.click(`${P} .kw-item:has-text('Pressão') button[aria-label^='Retirar']`);
     await node("Resolver");

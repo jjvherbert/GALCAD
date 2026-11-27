@@ -3,6 +3,7 @@
 import type { Ctx } from "./context.ts";
 import type { FemStudy } from "../doc/study.ts";
 import type { TopoRef } from "../doc/types.ts";
+import { pl } from "../doc/plural.ts";
 import { type TopoDS_Shape, bbox, explore, edgeProps, faceProps, distance, vertexAt } from "./occ.ts";
 import { namedEdges, hintFor } from "./naming.ts";
 import { THIN } from "./meshplan.ts";
@@ -72,9 +73,9 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
     const before = thin.reduce((a, t) => a + sp.nOf(t).n, 0), after = thin.reduce((a, t) => a + Math.max(sp.nOf(t).n, need.value), 0);
     out.push({
       id: idOf("thin", under), rule: "thin",
-      region: { block: "Corpo", edges: refsOf(under), label: `${under.length} aresta(s) na espessura (${fmt(th)} mm)` },
+      region: { block: "Corpo", edges: refsOf(under), label: `${pl(under.length, "aresta", "arestas")} na espessura (${fmt(th)} mm)` },
       patch: { set: { layers: need.value } }, preview: { tags: under },
-      why: `Zona fina: ${minN} elemento(s) na espessura de ${fmt(th)} mm; pedir ${need.value} (elementos de ordem ${order}: ${need.source}).${element === "tet" ? " Em tetraedros só as arestas ficam com as camadas; para camadas reais usar hexaedros." : ""}`,
+      why: `Zona fina: ${pl(minN, "elemento", "elementos")} na espessura de ${fmt(th)} mm; pedir ${need.value} (elementos de ordem ${order}: ${need.source}).${element === "tet" ? " Em tetraedros só as arestas ficam com as camadas; para camadas reais usar hexaedros." : ""}`,
       metric: { name: "elementos na espessura", before: minN, after: need.value, unit: "" },
       elements: { before, after },
     });
@@ -95,7 +96,7 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
       id: idOf("tiny", [t]), rule: "tiny",
       region: { block: blockOf(t), edges: refsOf([t, ...nbs]), label: `aresta de ${fmt(len)} mm` },
       patch: { addSeeds: seeds.map((x) => x.seed) }, preview: { tags: [t, ...nbs] },
-      why: `Aresta minúscula de ${fmt(len)} mm (< ${A.tinyEdgeRatio.value * 100} % do tamanho ${fmt(effSize(t))} mm: ${A.tinyEdgeRatio.source}). O GALCAD não tem topologia virtual para a absorver: seed local nas ${nbs.length} aresta(s) vizinha(s), com o 1.º elemento ≈ ${A.tinyGrade.value}× o seu comprimento (${A.tinyGrade.source}).`,
+      why: `Aresta minúscula de ${fmt(len)} mm (< ${A.tinyEdgeRatio.value * 100} % do tamanho ${fmt(effSize(t))} mm: ${A.tinyEdgeRatio.source}). O GALCAD não tem topologia virtual para a absorver: seed local ${nbs.length === 1 ? "na aresta vizinha" : `nas ${nbs.length} arestas vizinhas`}, com o 1.º elemento ≈ ${A.tinyGrade.value}× o seu comprimento (${A.tinyGrade.source}).`,
       metric: { name: "1.º elemento junto à aresta", before: fmt(before), after: fmt(after), unit: "mm" },
       elements: { before: nbs.reduce((a, u) => a + sp.nOf(u).n, 0), after: seeds.reduce((a, x) => a + x.n, 0) },
     });
@@ -115,7 +116,7 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
     const nAfter = (a: (typeof viaCurv)[number]) => Math.max(a.n, Math.ceil((a.deg / 360) * c - 1e-9));
     out.push({
       id: idOf("arc", viaCurv.map((a) => a.t)), rule: "arc",
-      region: { block: "Corpo", edges: refsOf(viaCurv.map((a) => a.t)), label: `${viaCurv.length} arco(s)` },
+      region: { block: "Corpo", edges: refsOf(viaCurv.map((a) => a.t)), label: pl(viaCurv.length, "arco", "arcos") },
       patch: { set: { curvature: c } }, preview: { tags: viaCurv.map((a) => a.t) },
       why: `Arco grosseiro: ${fmt(worstA)}° por elemento (> ${A.arcMaxDeg.value}°: ${A.arcMaxDeg.source}). Curvatura ${c} elementos por volta (${A.curvatureSuggest.source}).`,
       metric: { name: "graus por elemento no arco", before: fmt(worstA), after: fmt(Math.max(...viaCurv.map((a) => a.deg / nAfter(a)))), unit: "°" },
@@ -128,7 +129,7 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
     const nNew = (a: (typeof list)[number]) => Math.ceil(a.deg / A.arcTargetDeg.value - 1e-9), worstA = Math.max(...list.map((a) => a.deg / a.nEff));
     out.push({
       id: idOf("arc", list.map((a) => a.t)), rule: "arc",
-      region: { block, edges: refsOf(list.map((a) => a.t)), label: `${list.length} arco(s)` },
+      region: { block, edges: refsOf(list.map((a) => a.t)), label: pl(list.length, "arco", "arcos") },
       patch: { addSeeds: list.map((a) => ({ edges: [refOf.get(a.t)!], mode: "count" as const, value: nNew(a) })) }, preview: { tags: list.map((a) => a.t) },
       why: `Arco grosseiro: ${fmt(worstA)}° por elemento (> ${A.arcMaxDeg.value}°: ${A.arcMaxDeg.source}). Seed com ${A.arcTargetDeg.value}° por elemento (${A.arcTargetDeg.source}).`,
       metric: { name: "graus por elemento no arco", before: fmt(worstA), after: fmt(Math.max(...list.map((a) => a.deg / nNew(a)))), unit: "°" },
@@ -178,10 +179,10 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
       const N1 = curPlan.plan!.blocks.length;
       out.push({
         id: `hex:${chosen.map((c) => c.ref.name).sort().join(",")}`, rule: "hex",
-        region: { block: "Corpo", faces: chosen.map((c) => c.ref), label: `${chosen.length} partição(ões)` },
+        region: { block: "Corpo", faces: chosen.map((c) => c.ref), label: pl(chosen.length, "partição", "partições") },
         patch: { addPartitions: chosen.map((c) => ({ axis: "f" as const, at: 0, face: c.ref })) },
         preview: { tags: [], planes: chosen.map((c) => ({ origin: c.origin, normal: c.normal })) },
-        why: `Hexaedros: ${N - k0} de ${N} sólido(s) não são blocos hexaédricos (6 faces de 4 arestas) e caem na subdivisão, de qualidade inferior. Partir pelos planos de ${chosen.length} face(s) deixa ${N1 - cur} de ${N1} em blocos.${cur ? " Os restantes continuam por subdivisão." : ""}`,
+        why: `Hexaedros: ${N - k0} de ${pl(N, "sólido", "sólidos")} não ${N - k0 === 1 ? "é bloco hexaédrico" : "são blocos hexaédricos"} (6 faces de 4 arestas) e caem na subdivisão, de qualidade inferior. Partir pelos planos de ${pl(chosen.length, "face", "faces")} deixa ${N1 - cur} de ${N1} em blocos.${cur ? " Os restantes continuam por subdivisão." : ""}`,
         metric: { name: "blocos hexaédricos", before: k0, after: N1 - cur, unit: `/${N}→${N1}` },
       });
     } else {
@@ -189,7 +190,7 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
         id: "hex:subdivision", rule: "hex",
         region: { block: "Corpo", label: "método dos hexaedros" },
         patch: { set: { hexMethod: "subdivision" } }, preview: { tags: [] },
-        why: `Hexaedros: ${N - k0} de ${N} sólido(s) não são blocos hexaédricos e nenhuma partição pelos planos das faces do corpo ajuda. Assumir a subdivisão (qualidade inferior) ou partir à mão.`,
+        why: `Hexaedros: ${N - k0} de ${pl(N, "sólido", "sólidos")} não ${N - k0 === 1 ? "é bloco hexaédrico" : "são blocos hexaédricos"} e nenhuma partição pelos planos das faces do corpo ajuda. Assumir a subdivisão (qualidade inferior) ou partir à mão.`,
         metric: { name: "blocos hexaédricos", before: k0, unit: `/${N}` },
       });
     }
@@ -211,9 +212,9 @@ export function adviseMesh(ctx: Ctx, s: FemStudy, worst?: MeshQuality["worst"]):
     const tags = [...new Set([...faces.values()].flatMap((f) => explore(f.face, "edge").flatMap((e) => sp.topo.edgeIdx(e))))];
     out.push({
       id: `jacobian:${refs.map((r) => r.name).sort().join(",")}`, rule: "jacobian",
-      region: { block: "Corpo", faces: refs, label: `${inv.length} elemento(s) invertido(s)` },
+      region: { block: "Corpo", faces: refs, label: pl(inv.length, "elemento invertido", "elementos invertidos") },
       patch: { addLocal: [{ faces: refs, size: h }] }, preview: { tags },
-      why: `${inv.length} elemento(s) invertido(s) (${A.invertedSj.source}) junto a ${refs.length} face(s); refinamento local a ${h} mm. Se persistir, rever a geometria nessa zona (faces muito estreitas ou arestas minúsculas).`,
+      why: `${pl(inv.length, "elemento invertido", "elementos invertidos")} (${A.invertedSj.source}) junto a ${pl(refs.length, "face", "faces")}; refinamento local a ${h} mm. Se persistir, rever a geometria nessa zona (faces muito estreitas ou arestas minúsculas).`,
       metric: { name: "jacobiano escalado mínimo", before: fmt(Math.min(...inv.map((w) => w.sj))), unit: "" },
     });
   }

@@ -46,7 +46,7 @@ async function model() {
   return { run, preview, face, ids: Object.keys(doc.features ?? {}) };
 }
 
-const blocks = (c: FemCase) => Number(/dividem o sólido em (\d+) blocos/.exec(c.hypotheses.join("\n"))?.[1] ?? 1);
+const blocks = (c: FemCase) => Number(/dividem? o sólido em (\d+) blocos?/.exec(c.hypotheses.join("\n"))?.[1] ?? 1);
 const top = (c: FemCase) => Object.values(c.groups).find((g) => g.length > 1) ?? [];
 
 test("plano de referência: um plano de referência e uma face plana cortam a barra", async () => {
@@ -85,7 +85,7 @@ test("diagnóstico por ferramenta: 1 má + 2 boas → as 2 cortam e 1 aviso", as
     assert.equal(blocks(r.case), 4, JSON.stringify(r.case.hypotheses));
     assert.equal(r.warnings.filter((w) => /ignorada/.test(w)).length, 1, JSON.stringify(r.warnings));
     assert.ok(r.warnings.some((w) => /Partição 2/.test(w)), JSON.stringify(r.warnings));
-    assert.match(r.case.hypotheses.join("\n"), /2 ferramenta\(s\)/);
+    assert.match(r.case.hypotheses.join("\n"), /2 ferramentas dividem/);
   }
 });
 
