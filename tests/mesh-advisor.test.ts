@@ -8,6 +8,7 @@ import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument } from "../src/doc/types.ts";
 import { type FemStudy, type SimMesh, SIM_MATERIALS, newFemStudy } from "../src/doc/study.ts";
 import { adviseMesh, biasFor } from "../src/kernel/mesh-advisor.ts";
+import { suggestSweepCuts } from "../src/kernel/sweep-cuts.ts";
 import { applyPatch, groupByBlock, mergePatches, type Suggestion } from "../src/sim/mesh-advice.ts";
 import { ADVISOR_LIMITS } from "../src/sim/quality.ts";
 
@@ -93,6 +94,29 @@ test("L com hexaedros: propõe partição em blocos; aceitar elimina a sugestão
   assert.ok(h.preview.planes?.length);
   const b = adviseMesh(ctx, { ...s, mesh: applyPatch(s.mesh, h.patch) });
   assert.deepEqual(only(b, "hex"), []);
+});
+
+test("placa com furo em hexaedros: cortes pelo eixo do furo tornam tudo blocos", async () => {
+  const ctx = await box(100, 100, 10, [[50, 50, 20]]);
+  const s = fem({ size: 5, order: 1, curvature: 0, element: "hex", hexMethod: "auto" });
+  const sc = suggestSweepCuts(ctx, s);
+  assert.ok(sc, "sem cortes");
+  assert.ok(sc.cuts.some((c) => c.kind === "axis"), JSON.stringify(sc.cuts.map((c) => c.key)));
+  assert.equal(sc.after.blocks, sc.after.solids, JSON.stringify(sc.after));
+  assert.ok(sc.before.blocks < sc.before.solids);
+  const [h] = only(adviseMesh(ctx, s), "hex");
+  assert.ok(h?.patch.addPartitions?.length, JSON.stringify(h));
+  assert.equal(h.preview.planes?.length, h.patch.addPartitions!.length);
+  assert.match(h.why, /eixos dos furos/);
+  const b = adviseMesh(ctx, { ...s, mesh: applyPatch(s.mesh, h.patch) });
+  assert.deepEqual(only(b, "hex"), []);
+});
+
+test("caixa simples em hexaedros: já é bloco, sem cortes nem sugestão", async () => {
+  const ctx = await box(40, 20, 10);
+  const s = fem({ size: 5, order: 1, curvature: 0, element: "hex", hexMethod: "auto" });
+  assert.equal(suggestSweepCuts(ctx, s), null);
+  assert.deepEqual(only(adviseMesh(ctx, s), "hex"), []);
 });
 
 test("Jacobiano negativo: refinamento local na face mais próxima; gradiente fica em nota", async () => {
