@@ -410,6 +410,9 @@ button.on { background: var(--accent-soft); border-color: var(--accent); }
 .kw-item.error { border-left: 3px solid var(--bad); }
 .kw-item.info { border-left: 3px solid #2563eb; }
 .kw-item input:not([type]) { flex: 1; min-width: 0; }
+.kw-head { display: flex; align-items: center; gap: 8px; }
+.kw-head .kw-title { flex: 1; font-weight: 600; font-size: .9em; }
+.kw-head .check { white-space: nowrap; }
 .kw-dot { width: 1.2em; text-align: center; font-weight: 600; }
 .kw-table input { width: 6em; }
 .kw-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -620,6 +623,16 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .sim-leaves li:hover { color: var(--ws-accent); }
 .sim-leaves .dt { color: var(--muted); }
 .sim-leaves .sw { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: 0; }
+.sim-leaves li.pl { align-items: center; }
+.sim-leaves li.pl .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-leaves .pn { display: inline-block; min-width: 15px; margin-right: 5px; padding: 0 3px; border-radius: 4px; background: var(--line); color: var(--muted); font: 600 10px/15px system-ui, sans-serif; text-align: center; font-style: normal; }
+.sim-leaves .acts { display: flex; gap: 2px; visibility: hidden; }
+.sim-leaves li.pl:is(:hover, :focus-within) .acts { visibility: visible; }
+.sim-leaves .acts .icon { width: 22px; height: 20px; min-height: 0; padding: 0; font-size: 11px; line-height: 1; }
+@media (hover: none) { .sim-leaves .acts { visibility: visible; } .sim-leaves .acts .icon { width: 32px; height: 28px; } }
+.sim-leaves li.off .lb, .kw-item.off > .row, .kw-item.off > .kw-head .kw-title { opacity: .5; }
+.sim-leaves li.off .lb { text-decoration: line-through; }
+.kw-item.off { border-style: dashed; }
 .sim-new { display: flex; gap: 4px; flex-wrap: wrap; }
 .section-panel { animation: rise .2s var(--ease) both; }
 .pm-head { display: flex; align-items: baseline; gap: 8px; padding: 2px 0 8px; margin-bottom: 8px; border-bottom: 2px solid var(--ws-accent); }
