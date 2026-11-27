@@ -10,6 +10,7 @@ import { addFeature, newDocument } from "../src/doc/io.ts";
 import type { CadDocument, TopoRef } from "../src/doc/types.ts";
 import { type FemStudy, SIM_MATERIALS, newFemStudy } from "../src/doc/study.ts";
 import { studyCase } from "../src/kernel/sim.ts";
+import { seedPreview } from "../src/kernel/sim-fem.ts";
 import type { FemCase } from "../src/sim/case.ts";
 
 before(initKernel);
@@ -35,12 +36,14 @@ async function model() {
     { kind: "fixed", faces: [face(0, 0)] },
     { kind: "pressure", faces: [face(2, 10)], p: 1 },
   ];
+  const study = (partitions: NonNullable<FemStudy["mesh"]>["partitions"]): FemStudy =>
+    ({ ...newFemStudy("s1", 1), material: { ...SIM_MATERIALS[0] }, mesh: { size: 2.5, order: 1, curvature: 0, partitions }, loads });
+  const preview = (partitions: NonNullable<FemStudy["mesh"]>["partitions"]) => seedPreview(r.ctx, study(partitions));
   const run = (partitions: NonNullable<FemStudy["mesh"]>["partitions"]) => {
-    const st: FemStudy = { ...newFemStudy("s1", 1), material: { ...SIM_MATERIALS[0] }, mesh: { size: 2.5, order: 1, curvature: 0, partitions }, loads };
-    const c = studyCase(r.ctx, st);
+    const c = studyCase(r.ctx, study(partitions));
     return { warnings: c.warnings, case: c.case as FemCase };
   };
-  return { run, face, ids: Object.keys(doc.features ?? {}) };
+  return { run, preview, face, ids: Object.keys(doc.features ?? {}) };
 }
 
 const blocks = (c: FemCase) => Number(/dividem o sólido em (\d+) blocos/.exec(c.hypotheses.join("\n"))?.[1] ?? 1);
@@ -122,4 +125,21 @@ test("cilindro coaxial com um furo: R = 10 à volta de um furo de raio 5 separa 
   assert.ok(hole, "o corte devia ter aberto um furo cilíndrico");
   assert.deepEqual(c.warnings, []);
   assert.equal(blocks(c.case as FemCase), 2, JSON.stringify((c.case as FemCase).hypotheses));
+});
+
+/** Coordenadas x de todos os pontos das linhas de corte. */
+const xs = (cuts: number[][]) => cuts.flatMap((l) => l.filter((_, i) => i % 3 === 0));
+
+test("pré-visualização dos cortes: as linhas de corte ficam nos planos das partições e os avisos chegam", async () => {
+  const m = await model();
+  assert.deepEqual(m.preview(undefined).cuts, []);
+  const datum = m.preview([{ axis: "plane", at: 0, plane: { kind: "datum", feature: "f3" } }]);
+  assert.equal(datum.cuts.length, 4, "o quadrado 10 × 10 em X = 30");
+  assert.ok(xs(datum.cuts).every((x) => Math.abs(x - 30) < 1e-6), JSON.stringify(xs(datum.cuts)));
+  const sk = m.preview([{ axis: "sketch", at: 0, sketch: "f4" }]);
+  assert.equal(sk.cuts.length, 8, "dois quadrados, em X = 40 e X = 60");
+  assert.ok(xs(sk.cuts).every((x) => Math.abs(x - 40) < 1e-6 || Math.abs(x - 60) < 1e-6), JSON.stringify(xs(sk.cuts)));
+  const bad = m.preview([{ axis: "x", at: 200 }]);
+  assert.deepEqual(bad.cuts, []);
+  assert.ok(bad.warnings.some((w) => /^Partição 1.*ignorada/.test(w)), JSON.stringify(bad.warnings));
 });

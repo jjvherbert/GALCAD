@@ -121,6 +121,8 @@ export interface State {
   liveMesh: boolean;
   /** Malha ao vivo: último erro do Gmsh/agente (a malha anterior fica, esbatida, com este aviso). */
   liveMeshError: string | null;
+  /** Pré-visualização das partições do estudo FEM ativo: n.º de linhas de corte e avisos das ignoradas. */
+  partitionCheck: { cuts: number; warnings: string[] } | null;
   agent: { url: string; token: string };
   /** Forma livre em edição: polo selecionado e restrição do arrasto. */
   poleSel: [number, number] | null;
@@ -173,7 +175,7 @@ export const SESSION_KEYS = [
 export const UI_KEYS = [
   "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
   "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "userMaterials", "pmiView", "simView", "simHidden", "liveMesh",
-  "liveMeshError", "agent", "simBusy", "simProgress",
+  "liveMeshError", "partitionCheck", "agent", "simBusy", "simProgress",
 ] as const satisfies readonly (keyof State)[];
 export type DocKey = (typeof DOC_KEYS)[number];
 export type SessionKey = (typeof SESSION_KEYS)[number];

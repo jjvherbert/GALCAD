@@ -395,7 +395,7 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
   const set = (p: Partial<SimMesh>) => onChange({ ...m, ...p });
   const hex = m.element === "hex";
   const seeds = m.seeds ?? [];
-  const st = useStoreKeys("doc");
+  const st = useStoreKeys("doc", "partitionCheck");
   const setSeed = (i: number, p: Partial<MeshSeed>) => set({ seeds: seeds.map((x, k) => (k === i ? { ...x, ...p } : x)) });
   return (
     <>
@@ -471,6 +471,10 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
           </div>
         ))}
         <button class="small" onClick={() => set({ partitions: [...(m.partitions ?? []), { axis: "x", at: 0 }] })}>+ partição</button>
+        {(m.partitions ?? []).length > 0 && st.partitionCheck && <p class="field-hint partition-check" data-cuts={st.partitionCheck.cuts}>
+          {st.partitionCheck.cuts ? `${st.partitionCheck.cuts} linha(s) de corte a violeta no 3D.` : "Nenhuma linha de corte: as partições não dividem o sólido."}
+          {st.partitionCheck.warnings.map((w) => <span key={w} class="warn"><br />{w}</span>)}
+        </p>}
         {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Num plano inclinado a normal não precisa de ser unitária e d é a distância à origem ao longo dela. "Plano de uma face" prolonga o plano de uma face plana do corpo para lá dos seus limites (como o Extend Face do Abaqus). "Plano de referência" usa um plano padrão, um plano de referência ou uma face plana. "Esboço extrudido" extrude o perfil fechado de um esboço pelo sólido todo e corta por essa superfície (como a Partition Cell › Extrude/Sweep do Abaqus). "Cilindro" corta por uma superfície cilíndrica de raio R ao longo do eixo de uma face cilíndrica (um anel à volta de um furo) ou, sem face, do eixo que passa em O com a direção d. "Só nesta face" limita o corte às linhas que o plano traça nessa face plana e varre-as pela espessura, na direção da normal da face: a face oposta recebe a mesma divisão e os elementos ficam direitos (bom skew), sem precisar de outra partição. Num esboço, "Projetar só nesta face" projeta as curvas do esboço na face plana e varre-as pela espessura (como a Split Line › Projection do SolidWorks). Cargas, apoios, seeds e refinamentos passam às sub-faces. Uma partição que falha é ignorada com um aviso e as outras aplicam-se. Só sólidos.</p>}
       </fieldset>
       <fieldset class="checklist">

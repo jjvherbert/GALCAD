@@ -153,6 +153,7 @@ export class Viewport {
     const r = buildSeedMarks(this.seedGroup, this.seedEl, p);
     this.seedLabels = r.labels;
     this.el.dataset.seeds = p ? String(r.nodes) : "";
+    this.el.dataset.cuts = p ? String(r.cuts) : "";
   }
 
   private adviceGroup = new THREE.Group();

@@ -139,7 +139,10 @@ function App() {
   // espaços FEM/CFD: o modelo mostra as faces com condições (apoios, cargas, entrada/saída)
   useEffect(() => { vp.current?.setConditionFaces(conditionFaceColors()); }, [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result, st.asmResult]);
   // espaço FEM: nós das seeds da malha (meshPlan no worker, sem Gmsh), atualizados ao vivo
-  useEffect(() => scheduleSeedPreview((p) => vp.current?.setSeedMarks(p)), [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result]);
+  useEffect(() => scheduleSeedPreview((p) => {
+    vp.current?.setSeedMarks(p);
+    store.set({ partitionCheck: p ? { cuts: p.cuts.length, warnings: p.warnings.filter((w) => w.startsWith("Partição")) } : null });
+  }), [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result]);
   useEffect(() => vp.current?.setAdvicePreview(st.advicePreview, lastSeedPreview()), [st.advicePreview]);
   // malha ao vivo (opção no painel da seed): volta a gerar a malha completa após uma pausa nas alterações
   useEffect(scheduleLiveMesh, [st.workspace, st.simStudy, st.doc, st.project, st.liveMesh, st.agent, st.simBusy]);
