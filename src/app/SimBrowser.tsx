@@ -13,6 +13,7 @@ import { CONDITION_COLORS, activeStudies, activeStudy, addStudy, deleteStudy, up
 import { runCommand } from "./commands.ts";
 import { checkStudy, checkSummary } from "../sim/modelcheck.ts";
 import { loadEdges, loadFaces } from "../doc/study.ts";
+import { pl } from "../doc/plural.ts";
 import { type StepInfo, type StepState } from "./workflow.ts";
 import { activeStepStates } from "./workflow-actions.ts";
 
@@ -40,15 +41,15 @@ function femNodes(s: FemStudy, asm: boolean, hasResult: boolean, doc: Pick<CadDo
     { section: "study", icon: "⚙", label: "Estudo", detail: `${ANALYSIS[s.analysis]}${s.analysis === "dynamic" ? ` ${s.dynamic?.scheme === "explicit" ? "explícita" : "implícita"}` : ""} · ${SOLVER[s.solver ?? "calculix"]}`, state: "ok" },
     { section: "material", icon: "◧", label: "Material", detail: asm ? "por corpo" : s.material.name, state: "ok" },
     {
-      section: "conditions", icon: "⤓", label: "Cargas e apoios", detail: `${loads.length} condição(ões)`,
+      section: "conditions", icon: "⤓", label: "Cargas e apoios", detail: pl(loads.length, "condição", "condições"),
       state: structural && !supports && s.analysis !== "modal" ? "warn" : loads.length ? "ok" : "todo",
       children: loads.map((l) => {
         const edges = loadEdges(s, l).length;
-        return { label: LOAD_SHORT[l.kind], detail: edges ? `${edges} aresta(s)` : "faces" in l ? `${loadFaces(s, l).length} face(s)` : "", color: CONDITION_COLORS[l.kind], edges: edges > 0 };
+        return { label: LOAD_SHORT[l.kind], detail: edges ? pl(edges, "aresta", "arestas") : "faces" in l ? pl(loadFaces(s, l).length, "face", "faces") : "", color: CONDITION_COLORS[l.kind], edges: edges > 0 };
       }),
     },
     ...(asm ? [{ section: "contact" as const, icon: "⧉", label: "Contacto", detail: ({ bonded: "colado", friction: `atrito μ = ${s.contact?.mu ?? 0.3}`, none: "sem ligação" } as Record<string, string>)[s.contact?.mode ?? "bonded"], state: "ok" as const }] : []),
-    { section: "mesh", icon: "▦", label: "Malha", detail: `${m.element === "hex" ? "hexaedros" : "tetraedros"} ${m.order === 2 ? "quadráticos" : "lineares"} · ${m.size} mm${seeds ? ` · ${seeds} seed(s)` : ""}${parts ? ` · ${parts}` : ""}`, state: "ok",
+    { section: "mesh", icon: "▦", label: "Malha", detail: `${m.element === "hex" ? "hexaedros" : "tetraedros"} ${m.order === 2 ? "quadráticos" : "lineares"} · ${m.size} mm${seeds ? ` · ${pl(seeds, "seed", "seeds")}` : ""}${parts ? ` · ${parts}` : ""}`, state: "ok",
       children: (m.partitions ?? []).map((c, i) => ({ label: partitionLabel(c, doc), partition: i, off: !!c.suppressed, detail: c.suppressed ? "suprimida" : "" })),
     },
     convNode(s),
@@ -62,7 +63,7 @@ function femNodes(s: FemStudy, asm: boolean, hasResult: boolean, doc: Pick<CadDo
 function convNode(s: Study): Node {
   const c = s.convergence, runs = s.convergenceRuns?.length ?? 0;
   const mode = c ? { three: "3 malhas", sweep: `±${c.levels} níveis`, auto: `GCI ≤ ${c.target} %` }[c.mode] : "";
-  return { section: "convergence", icon: "⤳", label: "Convergência", detail: [c?.enabled ? `ligada · ${mode} · r ${c.ratio}` : runs ? "" : "desligada", runs ? `${runs} guardado(s)` : ""].filter(Boolean).join(" · "), state: runs ? "ok" : "todo" };
+  return { section: "convergence", icon: "⤳", label: "Convergência", detail: [c?.enabled ? `ligada · ${mode} · r ${c.ratio}` : runs ? "" : "desligada", runs ? pl(runs, "guardado", "guardados") : ""].filter(Boolean).join(" · "), state: runs ? "ok" : "todo" };
 }
 
 function checkNode(s: Study, asm: boolean): Node {
@@ -75,7 +76,7 @@ function cfdNodes(s: CfdStudy, hasResult: boolean): Node[] {
     { section: "study", icon: "⚙", label: "Estudo", detail: `${s.regime === "internal" ? "Interno" : "Externo"} · ${SOLVER[s.solver]} · ${s.turbulence === "laminar" ? "laminar" : s.turbulence}`, state: "ok" },
     {
       section: "conditions", icon: "⇉", label: "Fluido e fronteiras", detail: s.fluid.name, state: s.regime === "internal" && !(s.inlet?.faces.length && s.outlet?.faces.length) ? "warn" : "ok",
-      children: s.regime === "internal" ? [{ label: "Entrada", detail: `${s.inlet?.faces.length ?? 0} face(s)`, color: CONDITION_COLORS.inlet }, { label: "Saída", detail: `${s.outlet?.faces.length ?? 0} face(s)`, color: CONDITION_COLORS.outlet }] : [],
+      children: s.regime === "internal" ? [{ label: "Entrada", detail: pl(s.inlet?.faces.length ?? 0, "face", "faces"), color: CONDITION_COLORS.inlet }, { label: "Saída", detail: pl(s.outlet?.faces.length ?? 0, "face", "faces"), color: CONDITION_COLORS.outlet }] : [],
     },
     { section: "mesh", icon: "▦", label: "Malha", detail: `${s.mesh.size} mm`, state: "ok" },
     convNode(s),

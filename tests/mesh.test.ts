@@ -323,7 +323,7 @@ test("face mapeada triangular: as 3 arestas com o mesmo n.º de elementos e o Gm
   assert.equal(onTop.length, 3);
   assert.deepEqual(onTop.map((x) => x.n), [6, 6, 6]);
   assert.equal(t.c.mesh.surfaces!.length, 1);
-  assert.ok(t.c.hypotheses.some((h) => h.includes("1 face(s) mapeada(s) triangular(es)")));
+  assert.ok(t.c.hypotheses.some((h) => h.includes("1 face mapeada triangular")));
   if (!T.gmsh) return;
   const h = await previewMesh(t.dir);
   assert.ok(h.quality!.elements > 0);
@@ -345,7 +345,7 @@ test("camadas na espessura: chapa fina com ≥ 3 elementos nas arestas de 2 mm (
   assert.equal(tc.length, 4);
   assert.ok(tc.every((x) => x.n === 3 && !x.user));
   assert.equal(tet.c.mesh.curves!.length, 4, "só as arestas da espessura");
-  assert.ok(tet.c.hypotheses.some((h) => h.includes("4 aresta(s) na espessura com ≥ 3 elementos")));
+  assert.ok(tet.c.hypotheses.some((h) => h.includes("4 arestas na espessura com ≥ 3 elementos")));
   const hex = await solve(doc, fem({ mesh: { size: 10, order: 1, curvature: 0, layers: 3, element: "hex" }, loads }));
   assert.deepEqual(hex.c.mesh.curves!.filter(thick).map((x) => x.n), [3, 3, 3, 3]);
   // sem camadas: 1 elemento na espessura (tamanho 10 > 2 mm)
@@ -382,12 +382,12 @@ test("partições: perfil em L dividido em 3 blocos dá hexaedros estruturados, 
   const vals = Object.values(g);
   assert.equal(g.R1.length, 3, JSON.stringify(g));
   assert.equal(vals.filter((t) => t.length === 1).length, 2, JSON.stringify(g));
-  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")));
+  assert.ok(cut.c.hypotheses.some((h) => h.includes(" o sólido em 3 blocos")));
   // plano fora do sólido: ignorado com aviso (os outros continuam a cortar)
   const out = studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "x", at: 200 }] }, loads }));
   assert.ok(out.warnings.some((w) => /Partição 1 \(X = 200\): o plano não atravessa o sólido .* ignorada/.test(w)), JSON.stringify(out.warnings));
   const mix = studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "x", at: 20 }, { axis: "y", at: 20 }, { axis: "x", at: 200 }] }, loads }));
-  assert.ok(mix.case.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(mix.case.hypotheses));
+  assert.ok(mix.case.hypotheses.some((h) => h.includes(" o sólido em 3 blocos")), JSON.stringify(mix.case.hypotheses));
   if (!T.gmsh) return;
   const h = await previewMesh(cut.dir);
   near(h.quality!.volume, (100 * 20 + 20 * 40) * 10, 1e-6);
@@ -410,7 +410,7 @@ test("partições: plano inclinado x + y = 50 corta o perfil em L em 3 blocos", 
   const cut = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, partitions: [{ axis: "n", normal: [2, 2, 0], at: "50 / sqrt(2)" }] }, loads }));
   // os blocos (pentágonos/trapézios extrudidos) não são hexaédricos: só a malha tetraédrica fica conforme
   assert.equal(cut.c.faces.filter((f) => f.name.startsWith("corte ")).length, 2);
-  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
+  assert.ok(cut.c.hypotheses.some((h) => h.includes(" o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
   // as cargas continuam numa só face cada (o corte não lhes toca)
   assert.equal(Object.values(cut.c.groups).filter((t) => t.length === 1).length, 2, JSON.stringify(cut.c.groups));
   assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "n", normal: [0, 0, 0], at: 1 }] }, loads })).warnings.some((w) => /normal do plano não pode ser nula — ignorada/.test(w)));
@@ -461,7 +461,7 @@ test("partições: pelo plano de uma face (Extend Face) — as faces interiores 
   assert.equal(cut.c.mesh.hexMethod, "structured");
   assert.deepEqual(cut.c.mesh.volumes, [1, 2, 3]);
   assert.equal(cut.c.faces.filter((f) => f.name.startsWith("corte ")).length, 2);
-  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
+  assert.ok(cut.c.hypotheses.some((h) => h.includes(" o sólido em 3 blocos")), JSON.stringify(cut.c.hypotheses));
   // uma face exterior não atravessa o sólido: ignorada com aviso; sem face escolhida, erro claro
   assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0, face: face(1, 0) }] }, loads })).warnings.some((w) => /Partição 1 pela face .*não atravessa o sólido .* ignorada/.test(w)));
   assert.ok(studyCase(r.ctx, fem({ mesh: { size: 5, order: 1, partitions: [{ axis: "f", at: 0 }] }, loads })).warnings.some((w) => /Partição 1: escolha a face plana.* ignorada/.test(w)));
@@ -486,7 +486,7 @@ test("partições só numa face: o corte é varrido pela espessura e a face opos
   const cut = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, element: "hex", partitions: [{ axis: "x", at: 40, onFace: face(2, 10) }], local: [{ faces: [face(2, 0)], size: 5 }] }, loads }));
   assert.equal(cut.c.mesh.hexMethod, "structured");
   assert.deepEqual(cut.c.mesh.volumes, [1, 2]);
-  assert.ok(cut.c.hypotheses.some((h) => h.includes("dividem o sólido em 2 blocos")), JSON.stringify(cut.c.hypotheses));
+  assert.ok(cut.c.hypotheses.some((h) => h.includes(" o sólido em 2 blocos")), JSON.stringify(cut.c.hypotheses));
   // a face de baixo (z = 0) também ficou dividida em 2 (o corte atravessa a espessura direito)
   assert.equal(cut.c.groups.R1.length, 2, JSON.stringify(cut.c.groups));
   // plano paralelo à face escolhida: não a corta — ignorado com aviso

@@ -6,6 +6,7 @@
 import type { TopoDS_Shape } from "./occ.ts";
 import { bbox, edgeProps, explore } from "./occ.ts";
 import type { FemCaseMesh, V3 } from "../sim/case.ts";
+import { pl } from "../doc/plural.ts";
 
 export interface PlanSeed { tags: number[]; mode: "count" | "size"; value: number; bias: number; biasAt: "start" | "end" | "ends" | "center" | "vertex"; biasPoint?: V3 }
 
@@ -173,12 +174,12 @@ export function meshPlan(p: PlanInput): MeshPlan {
   }
   curves.sort((a, b) => a.tag - b.tag);
 
-  if (method === "structured") notes.push(`hexaedros estruturados (mapeados) em ${volumes.length} volume(s), ${surfaces.size} faces mapeadas`);
+  if (method === "structured") notes.push(`hexaedros estruturados (mapeados) em ${pl(volumes.length, "volume", "volumes")}, ${pl(surfaces.size, "face mapeada", "faces mapeadas")}`);
   if (method === "subdivision") notes.push("hexaedros por subdivisão de uma malha tetraédrica (cada tetraedro em 4 hexaedros)");
-  if (p.element !== "hex" && surfaces.size) notes.push(`${surfaces.size} face(s) mapeada(s)`);
-  if (tri) notes.push(`${tri} face(s) mapeada(s) triangular(es): as 3 arestas com o mesmo n.º de elementos${p.element === "hex" ? ", triângulos no canto degenerado" : ""}`);
-  if (thinCount) notes.push(`${thinCount} aresta(s) na espessura com ≥ ${layers} elementos${p.element === "tet" ? " (em tetraedros só nas arestas; o interior das faces segue o tamanho global — para camadas reais usar hexaedros ou tamanho ≤ espessura / camadas)" : ""}`);
+  if (p.element !== "hex" && surfaces.size) notes.push(pl(surfaces.size, "face mapeada", "faces mapeadas"));
+  if (tri) notes.push(`${pl(tri, "face mapeada triangular", "faces mapeadas triangulares")}: as 3 arestas com o mesmo n.º de elementos${p.element === "hex" ? ", triângulos no canto degenerado" : ""}`);
+  if (thinCount) notes.push(`${pl(thinCount, "aresta", "arestas")} na espessura com ≥ ${layers} elementos${p.element === "tet" ? " (em tetraedros só nas arestas; o interior das faces segue o tamanho global — para camadas reais usar hexaedros ou tamanho ≤ espessura / camadas)" : ""}`);
   const user = curves.filter((c) => c.user).length;
-  if (user) notes.push(`${user} aresta(s) com seed`);
+  if (user) notes.push(pl(user, "aresta com seed", "arestas com seed"));
   return { hexMethod: method, volumes: volumes.length ? volumes : undefined, surfaces: surfaces.size ? [...surfaces].sort((a, b) => a - b) : undefined, curves: curves.length ? curves : undefined, warnings, notes, blocks: hexable };
 }

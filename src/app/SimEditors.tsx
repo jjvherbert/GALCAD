@@ -9,6 +9,7 @@ import { Check, ExprInput, Field, RefList, Select, usePickTarget } from "./forms
 import { PlaneSelect, SketchSelect } from "./forms-select.tsx";
 import { ShellEditor } from "./ShellEditor.tsx";
 import { LiveMeshToggle } from "./SeedHud.tsx";
+import { pl } from "../doc/plural.ts";
 
 const LOAD_LABELS: Record<FemLoad["kind"], string> = {
   fixed: "Encastramento", displacement: "Deslocamento imposto", symmetry: "Simetria (plano)", pointForce: "Força pontual", force: "Força total", pressure: "Pressão", gravity: "Gravidade", spring: "Mola à terra", mass: "Massa pontual", coupling: "Acoplamento (RBE2/RBE3)",
@@ -172,7 +173,7 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
               <div class="set-chips" aria-label="Conjuntos desta condição">
                 {usable.map((g) => {
                   const on = !!l.sets?.includes(g.id);
-                  const n = setKind(g) === "edge" ? `${g.edges?.length ?? 0} aresta(s)` : `${g.faces.length} face(s)`;
+                  const n = setKind(g) === "edge" ? pl(g.edges?.length ?? 0, "aresta", "arestas") : pl(g.faces.length, "face", "faces");
                   return <button key={g.id} class={`chip ${on ? "on" : ""}`} aria-pressed={on} title={n} onClick={() => setLoad(i, { ...l, sets: on ? (l.sets ?? []).filter((x) => x !== g.id) : [...(l.sets ?? []), g.id] } as FemLoad)}>{on ? "✓ " : "+ "}{g.name}</button>;
                 })}
               </div>
@@ -482,7 +483,7 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
         })}
         <button class="small" onClick={() => set({ partitions: [...(m.partitions ?? []), { axis: "x", at: 0 }] })}>+ partição</button>
         {(m.partitions ?? []).length > 0 && st.partitionCheck && <p class="field-hint partition-check" data-cuts={st.partitionCheck.cuts}>
-          {st.partitionCheck.cuts ? `${st.partitionCheck.cuts} linha(s) de corte a violeta no 3D.` : "Nenhuma linha de corte: as partições não dividem o sólido."}
+          {st.partitionCheck.cuts ? `${pl(st.partitionCheck.cuts, "linha", "linhas")} de corte a violeta no 3D.` : "Nenhuma linha de corte: as partições não dividem o sólido."}
           {st.partitionCheck.warnings.map((w) => <span key={w} class="warn"><br />{w}</span>)}
         </p>}
         {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Num plano inclinado a normal não precisa de ser unitária e d é a distância à origem ao longo dela. "Plano de uma face" prolonga o plano de uma face plana do corpo para lá dos seus limites (como o Extend Face do Abaqus). "Plano de referência" usa um plano padrão, um plano de referência ou uma face plana. "Esboço extrudido" extrude o perfil fechado de um esboço pelo sólido todo e corta por essa superfície (como a Partition Cell › Extrude/Sweep do Abaqus). "Cilindro" corta por uma superfície cilíndrica de raio R ao longo do eixo de uma face cilíndrica (um anel à volta de um furo) ou, sem face, do eixo que passa em O com a direção d. "Só nesta face" limita o corte às linhas que o plano traça nessa face plana e varre-as pela espessura, na direção da normal da face: a face oposta recebe a mesma divisão e os elementos ficam direitos (bom skew), sem precisar de outra partição. Num esboço, "Projetar só nesta face" projeta as curvas do esboço na face plana e varre-as pela espessura (como a Split Line › Projection do SolidWorks). Cargas, apoios, seeds e refinamentos passam às sub-faces. Uma partição que falha é ignorada com um aviso e as outras aplicam-se. Suprimida: fica na lista com o mesmo número mas não corta (como suprimir uma feature); também se suprime ou apaga na árvore do estudo. Só sólidos.</p>}
