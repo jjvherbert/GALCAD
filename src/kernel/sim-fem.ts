@@ -39,6 +39,8 @@ export interface FemTopo {
    * exemplo a linha a meia espessura onde um plano corta a face exterior (NAFEMS LE10).
    */
   cutEdges: (face: TopoRef, what: string) => number[];
+  /** Arestas das faces de corte das partições (sem repetir): a pré-visualização dos cortes. */
+  cutLines: TopoDS_Shape[];
   note?: string;
 }
 
@@ -57,6 +59,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
       faceTags: (refs, what) => tagsOf(ctx, faces, solid, refs, what, report),
       edgeIdx: (e) => { const i = allEdges.findIndex((x) => x.IsSame(e)); return i < 0 ? [] : [i + 1]; },
       cutEdges: (_f, what) => { throw new Error(`${what}: as arestas de corte só existem com partições da malha`); },
+      cutLines: [],
     };
   }
   // «só nesta face»: o corte limita-se às linhas na face e é varrido pela espessura (normal da face)
@@ -161,7 +164,10 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
   });
   const faces = caseFaces(ctx, p.shape, named as never);
   const index = (list: TopoDS_Shape[], x: TopoDS_Shape) => list.findIndex((y) => y.IsSame(x)) + 1;
+  const cutTags = new Set(p.faces.filter((f) => !p.origin(f)).flatMap((f) => explore(f, "edge").map((e) => index(p.edges, e))));
+  cutTags.delete(0);
   return {
+    cutLines: [...cutTags].sort((a, b) => a - b).map((k) => p.edges[k - 1]),
     shape: p.shape, solids: p.solids, faces, allFaces: p.faces, allEdges: p.edges,
     faceTags: (refs, what) => {
       if (!refs.length) throw new Error(`${what}: escolha as faces`);
@@ -474,7 +480,8 @@ export function buildFemCase(s: FemStudy, sc: Ctx["scope"], faces: CaseFace[], t
 
 /** Nós de uma aresta na pré-visualização das seeds (malha ao vivo, sem Gmsh). */
 export interface SeedEdge { tag: number; n: number; kind: "user" | "propagated" | "auto"; progression?: number; bump?: number; points: number[] }
-export interface SeedPreview { edges: SeedEdge[]; warnings: string[]; notes: string[] }
+/** Plano de seeds para a vista; `cuts` são as linhas de corte das partições (polilinhas xyz achatadas). */
+export interface SeedPreview { edges: SeedEdge[]; cuts: number[][]; warnings: string[]; notes: string[] }
 
 /**
  * Frações (0..1, ao longo do comprimento) dos n+1 nós de uma aresta com a distribuição do Gmsh:
@@ -598,5 +605,6 @@ export function seedPreview(ctx: Ctx, s: FemStudy): SeedPreview {
     }
     return { tag, n, kind, points: pointsAlong(e, seedFractions(n)) };
   });
-  return { edges, warnings: [...new Set(sp.warnings)], notes: sp.plan?.notes ?? [] };
+  const cuts = sp.topo.cutLines.map((e) => sampleEdge(e, 40).flatMap((q) => q.p));
+  return { edges, cuts, warnings: [...new Set(sp.warnings)], notes: sp.plan?.notes ?? [] };
 }

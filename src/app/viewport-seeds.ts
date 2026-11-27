@@ -6,12 +6,24 @@ import type { SeedPreview } from "../kernel/sim-fem.ts";
 
 export const SEED_COLORS = { user: 0xdc2626, propagated: 0xf59e0b, auto: 0x64748b } as const;
 
+/** Linhas de corte das partições (pré-visualização antes de malhar). */
+export const CUT_COLOR = 0xa855f7;
+
 export interface SeedLabel { el: HTMLDivElement; at: THREE.Vector3 }
 
 /** Desenha os nós no grupo e cria os rótulos na camada; devolve os rótulos e o total de nós. */
-export function buildSeedMarks(g: THREE.Group, layer: HTMLElement, p: SeedPreview | null): { labels: SeedLabel[]; nodes: number } {
+export function buildSeedMarks(g: THREE.Group, layer: HTMLElement, p: SeedPreview | null): { labels: SeedLabel[]; nodes: number; cuts: number } {
   layer.replaceChildren();
-  if (!p) return { labels: [], nodes: 0 };
+  if (!p) return { labels: [], nodes: 0, cuts: 0 };
+  const segs: number[] = [];
+  for (const c of p.cuts) for (let i = 3; i < c.length; i += 3) segs.push(c[i - 3], c[i - 2], c[i - 1], c[i], c[i + 1], c[i + 2]);
+  if (segs.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(segs, 3));
+    const obj = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: CUT_COLOR, depthTest: false, transparent: true, opacity: 0.9 }));
+    obj.renderOrder = 10;
+    g.add(obj);
+  }
   const labels: SeedLabel[] = [];
   let nodes = 0;
   for (const kind of ["auto", "propagated", "user"] as const) {
@@ -33,7 +45,7 @@ export function buildSeedMarks(g: THREE.Group, layer: HTMLElement, p: SeedPrevie
     layer.append(el);
     labels.push({ el, at: new THREE.Vector3(e.points[k], e.points[k + 1], e.points[k + 2]) });
   }
-  return { labels, nodes };
+  return { labels, nodes, cuts: p.cuts.length };
 }
 
 export function placeSeedLabels(labels: SeedLabel[], camera: THREE.Camera, canvas: HTMLCanvasElement) {
