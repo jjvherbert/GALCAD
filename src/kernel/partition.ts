@@ -136,16 +136,17 @@ export function partitionSolid(solid: TopoDS_Shape, list: PartitionTool[]): Part
   return { shape, solids, faces, edges, sub, origin: (f) => back.get(f), used: built.length, skipped };
 }
 
-/** Linhas do plano sobre a face, varridas ao longo de `dir` de −far a +far (faces de corte pela espessura). */
-function sweptCut(plane: TopoDS_Shape, face: TopoDS_Shape, dir: [number, number, number] | undefined, far: number): TopoDS_Shape | null {
+/** Linhas que a ferramenta (um plano, um esboço extrudido) traça na face, varridas ao longo de `dir` de −far
+ *  a +far (faces de corte pela espessura, como a Split Line › Projection do SolidWorks); `null` = não a toca. */
+export function sweptCut(tool: TopoDS_Shape, face: TopoDS_Shape, dir: [number, number, number] | undefined, far: number): TopoDS_Shape | null {
   const o = oc() as any;
   const len = dir ? Math.hypot(...dir) : 0;
   if (!dir || !(len > 1e-12)) throw new Error("Partição numa face: a face tem de ser plana");
   const d = dir.map((x) => x / len);
-  const s = T(new o.BRepAlgoAPI_Section(plane, face, false));
+  const s = T(new o.BRepAlgoAPI_Section(tool, face, false));
   s.Approximation(true);
   s.Build();
-  if (!s.IsDone() || s.HasErrors()) throw new Error("Partição numa face: a interseção do plano com a face falhou");
+  if (!s.IsDone() || s.HasErrors()) throw new Error("Partição numa face: a interseção do corte com a face falhou");
   const edges = explore(T(s.Shape()), "edge");
   if (!edges.length) return null;
   const t = T(new o.gp_Trsf());

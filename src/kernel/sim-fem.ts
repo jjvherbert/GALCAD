@@ -5,7 +5,7 @@ import { exprIdentifiers } from "../doc/expr.ts";
 import type { MeshEdit } from "../sim/mshedit.ts";
 import { type Expr, type TopoRef } from "../doc/types.ts";
 import { type Ctx, type StepReport, edges as resolveEdges, faces as resolveFaces, featureName, modelSize, planeFrame } from "./context.ts";
-import { type CutPlane, type PartitionTool, partitionSolid } from "./partition.ts";
+import { type CutPlane, type PartitionTool, partitionSolid, sweptCut } from "./partition.ts";
 import { chainWire } from "./sketch3d.ts";
 import { chainsOf, one, shiftFrame } from "./features/surface-common.ts";
 import { type PlanInput, meshPlan } from "./meshplan.ts";
@@ -92,7 +92,16 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
         const wire = chainWire(ch, shiftFrame(sk.frame, v3.mul(sk.frame.z, -far))).wrapped;
         return T(T(new (oc().BRepPrimAPI_MakePrism)(wire, gpVec(v3.mul(sk.frame.z, 2 * far)), false, true)).Shape());
       }));
-      return { kind: "shape", shape, label: `Partição ${i + 1} pelo esboço "${featureName(ctx, c.sketch)}"` };
+      const name = featureName(ctx, c.sketch);
+      if (!c.onFace) return { kind: "shape", shape, label: `Partição ${i + 1} pelo esboço "${name}"` };
+      // curva projetada numa face (SolidWorks: Split Line › Projection): só as linhas que o esboço traça na
+      // face, varridas pela espessura na normal da face, para a face oposta receber a mesma divisão
+      const nf = resolveFaces(ctx, [c.onFace], report)[0];
+      const q = faceProps(nf.face);
+      if (!q.normal) throw new Error(`Partição ${i + 1}: a face "${nf.name}" onde se projeta o esboço não é plana`);
+      const cut = sweptCut(shape, nf.face, q.normal, far);
+      if (!cut) throw new Error(`Partição ${i + 1}: o esboço "${name}" não se projeta na face "${nf.name}"`);
+      return { kind: "shape", shape: cut, label: `Partição ${i + 1}: esboço "${name}" projetado na face "${nf.name}"` };
     }
     if (c.axis === "cyl") {
       // uma superfície cilíndrica de raio R, infinita no eixo (Abaqus: Partition Cell > Extrude a circle)

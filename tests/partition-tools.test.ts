@@ -64,6 +64,17 @@ test("esboço extrudido: o retângulo corta a barra em 3 e a carga no topo fica 
   assert.equal(top(r.case).length, 3, JSON.stringify(r.case.groups));
 });
 
+test("curva projetada: o esboço projetado no topo corta a barra em 3 pela espessura", async () => {
+  const m = await model();
+  const r = m.run([{ axis: "sketch", at: 0, sketch: "f4", onFace: m.face(2, 10) }]);
+  assert.equal(blocks(r.case), 3, JSON.stringify(r.case.hypotheses));
+  assert.deepEqual(r.warnings, []);
+  assert.equal(top(r.case).length, 3, JSON.stringify(r.case.groups));
+  const miss = m.run([{ axis: "sketch", at: 0, sketch: "f4", onFace: m.face(0, 0) }]);
+  assert.equal(blocks(miss.case), 1);
+  assert.ok(miss.warnings.some((w) => /Partição 1.*não se projeta.*ignorada/.test(w)), JSON.stringify(miss.warnings));
+});
+
 test("diagnóstico por ferramenta: 1 má + 2 boas → as 2 cortam e 1 aviso", async () => {
   const m = await model();
   for (const bad of [{ axis: "sketch" as const, at: 0, sketch: "" }, { axis: "x" as const, at: 200 }, { axis: "plane" as const, at: 0 }]) {
