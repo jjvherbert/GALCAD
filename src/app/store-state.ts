@@ -69,7 +69,7 @@ export interface State {
   /** Última feature confirmada (o 3D mostra um realce que se desvanece). */
   confirmed: { id: string; n: number } | null;
   /** Condição de simulação a destacar no painel (duplo clique numa face com condição). */
-  simFocus: { index: number; n: number } | null;
+  simFocus: { index: number; n: number; kind?: "partition" } | null;
   result: RebuildResponse | null;
   busy: boolean;
   /** O worker do núcleo tem pedidos por responder (reconstrução, exportação, análise…): mostra «Parar». */

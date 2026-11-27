@@ -51,7 +51,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
   const sh = s.shell ? shellOf(ctx) : undefined;
   const solid = sh ? sh.shape : bodyOf(ctx);
   const cuts = s.mesh.partitions ?? [];
-  if (sh || !cuts.length) {
+  if (sh || !cuts.some((c) => !c.suppressed)) {
     const faces = sh ? caseFaces(ctx, solid, sh.faces) : caseFaces(ctx, solid);
     const allEdges = explore(solid, "edge");
     return {
@@ -142,6 +142,7 @@ export function femTopo(ctx: Ctx, s: FemStudy, report: StepReport): FemTopo {
   };
   // cada ferramenta é diagnosticada à parte: a que não se consegue construir fica de fora com aviso
   const tools = cuts.flatMap((c, i): PartitionTool[] => {
+    if (c.suppressed) return []; // suprimida: não corta, mas as outras mantêm o número
     try { return [tool(c, i)]; } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
       report.warnings.push(`${m.startsWith("Partição") ? m : `Partição ${i + 1}: ${m}`} — ignorada`);
@@ -243,7 +244,7 @@ function shellCheck(s: FemStudy, sc: Ctx["scope"], tags: (refs: TopoRef[], what:
   if (sv === "code_aster" && s.analysis === "buckling") no("a encurvadura em casca no code_aster");
   if (s.analysis !== "static" && s.analysis !== "modal" && s.analysis !== "buckling") no(`a análise ${s.analysis}`);
   if (s.nonlinear?.geometry || s.nonlinear?.plasticity) no("a análise não linear");
-  if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1 || s.mesh.partitions?.length) no("a malha manual (hexaedros, seeds, faces mapeadas ou partições)");
+  if (s.mesh.element === "hex" || s.mesh.seeds?.length || s.mesh.mapped?.length || (s.mesh.layers ?? 0) > 1 || s.mesh.partitions?.some((c) => !c.suppressed)) no("a malha manual (hexaedros, seeds, faces mapeadas ou partições)");
   if (s.contact && s.contact.mode !== "none") no("o contacto");
   for (const l of s.loads) if (!SHELL_LOADS.has(l.kind)) no(`a condição «${l.kind}»`);
   return { thickness, ...(plies ? { plies } : {}), ...(regions.length ? { regions } : {}) };

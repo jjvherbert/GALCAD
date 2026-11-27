@@ -156,8 +156,10 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
       </fieldset>}
       {section === "conditions" && <>
       <SetsBox s={s} up={up} assembly={!!assembly} />
-      {s.loads.map((l, i) => (
-        <div class={`kw-item ${st.simFocus?.index === i ? "focus" : ""}`} key={`${i}:${st.simFocus?.index === i ? st.simFocus.n : 0}`} ref={(el) => { if (el && st.simFocus?.index === i) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }}>
+      {s.loads.map((l, i) => {
+        const focus = st.simFocus?.kind !== "partition" && st.simFocus?.index === i;
+        return (
+        <div class={`kw-item ${focus ? "focus" : ""}`} key={`${i}:${focus ? st.simFocus!.n : 0}`} ref={(el) => { if (el && focus) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }}>
           <div class="row"><b>{LOAD_LABELS[l.kind]}</b><button class="icon" aria-label={`Retirar condição ${i + 1}`} onClick={() => up({ loads: s.loads.filter((_, k) => k !== i) })}>✕</button></div>
           {"faces" in l && <RefList field={`load${i}`} label="Faces" accept={["face"]} refs={l.faces} onChange={(faces) => setLoad(i, { ...l, faces } as FemLoad)} />}
           {edgeLoad(l) && <>
@@ -224,7 +226,8 @@ export function FemEditor({ s, up, assembly, section }: { s: FemStudy; up: (p: P
           {l.kind === "convection" && <div class="row"><ExprInput label="h" unit="W/(m²·K)" value={l.h} onChange={(h) => setLoad(i, { ...l, h: h ?? 0 })} /><ExprInput label="T fluido" unit="°C" value={l.tInf} onChange={(tInf) => setLoad(i, { ...l, tInf: tInf ?? 0 })} /></div>}
           {l.kind === "heatFlux" && <ExprInput label="Fluxo" unit="W/m²" value={l.q} onChange={(q) => setLoad(i, { ...l, q: q ?? 0 })} />}
         </div>
-      ))}
+        );
+      })}
       <select aria-label="Acrescentar condição" value="" onChange={(e) => { const k = (e.target as HTMLSelectElement).value as FemLoad["kind"]; if (k) up({ loads: [...s.loads, newLoad(k)] }); }}>
         <option value="">+ condição…</option>
         {kinds.map((k) => <option key={k} value={k}>{LOAD_LABELS[k]}</option>)}
@@ -395,7 +398,7 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
   const set = (p: Partial<SimMesh>) => onChange({ ...m, ...p });
   const hex = m.element === "hex";
   const seeds = m.seeds ?? [];
-  const st = useStoreKeys("doc", "partitionCheck");
+  const st = useStoreKeys("doc", "partitionCheck", "simFocus");
   const setSeed = (i: number, p: Partial<MeshSeed>) => set({ seeds: seeds.map((x, k) => (k === i ? { ...x, ...p } : x)) });
   return (
     <>
@@ -446,8 +449,15 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
       {(m.layers ?? 0) > 1 && <p class="field-hint">Arestas curtas (≤ 15 % da maior dimensão do volume) com pelo menos {m.layers} elementos — para chapas e paredes finas modeladas como sólido. Camadas completas em hexaedros; em tetraedros só nas arestas (use também tamanho ≤ espessura / camadas).</p>}
       <fieldset class="checklist">
         <legend class="field-label">Partições em blocos</legend>
-        {(m.partitions ?? []).map((c, i) => (
-          <div key={i}>
+        {(m.partitions ?? []).map((c, i) => {
+          const focus = st.simFocus?.kind === "partition" && st.simFocus.index === i;
+          return (
+          <div class={`kw-item ${focus ? "focus" : ""} ${c.suppressed ? "off" : ""}`} data-partition={i} key={`${i}:${focus ? st.simFocus!.n : 0}`} ref={(el) => { if (el && focus) el.scrollIntoView({ block: "nearest", behavior: "smooth" }); }}>
+          <div class="kw-head">
+            <span class="kw-title">Partição {i + 1}</span>
+            <label class="check"><input type="checkbox" checked={!!c.suppressed} onChange={(e) => { const on = (e.target as HTMLInputElement).checked; set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, suppressed: on || undefined } : x)) }); }} /> Suprimida</label>
+            <button class="icon" aria-label={`Retirar partição ${i + 1}`} onClick={() => { const p = (m.partitions ?? []).filter((_, k) => k !== i); set({ partitions: p.length ? p : undefined }); }}>✕</button>
+          </div>
           <div class="row">
             <Select label="Plano" value={c.axis} options={[["x", "X = const."], ["y", "Y = const."], ["z", "Z = const."], ["n", "Inclinado (n·x = d)"], ["f", "Plano de uma face"], ["plane", "Plano de referência"], ["sketch", "Esboço extrudido"], ["cyl", "Cilindro (raio R)"]]} onChange={(axis) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, axis, at: axis === "cyl" && !(typeof x.at === "number" && x.at > 0) ? 5 : x.at, normal: axis === "n" ? x.normal ?? [1, 1, 0] : axis === "cyl" ? x.normal ?? [0, 0, 1] : undefined, origin: axis === "cyl" ? x.origin ?? [0, 0, 0] : undefined, face: axis === "f" || axis === "cyl" ? x.face : undefined, plane: axis === "plane" ? x.plane ?? { kind: "std", name: "XY" } : undefined, sketch: axis === "sketch" ? x.sketch ?? "" : undefined, onFace: axis === "cyl" ? undefined : x.onFace } : x)) })} />
             {c.axis === "sketch" && <SketchSelect label="Esboço" value={c.sketch ?? ""} before={st.doc.features.length} onChange={(sketch) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, sketch } : x)) })} />}
@@ -457,7 +467,6 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
               <ExprInput key={a} label={`n${a}`} unit="" value={(c.normal ?? [1, 1, 0])[j]} onChange={(v) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, normal: (x.normal ?? [1, 1, 0]).map((w, q) => (q === j ? v ?? 0 : w)) as [Expr, Expr, Expr] } : x)) })} />
             ))}
             {(c.axis === "x" || c.axis === "y" || c.axis === "z" || c.axis === "n") && <ExprInput label={c.axis === "n" ? "d" : c.axis.toUpperCase()} unit="mm" value={c.at} onChange={(at) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, at: at ?? 0 } : x)) })} />}
-            <button class="icon" aria-label={`Retirar partição ${i + 1}`} onClick={() => { const p = (m.partitions ?? []).filter((_, k) => k !== i); set({ partitions: p.length ? p : undefined }); }}>✕</button>
           </div>
             {c.axis === "plane" && <PlaneSelect field={`mesh.partitions.${i}.plane`} label="Plano" value={c.plane ?? { kind: "std", name: "XY" }} before={st.doc.features.length} onChange={(plane) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, plane } : x)) })} />}
             {c.axis === "cyl" && <RefList field={`mesh.partitions.${i}.face`} label="Eixo de uma face cilíndrica (opcional)" accept={["face"]} single refs={c.face ? [c.face] : []} onChange={(r) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, face: r[0] } : x)) })} />}
@@ -469,13 +478,14 @@ function MeshEditor({ mesh: m, thermal, onChange }: { mesh: SimMesh; thermal: bo
             </div>}
             {c.axis !== "cyl" && <RefList field={`mesh.partitions.${i}.onFace`} label={c.axis === "sketch" ? "Projetar só nesta face (opcional)" : "Só nesta face (opcional)"} accept={["face"]} single refs={c.onFace ? [c.onFace] : []} onChange={(r) => set({ partitions: (m.partitions ?? []).map((x, k) => (k === i ? { ...x, onFace: r[0] } : x)) })} />}
           </div>
-        ))}
+          );
+        })}
         <button class="small" onClick={() => set({ partitions: [...(m.partitions ?? []), { axis: "x", at: 0 }] })}>+ partição</button>
         {(m.partitions ?? []).length > 0 && st.partitionCheck && <p class="field-hint partition-check" data-cuts={st.partitionCheck.cuts}>
           {st.partitionCheck.cuts ? `${st.partitionCheck.cuts} linha(s) de corte a violeta no 3D.` : "Nenhuma linha de corte: as partições não dividem o sólido."}
           {st.partitionCheck.warnings.map((w) => <span key={w} class="warn"><br />{w}</span>)}
         </p>}
-        {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Num plano inclinado a normal não precisa de ser unitária e d é a distância à origem ao longo dela. "Plano de uma face" prolonga o plano de uma face plana do corpo para lá dos seus limites (como o Extend Face do Abaqus). "Plano de referência" usa um plano padrão, um plano de referência ou uma face plana. "Esboço extrudido" extrude o perfil fechado de um esboço pelo sólido todo e corta por essa superfície (como a Partition Cell › Extrude/Sweep do Abaqus). "Cilindro" corta por uma superfície cilíndrica de raio R ao longo do eixo de uma face cilíndrica (um anel à volta de um furo) ou, sem face, do eixo que passa em O com a direção d. "Só nesta face" limita o corte às linhas que o plano traça nessa face plana e varre-as pela espessura, na direção da normal da face: a face oposta recebe a mesma divisão e os elementos ficam direitos (bom skew), sem precisar de outra partição. Num esboço, "Projetar só nesta face" projeta as curvas do esboço na face plana e varre-as pela espessura (como a Split Line › Projection do SolidWorks). Cargas, apoios, seeds e refinamentos passam às sub-faces. Uma partição que falha é ignorada com um aviso e as outras aplicam-se. Só sólidos.</p>}
+        {(m.partitions ?? []).length > 0 && <p class="field-hint">Planos cortam o sólido em blocos com faces partilhadas (malha conforme). Blocos de 6 faces com 4 arestas permitem hexaedros estruturados (ex.: um perfil em L cortado nos dois cantos). Num plano inclinado a normal não precisa de ser unitária e d é a distância à origem ao longo dela. "Plano de uma face" prolonga o plano de uma face plana do corpo para lá dos seus limites (como o Extend Face do Abaqus). "Plano de referência" usa um plano padrão, um plano de referência ou uma face plana. "Esboço extrudido" extrude o perfil fechado de um esboço pelo sólido todo e corta por essa superfície (como a Partition Cell › Extrude/Sweep do Abaqus). "Cilindro" corta por uma superfície cilíndrica de raio R ao longo do eixo de uma face cilíndrica (um anel à volta de um furo) ou, sem face, do eixo que passa em O com a direção d. "Só nesta face" limita o corte às linhas que o plano traça nessa face plana e varre-as pela espessura, na direção da normal da face: a face oposta recebe a mesma divisão e os elementos ficam direitos (bom skew), sem precisar de outra partição. Num esboço, "Projetar só nesta face" projeta as curvas do esboço na face plana e varre-as pela espessura (como a Split Line › Projection do SolidWorks). Cargas, apoios, seeds e refinamentos passam às sub-faces. Uma partição que falha é ignorada com um aviso e as outras aplicam-se. Suprimida: fica na lista com o mesmo número mas não corta (como suprimir uma feature); também se suprime ou apaga na árvore do estudo. Só sólidos.</p>}
       </fieldset>
       <fieldset class="checklist">
         <legend class="field-label">Edição de nós/elementos</legend>

@@ -143,3 +143,15 @@ test("pré-visualização dos cortes: as linhas de corte ficam nos planos das pa
   assert.deepEqual(bad.cuts, []);
   assert.ok(bad.warnings.some((w) => /^Partição 1.*ignorada/.test(w)), JSON.stringify(bad.warnings));
 });
+
+test("suprimir: a partição suprimida não corta, não avisa e as outras mantêm o número", async () => {
+  const m = await model();
+  const r = m.run([{ axis: "x", at: 200, suppressed: true }, { axis: "x", at: 300 }, { axis: "sketch", at: 0, sketch: "f4" }]);
+  assert.equal(blocks(r.case), 3, JSON.stringify(r.case.hypotheses));
+  assert.equal(r.warnings.filter((w) => /ignorada/.test(w)).length, 1, JSON.stringify(r.warnings));
+  assert.ok(r.warnings.some((w) => /Partição 2/.test(w)), "a 2.ª continua a ser a «Partição 2»");
+  const all = m.run([{ axis: "sketch", at: 0, sketch: "f4", suppressed: true }]);
+  assert.equal(blocks(all.case), 1);
+  assert.deepEqual(all.warnings, []);
+  assert.deepEqual(m.preview([{ axis: "plane", at: 0, plane: { kind: "datum", feature: "f3" }, suppressed: true }]).cuts, []);
+});

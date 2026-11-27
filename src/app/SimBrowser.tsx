@@ -3,6 +3,9 @@
 // contacto, malha, sondas, resolver, resultados) com um resumo e o estado. Clicar abre a secção no
 // painel à direita; o 3D mostra o resultado do estudo escolhido.
 import type { CfdStudy, FemLoad, FemStudy, Study } from "../doc/study.ts";
+import type { CadDocument } from "../doc/types.ts";
+import { deletePartition, focusPartition, setPartitionSuppressed } from "./partition-actions.ts";
+import { partitionLabel, partitionSummary } from "./partition-label.ts";
 import { useState } from "preact/hooks";
 import { type SimSection, store, useStoreKeys } from "./store.ts";
 import { focusSelect } from "./forms-base.tsx";
@@ -23,14 +26,16 @@ const LOAD_SHORT: Record<FemLoad["kind"], string> = {
 const ANALYSIS: Record<FemStudy["analysis"], string> = { static: "Estática", modal: "Modal", buckling: "Encurvadura", dynamic: "Dinâmica", thermal: "Térmica" };
 const SOLVER: Record<string, string> = { calculix: "CalculiX", code_aster: "code_aster", openradioss: "OpenRadioss", openfoam: "OpenFOAM", su2: "SU2" };
 
-interface Node { section: SimSection; icon: string; label: string; detail: string; state?: "ok" | "warn" | "todo"; children?: { label: string; detail?: string; color?: number; edges?: boolean }[] }
+interface Leaf { label: string; detail?: string; color?: number; edges?: boolean; partition?: number; off?: boolean }
+interface Node { section: SimSection; icon: string; label: string; detail: string; state?: "ok" | "warn" | "todo"; children?: Leaf[] }
 
-function femNodes(s: FemStudy, asm: boolean, hasResult: boolean): Node[] {
+function femNodes(s: FemStudy, asm: boolean, hasResult: boolean, doc: Pick<CadDocument, "features">): Node[] {
   const loads = s.loads;
   const supports = loads.filter((l) => l.kind === "fixed" || l.kind === "displacement").length;
   const structural = s.analysis !== "thermal";
   const m = s.mesh;
   const seeds = m.seeds?.length ?? 0;
+  const parts = partitionSummary(m);
   return [
     { section: "study", icon: "⚙", label: "Estudo", detail: `${ANALYSIS[s.analysis]}${s.analysis === "dynamic" ? ` ${s.dynamic?.scheme === "explicit" ? "explícita" : "implícita"}` : ""} · ${SOLVER[s.solver ?? "calculix"]}`, state: "ok" },
     { section: "material", icon: "◧", label: "Material", detail: asm ? "por corpo" : s.material.name, state: "ok" },
@@ -43,7 +48,9 @@ function femNodes(s: FemStudy, asm: boolean, hasResult: boolean): Node[] {
       }),
     },
     ...(asm ? [{ section: "contact" as const, icon: "⧉", label: "Contacto", detail: ({ bonded: "colado", friction: `atrito μ = ${s.contact?.mu ?? 0.3}`, none: "sem ligação" } as Record<string, string>)[s.contact?.mode ?? "bonded"], state: "ok" as const }] : []),
-    { section: "mesh", icon: "▦", label: "Malha", detail: `${m.element === "hex" ? "hexaedros" : "tetraedros"} ${m.order === 2 ? "quadráticos" : "lineares"} · ${m.size} mm${seeds ? ` · ${seeds} seed(s)` : ""}`, state: "ok" },
+    { section: "mesh", icon: "▦", label: "Malha", detail: `${m.element === "hex" ? "hexaedros" : "tetraedros"} ${m.order === 2 ? "quadráticos" : "lineares"} · ${m.size} mm${seeds ? ` · ${seeds} seed(s)` : ""}${parts ? ` · ${parts}` : ""}`, state: "ok",
+      children: (m.partitions ?? []).map((c, i) => ({ label: partitionLabel(c, doc), partition: i, off: !!c.suppressed, detail: c.suppressed ? "suprimida" : "" })),
+    },
     convNode(s),
     { section: "probes", icon: "⌖", label: "Sondas", detail: `${s.probes?.length ?? 0}`, state: s.probes?.length ? "ok" : "todo" },
     checkNode(s, asm),
@@ -78,6 +85,22 @@ function cfdNodes(s: CfdStudy, hasResult: boolean): Node[] {
   ];
 }
 
+/** Folha de uma partição (como uma feature na árvore do SolidWorks): clique leva à sua linha no editor,
+ *  e os botões suprimem/retomam ou apagam sem abrir o painel (cada um com o seu passo de desfazer). */
+function PartitionLeaf({ s, c }: { s: Study; c: Leaf }) {
+  const i = c.partition!, n = i + 1;
+  return (
+    <li class={`pl${c.off ? " off" : ""}`} title="Clique: abrir esta partição no editor da malha" onClick={() => focusPartition(s, i)}>
+      <span class="lb"><i class="pn">{n}</i>{c.label}</span><span class="dt">{c.detail}</span>
+      <span class="acts">
+        <button class="icon" title={c.off ? "Retomar (volta a cortar)" : "Suprimir (fica na lista mas não corta)"} aria-label={`${c.off ? "Retomar" : "Suprimir"} partição ${n}`} aria-pressed={c.off}
+          onClick={(e) => { e.stopPropagation(); setPartitionSuppressed(s, i, !c.off); }}>{c.off ? "▶" : "⏸"}</button>
+        <button class="icon" title="Apagar partição" aria-label={`Apagar partição ${n}`} onClick={(e) => { e.stopPropagation(); deletePartition(s, i); }}>✕</button>
+      </span>
+    </li>
+  );
+}
+
 export function SimBrowser() {
   // `project`/`active`/`simStudy`: lidos por `activeAssembly`/`activeStudy`
   const st = useStoreKeys("workspace", "doc", "simResult", "simSection", "simStudy", "project", "active");
@@ -89,7 +112,7 @@ export function SimBrowser() {
   const docId = store.activeAssembly()?.id ?? st.doc.id;
   const nodesOf = (s: Study) => {
     const has = st.simResult?.studyId === s.id && st.simResult.doc === docId;
-    return s.physics === "fem" ? femNodes(s, asm, has) : cfdNodes(s, has);
+    return s.physics === "fem" ? femNodes(s, asm, has, st.doc) : cfdNodes(s, has);
   };
   // estado dos passos do fluxo guiado (C1a), só no nó principal de cada passo
   const stepsOf = (s: Study): StepInfo[] => (s.physics === "fem" ? activeStepStates(s) : []);
@@ -120,7 +143,7 @@ export function SimBrowser() {
                       {n.state === "warn" && <span class="st" title="Falta informação">!</span>}
                     </button>
                     {n.children?.length ? (
-                      <ul class="sim-leaves">{n.children.map((c, k) => <li key={k} title={`Duplo clique: escolher as ${c.edges ? "arestas" : "faces"} desta condição`} onClick={() => store.set({ simSection: n.section })} onDblClick={() => store.set({ simSection: n.section, pickTarget: n.section === "conditions" ? (c.edges ? { field: `loadEdge${k}`, accept: ["edge"] } : { field: `load${k}`, accept: ["face"] }) : null })}><span>{c.color !== undefined && <i class="sw" style={{ background: `#${c.color.toString(16).padStart(6, "0")}` }} />}{c.label}</span><span class="dt">{c.detail}</span></li>)}</ul>
+                      <ul class="sim-leaves">{n.children.map((c, k) => c.partition != null ? <PartitionLeaf key={`p${k}`} s={s} c={c} /> : <li key={k} title={`Duplo clique: escolher as ${c.edges ? "arestas" : "faces"} desta condição`} onClick={() => store.set({ simSection: n.section })} onDblClick={() => store.set({ simSection: n.section, pickTarget: n.section === "conditions" ? (c.edges ? { field: `loadEdge${k}`, accept: ["edge"] } : { field: `load${k}`, accept: ["face"] }) : null })}><span>{c.color !== undefined && <i class="sw" style={{ background: `#${c.color.toString(16).padStart(6, "0")}` }} />}{c.label}</span><span class="dt">{c.detail}</span></li>)}</ul>
                     ) : null}
                   </li>
                 ); })}

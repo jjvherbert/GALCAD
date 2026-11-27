@@ -169,6 +169,8 @@ export interface SimMesh {
   partitions?: {
     axis: "x" | "y" | "z" | "n" | "f" | "plane" | "sketch" | "cyl"; at: Expr; normal?: [Expr, Expr, Expr];
     face?: TopoRef; onFace?: TopoRef; plane?: PlaneRef; sketch?: string; origin?: [Expr, Expr, Expr];
+    /** Suprimida (como no SolidWorks): fica na lista, com o seu número, mas não corta a geometria. */
+    suppressed?: boolean;
   }[];
   /**
    * Edição de nós e elementos individuais depois da malha (Abaqus: Edit Mesh; Femap: Modify):
