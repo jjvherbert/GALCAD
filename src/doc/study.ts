@@ -160,7 +160,8 @@ export interface SimMesh {
    * Axis "plane": um plano de referência (padrão, de referência, de um sistema de eixos ou uma face plana).
    * Axis "sketch": as curvas de um esboço extrudidas pelo sólido nos dois sentidos da normal do esboço
    * (Abaqus: Partition Cell > Extrude/Sweep Edges). Cada ferramenta é diagnosticada à parte: a que falha
-   * fica de fora com aviso e as outras aplicam-se.
+   * fica de fora com aviso e as outras aplicam-se. Com `onFace` (face plana), o esboço é projetado nessa
+   * face e o corte é varrido pela espessura ao longo da normal dela (SolidWorks: Split Line › Projection).
    * Axis "cyl": uma superfície cilíndrica de raio `at`, infinita ao longo do eixo (Abaqus: anel à volta
    * de um furo). O eixo é o de `face` (cilíndrica: fica coaxial) ou, sem face, passa em `origin` com a
    * direção `normal` (por omissão a origem e Z).
