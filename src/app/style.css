@@ -842,10 +842,13 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .sim-node .step-badge + .st { right: 28px; }
 .sim-node:has(.step-badge) .dt, .sim-node:has(.step-badge) .lb { padding-right: 20px; }
 /* legenda das setas de carga (C1c) */
-.load-legend { position: absolute; z-index: 4; left: 8px; bottom: 8px; max-width: min(280px, calc(100% - 16px)); padding: 6px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 8px; background: color-mix(in srgb, var(--bg, #fff) 94%, transparent); box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); font-size: 12px; pointer-events: none; }
+.vp-legends { position: absolute; z-index: 4; left: 8px; bottom: 8px; max-width: min(280px, calc(100% - 16px)); display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.vp-legends:empty { display: none; }
+.load-legend { padding: 6px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 8px; background: color-mix(in srgb, var(--bg, #fff) 94%, transparent); box-shadow: 0 2px 8px rgb(0 0 0 / 0.15); font-size: 12px; pointer-events: none; }
 .load-legend ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
 .load-legend li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .load-legend li > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .load-legend i { width: 10px; height: 10px; border-radius: 2px; }
 .load-legend-v { font-variant-numeric: tabular-nums; color: var(--muted, #6b7280); }
-@media (max-width: 600px) { .load-legend { padding: 4px 6px; font-size: 11px; max-width: 200px; } }
+.load-legend i.legend-missing { box-sizing: border-box; border: 1.5px dashed #7f1d1d; }
+@media (max-width: 600px) { .vp-legends { max-width: 200px; } .load-legend { padding: 4px 6px; font-size: 11px; } }

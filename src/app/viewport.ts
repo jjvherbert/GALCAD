@@ -34,6 +34,8 @@ import { mouseHostOf } from "./viewport-host.ts";
 import { dimGroup } from "./viewport-section.ts";
 import { buildLoadArrows, disposeLoadArrows } from "./viewport-loads.ts";
 import type { LoadGlyph } from "./load-glyphs.ts";
+import type { MaterialColors } from "./material-colors.ts";
+import { buildMissingOutline } from "./viewport-materials.ts";
 import { SIM_LAYERS, type SimLayer } from "./workflow.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
@@ -62,6 +64,8 @@ export class Viewport {
   selected = new Set<string>();
   featureHighlight: string | null = null;
   conditionFaces: Map<string, number> | null = null;
+  /** Cor de base das faces pelo material (passo do material); null = cor do tema. */
+  materialFaces: Map<string, number> | null = null;
   /** Fração visível da cor das condições quando a camada está esbatida (null = cor plena). */
   conditionDim: number | null = null;
   theme: Theme = themes.light;
@@ -186,6 +190,32 @@ export class Viewport {
     const n = buildLoadArrows(this.loadGroup, this.loadGlyphList, this.mesh);
     this.el.dataset.arrows = n ? String(n) : "";
     this.applySection();
+  }
+
+  // --- cores de material (C1c) ------------------------------------------------------------
+
+  private materialGroup = new THREE.Group();
+  private materialSpec = "";
+  private missingFaces: string[] = [];
+
+  /** Cores por material das faces, com contorno tracejado nas faces sem material; null = cores do tema. */
+  setMaterialColors(mc: MaterialColors | null) {
+    const spec = mc ? JSON.stringify([[...mc.faces], mc.legend]) : "";
+    if (spec === this.materialSpec) return;
+    this.materialSpec = spec;
+    this.materialFaces = mc && mc.faces.size ? mc.faces : null;
+    this.missingFaces = mc?.missing ?? [];
+    this.el.dataset.materials = mc ? mc.legend.map((r) => `${r.name}:${r.bodies}`).join("|") : "";
+    this.el.dataset.missingMaterial = mc?.missing.length ? String(mc.missing.length) : "";
+    this.rebuildMaterialOutline();
+    this.recolor();
+  }
+
+  private rebuildMaterialOutline() {
+    this.disposeGroup(this.materialGroup);
+    if (!this.materialGroup.parent) this.scene.add(this.materialGroup);
+    const n = buildMissingOutline(this.materialGroup, this.mesh, this.missingFaces, this.size);
+    this.el.dataset.missingOutline = n ? String(n) : "";
   }
 
   // --- vista por passo da simulação (C1c) ----------------------------------------------
@@ -329,6 +359,7 @@ export class Viewport {
     this.faceMesh = null;
     this.edgeLines = null;
     if (this.loadGlyphList.length && mesh !== prev) this.rebuildLoads();
+    if (this.missingFaces.length && mesh !== prev) this.rebuildMaterialOutline();
     if (!mesh) return;
     ({ faceMesh: this.faceMesh, edgeLines: this.edgeLines, faceOfTri: this.faceOfTri, faceVerts: this.faceVerts } = content.buildBody(this.bodyGroup, mesh, this.mats, this.analysis, this.size));
     this.recolor();

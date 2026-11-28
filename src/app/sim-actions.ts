@@ -8,6 +8,7 @@ import { store } from "./store.ts";
 import { type GeomSnapshot, assemblySnapshot, geomRev, markDonePatch, partSnapshot, stepIssues, touchUser, validate } from "./workflow.ts";
 import { allMaterials } from "./material-library.ts";
 import { type LoadGlyph, loadGlyphs } from "./load-glyphs.ts";
+import { type MaterialColors, materialColors } from "./material-colors.ts";
 import { materialsRev, meshStamp } from "./live-mesh.ts";
 import { CancelledError, type RunResult, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
 
@@ -303,6 +304,19 @@ export function loadGlyphSpecs(): LoadGlyph[] {
   const key = (n: string) => (asm ? n.replace(/\/(?=[^/]*$)/, "|") : n);
   const vals = st.result?.variables.values ?? {};
   return loadGlyphs(s, (n) => vals[n], key);
+}
+
+/**
+ * Cores por material (C1c) das faces do modelo, só na secção Material do estudo estrutural ativo.
+ * Na montagem o corpo de cada face é o caminho da instância (antes do "|"); na peça, o sólido ("").
+ */
+export function materialFaceColors(faces: readonly { name: string }[] | undefined): MaterialColors | null {
+  const st = store.state;
+  if (st.workspace !== "fem" || st.simSection !== "material" || !faces?.length) return null;
+  const s = activeStudy("fem");
+  if (!s || s.physics !== "fem") return null;
+  const asm = !!store.activeAssembly();
+  return materialColors(s, faces.map((f) => ({ name: f.name, body: asm ? f.name.slice(0, Math.max(0, f.name.indexOf("|"))) : "" })));
 }
 
 /** Duplo clique numa face (ou aresta) dos espaços de simulação: abre (e destaca) a condição que a usa; sem condição, não faz nada. */
