@@ -7,6 +7,7 @@ import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
 import { type GeomSnapshot, assemblySnapshot, geomRev, markDonePatch, partSnapshot, stepIssues, touchUser, validate } from "./workflow.ts";
 import { allMaterials } from "./material-library.ts";
+import { type LoadGlyph, loadGlyphs } from "./load-glyphs.ts";
 import { materialsRev, meshStamp } from "./live-mesh.ts";
 import { CancelledError, type RunResult, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
 
@@ -290,6 +291,18 @@ export function conditionFaceColors(): Map<string, number> | null {
     for (const f of s.outlet?.faces ?? []) out.set(key(f.name), CONDITION_COLORS.outlet);
   }
   return out;
+}
+
+/** Setas das cargas do estudo estrutural ativo (C1c), com as variáveis do modelo reconstruído. */
+export function loadGlyphSpecs(): LoadGlyph[] {
+  const st = store.state;
+  if (st.workspace !== "fem") return [];
+  const s = activeStudy("fem");
+  if (!s || s.physics !== "fem") return [];
+  const asm = !!store.activeAssembly();
+  const key = (n: string) => (asm ? n.replace(/\/(?=[^/]*$)/, "|") : n);
+  const vals = st.result?.variables.values ?? {};
+  return loadGlyphs(s, (n) => vals[n], key);
 }
 
 /** Duplo clique numa face (ou aresta) dos espaços de simulação: abre (e destaca) a condição que a usa; sem condição, não faz nada. */

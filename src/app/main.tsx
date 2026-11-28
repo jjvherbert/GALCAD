@@ -21,7 +21,8 @@ import { BomPanel } from "./BomPanel.tsx";
 import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { SimPanel } from "./SimPanel.tsx";
 import { sectionView } from "./workflow.ts";
-import { conditionAtFace, conditionFaceColors } from "./sim-actions.ts";
+import { conditionAtFace, conditionFaceColors, loadGlyphSpecs } from "./sim-actions.ts";
+import { LoadLegend } from "./LoadLegend.tsx";
 import { activeSeedIndex, handleSeedKey, lastSeedPreview, scheduleLiveMesh, scheduleSeedPreview, stepSeed } from "./seed-actions.ts";
 import { LiveMeshStale, SeedHud } from "./SeedHud.tsx";
 import { SimBrowser } from "./SimBrowser.tsx";
@@ -147,6 +148,8 @@ function App() {
   useEffect(() => { if (st.confirmed) vp.current?.flashFeature(st.confirmed.id); }, [st.confirmed]);
   // espaços FEM/CFD: o modelo mostra as faces com condições (apoios, cargas, entrada/saída)
   useEffect(() => { vp.current?.setConditionFaces(conditionFaceColors()); }, [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result, st.asmResult]);
+  // espaço FEM: setas das cargas (comprimento pela intensidade, cor por carga)
+  useEffect(() => { vp.current?.setLoadGlyphs(loadGlyphSpecs()); }, [st.workspace, st.simStudy, st.doc, st.project, st.active, st.result, st.asmResult]);
   // espaço FEM: nós das seeds da malha (meshPlan no worker, sem Gmsh), atualizados ao vivo
   useEffect(() => scheduleSeedPreview((p) => {
     vp.current?.setSeedMarks(p);
@@ -277,6 +280,7 @@ function App() {
           {st.pickTarget && !st.sketch && <div class="pick-banner">Modo de seleção: {st.pickTarget.accept.map((a) => ({ face: "faces", edge: "arestas", plane: "planos", axis: "eixos", region: "regiões" })[a]).join(" / ")} · Esc para terminar</div>}
           {!st.sketch && /^seed\d+$/.test(st.pickTarget?.field ?? "") && <SeedHud />}
           {simWs && !st.sketch && <LiveMeshStale />}
+          {st.workspace === "fem" && !st.sketch && <LoadLegend />}
         </section>
         {simWs && kind !== "drawing" && <aside class="side side-right ws-side" key={`ws-r-${st.workspace}`}><SimPanel /></aside>}
       </div>
