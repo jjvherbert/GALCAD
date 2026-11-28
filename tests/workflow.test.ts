@@ -6,7 +6,7 @@ import { type FemLoad, type FemStudy, newFemStudy } from "../src/doc/study.ts";
 import type { CadDocument } from "../src/doc/types.ts";
 import {
   assemblySnapshot, canRun, diffTypeChange, firstOpenStep, geomRev, isEnabled, markDonePatch, nextStep,
-  partSnapshot, stableJson, stepIssues, stepStates, stepsFor, studyTypeDefaults, studyTypePatch, touchUser, typeOf, validate,
+  partSnapshot, sectionView, stableJson, stepIssues, stepStates, stepsFor, studyTypeDefaults, studyTypePatch, touchUser, typeOf, validate,
 } from "../src/app/workflow.ts";
 
 const face = (name: string) => ({ kind: "face" as const, name });
@@ -195,4 +195,13 @@ test("cartões do tipo: pré-definições legíveis", () => {
   assert.match(studyTypeDefaults("modal"), /6 modos/);
   assert.match(studyTypeDefaults("explicit"), /OpenRadioss.*1 ms/);
   assert.equal(studyTypeDefaults("fatigue"), "");
+});
+
+test("vista por secção: cada passo deixa nítida só a sua camada; «ver tudo» e estudo/verificar/correr mostram tudo", () => {
+  assert.deepEqual(sectionView("conditions"), { layers: ["conditions"], dim: 0.25 });
+  assert.deepEqual(sectionView("mesh")?.layers, ["seeds", "result"]);
+  assert.deepEqual(sectionView("results")?.layers, ["result"]);
+  assert.deepEqual(sectionView("material")?.layers, ["material"]);
+  for (const s of ["study", "check", "run"] as const) assert.equal(sectionView(s), null);
+  assert.equal(sectionView("conditions", true), null);
 });

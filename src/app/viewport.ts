@@ -31,6 +31,8 @@ import * as hover from "./viewport-hover.ts";
 import { type SeedLabel, buildAdviceGhosts, buildSeedMarks, placeSeedLabels } from "./viewport-seeds.ts";
 import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { mouseHostOf } from "./viewport-host.ts";
+import { dimGroup } from "./viewport-section.ts";
+import { SIM_LAYERS, type SimLayer } from "./workflow.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
 
@@ -58,6 +60,8 @@ export class Viewport {
   selected = new Set<string>();
   featureHighlight: string | null = null;
   conditionFaces: Map<string, number> | null = null;
+  /** Fração visível da cor das condições quando a camada está esbatida (null = cor plena). */
+  conditionDim: number | null = null;
   theme: Theme = themes.light;
   ray = new THREE.Raycaster();
   private accept: PickKind[] | null = null;
@@ -155,6 +159,39 @@ export class Viewport {
     this.seedLabels = r.labels;
     this.el.dataset.seeds = p ? String(r.nodes) : "";
     this.el.dataset.cuts = p ? String(r.cuts) : "";
+    this.applySection();
+  }
+
+  // --- vista por passo da simulação (C1c) ----------------------------------------------
+
+  private section: { layers: SimLayer[]; dim: number } | null = null;
+
+  /** Camadas nítidas do passo atual; as outras ficam esbatidas (null = tudo nítido). */
+  setSectionView(view: { layers: SimLayer[]; dim: number } | null) {
+    this.section = view;
+    this.applySection();
+    const dim = view?.layers.includes("conditions") === false ? view.dim : null;
+    if (dim !== this.conditionDim) { this.conditionDim = dim; this.recolor(); }
+  }
+
+  /** A camada está esbatida no passo atual (as suas entidades não se escolhem). */
+  layerDimmed(l: SimLayer) { return !!this.section && !this.section.layers.includes(l); }
+
+  /** A face (ou aresta) tem uma condição e a camada das condições está esbatida: não se escolhe. */
+  dimmedCondition(kind: string, name: string | undefined) {
+    if (!name || !this.layerDimmed("conditions")) return false;
+    return !!this.conditionFaces?.has(kind === "edge" ? `edge:${name}` : name);
+  }
+
+  /** Reaplica a atenuação aos grupos (depois de serem reconstruídos). */
+  applySection() {
+    const k = (l: SimLayer) => (this.layerDimmed(l) ? this.section!.dim : null);
+    dimGroup(this.seedGroup, k("seeds"));
+    this.seedEl.style.opacity = k("seeds") == null ? "" : String(k("seeds"));
+    dimGroup(this.simGroup, k("result"));
+    this.el.dataset.sectionLayers = this.section ? this.section.layers.join("|") : "";
+    this.el.dataset.dim = this.section ? SIM_LAYERS.filter((l) => this.layerDimmed(l)).join("|") : "";
+    this.el.dataset.geoms = String(this.renderer.info.memory.geometries);
   }
 
   private adviceGroup = new THREE.Group();
@@ -292,7 +329,7 @@ export class Viewport {
    * escolhido na paleta sequencial, com a mesma escala em todas as camadas visíveis, e deformada
    * ampliada. O corpo fica escondido enquanto se mostram resultados FEM; nos CFD fica em arame.
    */
-  setSimResult(r: ResultView | null, view: SimView, stale = false) { layers.setSimResult(this, r, view, stale); }
+  setSimResult(r: ResultView | null, view: SimView, stale = false) { layers.setSimResult(this, r, view, stale); this.applySection(); }
 
   /** Mostra (ou esconde) a rede de controlo da forma livre em edição e o polo selecionado. */
   setPoleNet(net: PoleNet | null, sel: [number, number] | null) {

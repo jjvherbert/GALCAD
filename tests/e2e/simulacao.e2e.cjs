@@ -75,6 +75,25 @@ async function main() {
     await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
     const panel = await p.textContent(P);
     check("separador abre a secção (cargas no painel)", /Encastramento/.test(panel) && /Força total/.test(panel) && /Encastrar/.test(await p.textContent(".tb-row.commands")), panel.slice(0, 200));
+    // C1c: a vista 3D mostra o passo atual (o resto esbatido); «Ver tudo» repõe; trocar de secção não cria geometrias
+    const vds = () => p.$eval(".viewport", (e) => ({ layers: e.dataset.sectionLayers, dim: e.dataset.dim, geoms: Number(e.dataset.geoms) }));
+    let v = await vds();
+    check("vista por passo: em Cargas só as condições ficam nítidas", v.layers === "conditions" && /seeds/.test(v.dim) && /result/.test(v.dim), JSON.stringify(v));
+    await p.click(`${P} .sec-showall`);
+    await p.waitForFunction(() => document.querySelector(".viewport")?.dataset.sectionLayers === "", null, { timeout: 5000 }).catch(() => {});
+    v = await vds();
+    check("«Ver tudo» deixa de esbater", v.layers === "" && v.dim === "" && (await p.getAttribute(`${P} .sec-showall`, "aria-pressed")) === "true", JSON.stringify(v));
+    await p.click(`${P} .sec-showall`);
+    await node("Malha");
+    v = await vds();
+    check("vista por passo: em Malha ficam nítidas as seeds e a malha", v.layers === "seeds|result" && /conditions/.test(v.dim), JSON.stringify(v));
+    await node("Estudo");
+    check("vista por passo: no Estudo mostra tudo", (await vds()).layers === "");
+    const g0 = (await vds()).geoms;
+    for (let i = 0; i < 50; i++) await node(i % 2 ? "Malha" : "Cargas e apoios");
+    const g1 = (await vds()).geoms;
+    check("50 trocas de secção sem geometrias novas", g1 <= g0, `${g0} → ${g1}`);
+    await node("Cargas e apoios");
     const before = (await p.textContent(".sim-node:has-text('Cargas e apoios')")).match(/(\d+) condi(?:ção|ções)/)?.[1];
     await p.click(".cmd:has-text('Pressão')");
     check("barra: + pressão com seleção de faces ativa", /Modo de seleção: faces/.test(await p.textContent("body")) && Number((await p.textContent(".sim-node:has-text('Cargas e apoios')")).match(/(\d+) condi(?:ção|ções)/)?.[1]) === Number(before) + 1);

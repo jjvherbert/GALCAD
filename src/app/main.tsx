@@ -20,6 +20,7 @@ import { DocTabs } from "./DocTabs.tsx";
 import { BomPanel } from "./BomPanel.tsx";
 import { KnowledgePanel } from "./KnowledgePanel.tsx";
 import { SimPanel } from "./SimPanel.tsx";
+import { sectionView } from "./workflow.ts";
 import { conditionAtFace, conditionFaceColors } from "./sim-actions.ts";
 import { activeSeedIndex, handleSeedKey, lastSeedPreview, scheduleLiveMesh, scheduleSeedPreview, stepSeed } from "./seed-actions.ts";
 import { LiveMeshStale, SeedHud } from "./SeedHud.tsx";
@@ -59,6 +60,8 @@ function selectedKeys(): string[] {
   return keys;
 }
 
+const DIMMED_HINT = "Camada esbatida — abre «Apoios e cargas» ou liga «Ver tudo»";
+
 function App() {
   // só os campos que o App lê ao renderizar (não `simProgress`, `agent`…, que mudam muito ou são de outros painéis)
   const st = useStoreKeys(
@@ -66,7 +69,7 @@ function App() {
     "edit", "sketch", "choosingPlane", "confirmed", "pickTarget", "selection", "selectedFeature", "hoverFeature",
     "mateEdit", "componentEdit", "pmiSel", "poleSel", "poleAxis", "simStudy",
     "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
-    "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden", "liveMesh", "liveMeshError", "agent", "simBusy", "advicePreview",
+    "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "pmiView", "simView", "simHidden", "simSection", "simShowAll", "liveMesh", "liveMeshError", "agent", "simBusy", "advicePreview",
   );
   const host = useRef<HTMLDivElement>(null);
   const vp = useRef<Viewport | null>(null);
@@ -93,7 +96,12 @@ function App() {
     v.onBoxSelect = (picks, add) => store.setSelection(picks, add);
     v.onDoubleClick = (p) => {
       // espaços de simulação: duplo clique numa face com condição abre essa condição (nunca editar features às escuras)
-      if (store.state.workspace === "fem" || store.state.workspace === "cfd") { conditionAtFace(p); return; }
+      if (store.state.workspace === "fem" || store.state.workspace === "cfd") {
+        // camada esbatida (fora do passo «Apoios e cargas»): as suas entidades não se escolhem
+        if ((p.kind === "face" || p.kind === "edge") && v.dimmedCondition(p.kind, p.name)) { store.set({ message: DIMMED_HINT }); return; }
+        conditionAtFace(p);
+        return;
+      }
       // duplo clique numa face/aresta: editar a feature que a criou
       if (store.state.active.kind === "assembly") {
         const name = p.kind === "face" || p.kind === "edge" ? p.name : "";
@@ -148,6 +156,11 @@ function App() {
   // malha ao vivo (opção no painel da seed): volta a gerar a malha completa após uma pausa nas alterações
   useEffect(scheduleLiveMesh, [st.workspace, st.simStudy, st.doc, st.project, st.liveMesh, st.agent, st.simBusy]);
   useEffect(() => { vp.current?.setAnalysis(st.analysis); }, [st.analysis]);
+  // C1c: a vista 3D mostra o passo atual — as camadas dos outros passos ficam esbatidas
+  useEffect(() => {
+    const sim = st.workspace === "fem" || st.workspace === "cfd";
+    vp.current?.setSectionView(sim ? sectionView(st.simSection, st.simShowAll) : null);
+  }, [st.workspace, st.simSection, st.simShowAll]);
   // resultados de simulação (FEM) no 3D
   useEffect(() => {
     const show = (st.workspace === "fem" || st.workspace === "cfd") && !st.simHidden && st.active.kind !== "drawing" && st.simResult?.doc === st.active.id;
@@ -279,6 +292,7 @@ function App() {
             {hover.kind === "plane" ? hover.name
               : hover.kind === "face" ? `Face ${SURF[hover.type] ?? hover.type} · ${describeName(st.doc, hover.name)}`
               : `Aresta ${CURVE[hover.type] ?? hover.type} · ${describeName(st.doc, hover.name).replace(/^Aresta: /, "")}`}
+            {hover.kind !== "plane" && vp.current?.dimmedCondition(hover.kind, hover.name) ? ` · ${DIMMED_HINT}` : ""}
           </span>
         )}
         <span class="muted">{st.project.name} · {docName(st.project, st.active)}{st.dirty ? " •" : ""} · mm</span>

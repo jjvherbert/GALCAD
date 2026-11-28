@@ -8,7 +8,7 @@ export function recolor(v: Viewport) {
     mesh: v.mesh, faceMesh: v.faceMesh, edgeLines: v.edgeLines, faceVerts: v.faceVerts,
     planeMeshes: v.planeMeshes, regionMeshes: v.regionMeshes, theme: v.theme, selected: v.selected,
     hoverKey: v.hover ? v.keyOf(v.hover) : v.extHover, featureHighlight: v.featureHighlight,
-    previewFeature: v.previewFeature, conditionFaces: v.conditionFaces, analysis: v.analysis, flash: v.flash,
+    previewFeature: v.previewFeature, conditionFaces: v.conditionFaces, conditionDim: v.conditionDim, analysis: v.analysis, flash: v.flash,
   }, v.el.dataset);
 }
 

@@ -26,11 +26,14 @@ export interface ColorState {
   previewFeature: string | null;
   /** Faces (nome) e arestas (`edge:nome`) com condições → cor da condição. */
   conditionFaces: Map<string, number> | null;
+  /** Fração da cor das condições que fica visível (null = cor plena); fora do passo das condições. */
+  conditionDim?: number | null;
   analysis: Analysis | null;
   flash: Flash;
 }
 
 const flashColor = new THREE.Color();
+const dimBase = new THREE.Color();
 
 /** Recolore regiões, planos, faces e arestas; publica o número de faces em pré-visualização em `data`. */
 export function recolor(s: ColorState, data: DOMStringMap) {
@@ -74,7 +77,9 @@ export function recolor(s: ColorState, data: DOMStringMap) {
       }
       return;
     }
-    c.set(flat ?? (f.body ? s.theme.sheet : s.theme.body));
+    const bodyColor = f.body ? s.theme.sheet : s.theme.body;
+    c.set(flat ?? bodyColor);
+    if (s.conditionDim != null && flat !== null && flat === s.conditionFaces?.get(f.name) && !s.selected.has(k) && k !== hoverKey) c.lerp(dimBase.set(bodyColor), 1 - s.conditionDim);
     if (flat === null && flash.on && flash.k > 0 && f.name.startsWith(flash.on.prefix)) c.lerp(flashColor.set(s.theme.preview), flash.k);
     for (let v = lo; v <= hi; v++) col.setXYZ(v, c.r, c.g, c.b);
   });
@@ -89,7 +94,9 @@ export function recolor(s: ColorState, data: DOMStringMap) {
     const cl = cont?.get(e.name);
     const base = cl !== undefined ? CONTINUITY_COLORS[cl]
       : d === undefined ? (e.curve ? s.theme.curve : s.theme.edge) : d <= 0.5 ? 0x16a34a : d <= 10 ? 0xf59e0b : 0x6b7280;
-    c.set(s.selected.has(k) ? s.theme.sel : k === hoverKey ? s.theme.hover : s.conditionFaces?.get(k) ?? base);
+    const cond = s.selected.has(k) || k === hoverKey ? undefined : s.conditionFaces?.get(k);
+    c.set(s.selected.has(k) ? s.theme.sel : k === hoverKey ? s.theme.hover : cond ?? base);
+    if (cond !== undefined && s.conditionDim != null) c.lerp(dimBase.set(base), 1 - s.conditionDim);
     for (let v = e.start; v < e.start + e.count; v++) ecol.setXYZ(v, c.r, c.g, c.b);
   });
   ecol.needsUpdate = true;
