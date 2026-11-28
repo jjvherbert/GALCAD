@@ -45,6 +45,32 @@ export function sectionStep(section: SimSection): StepId {
   return (Object.keys(STEP_SECTION) as StepId[]).find((k) => STEP_SECTION[k] === section) ?? "estudo";
 }
 
+/** Camadas da vista 3D da simulação que uma secção pode pôr em destaque. */
+export type SimLayer = "conditions" | "seeds" | "result" | "material" | "contact" | "probes";
+export const SIM_LAYERS: SimLayer[] = ["conditions", "seeds", "result", "material", "contact", "probes"];
+/** Opacidade relativa do que não pertence ao passo atual. */
+export const SECTION_DIM = 0.25;
+
+const SECTION_LAYERS: Partial<Record<SimSection, SimLayer[]>> = {
+  conditions: ["conditions"],
+  material: ["material"],
+  contact: ["contact"],
+  probes: ["probes"],
+  // a malha gerada vive na camada do resultado (corrida só de malha)
+  mesh: ["seeds", "result"],
+  convergence: ["seeds", "result"],
+  results: ["result"],
+};
+
+/**
+ * O que a vista 3D mostra nítido em cada secção; o resto fica a `dim` de opacidade.
+ * `null` = mostra tudo (estudo, verificar, correr, ou «ver tudo» ligado).
+ */
+export function sectionView(section: SimSection, showAll = false): { layers: SimLayer[]; dim: number } | null {
+  const layers = SECTION_LAYERS[section];
+  return showAll || !layers ? null : { layers, dim: SECTION_DIM };
+}
+
 /** Campos do estudo que pertencem a cada passo (a sua impressão digital). */
 export const STEP_FIELDS: Record<StepId, (keyof FemStudy)[]> = {
   estudo: ["analysis", "solver", "nonlinear", "dynamic", "modes"],

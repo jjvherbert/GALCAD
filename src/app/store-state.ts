@@ -117,6 +117,8 @@ export interface State {
   simResult: { doc: string; studyId: string; result: import("./sim-client.ts").RunResult; full?: string } | null;
   simView: { field: number; disp: number; scale: number; hidden: string[]; anim?: boolean; quality?: boolean };
   simHidden: boolean;
+  /** Simulação: «ver tudo» — não esbate o que não pertence à secção atual. */
+  simShowAll: boolean;
   /** Malha ao vivo: com as seeds em edição, volta a gerar a malha (elementos) a cada alteração. */
   liveMesh: boolean;
   /** Malha ao vivo: último erro do Gmsh/agente (a malha anterior fica, esbatida, com este aviso). */
@@ -174,7 +176,7 @@ export const SESSION_KEYS = [
 ] as const satisfies readonly (keyof State)[];
 export const UI_KEYS = [
   "workspace", "sidePanel", "busy", "kernelBusy", "rebuildPending", "error", "message", "showVariables", "showSettings", "showMaterials",
-  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "userMaterials", "pmiView", "simView", "simHidden", "liveMesh",
+  "contextMenu", "contextToolbar", "shortcutBar", "orientationMenu", "gesture", "settings", "userMaterials", "pmiView", "simView", "simHidden", "simShowAll", "liveMesh",
   "liveMeshError", "partitionCheck", "agent", "simBusy", "simProgress",
 ] as const satisfies readonly (keyof State)[];
 export type DocKey = (typeof DOC_KEYS)[number];

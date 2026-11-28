@@ -11,7 +11,7 @@ import { colourField, isMeshPreview, layerShown, toggleLayer } from "../sim/resu
 import { AssemblyBodies, CfdEditor, FemEditor } from "./SimEditors.tsx";
 import { CheckPanel } from "./SimCheck.tsx";
 import { MeshAdvicePanel } from "./MeshAdvice.tsx";
-import { type StepInfo, type StepState, type StudyTypeId, STUDY_TYPES, sectionStep, stepIssues, studyTypeDefaults, typeOf } from "./workflow.ts";
+import { type StepInfo, type StepState, type StudyTypeId, STUDY_TYPES, sectionStep, sectionView, stepIssues, studyTypeDefaults, typeOf } from "./workflow.ts";
 import { activeStepStates, chooseStudyType, completeAndNext, goToStep } from "./workflow-actions.ts";
 import { BEHAVIOUR, ConvergencePlot, JobProgress, num, pct, QualityReport, ResultExports, ResultProbe, SimLegend, SweepPlot, TimePlot } from "./SimResults.tsx";
 
@@ -26,7 +26,7 @@ const SECTION_TITLE: Record<SimSection, string> = {
  */
 export function SimPanel() {
   // `project`/`active`/`simStudy`: lidos por `activeAssembly`/`activeStudy`
-  const st = useStoreKeys("workspace", "simSection", "doc", "project", "active", "simStudy");
+  const st = useStoreKeys("workspace", "simSection", "doc", "project", "active", "simStudy", "simShowAll");
   const physics = st.workspace === "cfd" ? "cfd" : "fem";
   const asm = store.activeAssembly() ?? null;
   const s = activeStudy(physics);
@@ -42,6 +42,10 @@ export function SimPanel() {
       <div class="pm-head">
         <span class="pm-title">{title}</span>
         {s && <span class="muted">{s.name}</span>}
+        {sectionView(sec) && (
+          <button type="button" class="small sec-showall" aria-pressed={st.simShowAll} title="Mostrar todas as camadas da vista 3D, sem esbater as que não são deste passo"
+            onClick={() => store.set({ simShowAll: !st.simShowAll })}>Ver tudo</button>
+        )}
       </div>
       {s?.physics === "fem" && <StepBar s={s} section={sec} />}
       {physics === "fem" && sec === "study" && (!s || s.physics === "fem") && <StudyTypePicker s={s} />}

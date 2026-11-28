@@ -637,6 +637,8 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .section-panel { animation: rise .2s var(--ease) both; }
 .pm-head { display: flex; align-items: baseline; gap: 8px; padding: 2px 0 8px; margin-bottom: 8px; border-bottom: 2px solid var(--ws-accent); }
 .pm-title { font-size: 16px; font-weight: 700; color: var(--ws-accent); }
+.sec-showall { margin-left: auto; }
+.sec-showall[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--ws-accent); color: var(--ws-accent); }
 .sim-progress { position: relative; overflow: hidden; margin: 6px 0; padding: 6px 8px; border-radius: 8px; background: var(--accent-soft); font-size: 12px; }
 .sim-job .sim-progress { display: flex; align-items: center; gap: 8px; }
 .sim-job .sim-progress span { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; }
