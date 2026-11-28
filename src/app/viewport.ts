@@ -32,6 +32,8 @@ import { type SeedLabel, buildAdviceGhosts, buildSeedMarks, placeSeedLabels } fr
 import type { SeedPreview } from "../kernel/sim-fem.ts";
 import { mouseHostOf } from "./viewport-host.ts";
 import { dimGroup } from "./viewport-section.ts";
+import { buildLoadArrows, disposeLoadArrows } from "./viewport-loads.ts";
+import type { LoadGlyph } from "./load-glyphs.ts";
 import { SIM_LAYERS, type SimLayer } from "./workflow.ts";
 
 export type { PoleNet } from "./viewport-poles.ts";
@@ -162,6 +164,30 @@ export class Viewport {
     this.applySection();
   }
 
+  // --- setas das cargas (C1c) ----------------------------------------------------------
+
+  private loadGroup = new THREE.Group();
+  private loadSpec = "";
+  private loadGlyphList: LoadGlyph[] = [];
+
+  /** Setas das cargas; só reconstrói quando as cargas mudam (ou o modelo). */
+  setLoadGlyphs(glyphs: LoadGlyph[]) {
+    const spec = JSON.stringify(glyphs);
+    if (spec === this.loadSpec) return;
+    this.loadSpec = spec;
+    this.loadGlyphList = glyphs;
+    this.rebuildLoads();
+  }
+
+  private rebuildLoads() {
+    disposeLoadArrows(this.loadGroup);
+    this.disposeGroup(this.loadGroup);
+    if (!this.loadGroup.parent) this.scene.add(this.loadGroup);
+    const n = buildLoadArrows(this.loadGroup, this.loadGlyphList, this.mesh);
+    this.el.dataset.arrows = n ? String(n) : "";
+    this.applySection();
+  }
+
   // --- vista por passo da simulação (C1c) ----------------------------------------------
 
   private section: { layers: SimLayer[]; dim: number } | null = null;
@@ -189,6 +215,7 @@ export class Viewport {
     dimGroup(this.seedGroup, k("seeds"));
     this.seedEl.style.opacity = k("seeds") == null ? "" : String(k("seeds"));
     dimGroup(this.simGroup, k("result"));
+    dimGroup(this.loadGroup, k("conditions"));
     this.el.dataset.sectionLayers = this.section ? this.section.layers.join("|") : "";
     this.el.dataset.dim = this.section ? SIM_LAYERS.filter((l) => this.layerDimmed(l)).join("|") : "";
     this.el.dataset.geoms = String(this.renderer.info.memory.geometries);
@@ -297,9 +324,11 @@ export class Viewport {
 
   private setMesh(mesh: MeshData | null) {
     this.disposeGroup(this.bodyGroup);
+    const prev = this.mesh;
     this.mesh = mesh;
     this.faceMesh = null;
     this.edgeLines = null;
+    if (this.loadGlyphList.length && mesh !== prev) this.rebuildLoads();
     if (!mesh) return;
     ({ faceMesh: this.faceMesh, edgeLines: this.edgeLines, faceOfTri: this.faceOfTri, faceVerts: this.faceVerts } = content.buildBody(this.bodyGroup, mesh, this.mats, this.analysis, this.size));
     this.recolor();

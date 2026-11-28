@@ -15,6 +15,8 @@ async function main() {
   const agent = solvers ? await startAgent(AGENT, TOKEN) : null;
   const R = [];
   const check = (name, ok, extra = "") => R.push(`${ok ? "✓" : "✗"} ${name} ${extra}`);
+  // se um passo abortar, mostram-se os resultados até lá, os erros da página e uma captura (senão perdia-se tudo)
+  let page = null, pageLogs = [];
   try {
     for (let i = 0; i < 60; i++) {
       try { if ((await fetch(URL)).ok) break; } catch { /* a arrancar */ }
@@ -23,6 +25,7 @@ async function main() {
     const b = await chromium.launch({ args: ["--use-gl=swiftshader", "--enable-unsafe-swiftshader"] });
     const p = await b.newPage({ viewport: { width: 1400, height: 900 }, acceptDownloads: true });
     const logs = []; p.on("pageerror", (e) => logs.push(e.message));
+    page = p; pageLogs = logs;
     const settle = async () => { await p.waitForTimeout(250); await p.waitForFunction(() => /Reconstruído/.test(document.querySelector(".statusbar")?.textContent ?? ""), null, { timeout: 90000 }); await p.waitForTimeout(200); };
     await p.goto(URL);
     await p.evaluate((t) => { localStorage.clear(); localStorage.setItem("cad-prototipo:autosave", t); }, fs.readFileSync(path.join(__dirname, "fixtures/simulacao.cadp.json"), "utf8"));
@@ -79,6 +82,10 @@ async function main() {
     const vds = () => p.$eval(".viewport", (e) => ({ layers: e.dataset.sectionLayers, dim: e.dataset.dim, geoms: Number(e.dataset.geoms) }));
     let v = await vds();
     check("vista por passo: em Cargas só as condições ficam nítidas", v.layers === "conditions" && /seeds/.test(v.dim) && /result/.test(v.dim), JSON.stringify(v));
+    // C1c fatia 2: setas das cargas (pela intensidade) e legenda por carga
+    const arrows = Number(await p.$eval(".viewport", (e) => e.dataset.arrows ?? "0"));
+    const legend = await p.$$eval(".load-legend li", (ls) => ls.map((l) => l.textContent));
+    check("setas das cargas desenhadas com legenda", arrows > 0 && legend.length > 0 && legend.every((t) => /^C\d+ /.test(t ?? "") && /(N|MPa|m\/s²)$/.test(t ?? "")), `${arrows} setas; ${JSON.stringify(legend)}`);
     await p.click(`${P} .sec-showall`);
     await p.waitForFunction(() => document.querySelector(".viewport")?.dataset.sectionLayers === "", null, { timeout: 5000 }).catch(() => {});
     v = await vds();
@@ -87,6 +94,7 @@ async function main() {
     await node("Malha");
     v = await vds();
     check("vista por passo: em Malha ficam nítidas as seeds e a malha", v.layers === "seeds|result" && /conditions/.test(v.dim), JSON.stringify(v));
+    check("legenda das cargas escondida fora de Cargas", !(await p.$(".load-legend")));
     await node("Estudo");
     check("vista por passo: no Estudo mostra tudo", (await vds()).layers === "");
     const g0 = (await vds()).geoms;
@@ -256,6 +264,10 @@ async function main() {
     } else R.push("- cálculo no agente saltado (Gmsh/CalculiX não instalados)");
     check("sem erros na página", logs.length === 0, logs.join(" | "));
     await b.close();
+  } catch (e) {
+    await page?.screenshot({ path: path.join(__dirname, "../../dist/e2e-simulacao-abortado.png") }).catch(() => {});
+    console.log([...R, `✗ abortado: ${String(e?.message ?? e).split("\n")[0]}`, ...(pageLogs.length ? [`  erros da página: ${pageLogs.join(" | ")}`] : [])].join("\n"));
+    throw e;
   } finally {
     server.kill();
     agent?.kill();
