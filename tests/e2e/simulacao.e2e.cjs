@@ -57,6 +57,20 @@ async function main() {
     await p.click(`${P} .step-footer button:has-text('Concluir e seguir')`);
     await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
     check("fluxo: «Concluir e seguir» conclui o Material e abre Cargas e apoios", !!(await p.$(".sim-node:has-text('Material') .step-badge.done")));
+    // C1b: barra de passos clicável, Ctrl+Enter e persistência das marcas ao reabrir
+    check("barra de passos: Material concluído, Cargas atual", !!(await p.$(`${P} .step-bar .step-dot.done:has-text('Material')`)) && /cargas/i.test(await p.textContent(`${P} .step-bar .step-dot.on`)));
+    await p.click(`${P} .step-bar .step-dot:has-text('Material')`);
+    await p.waitForSelector(`${P} .pm-title:has-text('Material')`);
+    check("barra de passos: clicar num passo abre-o", /Material/.test(await p.textContent(`${P} .step-bar .step-dot.on`)));
+    await p.click(`${P} .step-bar .step-dot:has-text('Cargas')`);
+    await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
+    await p.focus(`${P} .step-footer button:has-text('Concluir e seguir')`);
+    await p.keyboard.press("Control+Enter");
+    await p.waitForFunction(() => !/Cargas/.test(document.querySelector(".sim-panel .pm-title")?.textContent ?? ""), null, { timeout: 10000 });
+    check("Ctrl+Enter conclui Cargas e segue", !!(await p.$(".sim-node:has-text('Cargas e apoios') .step-badge.done")), await p.textContent(`${P} .pm-title`));
+    await p.reload(); await settle();
+    await ws("Simulação FEM"); await p.waitForSelector(".sim-browser");
+    check("marcas dos passos persistem ao reabrir", !!(await p.$(".sim-node:has-text('Material') .step-badge.done")) && !!(await p.$(".sim-node:has-text('Cargas e apoios') .step-badge.done")));
     await p.click(".tabs button:has-text('Cargas e apoios')");
     await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
     const panel = await p.textContent(P);

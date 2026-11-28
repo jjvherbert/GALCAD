@@ -140,7 +140,7 @@ export function SimBrowser() {
                   <li key={n.section}>
                     <button class={`sim-node ${st.simSection === n.section ? "on" : ""} ${n.state ? `st-${n.state}` : ""}`} onClick={() => store.set({ simSection: n.section })}>
                       <span class="ic">{n.icon}</span><span class="lb">{n.label}</span><span class="dt">{n.detail}</span>
-                      {step && <span class={`step-badge ${BADGE[step.state]}`} title={`${step.label}: ${step.state}${step.reason ? ` — ${step.reason}` : ""}`} aria-label={`${step.label}: ${step.state}`}>{BADGE_MARK[step.state]}</span>}
+                      {step && (() => { const w = step.warn && step.state === "concluído"; const st = w ? "concluído com avisos" : step.state; return <span class={`step-badge ${BADGE[step.state]}${w ? " warn" : ""}`} title={`${step.label}: ${st}${step.reason ? ` — ${step.reason}` : ""}`} aria-label={`${step.label}: ${st}`}>{w ? "!" : BADGE_MARK[step.state]}</span>; })()}
                       {n.state === "warn" && <span class="st" title="Falta informação">!</span>}
                     </button>
                     {n.children?.length ? (

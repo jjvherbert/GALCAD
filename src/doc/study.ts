@@ -345,7 +345,8 @@ export interface FemStudy {
 /** Passos do fluxo guiado de um estudo FEM, pela ordem. */
 export type StepId = "estudo" | "material" | "interacoes" | "cargas" | "malha" | "verificar" | "correr" | "resultados";
 /** Impressão digital de um passo concluído: os seus dados, os dos passos a montante e a geometria. */
-export interface StepStamp { own: string; up?: Partial<Record<StepId, string>>; geom?: Record<string, string> }
+/** `warn`: o passo foi concluído com avisos de validação (fica âmbar em vez de verde). */
+export interface StepStamp { own: string; up?: Partial<Record<StepId, string>>; geom?: Record<string, string>; warn?: boolean }
 export interface StudyWorkflow { done?: Partial<Record<StepId, StepStamp>>; user?: string[] }
 
 /** Condições de estudos estruturais e térmicos (mudar a análise filtra as que não servem). */

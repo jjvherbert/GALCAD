@@ -810,5 +810,32 @@ button.primary:hover:not(:disabled) { background: #12337f; box-shadow: 0 2px 8px
 .sim-node .step-badge.doing { border-color: var(--ws-accent); color: var(--ws-accent); }
 .sim-node .step-badge.done { background: var(--ws-accent); border-color: var(--ws-accent); color: #fff; }
 .sim-node .step-badge.stale { border-color: var(--warn); color: var(--warn); }
+.sim-node .step-badge.done.warn { background: var(--warn); border-color: var(--warn); }
+.step-chip.done.warn { background: transparent; border-color: var(--warn); color: var(--warn); }
+.step-issue { flex: 1 1 100%; font-size: 11px; line-height: 1.35; overflow-wrap: anywhere; }
+.step-issue.err { color: var(--bad); }
+.step-issue.warn { color: var(--warn); }
+.study-type svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; color: var(--ws-accent); }
+.study-type small { font-size: 10px; color: var(--muted); }
+/* Barra de passos (C1b): um botão por passo; a ≤600 px passa a seletor */
+.step-bar { margin: 0 0 10px; }
+.step-bar ol { list-style: none; margin: 0; padding: 0; display: flex; gap: 2px; overflow-x: auto; }
+.step-bar li { flex: 1 1 0; min-width: 0; }
+.step-dot { width: 100%; display: grid; justify-items: center; gap: 2px; padding: 4px 2px; border: 0; border-bottom: 2px solid var(--line); background: none; cursor: pointer; color: var(--muted); font-size: 10px; }
+.step-dot .n { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid currentColor; display: grid; place-items: center; font-weight: 700; font-size: 10px; }
+.step-dot .lb { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step-dot.doing { color: var(--ws-accent); }
+.step-dot.done { color: var(--ws-accent); border-bottom-color: var(--ws-accent); }
+.step-dot.done .n { background: var(--ws-accent); border-color: var(--ws-accent); color: #fff; }
+.step-dot.done.warn { color: var(--warn); border-bottom-color: var(--warn); }
+.step-dot.done.warn .n { background: var(--warn); border-color: var(--warn); }
+.step-dot.stale { color: var(--warn); }
+.step-dot.on { font-weight: 700; color: var(--text); border-bottom-width: 3px; }
+.step-dot:hover { background: var(--accent-soft); }
+.step-select { display: none; width: 100%; }
+@media (max-width: 600px) {
+  .step-bar ol { display: none; }
+  .step-select { display: block; }
+}
 .sim-node .step-badge + .st { right: 28px; }
 .sim-node:has(.step-badge) .dt, .sim-node:has(.step-badge) .lb { padding-right: 20px; }
