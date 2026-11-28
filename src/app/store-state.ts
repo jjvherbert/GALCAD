@@ -92,7 +92,7 @@ export interface State {
   contextToolbar: { at: [number, number]; pick: Pick } | null;
   shortcutBar: { at: [number, number] } | null;
   orientationMenu: { at: [number, number] } | null;
-  gesture: { at: [number, number]; dir: import("./settings.ts").GestureDir | null } | null;
+  gesture: { at: [number, number]; dir: import("./settings.ts").GestureDir | null; ctx: import("./settings.ts").GestureContext } | null;
   /** Feature sob o rato na árvore (realçada no 3D). */
   hoverFeature: string | null;
   settings: Settings;

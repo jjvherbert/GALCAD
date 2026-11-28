@@ -1,7 +1,6 @@
 // Câmara do visualizador: estado, rotação/rolamento/deslocação/zoom, passo das transições e
 // desenho da caixa e dos gestos do rato.
 import * as THREE from "three";
-import type { GestureDir } from "./settings.ts";
 
 /** Estado da câmara (posição, centro, "para cima", zoom e meia-altura da vista). */
 export interface CamState { pos: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3; zoom: number; size: number }
@@ -90,14 +89,7 @@ export function stepCam(an: CamAnim, camera: THREE.OrthographicCamera, target: T
   return THREE.MathUtils.lerp(an.a.size, an.b.size, u);
 }
 
-/** Direção de um gesto do botão direito (a partir de 40 px), ou null. */
-export function gestureDir(a: [number, number], b: [number, number]): GestureDir | null {
-  const dx = b[0] - a[0], dy = b[1] - a[1];
-  if (Math.hypot(dx, dy) < 40) return null;
-  const ang = (Math.atan2(-dy, dx) * 180) / Math.PI; // 0 = direita, 90 = cima
-  const dirs: GestureDir[] = ["right", "upRight", "up", "upLeft", "left", "downLeft", "down", "downRight"];
-  return dirs[((Math.round(ang / 45) % 8) + 8) % 8];
-}
+export { gestureDir } from "./gestures.ts";
 
 /** Mostra a caixa de seleção entre `a` e `b` (pixels da vista). */
 export function drawBox(el: HTMLElement, a: [number, number], b: [number, number]) {

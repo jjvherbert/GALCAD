@@ -122,6 +122,7 @@ export class Viewport {
     cv.addEventListener("pointerdown", (e) => this.onDown(e));
     cv.addEventListener("pointermove", (e) => this.onMove(e));
     cv.addEventListener("pointerup", (e) => this.onUp(e));
+    cv.addEventListener("pointercancel", () => mouse.onCancel(this.mouseHost, this.mouse));
     cv.addEventListener("pointerleave", () => { if (!this.mouse.drag) this.setHover(null); });
     cv.addEventListener("wheel", (e) => { if (e.shiftKey && this.onSeedWheel?.(e.deltaY < 0 ? 1 : -1)) e.preventDefault(); else this.onWheel(e); }, { passive: false });
     cv.addEventListener("contextmenu", (e) => e.preventDefault());

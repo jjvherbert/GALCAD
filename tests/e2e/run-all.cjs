@@ -4,7 +4,7 @@
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
-const ALL = ["app", "navigation", "interacao", "surfaces", "assembly", "drawing", "fase4", "simulacao", "pmi", "script", "galkeel", "calc"];
+const ALL = ["app", "navigation", "interacao", "surfaces", "assembly", "drawing", "fase4", "simulacao", "pmi", "script", "galkeel", "calc", "gestos"];
 const pick = process.argv.slice(2);
 const unknown = pick.filter((s) => !ALL.includes(s));
 if (unknown.length) { console.error(`Suites desconhecidas: ${unknown.join(", ")}. Disponíveis: ${ALL.join(", ")}`); process.exit(2); }

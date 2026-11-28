@@ -28,12 +28,21 @@ test("sanitizeSettings: números cortados aos limites; NaN/texto → defeito", (
 });
 
 test("sanitizeSettings: preserva valores válidos e gestos parciais", () => {
-  const s = sanitizeSettings({ theme: "dark", sketchGrid: true, agentUrl: "http://10.0.0.5:9000", gestures: { up: "view.iso" } as Settings["gestures"] });
+  const s = sanitizeSettings({ theme: "dark", sketchGrid: true, agentUrl: "http://10.0.0.5:9000", gestures: { up: "view.iso" } as unknown as Settings["gestures"] });
   assert.equal(s.theme, "dark");
   assert.equal(s.sketchGrid, true);
   assert.equal(s.agentUrl, "http://10.0.0.5:9000");
-  assert.equal(s.gestures.up, "view.iso");
-  assert.equal(s.gestures.down, DEFAULT_SETTINGS.gestures.down);
+  // formato antigo (plano) migra para o contexto "3d"
+  assert.equal(s.gestures["3d"].up, "view.iso");
+  assert.equal(s.gestures["3d"].down, DEFAULT_SETTINGS.gestures["3d"].down);
+});
+
+test("sanitizeSettings: gestos por contexto (formato novo) parciais", () => {
+  const s = sanitizeSettings({ gestures: { sketch: { up: "sk:line" } } as unknown as Settings["gestures"] });
+  assert.equal(s.gestures.sketch.up, "sk:line");
+  assert.equal(s.gestures.sketch.down, DEFAULT_SETTINGS.gestures.sketch.down);
+  assert.deepEqual(s.gestures["3d"], DEFAULT_SETTINGS.gestures["3d"]);
+  assert.deepEqual(s.gestures.fem, DEFAULT_SETTINGS.gestures.fem);
 });
 
 test("sanitizeSettings: nunca guarda campos estranhos (ex. token)", () => {

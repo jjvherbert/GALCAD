@@ -1,8 +1,10 @@
 // Diálogo «Definições»: as alterações aplicam-se logo (e ficam guardadas no browser).
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { store, useStoreKeys } from "./store.ts";
 import { commandById } from "./commands.ts";
-import { LIMITS, type GestureDir, type Settings } from "./settings.ts";
+import { DEFAULT_SETTINGS, LIMITS, type GestureContext, type GestureDir, type Settings } from "./settings.ts";
+import { TOOLS } from "./sketch-types.ts";
+import { gestureLabel } from "./gesture-label.ts";
 
 const THEMES: [Settings["theme"], string][] = [["light", "Claro"], ["dark", "Escuro"], ["system", "Sistema"]];
 const STYLES: [Settings["displayStyle"], string][] = [["shadedEdges", "Sombreado com arestas"], ["shaded", "Sombreado"], ["wireframe", "Arestas (fio de arame)"]];
@@ -10,8 +12,15 @@ const GESTURES: [GestureDir, string][] = [
   ["up", "↑ Cima"], ["upRight", "↗ Cima-direita"], ["right", "→ Direita"], ["downRight", "↘ Baixo-direita"],
   ["down", "↓ Baixo"], ["downLeft", "↙ Baixo-esquerda"], ["left", "← Esquerda"], ["upLeft", "↖ Cima-esquerda"],
 ];
-/** Comandos que fazem sentido num gesto: os de vista e «novo esboço». */
-const GESTURE_COMMANDS = [...commandById.values()].filter((c) => c.group === "Vista" || c.id === "sketch.new");
+const GESTURE_CTX: [GestureContext, string][] = [["3d", "3D"], ["sketch", "Esboço"], ["fem", "FEM"]];
+/** Comandos que fazem sentido num gesto, por contexto: 3D = vista e «novo esboço»; esboço = ferramentas e sair;
+ *  FEM = simulação e vista. */
+const ids = (f: (c: { id: string; group: string }) => boolean) => [...commandById.values()].filter(f).map((c) => c.id);
+const GESTURE_COMMANDS: Record<GestureContext, string[]> = {
+  "3d": ids((c) => c.group === "Vista" || c.id === "sketch.new"),
+  sketch: [...TOOLS.map((t) => `sk:${t.id}`), "sk:exit"],
+  fem: ids((c) => c.group === "Simulação" || c.group === "Vista"),
+};
 
 const clamp = (v: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, v));
 
@@ -37,6 +46,7 @@ export function SettingsDialog() {
   const close = () => store.set({ showSettings: false });
   const set = (patch: Partial<Settings>) => store.updateSettings(patch);
 
+  const [gctx, setGctx] = useState<GestureContext>("3d");
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { close(); e.stopImmediatePropagation(); } };
     addEventListener("keydown", onKey, true);
@@ -75,13 +85,26 @@ export function SettingsDialog() {
           <label class="row"><span>Mostrar planos</span><input type="checkbox" checked={s.showPlanes} onChange={(e) => { set({ showPlanes: (e.currentTarget as HTMLInputElement).checked }); store.rebuild(0); }} /></label>
           <details>
             <summary>Gestos do rato (arrastar com o botão direito)</summary>
+            <div class="row">
+              <span>Contexto</span>
+              <div class="seg" role="radiogroup" aria-label="Contexto dos gestos">
+                {GESTURE_CTX.map(([v, label]) => (
+                  <label key={v} class={gctx === v ? "on" : ""}>
+                    <input type="radio" name="gesture-ctx" value={v} checked={gctx === v} onChange={() => setGctx(v)} />{label}
+                  </label>
+                ))}
+              </div>
+            </div>
             {GESTURES.map(([d, label]) => (
               <label key={d} class="row"><span>{label}</span>
-                <select value={s.gestures[d]} onChange={(e) => set({ gestures: { ...s.gestures, [d]: (e.currentTarget as HTMLSelectElement).value } })}>
-                  {GESTURE_COMMANDS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                <select value={s.gestures[gctx][d]} onChange={(e) => set({ gestures: { ...s.gestures, [gctx]: { ...s.gestures[gctx], [d]: (e.currentTarget as HTMLSelectElement).value } } })}>
+                  {GESTURE_COMMANDS[gctx].map((id) => <option key={id} value={id}>{gestureLabel(id)}</option>)}
                 </select>
               </label>
             ))}
+            <div class="row"><span class="muted">Manter o botão parado ~0,3 s mostra a roda dos comandos.</span>
+              <button type="button" onClick={() => set({ gestures: { ...s.gestures, [gctx]: { ...DEFAULT_SETTINGS.gestures[gctx] } } })}>Repor por omissão</button>
+            </div>
           </details>
         </section>
 

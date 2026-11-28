@@ -87,8 +87,9 @@ function App() {
     v.onEmptyClick = () => { store.closeOverlays(); if (!store.state.pickTarget) store.clearSelection(); };
     v.onHover = setHover;
     v.onContextMenu = (at, pick) => store.set({ contextMenu: { at, pick }, contextToolbar: null });
-    v.onGesture = (dir) => { store.set({ gesture: null }); runCommand(store.state.settings.gestures[dir]); };
-    v.onGestureTrack = (dir, at) => store.set({ gesture: at ? { at, dir } : null });
+    const gctx = () => (store.state.workspace === "fem" ? "fem" : "3d");
+    v.onGesture = (dir) => { store.set({ gesture: null }); runCommand(store.state.settings.gestures[gctx()][dir]); };
+    v.onGestureTrack = (dir, at) => store.set({ gesture: at ? { at, dir, ctx: gctx() } : null });
     v.onBoxSelect = (picks, add) => store.setSelection(picks, add);
     v.onDoubleClick = (p) => {
       // espaços de simulação: duplo clique numa face com condição abre essa condição (nunca editar features às escuras)
