@@ -277,7 +277,7 @@ test("pré-visualização da malha: qualidade, volume, arestas dos elementos e t
   const t = await solve(doc, fem({ mesh: { size: 5, order: 1, curvature: 0, seeds: [{ edges: [edge(0, [0, 0])], mode: "count", value: 30 }] }, loads }));
   assert.equal(t.c.mesh.curves!.length, 1);
   const tp = await previewMesh(t.dir);
-  const m = parseMsh(readFileSync(join(t.dir, "mesh.msh"), "utf8"));
+  const m = parseMsh(readFileSync(join(t.dir, "mesh.msh")));
   const onEdge = [...m.nodes.values()].filter((p) => Math.abs(p[1]) < 1e-9 && Math.abs(p[2]) < 1e-9);
   assert.equal(onEdge.length, 31);
   assert.ok(tp.quality!.metrics.some((x) => x.key === "shape"));
