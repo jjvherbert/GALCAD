@@ -2,8 +2,7 @@
 // isolamento (sem rede) e, com Gmsh + CalculiX, simulações em série pelo agente local.
 // Uso: npm run build && node tests/e2e/script.e2e.cjs
 const { chromium } = require("playwright");
-const { spawn } = require("node:child_process");
-const { startPreview, has } = require("./_server.cjs");
+const { startPreview, has, startAgent } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -13,7 +12,7 @@ const URL = `http://localhost:${PORT}`;
 async function main() {
   const server = startPreview(PORT);
   const solvers = has("gmsh") && has("ccx");
-  const agent = solvers ? spawn("node", [path.join(__dirname, "../../public/cad-runner.mjs"), "--serve", "--port", String(AGENT)], { stdio: "ignore", env: { ...process.env, CAD_TOKEN: TOKEN } }) : null;
+  const agent = solvers ? await startAgent(AGENT, TOKEN) : null;
   const R = [];
   const check = (name, ok, extra = "") => R.push(`${ok ? "✓" : "✗"} ${name} ${extra}`);
   try {
@@ -73,7 +72,7 @@ async function main() {
       const t = await p.$$eval(".script-panel table.data tr", (trs) => trs.slice(1).map((tr) => [...tr.querySelectorAll("td")].map((td) => Number(td.textContent))));
       // Timoshenko: δ(L) = F·L³/(3EI) + F·L/(κGA)
       const E = 210000, I = 10000 / 12, G = E / 2.6, d = (L) => (100 * L ** 3) / (3 * E * I) + (100 * L) / ((5 / 6) * G * 100);
-      check("3 simulações no agente contra Timoshenko", t.length === 3 && t.every((r) => Math.abs(-r[2] - d(r[0])) < 0.03 * d(r[0])), JSON.stringify(t));
+      check("3 simulações no agente contra Timoshenko", t.length === 3 && t.every((r) => Math.abs(-r[2] - d(r[0])) < 0.03 * d(r[0])), JSON.stringify(t) + " " + ((await p.textContent(".script-panel .script-console").catch(() => "")) ?? "").slice(0, 400));
       await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-script.png") });
     } else R.push("- simulações em série saltadas (Gmsh/CalculiX não instalados)");
     await p.fill(".script-panel input[aria-label='Nome do script']", "Meu varrimento");

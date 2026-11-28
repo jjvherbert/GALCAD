@@ -10,6 +10,8 @@ Os testes com solvers reais estão em `tests/*.test.ts`. Ficam `skip` quando o s
 CAD_GMSH=… CAD_CCX=… CAD_ASTER=… node --test tests/vv.test.ts
 ```
 
+Os testes e2e (`tests/e2e/*.e2e.cjs`) põem no PATH os solvers empacotados em `desktop/solvers/<plataforma>/{gmsh,calculix}` quando existem. Assim a suite `simulacao` gera de facto a malha ao vivo, resolve a consola e verifica a malha estruturada no 3D. Sem esses solvers (por exemplo, no CI), essas secções ficam `skip`.
+
 ## Benchmarks NAFEMS
 
 | Caso | Grandeza | Referência | CalculiX 2.21 | code_aster | Erro | Teste |
