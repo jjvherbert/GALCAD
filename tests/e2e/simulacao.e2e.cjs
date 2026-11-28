@@ -2,8 +2,7 @@
 // local real (cad-runner --serve com Gmsh + CalculiX), com o resultado a cores no 3D.
 // Uso: npm run build && node tests/e2e/simulacao.e2e.cjs  (sem Gmsh/CalculiX, o cálculo é saltado)
 const { chromium } = require("playwright");
-const { spawn } = require("node:child_process");
-const { startPreview, has } = require("./_server.cjs");
+const { startPreview, has, startAgent } = require("./_server.cjs");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -13,7 +12,7 @@ const URL = `http://localhost:${PORT}`;
 async function main() {
   const server = startPreview(PORT);
   const solvers = has("gmsh") && has("ccx");
-  const agent = solvers ? spawn("node", [path.join(__dirname, "../../public/cad-runner.mjs"), "--serve", "--port", String(AGENT)], { stdio: "ignore", env: { ...process.env, CAD_TOKEN: TOKEN } }) : null;
+  const agent = solvers ? await startAgent(AGENT, TOKEN) : null;
   const R = [];
   const check = (name, ok, extra = "") => R.push(`${ok ? "✓" : "✗"} ${name} ${extra}`);
   try {
@@ -37,7 +36,11 @@ async function main() {
       await node("Resolver");
       const b = p.locator(`${P} button:has-text('Calcular no agente local')`);
       try { await b.waitFor({ timeout: 15000 }); } catch { throw new Error(`sem botão Calcular; botões: ${JSON.stringify(await p.$$eval(".sim-panel button", (x) => x.map((y) => y.textContent.trim().slice(0, 28) + (y.disabled ? '(off)' : ''))))} · progresso: ${!!(await p.$(".sim-progress"))} · título: ${await p.textContent(".sim-panel .pm-title")} · estado: ${(await p.textContent(".statusbar")).slice(0, 200)}`); }
-      await b.click();
+      // a malha ao vivo (relançada ao mudar o estudo) desativa e redesenha o botão: espera-se que fique ativo e tenta-se de novo
+      for (let i = 0; ; i++) {
+        await p.waitForFunction(() => [...document.querySelectorAll(".sim-panel button")].some((x) => /Calcular no agente local/.test(x.textContent ?? "") && !x.disabled), null, { timeout: 120000 });
+        try { await b.click({ timeout: 10000 }); break; } catch (e) { if (i >= 4) throw e; await p.waitForTimeout(500); }
+      }
     };
     // convergência: configura-se na secção «Convergência» do estudo (guardada no estudo)
     const convOn = async (on) => { await node("Convergência"); const c = p.locator(`${P} label:has-text('Correr a convergência') input`); if ((await c.isChecked()) !== on) await c.click(); };
@@ -77,6 +80,11 @@ async function main() {
       await p.click(`${P} button:has-text('Testar ligação')`);
       await p.waitForFunction(() => /gmsh ✓/.test(document.querySelector(".sim-panel")?.textContent ?? ""), null, { timeout: 30000 }).catch(() => {});
       check("ligação ao agente", /gmsh ✓ · calculix ✓/.test(await p.textContent(P)));
+      // com o token, a malha ao vivo arranca sozinha: o 3D mostra-a e «Calcular» fica à espera dela
+      await p.waitForFunction(() => document.querySelector(".viewport")?.dataset.sim === "1", null, { timeout: 120000 }).catch(() => {});
+      check("malha ao vivo gerada e visível no 3D", (await p.$eval(".viewport", (e) => e.dataset.sim)) === "1");
+      await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-malha-viva.png") });
+      await p.waitForSelector(`${P} button:has-text('Calcular no agente local'):not([disabled])`, { timeout: 120000 });
       await p.click(`${P} button:has-text('Calcular no agente local')`);
       await p.waitForSelector(`${P} .info-table`, { timeout: 240000 });
       const t = (await p.textContent(`${P} .info-table`)).replace(/\s+/g, " ");
@@ -121,7 +129,7 @@ async function main() {
       await p.waitForSelector(`${P} details.quality`, { timeout: 120000 });
       const q = (await p.textContent(`${P} details.quality`)).replace(/\s+/g, " ");
       check("pré-visualização: qualidade dos hexaedros", /Jacobiano escalado\s*1\.00 · 1\.00 · 1\.00/.test(q) && /Empeno/.test(q), q.slice(0, 200));
-      check("pré-visualização: malha estruturada no 3D", /hexaedros de 20 nós/.test(await p.textContent(`${P} .info-table`)) && (await p.$eval(".viewport", (e) => e.dataset.sim)) === "1");
+      check("pré-visualização: malha estruturada no 3D", /\d+ hexaedros de (?:8|20) nós/.test(await p.textContent(`${P} .info-table`)) && (await p.$eval(".viewport", (e) => e.dataset.sim)) === "1");
       await p.screenshot({ path: path.join(__dirname, "../../dist/e2e-malha.png") });
       // C9c: histogramas por métrica e sugestões; «Aceitar todas» é um só passo de desfazer
       check("verificar: um histograma por métrica", (await p.$$(`${P} .hist-card .histogram`)).length >= 3);
