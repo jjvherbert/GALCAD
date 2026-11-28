@@ -65,6 +65,10 @@ async function main() {
     await p.click(`${P} .step-bar .step-dot:has-text('Material')`);
     await p.waitForSelector(`${P} .pm-title:has-text('Material')`);
     check("barra de passos: clicar num passo abre-o", /Material/.test(await p.textContent(`${P} .step-bar .step-dot.on`)));
+    // C1c fatia 3: no Material cada material tem a sua cor no 3D e uma linha na legenda
+    const mats = await p.$eval(".viewport", (e) => ({ m: e.dataset.materials ?? "", miss: e.dataset.missingMaterial ?? "" }));
+    const matLegend = await p.$$eval(".load-legend[aria-label='Legenda dos materiais'] li", (ls) => ls.map((l) => l.textContent));
+    check("cores por material no 3D com legenda", mats.m.endsWith(":1") && mats.miss === "" && matLegend.length === 1 && (matLegend[0] ?? "").endsWith("1 corpo"), `${JSON.stringify(mats)}; ${JSON.stringify(matLegend)}`);
     await p.click(`${P} .step-bar .step-dot:has-text('Cargas')`);
     await p.waitForSelector(`${P} .pm-title:has-text('Cargas e apoios')`);
     await p.focus(`${P} .step-footer button:has-text('Concluir e seguir')`);

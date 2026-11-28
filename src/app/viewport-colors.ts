@@ -28,6 +28,8 @@ export interface ColorState {
   conditionFaces: Map<string, number> | null;
   /** Fração da cor das condições que fica visível (null = cor plena); fora do passo das condições. */
   conditionDim?: number | null;
+  /** Cor de base por face segundo o material (passo do material); senão a cor do tema. */
+  materialFaces?: Map<string, number> | null;
   analysis: Analysis | null;
   flash: Flash;
 }
@@ -77,7 +79,7 @@ export function recolor(s: ColorState, data: DOMStringMap) {
       }
       return;
     }
-    const bodyColor = f.body ? s.theme.sheet : s.theme.body;
+    const bodyColor = s.materialFaces?.get(f.name) ?? (f.body ? s.theme.sheet : s.theme.body);
     c.set(flat ?? bodyColor);
     if (s.conditionDim != null && flat !== null && flat === s.conditionFaces?.get(f.name) && !s.selected.has(k) && k !== hoverKey) c.lerp(dimBase.set(bodyColor), 1 - s.conditionDim);
     if (flat === null && flash.on && flash.k > 0 && f.name.startsWith(flash.on.prefix)) c.lerp(flashColor.set(s.theme.preview), flash.k);
