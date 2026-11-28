@@ -3,7 +3,7 @@
 import { type FemStudy, newFemStudy } from "../doc/study.ts";
 import { store } from "./store.ts";
 import { activeStudy, addStudy, currentGeom, markStepsDone, updateStudy } from "./sim-actions.ts";
-import { type StepId, type StepInfo, type StudyTypeId, STEP_SECTION, STUDY_TYPES, diffTypeChange, firstOpenStep, nextStep, sectionStep, stepStates, studyTypeLabel, studyTypePatch } from "./workflow.ts";
+import { type StepId, type StepInfo, type StudyTypeId, STEP_SECTION, STUDY_TYPES, diffTypeChange, firstOpenStep, nextStep, sectionStep, stepIssues, stepStates, studyTypeLabel, studyTypePatch } from "./workflow.ts";
 
 /** O estudo FEM ativo (ou nada). */
 function fem(): FemStudy | undefined {
@@ -50,11 +50,23 @@ export function chooseStudyType(type: StudyTypeId): boolean {
   return true;
 }
 
-/** Concluir o passo da secção aberta e seguir para o próximo passo. */
-export function completeAndNext() {
+/**
+ * Concluir o passo da secção aberta e seguir para o próximo passo. Erros do passo bloqueiam
+ * (devolve `false` e mostra o primeiro); avisos deixam concluir, como «concluído com avisos».
+ * Os resultados e o «correr» não se concluem à mão.
+ */
+export function completeAndNext(): boolean {
   const s = fem();
-  if (!s) return;
+  if (!s) return false;
   const step = sectionStep(store.state.simSection);
+  if (step === "resultados" || step === "correr") return false;
+  const asm = !!store.activeAssembly();
+  const { errors } = stepIssues(s, step, asm);
+  if (errors.length) {
+    store.set({ error: errors[0].text });
+    return false;
+  }
   markStepsDone(s.id, [step]);
-  goToStep(nextStep(step, !!store.activeAssembly()));
+  goToStep(nextStep(step, asm));
+  return true;
 }

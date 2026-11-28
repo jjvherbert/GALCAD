@@ -11,8 +11,8 @@ import { colourField, isMeshPreview, layerShown, toggleLayer } from "../sim/resu
 import { AssemblyBodies, CfdEditor, FemEditor } from "./SimEditors.tsx";
 import { CheckPanel } from "./SimCheck.tsx";
 import { MeshAdvicePanel } from "./MeshAdvice.tsx";
-import { type StepState, STUDY_TYPES, sectionStep, typeOf, validate } from "./workflow.ts";
-import { activeStepStates, chooseStudyType, completeAndNext } from "./workflow-actions.ts";
+import { type StepInfo, type StepState, type StudyTypeId, STUDY_TYPES, sectionStep, stepIssues, studyTypeDefaults, typeOf } from "./workflow.ts";
+import { activeStepStates, chooseStudyType, completeAndNext, goToStep } from "./workflow-actions.ts";
 import { BEHAVIOUR, ConvergencePlot, JobProgress, num, pct, QualityReport, ResultExports, ResultProbe, SimLegend, SweepPlot, TimePlot } from "./SimResults.tsx";
 
 const SECTION_TITLE: Record<SimSection, string> = {
@@ -35,11 +35,15 @@ export function SimPanel() {
   const docId = asm?.id ?? st.doc.id;
   const title = s?.physics === "cfd" && sec === "conditions" ? "Fluido e fronteiras" : SECTION_TITLE[sec];
   return (
-    <div class="knowledge-panel sim-panel section-panel" key={`${s?.id ?? ""}:${sec}`}>
+    <div class="knowledge-panel sim-panel section-panel" key={`${s?.id ?? ""}:${sec}`} onKeyDown={(e) => {
+      // Ctrl+Enter conclui o passo (o atalho global ignora os campos, e aqui é dentro deles que se escreve)
+      if (s?.physics === "fem" && e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); (e.target as HTMLElement).blur?.(); completeAndNext(); }
+    }}>
       <div class="pm-head">
         <span class="pm-title">{title}</span>
         {s && <span class="muted">{s.name}</span>}
       </div>
+      {s?.physics === "fem" && <StepBar s={s} section={sec} />}
       {physics === "fem" && sec === "study" && (!s || s.physics === "fem") && <StudyTypePicker s={s} />}
       {s && sec === "study" && <Field label="Nome"><input value={s.name} onChange={(e) => up({ name: (e.target as HTMLInputElement).value })} /></Field>}
       {s?.physics === "fem" && <FemEditor s={s} up={up} assembly={!!asm} section={sec} />}
@@ -60,6 +64,43 @@ export function SimPanel() {
 }
 
 const STATE_CLASS: Record<StepState, string> = { "por fazer": "todo", "em curso": "doing", "concluído": "done", "desatualizado": "stale" };
+const stateClass = (i: StepInfo) => `${STATE_CLASS[i.state]}${i.warn && i.state === "concluído" ? " warn" : ""}`;
+const stateText = (i: StepInfo) => i.warn && i.state === "concluído" ? "concluído com avisos" : i.state;
+
+/** Barra de progresso dos passos: clicar vai ao passo; a 390 px é um seletor compacto. */
+function StepBar({ s, section }: { s: FemStudy; section: SimSection }) {
+  const steps = activeStepStates(s);
+  const cur = sectionStep(section);
+  return (
+    <nav class="step-bar" aria-label="Passos do estudo">
+      <ol>
+        {steps.map((x, k) => (
+          <li key={x.id}>
+            <button type="button" class={`step-dot ${stateClass(x)}${x.id === cur ? " on" : ""}`} aria-current={x.id === cur ? "step" : undefined}
+              title={`${k + 1}. ${x.label}: ${stateText(x)}${x.reason ? ` — ${x.reason}` : ""}`} onClick={() => goToStep(x.id)}>
+              <span class="n">{x.state === "concluído" ? (x.warn ? "!" : "✓") : k + 1}</span><span class="lb">{x.label}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <select class="step-select" aria-label="Passo" value={cur} onChange={(e) => goToStep((e.target as HTMLSelectElement).value as StepInfo["id"])}>
+        {steps.map((x, k) => <option key={x.id} value={x.id}>{`Passo ${k + 1}/${steps.length} · ${x.label} (${stateText(x)})`}</option>)}
+      </select>
+    </nav>
+  );
+}
+
+/** Ícone de cada tipo de estudo (traço simples, herda a cor). */
+const TYPE_ICON: Record<StudyTypeId, string> = {
+  static: "M3 17h14M6 17V8h8v9M10 3v5M8 6l2 2 2-2",
+  nonlinear: "M3 17C7 17 8 5 17 3M3 17h14",
+  modal: "M2 10c2-5 4-5 6 0s4 5 6 0 3-4 4-2",
+  buckling: "M10 2v2M10 18v-2M10 4c-4 4-4 8 0 12M7 2h6M7 18h6",
+  thermal: "M9 3v9a3 3 0 1 0 2 0V3zM14 6h3M14 9h2",
+  dynamic: "M2 14l4-8 4 8 4-8 4 8",
+  explicit: "M11 2L4 11h5l-1 7 7-9h-5z",
+  fatigue: "M2 10h3l2-5 3 10 2-5h6",
+};
 
 /** Escolha do tipo de estudo (C1a): cria o estudo ou muda o tipo do estudo aberto. */
 function StudyTypePicker({ s }: { s?: FemStudy }) {
@@ -69,26 +110,31 @@ function StudyTypePicker({ s }: { s?: FemStudy }) {
       <legend class="field-label">{s ? "Tipo de estudo" : "Escolha o tipo de estudo para começar"}</legend>
       {STUDY_TYPES.map((t) => (
         <button key={t.id} type="button" class={`study-type${t.id === cur ? " on" : ""}`} aria-pressed={t.id === cur} disabled={!!t.disabled} title={t.disabled} onClick={() => chooseStudyType(t.id)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d={TYPE_ICON[t.id]} /></svg>
           <b>{t.label}</b>
           <span>{t.disabled ?? t.description}</span>
+          {!t.disabled && <small>{studyTypeDefaults(t.id)}</small>}
         </button>
       ))}
     </fieldset>
   );
 }
 
-/** Rodapé do passo: o estado (com a razão) e «Concluir e seguir». */
+/** Rodapé do passo: o estado (com a razão), o primeiro erro ou aviso e «Concluir e seguir» (Ctrl+Enter). */
 function StepFooter({ s, section, assembly }: { s: FemStudy; section: SimSection; assembly: boolean }) {
   const step = sectionStep(section);
   const info = activeStepStates(s).find((i) => i.id === step);
   if (!info) return null;
-  const errors = step === "verificar" ? validate(s, "todos", assembly).filter((i) => i.level === "erro") : [];
+  const { errors, warnings } = stepIssues(s, step, assembly);
+  const more = (n: number) => n > 1 ? ` (+${n - 1})` : "";
   return (
     <div class="step-footer">
-      <span class={`step-chip ${STATE_CLASS[info.state]}`} title={info.reason}>{info.label}: {info.state}</span>
+      <span class={`step-chip ${stateClass(info)}`} title={info.reason}>{info.label}: {stateText(info)}</span>
       {info.reason && <span class="field-hint step-reason">{info.reason}</span>}
+      {errors.length > 0 && <span class="step-issue err" role="alert">{errors[0].text}{more(errors.length)}</span>}
+      {!errors.length && warnings.length > 0 && <span class="step-issue warn">{warnings[0].text}{more(warnings.length)}</span>}
       {step !== "resultados" && step !== "correr" && (
-        <button class="small primary" disabled={errors.length > 0} title={errors[0]?.text} onClick={() => completeAndNext()}>Concluir e seguir ▸</button>
+        <button class="small primary" disabled={errors.length > 0} title={errors[0]?.text ?? "Ctrl+Enter"} onClick={() => completeAndNext()}>Concluir e seguir ▸</button>
       )}
     </div>
   );

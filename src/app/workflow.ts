@@ -6,7 +6,7 @@
 // Um passo concluído guarda a impressão digital dos seus dados, dos passos a montante de que
 // depende e da geometria. Muda os seus dados → «em curso»; muda algo a montante → «desatualizado».
 
-import { type FemStudy, type StepId, type StepStamp, type StudyWorkflow, STRUCT_LOADS, THERMAL_LOADS } from "../doc/study.ts";
+import { type FemStudy, type StepId, type StepStamp, type StudyWorkflow, STRUCT_LOADS, THERMAL_LOADS, newFemStudy } from "../doc/study.ts";
 import type { AssemblyDoc } from "../doc/project.ts";
 import type { CadDocument } from "../doc/types.ts";
 import { type CheckLevel, type CheckWhere, checkStudy } from "../sim/modelcheck.ts";
@@ -138,9 +138,10 @@ export function geomRev(g: GeomSnapshot): string {
 
 // ---------- estado dos passos ----------
 
-export function stampStep(s: FemStudy, step: StepId, geom: GeomSnapshot, assembly = false): StepStamp {
+export function stampStep(s: FemStudy, step: StepId, geom: GeomSnapshot, assembly = false, warn = false): StepStamp {
   const inp = inputsOf(step, assembly);
   const stamp: StepStamp = { own: ownHash(s, step) };
+  if (warn) stamp.warn = true;
   if (inp.up.length) stamp.up = Object.fromEntries(inp.up.map((u) => [u, ownHash(s, u)]));
   if (inp.geom) stamp.geom = { ...geom.parts };
   return stamp;
@@ -164,7 +165,8 @@ function geomReasons(before: Record<string, string>, now: GeomSnapshot): string[
   return [...meta, ...edits];
 }
 
-export interface StepInfo { id: StepId; label: string; section: SimSection; state: StepState; reasons: string[]; reason: string }
+/** `warn`: concluído com avisos (só quando `state` é «concluído»). */
+export interface StepInfo { id: StepId; label: string; section: SimSection; state: StepState; reasons: string[]; reason: string; warn?: boolean }
 
 export function stepState(s: FemStudy, step: StepId, geom: GeomSnapshot, assembly = false): Omit<StepInfo, "id" | "label" | "section"> {
   const stamp = s.workflow?.done?.[step];
@@ -179,7 +181,7 @@ export function stepState(s: FemStudy, step: StepId, geom: GeomSnapshot, assembl
     const was = stamp.up?.[u];
     if (was !== undefined && was !== ownHash(s, u)) reasons.push(`passo «${STEP_LABEL[u]}» alterado`);
   }
-  if (!reasons.length) return { state: "concluído", reasons, reason: "" };
+  if (!reasons.length) return stamp.warn ? { state: "concluído", reasons, reason: "", warn: true } : { state: "concluído", reasons, reason: "" };
   return { state: "desatualizado", reasons, reason: reasons.slice(0, 2).join("; ") + (reasons.length > 2 ? "…" : "") };
 }
 
@@ -199,9 +201,15 @@ export function nextStep(step: StepId, assembly = false): StepId {
   return order[Math.min(i + 1, order.length - 1)] ?? step;
 }
 
-export function markDonePatch(s: FemStudy, step: StepId, geom: GeomSnapshot, assembly = false): Pick<FemStudy, "workflow"> {
+export function markDonePatch(s: FemStudy, step: StepId, geom: GeomSnapshot, assembly = false, warn = false): Pick<FemStudy, "workflow"> {
   const wf: StudyWorkflow = s.workflow ?? {};
-  return { workflow: { ...wf, done: { ...wf.done, [step]: stampStep(s, step, geom, assembly) } } };
+  return { workflow: { ...wf, done: { ...wf.done, [step]: stampStep(s, step, geom, assembly, warn) } } };
+}
+
+/** Erros (bloqueiam a conclusão) e avisos (concluído com avisos) de um passo; «verificar» e «correr» veem o estudo todo. */
+export function stepIssues(s: FemStudy, step: StepId, assembly = false): { errors: Issue[]; warnings: Issue[] } {
+  const all = validate(s, step, assembly);
+  return { errors: all.filter((i) => i.level === "erro"), warnings: all.filter((i) => i.level === "aviso") };
 }
 
 /** Regista os campos mudados à mão (a escolha do tipo de estudo deixa-os estar). */
@@ -286,6 +294,17 @@ export const STUDY_TYPES: StudyType[] = [
 export const studyTypeLabel = (id: StudyTypeId) => STUDY_TYPES.find((t) => t.id === id)?.label ?? id;
 
 const SOLVER_LABEL: Record<FemStudy["solver"], string> = { calculix: "CalculiX", code_aster: "code_aster", openradioss: "OpenRadioss" };
+
+/** Pré-definições de um tipo de estudo novo (cartões do tipo): solver, malha e duração. */
+export function studyTypeDefaults(type: StudyTypeId): string {
+  if (type === "fatigue") return "";
+  const base = newFemStudy("tmp", 0);
+  const s = { ...base, ...studyTypePatch(base, type) };
+  const bits = [SOLVER_LABEL[s.solver], s.mesh.order === 1 ? "lineares" : "quadráticos"];
+  if (s.dynamic && typeof s.dynamic.duration === "number") bits.push(`${+(s.dynamic.duration * 1000).toPrecision(3)} ms`);
+  if (s.analysis === "modal") bits.push(`${s.modes} modos`);
+  return bits.join(" · ");
+}
 
 export function typeOf(s: Pick<FemStudy, "analysis" | "dynamic" | "nonlinear">): StudyTypeId {
   if (s.analysis === "dynamic") return s.dynamic?.scheme === "explicit" ? "explicit" : "dynamic";

@@ -6,7 +6,7 @@ import { type FemLoad, type FemStudy, newFemStudy } from "../src/doc/study.ts";
 import type { CadDocument } from "../src/doc/types.ts";
 import {
   assemblySnapshot, canRun, diffTypeChange, firstOpenStep, geomRev, isEnabled, markDonePatch, nextStep,
-  partSnapshot, stableJson, stepStates, stepsFor, studyTypePatch, touchUser, typeOf, validate,
+  partSnapshot, stableJson, stepIssues, stepStates, stepsFor, studyTypeDefaults, studyTypePatch, touchUser, typeOf, validate,
 } from "../src/app/workflow.ts";
 
 const face = (name: string) => ({ kind: "face" as const, name });
@@ -170,4 +170,29 @@ test("diffTypeChange: lista as mudanças e marca as destrutivas", () => {
   const e = diffTypeChange(s, "explicit");
   assert.ok(e.changes.includes("Solver: CalculiX → OpenRadioss"));
   assert.ok(e.changes.includes("Malha: ordem 2 → 1"));
+});
+
+test("concluído com avisos: a marca guarda o aviso e o estado mostra-o", () => {
+  const g = partSnapshot(doc([box]));
+  const s = newFemStudy("a", 1);
+  const w = { ...s, ...markDonePatch(s, "material", g, false, true) };
+  assert.equal(state(w, g).material.state, "concluído");
+  assert.equal(state(w, g).material.warn, true);
+  assert.ok(!state(done(s, "material"), g).material.warn);
+});
+
+test("erros de um passo bloqueiam; os avisos não", () => {
+  const s = newFemStudy("a", 1);
+  const st = stepIssues(s, "cargas");
+  assert.ok(st.errors.some((i) => i.text.startsWith("Sem cargas")), "estática sem cargas é erro");
+  assert.ok([...st.errors, ...st.warnings].every((i) => i.step === "cargas"));
+  const modal = { ...s, ...studyTypePatch(s, "modal") };
+  assert.ok(!stepIssues(modal, "cargas").errors.some((i) => i.text.startsWith("Sem cargas")), "modal sem cargas não bloqueia");
+});
+
+test("cartões do tipo: pré-definições legíveis", () => {
+  assert.match(studyTypeDefaults("static"), /CalculiX · quadráticos/);
+  assert.match(studyTypeDefaults("modal"), /6 modos/);
+  assert.match(studyTypeDefaults("explicit"), /OpenRadioss.*1 ms/);
+  assert.equal(studyTypeDefaults("fatigue"), "");
 });

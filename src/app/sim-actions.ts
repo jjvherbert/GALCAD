@@ -5,7 +5,7 @@ import { type ConvergenceConfig, DEFAULT_CONVERGENCE, type StoredConvergence, ty
 import type { AssemblyDoc } from "../doc/project.ts";
 import { checkStudy } from "../sim/modelcheck.ts";
 import { store } from "./store.ts";
-import { type GeomSnapshot, assemblySnapshot, geomRev, markDonePatch, partSnapshot, touchUser, validate } from "./workflow.ts";
+import { type GeomSnapshot, assemblySnapshot, geomRev, markDonePatch, partSnapshot, stepIssues, touchUser, validate } from "./workflow.ts";
 import { allMaterials } from "./material-library.ts";
 import { materialsRev, meshStamp } from "./live-mesh.ts";
 import { CancelledError, type RunResult, agentJob, cancelAgentJob, previewStudyMesh, runStudy } from "./sim-client.ts";
@@ -148,14 +148,14 @@ export async function runActiveStudy(meshOnly = false, o: { live?: boolean } = {
   }
 }
 
-/** Marca passos do fluxo guiado como concluídos no estudo FEM indicado (carimbo com os dados atuais). */
+/** Marca passos do fluxo guiado como concluídos no estudo FEM indicado (carimbo com os dados atuais; com avisos, fica «concluído com avisos»). */
 export function markStepsDone(id: string, steps: Parameters<typeof markDonePatch>[1][], label = "Concluir passo") {
   const asm = !!store.activeAssembly();
   const geom = currentGeom();
   saveStudies(activeStudies().map((x) => {
     if (x.id !== id || x.physics !== "fem") return x;
     let n: FemStudy = x;
-    for (const step of steps) n = { ...n, ...markDonePatch(n, step, geom, asm) };
+    for (const step of steps) n = { ...n, ...markDonePatch(n, step, geom, asm, stepIssues(n, step, asm).warnings.length > 0) };
     return n;
   }), label);
 }
