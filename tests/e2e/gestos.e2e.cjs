@@ -67,13 +67,13 @@ async function main() {
     };
 
     await flick(0, -80);
-    check("esboço: gesto para cima ativa a cota inteligente", /^Cota inteligente/.test(await activeTool()), await activeTool());
+    check("esboço: gesto para cima ativa a cota inteligente", (await activeTool()).startsWith("Cota inteligente"), await activeTool());
     await flick(-80, 0);
-    check("esboço: gesto para a esquerda ativa a linha", /^Linha/.test(await activeTool()), await activeTool());
+    check("esboço: gesto para a esquerda ativa a linha", (await activeTool()).startsWith("Linha"), await activeTool());
     await flick(80, 0);
-    check("esboço: gesto para a direita ativa o círculo", /^Círculo/.test(await activeTool()), await activeTool());
+    check("esboço: gesto para a direita ativa o círculo", (await activeTool()).startsWith("Círculo"), await activeTool());
     await flick(0, 80);
-    check("esboço: gesto para baixo ativa o retângulo", /^Retângulo/.test(await activeTool()), await activeTool());
+    check("esboço: gesto para baixo ativa o retângulo", (await activeTool()).startsWith("Retângulo"), await activeTool());
     check("esboço: continua dentro do esboço", (await p.$(".sk-canvas.entered")) !== null);
 
     // roda no esboço mostra os comandos do esboço
@@ -97,7 +97,7 @@ async function main() {
     await p.mouse.click(cx, cy, { button: "right" });
     await p.waitForSelector(".popup[aria-label='Menu do esboço']");
     await p.click(".popup[aria-label='Menu do esboço'] [role=menuitem]:has-text('Linha')");
-    check("esboço: item do menu ativa a linha e fecha o menu", /^Linha/.test(await activeTool()) && (await p.$(".popup[aria-label='Menu do esboço']")) === null, await activeTool());
+    check("esboço: item do menu ativa a linha e fecha o menu", (await activeTool()).startsWith("Linha") && (await p.$(".popup[aria-label='Menu do esboço']")) === null, await activeTool());
 
     // Ctrl + botão direito desloca a vista (não é gesto)
     const o0 = await origin();
@@ -110,7 +110,7 @@ async function main() {
     await p.waitForTimeout(150);
     const o1 = await origin();
     check("esboço: Ctrl+botão direito desloca a vista", Math.abs(o1[0] - o0[0] - 60) < 3 && Math.abs(o1[1] - o0[1] - 40) < 3, JSON.stringify([o0, o1]));
-    check("esboço: Ctrl+botão direito não muda a ferramenta", /^Linha/.test(await activeTool()), await activeTool());
+    check("esboço: Ctrl+botão direito não muda a ferramenta", (await activeTool()).startsWith("Linha"), await activeTool());
 
     // gesto para baixo-direita sai do esboço
     await flick(60, 60);
