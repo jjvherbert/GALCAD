@@ -16,7 +16,10 @@ import { type SketchData, CONSTRAINT_GLYPH, CONSTRAINT_LABEL, applicableConstrai
 import type { RebuildResponse } from "../kernel/protocol.ts";
 import { store, useStoreKeys } from "./store.ts";
 import { focusSelect } from "./forms-base.tsx";
-import { commandViewport } from "./commands.ts";
+import { commandViewport, runCommand } from "./commands.ts";
+import { gestureDir } from "./gestures.ts";
+import type { GestureDir } from "./settings.ts";
+import { Item, Popup } from "./Overlays.tsx";
 import { type CommitResult, type Draw, type DimMode, type Snap, type Tool, GEOM_CONSTRAINTS, TOOLS, fmt } from "./sketch-types.ts";
 import { Constraints, DimGhost, Dimensions, Grid, labelPos } from "./SketchOverlays.tsx";
 
@@ -45,8 +48,11 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   const [free, setFree] = useState<Set<string>>(new Set());
   const [msg, setMsg] = useState<string | null>(null);
   const hist = useRef(new History<SketchData>({ state: { entities: draft.entities, constraints: draft.constraints }, label: "início" }));
-  const drag = useRef<{ mode: "points" | "radius" | "pan" | "label"; ids: string[]; start: P2; base: SketchData; screen: [number, number]; moved: boolean; t0: [number, number] } | null>(null);
+  const drag = useRef<{ mode: "points" | "radius" | "pan" | "label" | "gesture"; ids: string[]; start: P2; base: SketchData; screen: [number, number]; moved: boolean; t0: [number, number] } | null>(null);
   const lastMiddle = useRef(0);
+  /** Gesto do botão direito (coordenadas de cliente, como o HUD global). */
+  const gest = useRef<{ start: [number, number]; dir: GestureDir | null; wheel: boolean; timer?: ReturnType<typeof setTimeout> } | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<[number, number] | null>(null);
   const freeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const scope = (n: string) => result?.variables.values[n];
@@ -169,6 +175,16 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
   function onDown(e: PointerEvent) {
     const [sx, sy] = local(e);
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    setCtxMenu(null);
+    if (e.button === 2 && !e.ctrlKey) {
+      // botão direito: gesto (arrastar) ou menu de contexto (clique); parado 300 ms mostra a roda
+      const at: [number, number] = [e.clientX, e.clientY];
+      const g: NonNullable<typeof gest.current> = { start: at, dir: null, wheel: false };
+      g.timer = setTimeout(() => { g.wheel = true; store.set({ gesture: { at, dir: g.dir, ctx: "sketch" } }); }, 300);
+      gest.current = g;
+      drag.current = { mode: "gesture", ids: [], start: W(sx, sy), base: data(), screen: [sx, sy], moved: false, t0: [0, 0] };
+      return;
+    }
     if (e.button === 1 || e.button === 2 || (tool === "select" && !hitAt(sx, sy))) {
       drag.current = { mode: "pan", ids: [], start: W(sx, sy), base: data(), screen: [sx, sy], moved: false, t0: [v.tx, v.ty] };
       return;
@@ -188,6 +204,17 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     const p = W(sx, sy);
     setMouse(p);
     const d = drag.current;
+    if (d?.mode === "gesture") {
+      const g = gest.current;
+      if (!g) return;
+      const dir = gestureDir(g.start, [e.clientX, e.clientY]);
+      if (dir !== g.dir || (dir && !store.state.gesture)) {
+        g.dir = dir;
+        if (dir) clearTimeout(g.timer);
+        if (dir || g.wheel) store.set({ gesture: { at: g.start, dir, ctx: "sketch" } });
+      }
+      return;
+    }
     if (d) {
       if (!d.moved && Math.hypot(sx - d.screen[0], sy - d.screen[1]) < 3) return;
       d.moved = true;
@@ -223,6 +250,16 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     const d = drag.current;
     drag.current = null;
     const [sx, sy] = local(e);
+    if (d?.mode === "gesture") {
+      const g = gest.current;
+      gest.current = null;
+      if (!g) return;
+      clearTimeout(g.timer);
+      store.set({ gesture: null });
+      if (g.dir) runGesture(st.settings.gestures.sketch[g.dir]);
+      else if (!g.wheel) setCtxMenu([e.clientX, e.clientY]);
+      return;
+    }
     if (d && d.moved) {
       if (d.mode !== "pan") commit(data(), "Arrastar");
       return;
@@ -264,6 +301,21 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     commit(deleteItems(data(), sel), "Apagar");
     setSel([]);
   }
+  /** Executa o comando de um gesto do esboço: `sk:exit`, `sk:<ferramenta>` ou um comando da paleta. */
+  function runGesture(id: string) {
+    if (id === "sk:exit") store.exitSketch(true);
+    else if (id.startsWith("sk:")) { const t = TOOLS.find((x) => x.id === id.slice(3)); if (t) { setTool(t.id); setDrawing(null); } }
+    else runCommand(id);
+  }
+  function cancelGesture() {
+    const g = gest.current;
+    if (!g) return false;
+    clearTimeout(g.timer);
+    gest.current = null;
+    drag.current = null;
+    store.set({ gesture: null });
+    return true;
+  }
   function undo() { const s = hist.current.undo(); if (s) { store.updateSketch({ ...draft, ...s }); setInfo(solveSketch(s, scope)); scheduleFree(s); } }
   function redo() { const s = hist.current.redo(); if (s) { store.updateSketch({ ...draft, ...s }); setInfo(solveSketch(s, scope)); scheduleFree(s); } }
 
@@ -275,6 +327,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "INPUT") return;
       const k = e.key.toLowerCase();
+      if (k === "escape" && (cancelGesture() || ctxMenu)) { setCtxMenu(null); return; }
       if (k === "escape") { if (drawing?.kind === "spline" && drawing.pts.length >= 2) finishSpline(drawing.pts); setDrawing(null); if (!drawing) { setSel([]); setTool("select"); } }
       else if (k === "enter" && drawing?.kind === "spline") finishSpline(drawing.pts);
       else if (k === "delete" || k === "backspace") remove();
@@ -289,6 +342,14 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
   });
+  // menu de contexto: fecha com um clique fora (o Popup para a propagação dos seus próprios cliques)
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    addEventListener("pointerdown", close);
+    return () => removeEventListener("pointerdown", close);
+  }, [ctxMenu]);
+  useEffect(() => () => cancelGesture(), []);
 
   // --- desenho ----------------------------------------------------------------------
   // cores de estado como no SolidWorks: azul = sub-definido, preto = definido,
@@ -416,6 +477,15 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
             })}
           </div>
         )}
+        {ctxMenu && (
+          <Popup at={ctxMenu} w={220} h={200} label="Menu do esboço">
+            <Item label="Sair do esboço" onClick={() => { setCtxMenu(null); store.exitSketch(true); }} />
+            <Item label="Cota inteligente" keys="D" onClick={() => { setCtxMenu(null); runGesture("sk:dim"); }} />
+            <Item label="Linha" keys="L" onClick={() => { setCtxMenu(null); runGesture("sk:line"); }} />
+            {sel.length > 0 && <Item label="Apagar" keys="Del" onClick={() => { setCtxMenu(null); remove(); }} />}
+            <Item label="Ajustar ao ecrã" keys="F" onClick={() => { setCtxMenu(null); setView(null); }} />
+          </Popup>
+        )}
         {prompt && <PromptBox prompt={prompt} setPrompt={setPrompt} apply={applyPrompt} lv={lastValue.current} />}
         {dimEdit && (() => {
           const c = draft.constraints.find((x) => x.id === dimEdit.id);
@@ -447,7 +517,7 @@ export function SketchEditor({ result }: { result: RebuildResponse | null }) {
         {mouse && <span class="muted">x {fmt(mouse[0])} · y {fmt(mouse[1])} mm</span>}
         {msg && <span class="msg">{msg}</span>}
         <span class="grow" />
-        <span class="muted hint">Roda: zoom · arrastar no vazio: deslocar · Shift: seleção múltipla</span>
+        <span class="muted hint">Roda: zoom · arrastar no vazio, botão do meio ou Ctrl+botão direito: deslocar · arrastar com o botão direito: gestos · clique direito: menu · Shift: seleção múltipla</span>
       </div>
     </div>
   );

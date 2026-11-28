@@ -20,6 +20,9 @@ export type Drag = {
   moved: boolean;
   shift: boolean;
   ctrl: boolean;
+  /** Botão direito parado 300 ms: a roda de gestos está à vista e largar sem direção só a fecha. */
+  wheel?: boolean;
+  timer?: ReturnType<typeof setTimeout>;
 };
 
 export type MouseState = { drag: Drag | null; lastMiddleUp: number; wheelAt: number };
@@ -84,7 +87,12 @@ export function onDown(v: MouseHost, s: MouseState, e: PointerEvent) {
   if (e.button === 1) mode = e.ctrlKey ? "pan" : e.shiftKey ? "zoom" : e.altKey ? "roll" : "rotate";
   else if (e.button === 2) mode = "gesture";
   else if (e.button === 0) mode = v.hitTest(e) ? "pending" : "box";
-  s.drag = { button: e.button, mode, start: p, last: p, path: [p], moved: false, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
+  const d: Drag = { button: e.button, mode, start: p, last: p, path: [p], moved: false, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
+  s.drag = d;
+  if (mode === "gesture") {
+    const at: [number, number] = [e.clientX, e.clientY];
+    d.timer = setTimeout(() => { if (s.drag === d && !d.moved) { d.wheel = true; v.onGestureTrack(null, at); } }, 300);
+  }
   if (e.button === 1) {
     e.preventDefault();
     if (mode === "rotate" && !v.pivot) v.pivot = v.target.clone();
@@ -98,6 +106,7 @@ export function onMove(v: MouseHost, s: MouseState, e: PointerEvent) {
   const dx = p[0] - d.last[0], dy = p[1] - d.last[1];
   if (!d.moved && Math.hypot(p[0] - d.start[0], p[1] - d.start[1]) > 4) {
     d.moved = true;
+    clearTimeout(d.timer);
     if (d.mode === "rotate" || d.mode === "pan" || d.mode === "zoom" || d.mode === "roll") v.pushHistory();
   }
   d.last = p;
@@ -132,10 +141,21 @@ export function onMove(v: MouseHost, s: MouseState, e: PointerEvent) {
   }
 }
 
+/** Ponteiro cancelado (perda de captura, janela sem foco): larga o arrasto sem executar nada. */
+export function onCancel(v: MouseHost, s: MouseState) {
+  const d = s.drag;
+  s.drag = null;
+  if (!d) return;
+  clearTimeout(d.timer);
+  if (d.mode === "gesture") { v.gestureEl.replaceChildren(); v.onGestureTrack(null, null); }
+  if (d.mode === "box") v.boxEl.style.display = "none";
+}
+
 export function onUp(v: MouseHost, s: MouseState, e: PointerEvent) {
   const d = s.drag;
   s.drag = null;
   if (!d) return;
+  clearTimeout(d.timer);
   const p = v.local(e);
   if (d.button === 1) {
     const now = performance.now();
@@ -154,7 +174,7 @@ export function onUp(v: MouseHost, s: MouseState, e: PointerEvent) {
     v.onGestureTrack(null, null);
     const dir = cam.gestureDir(d.start, p);
     if (d.moved && dir) v.onGesture(dir);
-    else {
+    else if (!d.wheel) {
       const h = v.hitTest(e, null);
       v.onContextMenu([e.clientX, e.clientY], h ? v.toPick(h) : null);
     }

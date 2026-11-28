@@ -8,6 +8,7 @@ import type { GestureDir } from "./settings.ts";
 import { CONTINUITY_COLORS, robustScale } from "./viewport-style.ts";
 import { VIEWS, type ViewName } from "./viewport-views.ts";
 import { describeName } from "./forms.tsx";
+import { gestureLabel } from "./gesture-label.ts";
 
 /** Feature que criou uma face/aresta (pelo primeiro id do nome topológico). */
 export function featureOfPick(p: Pick | null): string | null {
@@ -20,7 +21,7 @@ function clampTo(at: [number, number], w: number, h: number): { left: string; to
   return { left: `${Math.max(4, Math.min(at[0], innerWidth - w - 4))}px`, top: `${Math.max(4, Math.min(at[1], innerHeight - h - 4))}px` };
 }
 
-function Popup({ at, w = 240, h = 320, children, label }: { at: [number, number]; w?: number; h?: number; children: ComponentChildren; label: string }) {
+export function Popup({ at, w = 240, h = 320, children, label }: { at: [number, number]; w?: number; h?: number; children: ComponentChildren; label: string }) {
   return (
     <div class="popup" role="menu" aria-label={label} style={clampTo(at, w, h)} onPointerDown={(e) => e.stopPropagation()}>
       {children}
@@ -28,7 +29,7 @@ function Popup({ at, w = 240, h = 320, children, label }: { at: [number, number]
   );
 }
 
-const Item = ({ label, keys, onClick, disabled }: { label: string; keys?: string; onClick: () => void; disabled?: boolean }) => (
+export const Item = ({ label, keys, onClick, disabled }: { label: string; keys?: string; onClick: () => void; disabled?: boolean }) => (
   <button role="menuitem" disabled={disabled} onClick={() => { store.closeOverlays(); onClick(); }}>
     <span>{label}</span>{keys && <kbd>{keys}</kbd>}
   </button>
@@ -159,8 +160,7 @@ export function GestureHud() {
     <div class="gesture-hud" style={{ left: `${g.at[0]}px`, top: `${g.at[1]}px` }} aria-hidden="true">
       {(Object.keys(GESTURE_POS) as GestureDir[]).map((d) => {
         const [x, y] = GESTURE_POS[d];
-        const c = commandById.get(st.settings.gestures[d]);
-        return <span key={d} class={g.dir === d ? "on" : ""} style={{ transform: `translate(calc(${x * 80}px - 50%), calc(${y * 64}px - 50%))` }}>{c?.label.replace(/^Vista /, "") ?? "—"}</span>;
+        return <span key={d} class={g.dir === d ? "on" : ""} style={{ transform: `translate(calc(${x * 80}px - 50%), calc(${y * 64}px - 50%))` }}>{gestureLabel(st.settings.gestures[g.ctx][d])}</span>;
       })}
     </div>
   );
